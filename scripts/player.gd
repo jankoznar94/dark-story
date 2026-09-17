@@ -32,11 +32,6 @@ enum Kind { LIGHT, HEAVY }
 @export var heavy_range: float = 2.1
 @export var heavy_arc: float = 105.0
 
-@export_group("Weapon swing visual")
-@export var light_sweep: float = 120.0
-@export var heavy_sweep: float = 210.0
-
-@onready var pivot: Node3D = $Pivot
 @onready var hero: Node3D = $Hero
 
 var facing: Vector3 = Vector3(0, 0, -1)
@@ -67,7 +62,6 @@ func _physics_process(delta: float) -> void:
 		_advance_attack()
 		velocity = velocity.move_toward(Vector3.ZERO, decel * delta)
 		move_and_slide()
-		_animate_weapon()
 		return
 
 	# --- movement ---
@@ -130,20 +124,10 @@ func _advance_attack() -> void:
 		_t = 0.0
 
 
-func _animate_weapon() -> void:
-	var w := light_windup if _kind == Kind.LIGHT else heavy_windup
-	var a := light_active if _kind == Kind.LIGHT else heavy_active
-	var r := light_recover if _kind == Kind.LIGHT else heavy_recover
-	var sweep := deg_to_rad(light_sweep if _kind == Kind.LIGHT else heavy_sweep)
-	var half := sweep * 0.5
-	var ang := 0.0
-	if _state == Atk.WINDUP:
-		ang = lerpf(0.0, -half, clampf(_t / max(w, 0.001), 0.0, 1.0))
-	elif _state == Atk.ACTIVE:
-		ang = lerpf(-half, half, clampf(_t / max(a, 0.001), 0.0, 1.0))
-	elif _state == Atk.RECOVER:
-		ang = lerpf(half, 0.0, clampf(_t / max(r, 0.001), 0.0, 1.0))
-	pivot.rotation.y = ang
+## The sword is NOT animated here any more. It is welded to the hand bone inside
+## models/hero.glb, so it swings with the hand of the clip itself. The old
+## procedural pivot rotation fought the animation - that is what made the bar
+## look detached from the arms.
 
 
 func _do_melee() -> void:

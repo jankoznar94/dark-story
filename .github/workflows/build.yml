@@ -64,6 +64,13 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "CONTROLS_ALL_PASS=true"
 
+      - name: Weapon-in-hand test (must pass before we ship a build)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_weapon.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "WEAPON_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
