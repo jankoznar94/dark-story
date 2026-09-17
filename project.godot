@@ -10,8 +10,8 @@ config_version=5
 
 [application]
 
-config/name="ArpgProto"
-config/description="Isometric slow-paced ARPG prototype"
+config/name="Dark Story"
+config/description="Isometric slow-paced ARPG - Diablo 1/2 feel"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
