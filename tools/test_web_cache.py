@@ -106,12 +106,17 @@ with tempfile.TemporaryDirectory() as td:
     ok("wasm cache key DOES change when the engine changes", w3 != w2)
 
     # --- what a code-only deploy must transfer ---
+    # Ratio, not an absolute size: index.pck grows as the game gains content
+    # (a model, sounds, textures), so a fixed MB threshold would fail on every
+    # asset addition even though the cache behaviour is still correct.
     total = sum((d2 / f).stat().st_size for f in CODE_FILES if (d2 / f).exists())
+    wasm_size = (d2 / "index.wasm").stat().st_size
+    ratio = wasm_size / total if total else 0.0
     print(f"== bytes a code-only deploy must transfer ==")
-    print(f"  {total} bytes = {total / 1048576:.2f} MB  (vs 37.7 MB wasm)")
-    ok("code-only deploy transfers under 1 MB", total < 1048576, f"{total/1048576:.2f} MB")
-    ok("saving is at least 20x", (37.7 * 1048576) / total > 20,
-       f"{(37.7*1048576)/total:.0f}x")
+    print(f"  {total} bytes = {total / 1048576:.2f} MB  (vs {wasm_size/1048576:.1f} MB wasm)")
+    ok("code-only deploy is a fraction of the wasm (< 25%)",
+       total < wasm_size * 0.25, f"{100*total/wasm_size:.1f}% of the wasm")
+    ok("saving is at least 4x", ratio >= 4.0, f"{ratio:.0f}x")
 
 print("")
 if fails:

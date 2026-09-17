@@ -15,16 +15,20 @@ enum Kind { LIGHT, HEAVY }
 @export var turn_speed: float = 9.0          ## how fast the body swings to face a new direction
 
 @export_group("Light attack (timing in seconds)")
-@export var light_windup: float = 0.16
-@export var light_active: float = 0.10
-@export var light_recover: float = 0.20
+## Tuned so the swing animation lines up with the hit. Sword_Attack is 1.50 s
+## played at 2x = 0.75 s, and the strike fires at windup+active = 0.42 s, which
+## is close to the clip's contact moment. Total 0.75 s keeps the attack a real
+## commitment without feeling sluggish.
+@export var light_windup: float = 0.30
+@export var light_active: float = 0.12
+@export var light_recover: float = 0.33
 @export var light_range: float = 1.7
 @export var light_arc: float = 50.0          ## total degrees of the swing cone
 
 @export_group("Heavy attack")
-@export var heavy_windup: float = 0.34
-@export var heavy_active: float = 0.14
-@export var heavy_recover: float = 0.38
+@export var heavy_windup: float = 0.40
+@export var heavy_active: float = 0.16
+@export var heavy_recover: float = 0.44
 @export var heavy_range: float = 2.1
 @export var heavy_arc: float = 105.0
 
@@ -33,6 +37,7 @@ enum Kind { LIGHT, HEAVY }
 @export var heavy_sweep: float = 210.0
 
 @onready var pivot: Node3D = $Pivot
+@onready var hero: Node3D = $Hero
 
 var facing: Vector3 = Vector3(0, 0, -1)
 var _state: int = Atk.NONE
@@ -77,6 +82,12 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
+	if hero and hero.has_method("play_walk"):
+		if velocity.length() > 0.25:
+			hero.play_walk()
+		else:
+			hero.play_idle()
+
 	# --- input ---
 	# Basic attack reads is_action_pressed, NOT just_pressed: holding the button
 	# keeps the character swinging until it is released, which is what Jan asked
@@ -98,6 +109,8 @@ func _begin_attack(kind: int) -> void:
 	_kind = kind
 	_t = 0.0
 	_hit_done = false
+	if hero and hero.has_method("play_attack"):
+		hero.play_attack(kind == Kind.HEAVY)
 	attack_started.emit("light" if kind == Kind.LIGHT else "heavy", global_position, facing)
 
 
