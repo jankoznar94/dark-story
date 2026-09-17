@@ -73,6 +73,13 @@ jobs:
           ./godot --headless --path . --export-release "Android" || true
           ls -la build/web build/windows build/android
 
+      - name: Patch web service worker (split cache, saves ~38 MB per deploy)
+        run: |
+          set -e
+          python3 tools/patch_web_sw.py build/web
+          python3 tools/test_web_cache.py | tail -10
+          python3 tools/test_web_cache.py | grep -q "WEB_CACHE_ALL_PASS=true"
+
       - name: Report what actually got built
         id: built
         run: |

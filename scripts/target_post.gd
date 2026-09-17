@@ -23,3 +23,5 @@ func _process(delta: float) -> void:
 		_flash -= delta
 		if _flash <= 0.0:
 			_mat.albedo_color = Color(0.30, 0.26, 0.21)
+
+# cache test marker

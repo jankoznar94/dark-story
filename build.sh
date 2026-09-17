@@ -85,6 +85,18 @@ for target in Web Windows Android; do
   "$GODOT" --headless --path . --export-release "$target" 2>&1 | grep -iE "^ERROR|Signed" || true
 done
 
+# Replace Godot's stock service worker: it keys ONE cache by a build timestamp,
+# so every deploy re-downloads the whole 38 MB wasm even though the wasm bytes
+# only change on an engine upgrade. The split-cache worker keys the wasm by its
+# content hash, so a code-only deploy refetches ~0.3 MB instead of ~38 MB.
+echo "== patch web service worker (split cache) =="
+python3 tools/patch_web_sw.py build/web
+
+echo "== web cache behaviour test (must pass) =="
+python3 tools/test_web_cache.py | tail -8
+python3 tools/test_web_cache.py 2>/dev/null | grep -q "WEB_CACHE_ALL_PASS=true" \
+  || { echo "WEB CACHE TEST FAILED - not publishing"; exit 1; }
+
 echo
 echo "== artifacts =="
 for f in build/web/index.html build/web/index.wasm build/windows/arpg.exe build/android/arpg.apk; do
