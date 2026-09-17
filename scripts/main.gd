@@ -6,6 +6,7 @@ extends Node3D
 @onready var hud: CanvasLayer = $HUD
 
 var _posts: Array[Node] = []
+var _hits: Array = []
 
 
 func _ready() -> void:
@@ -83,4 +84,5 @@ func _process(_delta: float) -> void:
 
 
 func _on_landed(kind: String, collider: Node, point: Vector3) -> void:
+	_hits.append({"kind": kind, "who": collider.name})
 	print("[hit] %s on %s at %s" % [kind, collider.name, point])

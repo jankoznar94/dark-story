@@ -78,7 +78,10 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	# --- input ---
-	if Input.is_action_just_pressed("attack"):
+	# Basic attack reads is_action_pressed, NOT just_pressed: holding the button
+	# keeps the character swinging until it is released, which is what Jan asked
+	# for. Skills stay on just_pressed so they cannot be spammed by holding.
+	if Input.is_action_pressed("attack"):
 		_begin_attack(Kind.LIGHT)
 	elif Input.is_action_just_pressed("skill_1"):
 		_begin_attack(Kind.HEAVY)
