@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+		<title>$GODOT_PROJECT_NAME</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+/* 100dvh is what actually removes the mobile URL-bar problem: it tracks the
+   *visible* viewport instead of the largest possible one, so the canvas never
+   ends up taller than the screen on landscape phones. Falls back to 100vh. */
+html, body {
+	width: 100%;
+	height: 100vh;
+	height: 100dvh;
+	overflow: hidden;
+	overscroll-behavior: none;
+}
+
+body {
+	color: white;
+	background-color: $GODOT_SPLASH_COLOR;
+	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+#canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	outline: none;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+/* Fullscreen entry point. Deliberately always visible (top-right, small) and
+   flat: no hover/focus styling, matching the game's UI rules. */
+#fs-btn {
+	position: fixed;
+	top: 6px;
+	right: 6px;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	margin: 0;
+	border: 2px solid rgba(140, 115, 77, 0.85);
+	border-radius: 999px;
+	background: rgba(41, 33, 26, 0.72);
+	color: #e0d4b4;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+}
+
+#fs-btn[hidden] { display: none; }
+</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+
+		<!-- Fullscreen prompt: only shown when the page is NOT already installed as a
+		     PWA and NOT already fullscreen. On iOS Safari there is no Fullscreen API
+		     for arbitrary elements, so we tell the player to use Add to Home Screen
+		     instead - that is the only route that removes the URL bar there. -->
+		<div id="fs-bar" hidden>
+			<span id="fs-text">Na šířku a celou obrazovku</span>
+			<button id="fs-btn" type="button">⛶ Fullscreen</button>
+		</div>
+		<div id="status">
+			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+	
+		<script>
+		(function () {
+			const isStandalone =
+				window.matchMedia('(display-mode: standalone)').matches ||
+				window.navigator.standalone === true;
+			const inFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+			const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+				(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+			const bar = document.getElementById('fs-bar');
+			const btn = document.getElementById('fs-btn');
+			const text = document.getElementById('fs-text');
+			if (!bar || !btn) { return; }
+
+			function sync() {
+				if (isStandalone || inFullscreen()) { bar.hidden = true; return; }
+				bar.hidden = false;
+			}
+
+			document.addEventListener('fullscreenchange', sync);
+			document.addEventListener('webkitfullscreenchange', sync);
+
+			if (isIOS) {
+				// No element-fullscreen API on iOS; the home-screen app is the only fix.
+				text.textContent = 'Přidej na plochu: Sdílet → Přidat na plochu (odstraní adresní řádek)';
+				btn.hidden = true;
+			} else {
+				btn.addEventListener('click', async function () {
+					const el = document.documentElement;
+					try {
+						if (el.requestFullscreen) { await el.requestFullscreen({ navigationUI: 'hide' }); }
+						else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); }
+						// Belt and braces: some Android browsers honour orientation lock.
+						if (screen.orientation && screen.orientation.lock) {
+							screen.orientation.lock('landscape').catch(function () {});
+						}
+					} catch (e) { /* user can still rotate manually */ }
+					sync();
+				});
+			}
+
+			// First tap anywhere also tries fullscreen - browsers require a gesture.
+			window.addEventListener('pointerdown', function once() {
+				window.removeEventListener('pointerdown', once);
+				if (!isIOS && !inFullscreen() && !isStandalone) {
+					try {
+						const el = document.documentElement;
+						if (el.requestFullscreen) { el.requestFullscreen({ navigationUI: 'hide' }); }
+					} catch (e) {}
+				}
+				sync();
+			}, { once: true });
+
+			sync();
+		})();
+		</script>
+	</body>
+</html>

@@ -12,6 +12,9 @@ PROJ="$(cd "$(dirname "$0")" && pwd)"
 # Android toolchain (user-local install, see docs/android-setup.md)
 export JAVA_HOME="$HOME/tools/jdk-17"
 export ANDROID_HOME="$HOME/tools/android-sdk"
+# apksigner is a java launcher - JAVA_HOME alone is not enough, java must be on PATH,
+# otherwise the verification step below false-negatives on a perfectly signed APK.
+export PATH="$JAVA_HOME/bin:$PATH"
 
 # Signing. The debug keystore is re-used as the release key so the tester can
 # install updates over old builds instead of uninstalling every time.
@@ -46,6 +49,12 @@ done
 
 APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
 if [ -x "$APKSIGNER" ]; then
-  "$APKSIGNER" verify build/android/arpg.apk >/dev/null 2>&1 \
-    && echo "  APK signature: VALID" || echo "  APK signature: INVALID"
+  SIG=$("$APKSIGNER" verify --verbose build/android/arpg.apk 2>&1) || true
+  if echo "$SIG" | grep -q "^Verifies"; then
+    SCHEMES=$(echo "$SIG" | grep ": true" | sed 's/Verified using //; s/: true//' | tr '\n' ' ')
+    echo "  APK signature: VALID   (schemes: $SCHEMES)"
+  else
+    echo "  APK signature: INVALID"
+    echo "$SIG" | head -3
+  fi
 fi
