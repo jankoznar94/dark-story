@@ -5,6 +5,12 @@ on:
     branches: ["**"]
   workflow_dispatch:
 
+# peaceiris/actions-gh-pages and action-gh-release both WRITE to the repo.
+# Without this, GITHUB_TOKEN is read-only on repos with restrictive defaults
+# and both steps fail with 403.
+permissions:
+  contents: write
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -29,13 +35,16 @@ jobs:
           set -e
           BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
           wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -O godot.zip
-          unzip -q godot.zip
+          python3 -c "import zipfile; zipfile.ZipFile('godot.zip').extractall('.')"
           mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot
           chmod +x godot
           wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -O tpl.tpz
-          mkdir -p ~/.local/share/godot/export_templates
-          unzip -q tpl.tpz
-          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          python3 -c "import zipfile; zipfile.ZipFile('tpl.tpz').extractall('.')"
+          # Godot looks for exactly <version>.stable/ — create it before moving.
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$DEST"
+          cp -r templates/. "$DEST"/
+          ls "$DEST" | head
           ./godot --headless --version
 
       - name: Generate input map
@@ -67,6 +76,7 @@ jobs:
             done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
 
       - name: Publish to GitHub Pages (web build)
         if: hashFiles('build/web/index.html') != ''
@@ -86,5 +96,3 @@ jobs:
           files: |
             build/windows/arpg.exe
             build/android/arpg.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
