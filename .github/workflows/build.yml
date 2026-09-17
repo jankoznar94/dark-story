@@ -1,0 +1,90 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK + Android SDK are preinstalled on ubuntu runners; this pins the JDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Fetch Godot editor + export templates
+        run: |
+          set -e
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -O godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot
+          chmod +x godot
+          wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -O tpl.tpz
+          mkdir -p ~/.local/share/godot/export_templates
+          unzip -q tpl.tpz
+          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          ./godot --headless --version
+
+      - name: Generate input map
+        run: ./godot --headless --path . --script res://tools/gen_input_map.gd
+
+      - name: Headless gameplay test (must pass before we ship a build)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_attack.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ALL_PASS=true"
+
+      - name: Export
+        run: |
+          set -e
+          mkdir -p build/web build/windows build/android
+          ./godot --headless --path . --export-release "Web"     || true
+          ./godot --headless --path . --export-release "Windows" || true
+          ./godot --headless --path . --export-release "Android" || true
+          ls -la build/web build/windows build/android
+
+      - name: Report what actually got built
+        id: built
+        run: |
+          {
+            echo "report<<EOF"
+            for f in build/web/index.html build/web/index.wasm build/windows/arpg.exe build/android/arpg.apk; do
+              if [ -f "$f" ]; then echo "OK   $(du -h "$f" | cut -f1)  $f"; else echo "MISS ---  $f"; fi
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Pages (web build)
+        if: hashFiles('build/web/index.html') != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          publish_branch: gh-pages
+
+      - name: Attach downloads to a Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: ${{ steps.built.outputs.report }}
+          files: |
+            build/windows/arpg.exe
+            build/android/arpg.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
