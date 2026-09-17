@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1789657265|5142794';
+const CACHE_VERSION = '1789657633|6238168';
 /** @type {string} */
 const CACHE_PREFIX = 'Dark Story-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
