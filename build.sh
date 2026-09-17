@@ -72,6 +72,11 @@ OUT=$("$GODOT" --headless --path . --script res://tools/test_attack.gd 2>&1)
 echo "$OUT" | grep -E "^(CASE|RESULT|ALL_PASS)"
 echo "$OUT" | grep -q "ALL_PASS=true" || { echo "GAMEPLAY TEST FAILED - not building"; exit 1; }
 
+echo "== controls test (must pass) =="
+OUT2=$("$GODOT" --headless --path . --script res://tools/test_controls.gd 2>&1)
+echo "$OUT2" | grep -E "FAIL|checks executed|CONTROLS_ALL_PASS"
+echo "$OUT2" | grep -q "CONTROLS_ALL_PASS=true" || { echo "CONTROLS TEST FAILED - not building"; exit 1; }
+
 rm -rf build
 mkdir -p build/web build/windows build/android
 
