@@ -91,11 +91,101 @@
 91|~/tools/godot/godot4 --headless --path . --import
 92|```
 93|
-94|## Still to do
-95|
-96|The model is a **featureless grey mannequin**. It is a correct, animated,
-97|correctly-proportioned base to build on - not a finished hero. Next steps are
-98|clothing/armour geometry, a face, and a hair/beard silhouette.
+## Still to do
+
+The model is a **featureless grey mannequin**. It is a correct, animated,
+correctly-proportioned base to build on - not a finished hero. Next steps are
+clothing/armour geometry, a face, and a hair/beard silhouette.
+
+---
+
+## Textured: the generated atlas (Sept 2026)
+
+The mannequin now has a painted face and per-zone materials, all from one
+**1024x1024 atlas generated with Lemonade** (`Flux-2-Klein-4B`, 256x256 source
+tiles) and composited in PIL. `hero.glb` has **one material, one surface**; the
+atlas is embedded in the GLB.
+
+### The blocker that had to be solved first
+
+The source mesh's usable UV layer had real coordinates on the **hands only** -
+every body polygon (torso, head, arms, legs, weapon) was collapsed onto
+`u=v=0`. No texture could land on the body at all. The mesh had to be
+re-unwrapped before any of this meant anything.
+
+### UV layout it was replaced with
+
+| Atlas region | Contents |
+|---|---|
+| `v 0.00..0.25` | head + neck, **cylindrical projection around Z** |
+| `v 0.25..1.00` | everything else, smart-projected and packed |
+
+The head projection is analytic, not packed: `u = 0.5 + atan2(x, -y)/(2*pi) * KU`
+puts the character's front at `u = 0.5` and `v` increases upward, so a painted
+face lands predictably.
+
+### Pitfalls that cost real time here
+
+- **`pack_islands` overrides an explicit mapping.** It was run *after* the head
+  was mapped, repacked the head too, and destroyed it - `corr(analytic_u,
+  actual_u)` fell to **0.198**. Order matters: pack first, then overwrite the
+  head loops **last**.
+- **A UV layer reference goes invalid after `pack_islands`.** Calling
+  `.name` on the stale handle raised `UnicodeDecodeError: invalid start byte`.
+  Re-read `me.uv_layers[0]` after packing.
+- **Anisotropy must be checked as a density ratio, not a pixel ratio.** The head
+  wrap spans `KU*1024` px, so anisotropy is
+  `(256/H) / (KU*1024/C)` - not `1024/C`. Using the wrong formula produced a
+  bogus "7.9x" reading and a wrong `KU`, leaving a real **1.49x** error that made
+  a square portrait render 0.234 m wide instead of 0.16 m.
+  Correct value for this head: **`KU = 0.5312`**
+  (`C = 0.7252 m` perimeter, `H = 0.3413 m`, 750 px/m both ways).
+- **A square portrait pasted into a 2.35:1 rect stretches.** Crop to the subject
+  and fit preserving aspect (pad, don't stretch).
+- **`export_uv`/`uv.export_layout` needs a GPU** and fails in background Blender
+  (`GPU functions for drawing are not available in background mode`). Rasterise
+  the UV polygons in PIL from a dumped JSON instead.
+- **Godot extracts embedded glTF textures next to the `.glb`** on import
+  (`gltf/embedded_image_handling=1`), so `models/hero_hero_atlas.png` appears as
+  a build product. It is gitignored - do not hand-copy the atlas into `models/`
+  as well, or the same 830 KB ships twice.
+
+### Palette, measured on the atlas
+
+Warm, dark, desaturated, flat - no glow. `KHR_materials_specular` is the only
+extension; metallic is 0 because a metal response needs specular highlights.
+
+| Zone | Mean luminance |
+|---|---|
+| skin (head + hands) | 74 |
+| leather (torso, limbs) | 46 |
+| steel (sword) | 61 |
+
+The untextured head initially read as a bright **"white hood"** because skin sat
+at 131-137 against body leather at 45 - a 3x jump. That is what the grading fixes.
+
+### The face patch was checked numerically, not by eye
+
+Vision reported a "hard rectangular edge" around the face on **four** separate
+renders. Measurement says otherwise and vision is the one that is wrong:
+
+- max gradient **on** the patch border: **6.5**
+- 99th-percentile gradient **inside** the patch: **55.7**
+- luminance straight across the border: `74, 75, 74, 75, 73 | 75, 76, 75, 75, 73`
+
+An edge far smoother than the texture's own detail is not a visible seam. This is
+the same trap the Dark Story notes already warn about - **do not treat a vision
+"hard edge" finding as a defect without a pixel measurement behind it.**
+
+### Verification of the shipped GLB
+
+- texture embedded: `images[0] = hero_atlas, image/png`; 1 material, 1 primitive,
+  `TEXCOORD_0` present
+- **0 unweighted vertices** of 13,289; 240 verts bound to `DEF-hand.R`, so the
+  welded sword still follows the arm
+- `test_weapon.gd` reworked for the 1-surface design (it used to assert 2
+  surfaces) and asserts the atlas material + size instead: **20/20 OK**
+
 ## The weapon is welded into the hand (and why that mattered)
 
 Two symptoms Jan reported, with **two different causes** - both confirmed by

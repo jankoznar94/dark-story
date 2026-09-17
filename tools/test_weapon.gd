@@ -86,7 +86,11 @@ func _run() -> void:
 	_ok("idle clip present", names.has(CLIP_IDLE), CLIP_IDLE)
 	_ok("attack clip present", names.has(CLIP_ATTACK), CLIP_ATTACK)
 
-	# --- 1. one mesh, two surfaces: body + steel -------------------------------
+	# --- 1. one mesh, ONE surface, textured atlas -----------------------------
+	# The model used to carry two surfaces (body + steel). It is now a single
+	# surface with a generated 1024x1024 atlas that already contains the per-zone
+	# materials, which is cheaper on mobile (one draw call) and is what makes the
+	# painted face land on the head at all.
 	# NOTE: a GDScript lambda captures by VALUE, so a counter inside a lambda
 	# never updates the outer variable (it silently read 0). Use an array, which
 	# is passed by reference.
@@ -94,32 +98,54 @@ func _run() -> void:
 	_collect_meshes(inst, found)
 	_ok("hero is a single skinned mesh", found.size() == 1,
 		"%d mesh nodes" % found.size())
-	_ok("mesh has 2 surfaces (body + steel)", mi.mesh.get_surface_count() == 2,
+	_ok("mesh has 1 surface (atlas covers every part)", mi.mesh.get_surface_count() == 1,
 		"%d" % mi.mesh.get_surface_count())
 
-	# --- 2. the steel is welded to the hand bone ------------------------------
-	# surface 1 = steel. Every vertex with weight > 0.5 must point at DEF-hand.R.
+	# --- 2. the atlas material is actually applied ----------------------------
+	# A missing texture here is the classic silent failure: the model renders with
+	# its flat base colour and nothing looks obviously wrong in a grey test.
+	var mat := mi.get_active_material(0)
+	_ok("surface 0 has a material", mat != null)
+	if mat != null:
+		var has_tex := mat is BaseMaterial3D and mat.albedo_texture != null
+		_ok("material samples the generated atlas", has_tex,
+			str(mat.albedo_texture.resource_path if has_tex else "no albedo_texture"))
+		if has_tex:
+			var ts: Vector2i = mat.albedo_texture.get_size()
+			_ok("atlas is 1024x1024", ts.x == 1024 and ts.y == 1024, str(ts))
+
+	# --- 3. every vertex is skinned (the welded sword included) ---------------
+	# Before the atlas pass the sword was its own surface. It is now merged into
+	# the one surface, so "the sword follows the hand" has to be asserted on the
+	# whole mesh: no vertex may be unweighted, or it would stay in rest pose while
+	# the body animates away from it.
+	var body: Array = mi.mesh.surface_get_arrays(0)
+	var bones: PackedInt32Array = body[Mesh.ARRAY_BONES]
+	var weights: PackedFloat32Array = body[Mesh.ARRAY_WEIGHTS]
+	var verts: PackedVector3Array = body[Mesh.ARRAY_VERTEX]
+	_ok("mesh carries skin data", bones != null and weights != null and not verts.is_empty())
 	var hand_idx := skel.find_bone("DEF-hand.R")
 	_ok("hand bone found", hand_idx != -1)
-	var steel: Array = mi.mesh.surface_get_arrays(1)
-	var bones: PackedInt32Array = steel[Mesh.ARRAY_BONES]
-	var weights: PackedFloat32Array = steel[Mesh.ARRAY_WEIGHTS]
-	var verts: PackedVector3Array = steel[Mesh.ARRAY_VERTEX]
-	_ok("steel surface carries skin data", bones != null and weights != null)
 	var bound_hand := 0
-	var bound_other := 0
-	for i in weights.size():
-		if weights[i] > 0.5:
-			if bones[i] == hand_idx:
-				bound_hand += 1
-			else:
-				bound_other += 1
-	print("  info steel verts=%d bound_to_hand=%d bound_to_other=%d"
-		% [verts.size(), bound_hand, bound_other])
-	_ok("every steel vertex is bound to DEF-hand.R", bound_other == 0 and bound_hand > 0,
-		"%d to hand, %d elsewhere" % [bound_hand, bound_other])
+	var unweighted := 0
+	var n_stride := 4                      # 4 bone influences per vertex
+	for i in range(0, weights.size(), n_stride):
+		var w := 0.0
+		var hit_hand := false
+		for k in n_stride:
+			w += weights[i + k]
+			if weights[i + k] > 0.5 and bones[i + k] == hand_idx:
+				hit_hand = true
+		if w < 0.01:
+			unweighted += 1
+		if hit_hand:
+			bound_hand += 1
+	print("  info verts=%d bound_to_hand=%d unweighted=%d"
+		% [verts.size(), bound_hand, unweighted])
+	_ok("no unweighted vertices", unweighted == 0, "%d unweighted" % unweighted)
+	_ok("the sword hand is actually bound", bound_hand > 0, "%d verts on DEF-hand.R" % bound_hand)
 
-	# --- 3. the fist is CLOSED in the clips we ship ---------------------------
+	# --- 4. the fist is CLOSED in the clips we ship ---------------------------
 	# measured as the posed bone distance thumb-tip <-> middle-fingertip: the
 	# source rig gives 0.9 mm closed and 78 mm wide open.
 	var thumb := skel.find_bone("DEF-thumb.03.R")
