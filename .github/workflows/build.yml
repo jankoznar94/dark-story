@@ -47,6 +47,14 @@ jobs:
           ls "$DEST" | head
           ./godot --headless --version
 
+      # On a CLEAN checkout Godot has no imported resources yet, so anything that
+      # does load("res://models/hero.glb") fails with
+      #   "Cannot open file 'res://.godot/imported/hero.glb-....scn'"
+      # Locally this is invisible because .godot/ already holds the cache. Import
+      # assets explicitly before any test runs.
+      - name: Import assets
+        run: ./godot --headless --path . --import
+
       - name: Generate input map
         run: ./godot --headless --path . --script res://tools/gen_input_map.gd
 
