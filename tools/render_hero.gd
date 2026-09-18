@@ -6,10 +6,20 @@ extends SceneTree
 ##        --script res://tools/render_hero.gd
 ## Must NOT be --headless: headless cannot draw. In this box the GPU comes via
 ## OpenGL/D3D12, so force the opengl3 driver.
+##
+## Model axis facts measured on models/hero.glb (tools/probe_axis.gd):
+##   * the model's front is -Z: the toes point -Z (Blender +Y) and player.gd
+##     drives rotation.y from a -Z forward, so the visual only matches the
+##     gameplay facing if the mesh front is -Z.
+##   * the atlas face patch (u 0.44..0.56 in the head strip) sampled the +Z side
+##     before the fix, i.e. the back of the head.
+## Views are named by what they LOOK AT: "front" stands at -Z.
 
 var t := 0.0
 var shots := 0
 var cam: Camera3D
+var _views: Array = []
+var _i := 0
 
 
 func _initialize() -> void:
@@ -18,8 +28,6 @@ func _initialize() -> void:
 
 	cam = Camera3D.new()
 	root3.add_child(cam)
-	cam.position = Vector3(0.0, 1.05, 3.4)
-	cam.look_at(Vector3(0.0, 1.0, 0.0), Vector3.UP)
 	cam.fov = 32.0
 
 	var light := DirectionalLight3D.new()
@@ -52,11 +60,16 @@ func _initialize() -> void:
 	if mi != null:
 		print("RENDER material=", mi.get_active_material(0),
 			" surfaces=", mi.mesh.get_surface_count())
-		if mi.get_active_material(0) is BaseMaterial3D:
-			var m: BaseMaterial3D = mi.get_active_material(0)
-			print("RENDER albedo_texture=", m.albedo_texture)
 	if anim != null:
 		anim.play("Rig|Sword_Idle")
+	# camera position, look-at point, output name
+	_views = [
+		[Vector3(0.0, 1.05, 3.4), Vector3(0.0, 1.0, 0.0), "hero_engine_back.png"],
+		[Vector3(0.0, 1.05, -3.4), Vector3(0.0, 1.0, 0.0), "hero_engine_front.png"],
+		[Vector3(3.4, 1.05, 0.0), Vector3(0.0, 1.0, 0.0), "hero_engine_side.png"],
+		[Vector3(0.05, 1.60, -0.85), Vector3(0.0, 1.60, 0.0), "hero_engine_head.png"],
+		[Vector3(1.1, 1.35, -0.75), Vector3(0.55, 1.05, -0.15), "hero_engine_hand.png"],
+	]
 	print("RENDER_READY")
 
 
@@ -83,21 +96,23 @@ func _find_mesh(n: Node) -> MeshInstance3D:
 func _process(delta: float) -> bool:
 	t += delta
 	if shots == 0 and t > 1.0:
-		cam.position = Vector3(0.0, 1.05, 3.4)
-		cam.look_at(Vector3(0.0, 1.0, 0.0), Vector3.UP)
-		_capture("hero_engine_front.png")
 		shots = 1
-	elif shots == 1 and t > 1.7:
-		cam.position = Vector3(0.05, 1.60, 0.85)
-		cam.look_at(Vector3(0.0, 1.60, 0.0), Vector3.UP)
-		_capture("hero_engine_head.png")
-		shots = 2
-		return true
-	return false
+		_shot()
+	elif shots >= 1 and t > 1.0 + 0.45 * float(shots):
+		_shot()
+	return _i >= _views.size()
 
 
-func _capture(name: String) -> void:
+func _shot() -> void:
+	if _i >= _views.size():
+		return
+	var v: Array = _views[_i]
+	cam.position = v[0]
+	cam.look_at(v[1], Vector3.UP)
 	var img := get_root().get_texture().get_image()
-	var path := "user://" + name
+	var path := "user://" + str(v[2])
 	img.save_png(path)
 	print("CAPTURED ", ProjectSettings.globalize_path(path))
+	_i += 1
+	if _i >= _views.size():
+		quit()

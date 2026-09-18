@@ -186,7 +186,79 @@ the same trap the Dark Story notes already warn about - **do not treat a vision
 - `test_weapon.gd` reworked for the 1-surface design (it used to assert 2
   surfaces) and asserts the atlas material + size instead: **20/20 OK**
 
+## The welded sword was rotated wrong, and the face was on the back (fixed Sept 2026)
+
+Two defects Jan reported, both confirmed by measurement on the shipped GLB.
+
+**"The face is on the back of the head."** The head projection used
+`u = 0.5 + atan2(x, -y)/(2 pi) * KU`. The character's front is **+Y** (the toes
+span y +0.098..+0.206), so the front point `(x=0, y=+R)` gives
+`atan2(0, -R) = pi` -> u at the *far edge* of the head strip, while the face is
+painted at `u = 0.5`. Exactly 180 deg off.
+
+Fix: `u = 0.5 - atan2(x, y)/(2 pi) * KU`.
+- front -> 0.5 (where the face is painted)
+- the subject's own right (+X, where `DEF-*.R` lives) lands **below** 0.5. A
+  front-view portrait puts the subject's right on the image's left, i.e. low u, so
+  this sign is the one that is **not mirrored**. The `+` variant also centres the
+  face but mirrors it.
+- the wrap seam falls at the back, not across the face
+- the covered u span is still exactly `KU`, so **the existing atlas still fits and
+  did not need regenerating**
+
+**"He holds a machine gun, not properly in the hand."** Mechanically the sword was
+fine: 100% weighted to `DEF-hand.R`, **0.0000 m** from the fist in every clip. But
+it measured **55.2 deg** off the hand bone's own axis and hung ~0.8 m nearly
+straight **down** out of the fist in the idle. Held point-down beside the leg that
+reads as a rifle slung at the side. The old note's "2.8 deg off the forearm" was
+measured against the **forearm** and on a re-placed weapon, which is how the real
+error hid.
+
+Fix: rotate the weapon **in the hand bone's local space** about its grip, so the
+blade lies along the bone (`+Y`, wrist -> fingers). Because the weapon is rigidly
+bound to one bone, a rest-space rotation is the same rotation in every animation —
+no re-posing, no re-skinning, no animation edits. Result: 55.2 deg -> **0.0 deg**
+(signed +1.0000), grip moved **0.000000 m**, blade 0.8457 m.
+
+### Pitfalls that cost real time here
+
+- **A rigidly-bound part must be rotated in its BONE's space.** Rotating it in
+  world space rotates it relative to the bone, which desyncs it in every pose.
+- **Three frames are in play and mixing them gives silent 100x errors:** raw mesh
+  coords --`body.matrix_world`--> world metres, and bone local
+  --`armature.matrix_world @ bone.matrix_local`--> world metres. Absolute lengths
+  come out 100x wrong (a 0.016 m grip-to-hand read as 1.61 m) unless the mesh's own
+  `matrix_world` is the only bridge used. Directions are safe (uniform scale).
+- **The exporter splits the welded sword into 4-vert islands.** After export the
+  blade is *not* one connected component, so
+  - "cluster the verts bound only to `DEF-hand.R`" finds 29 fragments and the
+    largest measures 0.54 m — a fragment, not the sword, and the "gap to the fist"
+    then reads a bogus 0.62 m
+  - "all verts 100% on `DEF-hand.R`" also includes hand geometry (rotating that
+    would deform the fist)
+  - **matching vertex positions is not a unique identification either**: 80 source
+    weapon verts collapsed to 25 unique hits, and the "blade" came out 0.0085 m.
+  Identify the weapon in the **pre-atlas** file by `material_index == 1` (80 verts,
+  all 100% on `DEF-hand.R`) and do the whole fix in one pass from there.
+- **Godot serves a stale `.godot/imported` cache after a GLB is replaced.** A probe
+  reported the OLD head orientation until `godot --headless --path . --import` was
+  re-run. Re-import before believing any orientation measurement.
+- **Vision contradicts itself on head orientation** (it called one render both
+  "front with a face" and "rear view"): settle facing with geometry — the foot
+  chain (toe vs ankle) and the atlas face-patch centroid — never from a render.
+
+### Reproduce
+
+```bash
+# inputs: in.glb = models/hero.glb at ff0618f (md5 01d39a0ee09f57...), hero_atlas.png
+blender.exe -b --factory-startup -P tools/blender/build_hero_fixed.py
+~/tools/godot/godot4 --headless --path . --import      # or Godot serves a stale cache
+~/tools/godot/godot4 --headless --path . --script res://tools/probe_hero.gd
+~/tools/godot/godot4 --headless --path . --script res://tools/test_weapon.gd
+```
+
 ## The weapon is welded into the hand (and why that mattered)
+
 
 Two symptoms Jan reported, with **two different causes** - both confirmed by
 measurement:
