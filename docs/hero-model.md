@@ -206,59 +206,103 @@ Fix: `u = 0.5 - atan2(x, y)/(2 pi) * KU`.
 - the covered u span is still exactly `KU`, so **the existing atlas still fits and
   did not need regenerating**
 
-**"He holds a machine gun, not properly in the hand."** Mechanically the sword was
-fine: 100% weighted to `DEF-hand.R`, **0.0000 m** from the fist in every clip. But
-it measured **55.2 deg** off the hand bone's own axis and hung ~0.8 m nearly
-straight **down** out of the fist in the idle. Held point-down beside the leg that
-reads as a rifle slung at the side. The old note's "2.8 deg off the forearm" was
-measured against the **forearm** and on a re-placed weapon, which is how the real
-error hid.
+**"He holds a machine gun, not properly in the hand" / "it still aims at the
+ground".** The sword was **never in the hand at all**, and this took three wrong
+"verified" claims to establish. Measured in metres on the pre-atlas model:
 
-Fix: rotate the weapon **in the hand bone's local space** about its grip, so the
-blade lies along the bone (`+Y`, wrist -> fingers). Because the weapon is rigidly
-bound to one bone, a rest-space rotation is the same rotation in every animation —
-no re-posing, no re-skinning, no animation edits. Result: 55.2 deg -> **0.0 deg**
-(signed +1.0000), grip moved **0.000000 m**, blade 0.8457 m.
+| | value |
+|---|---|
+| grip to FIST CENTRE | **0.8356 m** |
+| idle `Rig|Sword_Idle`: nearest sword-vert to fist | **0.7860 m** |
+| idle blade direction, z component | **-0.93** (at the floor) |
 
-### Pitfalls that cost real time here
+Being 100% weighted to `DEF-hand.R` only means it travels *with* the hand — the
+offset is baked into the binding, so it hung ~0.8 m away beside the leg. Aligning
+the blade with the hand bone could not help because in the idle the arm hangs at
+the side: the hand bone's `+Y` in that pose is `(0.562, -0.331, -0.758)` → **down**.
 
-- **A rigidly-bound part must be rotated in its BONE's space.** Rotating it in
-  world space rotates it relative to the bone, which desyncs it in every pose.
-- **Three frames are in play and mixing them gives silent 100x errors:** raw mesh
-  coords --`body.matrix_world`--> world metres, and bone local
-  --`armature.matrix_world @ bone.matrix_local`--> world metres. Absolute lengths
-  come out 100x wrong (a 0.016 m grip-to-hand read as 1.61 m) unless the mesh's own
-  `matrix_world` is the only bridge used. Directions are safe (uniform scale).
-- **The exporter splits the welded sword into 4-vert islands.** After export the
-  blade is *not* one connected component, so
-  - "cluster the verts bound only to `DEF-hand.R`" finds 29 fragments and the
-    largest measures 0.54 m — a fragment, not the sword, and the "gap to the fist"
-    then reads a bogus 0.62 m
-  - "all verts 100% on `DEF-hand.R`" also includes hand geometry (rotating that
-    would deform the fist)
-  - **matching vertex positions is not a unique identification either**: 80 source
-    weapon verts collapsed to 25 unique hits, and the "blade" came out 0.0085 m.
-  Identify the weapon in the **pre-atlas** file by `material_index == 1` (80 verts,
-  all 100% on `DEF-hand.R`) and do the whole fix in one pass from there.
-- **Godot serves a stale `.godot/imported` cache after a GLB is replaced.** A probe
-  reported the OLD head orientation until `godot --headless --path . --import` was
-  re-run. Re-import before believing any orientation measurement.
-- **Vision contradicts itself on head orientation** (it called one render both
-  "front with a face" and "rear view"): settle facing with geometry — the foot
-  chain (toe vs ankle) and the atlas face-patch centroid — never from a render.
+Fix: transform the weapon in the hand bone's **rest-local** space —
+`p' = fist_centre + R @ (p - grip)`. `R` rotates the blade from its actual
+direction onto a target direction chosen **in the idle pose** (forward and ~49 deg
+up: `D_local = M_idle_rot^-1 @ D_world`), and the translation puts the grip exactly
+at the fist centre. Rest-local is the only pose-independent frame for a rigidly
+bound part, and because the sword and the fist share one bone they receive the same
+skin matrix in every clip — so the grip stays in the fist across all 45 animations.
+No re-posing, no re-skinning, no animation edits.
+
+Measured after, on the delivered file: nearest sword-vert to fist **0.0000 m**,
+grip-to-fist-centre **0.0089 m**, blade 0.6707 m, and in the idle the blade points
+**+49.5 deg above horizontal** instead of at the ground.
+
+### Three verification traps that produced false "OK" results
+
+Each of these reported success while the sword was still 0.8 m from the hand:
+
+1. **A distance filter written in the wrong units is silently a no-op.** The fist
+   set was built as "dominated by a right-hand bone **AND** within 0.25 m of the
+   hand bone" — in BONE-LOCAL units. On this rig those are 100x smaller than
+   metres, so `0.25` meant 25 m and dropped nothing. The set then contained the
+   weapon's own verts and the "nearest weapon-to-fist" was trivially **0.0000 m**.
+   Select sets in **world metres** first, then convert; and print the set's own
+   span as proof (a fist is ~0.13 m, not 1 m).
+2. **A filter that excludes the thing being measured.** Selecting "blade verts
+   more than 0.40 m from the bone" and then asking whether the blade is near the
+   fist tests the filter, not the model. Pick the weapon by `material_index == 1`
+   in the **pre-atlas** file (80 verts), never by a distance rule.
+3. **`headless` SceneTree cannot apply an animation**, so every "POSED" figure
+   from a Godot script probe was really the bind pose. Pose-dependent checks must
+   run in Blender with an action assigned and `frame_set()`.
+
+The exporter also splits the welded sword into 4-vert islands, and 80 source
+weapon verts collapse to **25 distinct bone-local positions**, so "match vertex
+positions" is not a unique identification either.
+
+### Verified how
+
+`tools/blender/verify_decisive.py` re-derives the expected post-fix positions from
+the source and locates them in the delivered file by coordinate identity (worst
+residual 0.0000000), then reports the world-metre distances. `tools/probe_hero.gd`
+checks the face in Godot. Both are in the repo; the intermediate experiments that
+produced the false passes were deleted.
 
 ### Reproduce
 
 ```bash
 # inputs: in.glb = models/hero.glb at ff0618f (md5 01d39a0ee09f57...), hero_atlas.png
 blender.exe -b --factory-startup -P tools/blender/build_hero_fixed.py
+blender.exe -b --factory-startup -P tools/blender/verify_decisive.py   # independent check
 ~/tools/godot/godot4 --headless --path . --import      # or Godot serves a stale cache
 ~/tools/godot/godot4 --headless --path . --script res://tools/probe_hero.gd
 ~/tools/godot/godot4 --headless --path . --script res://tools/test_weapon.gd
 ```
 
+### Other traps hit along the way
+
+- **A rigidly-bound part must be transformed in its BONE's space.** Doing it in
+  world space moves it relative to the bone, which desyncs it in every pose.
+- **Three frames are in play and mixing them gives silent 100x errors:** raw mesh
+  coords --`body.matrix_world`--> world metres, and bone local
+  --`armature.matrix_world @ bone.matrix_local`--> world metres. Absolute lengths
+  come out 100x wrong (a 0.016 m grip-to-hand read as 1.61 m) unless the mesh's own
+  `matrix_world` is the only bridge used. Directions are safe (uniform scale), and
+  `body.matrix_world.to_scale()` prints 100.0 on this rig — check it once rather
+  than assuming.
+- **Godot serves a stale `.godot/imported` cache after a GLB is replaced.** A probe
+  reported the OLD head orientation until `godot --headless --path . --import` was
+  re-run. Re-import before believing any orientation measurement.
+- **Vision contradicts itself on orientation** (it called one render both "front
+  with a face" and "rear view", and read a beard as "a smooth hood" on the very
+  next frame). Settle facing with geometry — the foot chain (toe vs ankle) and the
+  atlas face-patch centroid — and use a render only to confirm what a number
+  already settled, never to decide it.
+
 ## The weapon is welded into the hand (and why that mattered)
 
+> **Superseded warning:** the measurements in this section were taken with a fist
+> set built in the wrong units, so its claim that the sword sat in the hand was
+> **wrong** — see "Three verification traps" above. The welding itself (100 %
+> weight, closed fist, `Pivot`/`Blade` removal) is accurate; only the placement
+> claim was not. The sword has since been moved onto the fist centre.
 
 Two symptoms Jan reported, with **two different causes** - both confirmed by
 measurement:

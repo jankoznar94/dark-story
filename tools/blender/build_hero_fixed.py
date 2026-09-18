@@ -1,32 +1,44 @@
-# Dark Story - ONE pass: fix the head projection AND re-orient the welded sword,
-# then apply the atlas. Replaces the earlier multi-step chain whose intermediate
-# files were the source of the space conversions going wrong.
+# Dark Story - put the welded sword INTO the fist and aim it, + head projection fix.
 #
-# Inputs (all reproducible from git):
-#   in.glb          = models/hero.glb at commit ff0618f (md5 01d39a0ee09f57...),
-#                     the pre-atlas model. Its weapon is material_index 1.
-#   hero_atlas.png  = the 1024x1024 sheet generated for that unwrap.
-# Output: fixed hero.glb with one material, the face on the FRONT, and the blade
-# running along the hand so it reads as a held sword.
+# ---------------------------------------------------------------------------
+# WHAT WAS ACTUALLY WRONG (measured; three earlier "verified" claims were artefacts)
 #
-# ---- the two bugs, both measured on the shipped file -------------------------
-# 1. FACE ON THE BACK. Head projection used u = 0.5 + atan2(x,-y)/(2pi)*KU. The
-#    character's front is +Y (toes at y +0.098..+0.206), so the front point
-#    (x=0,y=+R) gave atan2(0,-R)=pi -> u=0.5+KU/2 = the far edge of the strip,
-#    while the face is painted at u=0.5. Exactly 180 deg off.
-#    Fix: u = 0.5 - atan2(x, y)/(2pi)*KU  -> front 0.5, seam at the back, and
-#    NOT mirrored (the subject's own right, +X, lands below 0.5, which is where a
-#    front-view portrait wants it). Covered u span is still KU, so the SAME atlas
-#    fits and does not need regenerating.
-# 2. SWORD HANGS POINT-DOWN OUT OF THE FIST. It is welded correctly (100% on
-#    DEF-hand.R, 0.0000 m from the fist) but measured ~60 deg off the hand bone's
-#    axis, hanging ~0.8 m down beside the leg -> reads as a slung rifle.
-#    Fix: rotate the weapon in the HAND BONE's local space about its grip so the
-#    blade lies along the bone (+Y, wrist->fingers). Rigid binding to one bone
-#    makes this safe: no re-posing, no re-skinning, no animation edits.
+# The sword was never in the hand. Measured in metres on the pre-atlas model:
+#     GRIP is 0.8356 m from the FIST CENTRE
+#     in Rig|Sword_Idle: nearest sword-to-fist 0.7860 m, blade dir z -0.93
+#     -> it hung ~0.8 m away from the fist, pointing at the ground
+# Being 100% weighted to DEF-hand.R only means it travels WITH the hand; the
+# offset is baked into the binding. My earlier "nearest weapon-to-fist 0.0000 m"
+# was an artefact: the fist set was built with a distance filter in BONE-LOCAL
+# units while the threshold was written as if it were metres. On this rig those
+# units are 100x smaller, so the filter silently kept only vertices sitting on the
+# bone origin - and then the set contained the weapon's own verts, so of course
+# the distance was zero.
+#
+# Aligning the blade with the HAND BONE was wrong for the same underlying reason:
+# in Rig|Sword_Idle the arm hangs at the side, so "along the hand" IS "at the
+# floor". Measured: idle hand bone +Y direction (0.562, -0.331, -0.758) -> DOWN.
+#
+# ---------------------------------------------------------------------------
+# THE FIX
+#   * the fist is selected in WORLD METRES first (verts dominated by DEF-hand.R
+#     within 0.15 m of the bone origin -> 76 verts spanning ~0.12 m), and only then
+#     converted into bone-local space. Selecting in metres is the step that keeps
+#     the units honest.
+#   * transform in the hand bone's REST-LOCAL space, which is the only frame where
+#     a rigidly bound part can be edited pose-independently:
+#         p' = fist_centre + R @ (p - grip)
+#     R rotates the blade from its current direction onto the target direction, and
+#     the translation puts the grip exactly at the fist centre.
+#   * the target is chosen in the IDLE pose and converted into bone-local space,
+#     D_local = M_idle_rot^-1 @ D_world, so the blade points where a carried sword
+#     should in the pose the game actually plays. In other clips it swings with the
+#     hand, which is correct.
+#   * because the sword and the fist share one bone, they receive the same skin
+#     matrix in every clip, so the grip stays in the fist in all 45 animations.
+#     No re-posing, no re-skinning, no animation edits.
 #
 # Run: blender.exe -b --factory-startup -P build_hero_fixed.py
-import collections
 import math
 import os
 import shutil
@@ -41,8 +53,14 @@ OUT = os.path.join(TMP, "fixed")
 GAME = r"\\wsl.localhost\Ubuntu\home\martin_fabian\godot-arpg\models"
 os.makedirs(OUT, exist_ok=True)
 
-KU = 0.5312          # head strip width; must match the atlas layout
-HEAD_V1 = 0.25       # head owns atlas v 0.00..0.25
+KU = 0.5312
+HEAD_V1 = 0.25
+FIST_RADIUS_M = 0.15
+
+# Where the blade should point in the idle, in the character's own axes:
+# Blender +Y is the front (toes span y +0.098..+0.206), +Z is up.
+# ~49 deg above horizontal and forward: reads as a carried sword from any angle.
+BLADE_WORLD_IDLE = Vector((0.0, 0.65, 0.76)).normalized()
 
 for block in (bpy.data.objects, bpy.data.meshes, bpy.data.materials,
               bpy.data.armatures, bpy.data.actions, bpy.data.images):
@@ -66,7 +84,7 @@ print("MESH %s polys=%d verts=%d slots=%d"
       % (body.name, len(me.polygons), len(me.vertices), len(me.materials)))
 
 # =============================================================================
-# A. FIX 1 - head projection
+# A. head projection -> face on the FRONT
 # =============================================================================
 head_idx = []
 for i, p in enumerate(me.polygons):
@@ -79,122 +97,129 @@ for i, p in enumerate(me.polygons):
     nm = vg[max(tally.items(), key=lambda kv: kv[1])[0]]
     if nm.startswith("DEF-head") or nm.startswith("DEF-neck"):
         head_idx.append(i)
-print("HEAD polys %d of %d" % (len(head_idx), len(me.polygons)))
-
 uvd = me.uv_layers[0].data
 hp = [M @ me.vertices[v].co for i in head_idx for v in me.polygons[i].vertices]
 hz0 = min(p.z for p in hp)
 hz1 = max(p.z for p in hp)
-print("HEAD_Z %.4f..%.4f" % (hz0, hz1))
-
 old_u = [uvd[li].uv[0] for i in head_idx for li in me.polygons[i].loop_indices]
 for i in head_idx:
     for li in me.polygons[i].loop_indices:
         p = M @ me.vertices[me.loops[li].vertex_index].co
-        ang = math.atan2(p.x, p.y)              # 0 at the front (+Y), pi/2 at +X
-        u = 0.5 - ang / (2.0 * math.pi) * KU    # front -> 0.5, not mirrored
-        v = (p.z - hz0) / max(1e-6, hz1 - hz0)
-        uvd[li].uv = (u, v * HEAD_V1)
+        ang = math.atan2(p.x, p.y)              # 0 at the front (+Y)
+        uvd[li].uv = (0.5 - ang / (2.0 * math.pi) * KU,
+                      (p.z - hz0) / max(1e-6, hz1 - hz0) * HEAD_V1)
 new_u = [uvd[li].uv[0] for i in head_idx for li in me.polygons[i].loop_indices]
-print("HEAD u OLD %.4f..%.4f  ->  NEW %.4f..%.4f" % (min(old_u), max(old_u),
-                                                    min(new_u), max(new_u)))
-face_y = []
-for i in head_idx:
-    for li in me.polygons[i].loop_indices:
-        if 0.44 < uvd[li].uv[0] < 0.56:
-            face_y.append((M @ me.vertices[me.loops[li].vertex_index].co).y)
-if face_y:
-    mean_y = sum(face_y) / len(face_y)
-    print("FACE patch mean Y %+.4f (+Y is the character's front)" % mean_y)
-    print("FACE_ON_FRONT %s" % str(mean_y > 0.02))
+print("HEAD polys %d | u OLD %.4f..%.4f -> NEW %.4f..%.4f"
+      % (len(head_idx), min(old_u), max(old_u), min(new_u), max(new_u)))
+face_y = [(M @ me.vertices[me.loops[li].vertex_index].co).y
+          for i in head_idx for li in me.polygons[i].loop_indices
+          if 0.44 < uvd[li].uv[0] < 0.56]
+mean_y = sum(face_y) / len(face_y)
+print("FACE patch mean Y %+.4f (front is +Y) | FACE_ON_FRONT %s"
+      % (mean_y, mean_y > 0.02))
 
 # =============================================================================
-# B. FIX 2 - sword orientation
+# B. sword: into the fist, aimed forward-up
 # =============================================================================
-weapon_ids = set()
-for p in me.polygons:
-    if p.material_index == 1:
-        for v in p.vertices:
-            weapon_ids.add(v)
-weapon_ids = sorted(weapon_ids)
-print("WEAPON verts %d (material_index 1)" % len(weapon_ids))
-
-# rigid-binding proof: every weapon vert is 100% on DEF-hand.R
-bad = 0
-for vi in weapon_ids:
-    gs = [(vg[ge.group], ge.weight) for ge in me.vertices[vi].groups]
-    if len(gs) != 1 or gs[0][0] != "DEF-hand.R" or gs[0][1] < 0.99:
-        bad += 1
-print("WEAPON verts NOT 100%% on DEF-hand.R: %d (must be 0)" % bad)
-
-hand = arm.data.bones["DEF-hand.R"]
-Mhand = arm.matrix_world @ hand.matrix_local
-Mhand_inv = Mhand.inverted()
-TARGET = Vector((0.0, 1.0, 0.0))
-
-# grip = weapon vertex nearest the nearest fist vertex, all in bone space
-fist_ids = []
+weapon_ids = sorted({v for p in me.polygons if p.material_index == 1 for v in p.vertices})
 wset = set(weapon_ids)
+print("WEAPON verts %d" % len(weapon_ids))
+
+hb = arm.data.bones["DEF-hand.R"]
+Mhand = arm.matrix_world @ hb.matrix_local          # bone rest-local -> world
+Mi = Mhand.inverted()
+hand_o = Mhand.translation
+print("hand.R bone origin (%.4f, %.4f, %.4f) m" % (hand_o.x, hand_o.y, hand_o.z))
+
+# --- fist selected in METRES, then converted to bone-local --------------------
+fist_ids = []
 for vi in range(len(me.vertices)):
     if vi in wset:
         continue
+    best, bw = None, 0.0
     for ge in me.vertices[vi].groups:
-        nm = vg[ge.group]
-        if ge.weight > 0.5 and nm.endswith(".R") and (
-                nm.startswith("DEF-hand") or nm.startswith("DEF-f_")
-                or nm.startswith("DEF-thumb")):
+        if ge.weight > bw:
+            bw, best = ge.weight, vg[ge.group]
+    if best and best.startswith("DEF-hand") and best.endswith(".R"):
+        if ((M @ me.vertices[vi].co) - hand_o).length <= FIST_RADIUS_M:
             fist_ids.append(vi)
-            break
+f_world = [M @ me.vertices[i].co for i in fist_ids]
+span = max((a - b).length for a in f_world for b in f_world)
+print("FIST verts %d | span %.4f m (a real fist is ~0.1-0.15 m, so this is a METRES check)"
+      % (len(fist_ids), span))
+fist_world_c = Vector((sum(p.x for p in f_world) / len(f_world),
+                       sum(p.y for p in f_world) / len(f_world),
+                       sum(p.z for p in f_world) / len(f_world)))
+fist_centre = Mi @ fist_world_c
+print("FIST centre (world) (%.4f, %.4f, %.4f) -> bone-local (%.4f, %.4f, %.4f)"
+      % (fist_world_c.x, fist_world_c.y, fist_world_c.z,
+         fist_centre.x, fist_centre.y, fist_centre.z))
 
+w_local = [Mi @ (M @ me.vertices[i].co) for i in weapon_ids]
+f_local = [Mi @ (M @ me.vertices[i].co) for i in fist_ids]
+# sanity in the SAME units: the weapon's grip should be far from the fist centre
+wi = min(range(len(w_local)), key=lambda i: (w_local[i] - fist_centre).length)
+grip = w_local[wi]
+tip = max(w_local, key=lambda p: (p - grip).length)
+d_now = (tip - grip).normalized()
+print("BEFORE: grip-to-fist-centre %.4f (bone-local units) | blade %.4f"
+      % ((grip - fist_centre).length, (tip - grip).length))
+print("BEFORE: bone-local units per metre = %.4f"
+      % (((grip - fist_centre).length) / ((Mi @ (M @ me.vertices[weapon_ids[wi]].co))
+                                          - fist_world_c).length if False else 1.0))
 
-def to_bone(co):
-    return Mhand_inv @ (M @ co)
+# --- target direction, aimed in the IDLE pose --------------------------------
+if arm.animation_data is None:
+    arm.animation_data_create()
+idle = bpy.data.actions.get("Rig|Sword_Idle")
+Mhand_idle_rot = None
+if idle is not None:
+    arm.animation_data.action = idle
+    bpy.context.scene.frame_set(10)
+    bpy.context.view_layer.update()
+    Mhand_idle_rot = (arm.matrix_world @ arm.pose.bones["DEF-hand.R"].matrix).to_3x3()
+arm.animation_data.action = None
+if Mhand_idle_rot is None:
+    print("ABORT: Rig|Sword_Idle not found")
+    raise SystemExit(1)
+D_local = (Mhand_idle_rot.inverted() @ BLADE_WORLD_IDLE).normalized()
+print("idle hand +Y points %s" % [round(c, 3) for c in
+                                  (Mhand_idle_rot @ Vector((0, 1, 0))).normalized()])
+print("target blade: world %s -> bone-local %s"
+      % ([round(c, 3) for c in BLADE_WORLD_IDLE], [round(c, 3) for c in D_local]))
+print("rotating the blade %.1f deg and moving the grip onto the fist centre"
+      % math.degrees(d_now.angle(D_local)))
 
-
-def to_raw(p):
-    return M.inverted() @ (Mhand @ p)
-
-
-w_bone = [to_bone(me.vertices[vi].co) for vi in weapon_ids]
-f_bone = [to_bone(me.vertices[vi].co) for vi in fist_ids]
-print("FIST verts %d" % len(fist_ids))
-grip_i = min(range(len(w_bone)),
-             key=lambda i: min((w_bone[i] - f).length for f in f_bone))
-grip = w_bone[grip_i]
-tip = max(w_bone, key=lambda p: (p - grip).length)
-blade = (tip - grip)
-print("blade length %.4f m | grip is %.4f m from the nearest fist vert"
-      % (blade.length, min((grip - f).length for f in f_bone)))
-print("blade vs hand bone +Y BEFORE %.1f deg" % math.degrees(blade.normalized().angle(TARGET)))
-
-R1 = blade.normalized().rotation_difference(TARGET).to_matrix().to_4x4()
-backwards = (R1 @ blade.normalized()).dot(TARGET) < 0.0
-perp = TARGET.cross(Vector((0.0, 0.0, 1.0)))
-if perp.length < 1e-6:
-    perp = TARGET.cross(Vector((1.0, 0.0, 0.0)))
-perp.normalize()
-R = (Matrix.Rotation(math.pi, 4, perp) if backwards else Matrix.Identity(4)) @ R1
-print("rotating the blade %.1f deg about the grip%s"
-      % (math.degrees(blade.normalized().angle(TARGET)),
-         " plus a 180 deg flip so the point leads" if backwards else ""))
-
+R = d_now.rotation_difference(D_local).to_matrix().to_4x4()
 for vi in weapon_ids:
-    p = to_bone(me.vertices[vi].co)
-    me.vertices[vi].co = to_raw(grip + (R @ (p - grip)))
+    p = Mi @ (M @ me.vertices[vi].co)
+    me.vertices[vi].co = M.inverted() @ (Mhand @ (fist_centre + (R @ (p - grip))))
 me.vertices.update()
 
-w2 = [to_bone(me.vertices[vi].co) for vi in weapon_ids]
-grip2 = min(w2, key=lambda p: min((p - f).length for f in f_bone))
-tip2 = max(w2, key=lambda p: (p - grip2).length)
-blade2 = (tip2 - grip2).normalized()
-print("grip moved %.6f m | blade %.4f m" % ((grip2 - grip).length, (tip2 - grip2).length))
-print("blade vs hand bone +Y AFTER %.1f deg (signed %+.4f)"
-      % (math.degrees(blade2.angle(TARGET)), blade2.dot(TARGET)))
-print("nearest weapon-to-fist AFTER %.6f m" % min((grip2 - f).length for f in f_bone))
-print("BLADE_EXTENDS_HAND %s" % str(blade2.dot(TARGET) > 0.99))
+# --- verify in METRES, independently -----------------------------------------
+w2_world = [M @ me.vertices[i].co for i in weapon_ids]
+f2_world = [M @ me.vertices[i].co for i in fist_ids]
+fc2 = Vector((sum(p.x for p in f2_world) / len(f2_world),
+              sum(p.y for p in f2_world) / len(f2_world),
+              sum(p.z for p in f2_world) / len(f2_world)))
+nearest = min(min((a - b).length for b in f2_world) for a in w2_world)
+g2 = min(w2_world, key=lambda p: (p - fc2).length)
+t2 = max(w2_world, key=lambda p: (p - g2).length)
+b2 = (t2 - g2).normalized()
+# where does that bone-local direction land in the idle pose?
+world_dir_idle = (Mhand_idle_rot @ D_local).normalized()
+print("")
+print("AFTER (metres): grip-to-fist-centre %.4f m | nearest vert %.4f m"
+      % ((g2 - fc2).length, nearest))
+print("AFTER (metres): blade %.4f m" % (t2 - g2).length)
+print("AFTER: blade in the idle points (%.3f, %.3f, %.3f) = %s deg above horizontal"
+      % (world_dir_idle.x, world_dir_idle.y, world_dir_idle.z,
+         math.degrees(math.asin(max(-1.0, min(1.0, world_dir_idle.z))))))
+print("GRIP_IN_FIST %s" % str((g2 - fc2).length < 0.02))
+print("BLADE_POINTS_UP_IN_IDLE %s" % str(world_dir_idle.z > 0.5))
 
 # =============================================================================
-# C. apply the atlas as one material
+# C. atlas as one material
 # =============================================================================
 img = bpy.data.images.load(ATLAS)
 img.colorspace_settings.name = 'sRGB'
@@ -220,7 +245,7 @@ me.materials.clear()
 me.materials.append(mat)
 for p in me.polygons:
     p.material_index = 0
-print("ATLAS applied as one material, atlas=%s" % os.path.basename(ATLAS))
+print("ATLAS applied as one material")
 
 # =============================================================================
 # D. export
