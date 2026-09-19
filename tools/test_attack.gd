@@ -8,6 +8,19 @@ var main: Node
 var hits: Array = []
 
 
+## Distance from `p` to the nearest prop the level builder created. Used to prove a
+## test position is clear, so a layout change cannot silently invalidate the test
+## by spawning the player inside geometry.
+func _nearest_level_prop_distance(node: Node, p: Vector3) -> float:
+	var best := INF
+	for c in node.get_children():
+		if c is StaticBody3D and c.name != "FloorBody":
+			var d: float = p.distance_to((c as Node3D).global_position)
+			if d < best:
+				best = d
+	return best
+
+
 func _init() -> void:
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
@@ -49,9 +62,17 @@ func _drive() -> void:
 	var case3_ok: bool = hits.size() == 0
 
 	# --- case 4: attack must lock movement (commitment, not move-cancel) ---
-	player.global_position = Vector3(0, 0, 6.0)
+	# NOTE: this used to stand at (0, 0, 6.0). Once the level got props, that spot
+	# had a rubble_pile 1.71 m away and a pillar at 2.0 m, so the player spawned
+	# against geometry and the physics push-out moved them 0.361 m - which this
+	# test correctly reported as a move-cancel failure. It was the LEVEL, not the
+	# attack code. Stand in the open arena centre instead, and assert it is clear.
+	player.global_position = Vector3(0, 0, 0)
 	player.facing = Vector3(0, 0, -1)
 	player.velocity = Vector3.ZERO
+	var near := _nearest_level_prop_distance(main, player.global_position)
+	print("CASE4 arena clearance: nearest prop %.2f m" % near)
+	var clear_ok: bool = near > 1.6
 	player._begin_attack(0)
 	Input.action_press("move_right")
 	for i in 10:
@@ -59,7 +80,7 @@ func _drive() -> void:
 	var moved_during: float = absf(player.global_position.x - 0.0)
 	Input.action_release("move_right")
 	print("CASE4 movement during attack = %.3f (expect ~0)" % moved_during)
-	var case4_ok: bool = moved_during < 0.02
+	var case4_ok: bool = moved_during < 0.02 and clear_ok
 
 	# --- case 5: attack takes real time (windup+active+recover), not one frame ---
 	player._begin_attack(0)

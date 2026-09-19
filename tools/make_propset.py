@@ -29,12 +29,19 @@ DEFAULT_OUT = os.path.join(ROOT, "assets", "props")
 SEED = 20260919
 
 MATERIALS = {
-    "bark": (0.115, 0.092, 0.070),
-    "wood": (0.150, 0.115, 0.078),
-    "stone": (0.185, 0.178, 0.163),
-    "metal": (0.105, 0.102, 0.100),
-    "leaf": (0.075, 0.098, 0.062),
-    "cloth": (0.130, 0.115, 0.098),
+    # Albedo calibrated in the ASSEMBLED LEVEL, measured: at the first lift the
+    # props sat 2x under the grass (bark 24, wood 30, stone 45 vs grass 56-77) and
+    # rendered as black silhouettes. After lifting them the internal form came
+    # back (prop spread std 25.2 vs <6 for a flat blob) but the contrast against
+    # the grass was only +5.9 luminance, which still does not read at a glance -
+    # the threshold for that is roughly 12-20. These values put stone and wood
+    # clearly ABOVE the ground rather than level with it.
+    "bark": (0.300, 0.235, 0.170),
+    "wood": (0.400, 0.320, 0.200),
+    "stone": (0.460, 0.445, 0.415),
+    "metal": (0.330, 0.322, 0.316),
+    "leaf": (0.170, 0.245, 0.120),
+    "cloth": (0.340, 0.300, 0.250),
 }
 
 

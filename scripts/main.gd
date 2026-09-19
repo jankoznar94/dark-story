@@ -7,12 +7,28 @@ extends Node3D
 
 var _posts: Array[Node] = []
 var _hits: Array = []
+var _level_nodes: Array = []
 
 
 func _ready() -> void:
 	_setup_world()
+	_build_level()
 	_spawn_posts()
 	player.attack_landed.connect(_on_landed)
+
+
+func _build_level() -> void:
+	## The level is DATA (levels/training_ground.json), not hand-placed nodes.
+	## Jan is the tester and has no time to click a scene together, so a layout
+	## change is a JSON edit and a new area is a new file. See scripts/level_builder.gd.
+	var data: Dictionary = load("res://scripts/level_builder.gd").load_level()
+	if data.is_empty():
+		push_warning("main: no level data, running with an empty arena")
+		_level_nodes = []
+		return
+	_level_nodes = load("res://scripts/level_builder.gd").build(self, data)
+	print("[level] built %d prop nodes from %s"
+		% [_level_nodes.size(), data.get("comment", "level data")])
 
 
 func _setup_world() -> void:
@@ -37,11 +53,14 @@ func _setup_world() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.030, 0.028, 0.026)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	## was Color(0.16, 0.135, 0.115) @ 0.75 - a flat warm wash on everything.
-	## Second pass: 0.20/0.42 rendered the scene cheerful and washed out (measured
-	## p10 90.7, and the sky-facing surfaces clipped), so this sits between the two.
+	## Light settings are the "E_soft_shadow" preset chosen by Jan from a rendered
+	## contact sheet of 8 variants (tools/sweep_render.gd + tools/sweep_sheet.py,
+	## sheet in docs/props_and_lights_sweep.png). He picked E over the contrastier
+	## F: softer shadows and a little more ambient, so the world is readable
+	## without the shadows reading as hard black cutouts on the grass.
+	## Measured for E: p10 35, p50 50, p90 69, 284 distinct colours, 0 % clipped.
 	env.ambient_light_color = Color(0.14, 0.135, 0.125)
-	env.ambient_light_energy = 0.34
+	env.ambient_light_energy = 0.40
 
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.adjustment_enabled = true
@@ -55,7 +74,7 @@ func _setup_world() -> void:
 	env.fog_light_color = Color(0.115, 0.105, 0.095)
 	env.fog_light_energy = 0.6
 	## was 0.028 - thick enough to grey out the far half of a 34 m floor
-	env.fog_density = 0.018
+	env.fog_density = 0.014
 	env.fog_aerial_perspective = 0.0
 
 	we.environment = env
@@ -70,10 +89,8 @@ func _setup_world() -> void:
 	sun.light_color = Color(1.0, 0.94, 0.84)
 	sun.shadow_enabled = true
 	sun.shadow_bias = 0.02
-	## Full-strength shadows rendered as hard black cutouts on the grass (reported
-	## back after the first render). Partial opacity keeps the direction readable
-	## while the shadowed ground stays grass-coloured instead of turning black.
-	sun.shadow_opacity = 0.62
+	## Full-strength shadows rendered as hard black cutouts on the grass. E's value:
+	sun.shadow_opacity = 0.45
 	sun.shadow_blur = 1.6
 	sun.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
 	add_child(sun)
@@ -82,7 +99,7 @@ func _setup_world() -> void:
 	# black. Kept well under the sun so the direction still reads.
 	var fill := DirectionalLight3D.new()
 	fill.name = "Fill"
-	fill.light_energy = 0.22
+	fill.light_energy = 0.30
 	fill.light_color = Color(0.62, 0.70, 0.88)
 	fill.shadow_enabled = false
 	fill.rotation_degrees = Vector3(-24.0, 142.0, 0.0)

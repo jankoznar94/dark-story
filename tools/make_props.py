@@ -330,9 +330,12 @@ PROPS = {
 }
 
 MATERIALS = {
-    "bark": (0.115, 0.092, 0.070),
-    "stone": (0.185, 0.178, 0.163),
-    "leaf": (0.075, 0.098, 0.062),
+    # Same calibration as make_propset.py, measured in the assembled level: the
+    # first values read 2x under the grass and every prop became a black
+    # silhouette; these sit clearly above it so the form reads at a glance.
+    "bark": (0.300, 0.235, 0.170),
+    "stone": (0.460, 0.445, 0.415),
+    "leaf": (0.170, 0.245, 0.120),
 }
 # which prop gets the foliage material for its canopy tiers
 LEAFY = {"tree_conifer"}

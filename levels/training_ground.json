@@ -1,0 +1,197 @@
+[
+{
+  "comment": "Dark Story training ground. Built from a TEXT description, so the level is data and a new area means editing this file, not GDScript. Coordinates are metres, X right, Z toward the camera is +, the player's front is -Z. The area stays open in the middle on purpose: the game is about positioning, so the props frame three approach lanes rather than filling the space.",
+  "groups": [
+    {
+      "comment": "south edge: a broken masonry wall with two gaps, so the wall reads as ruined and gives cover without closing the lane",
+      "prop": "wall_segment",
+      "placements": [
+        {"pos": [-8.0, 0.0, 6.2], "rot_y": 0.0},
+        {"pos": [-2.6, 0.0, 6.2], "rot_y": 0.0},
+        {"pos": [4.0, 0.0, 6.2], "rot_y": 0.0},
+        {"pos": [9.0, 0.0, 6.5], "rot_y": 18.0}
+      ]
+    },
+    {
+      "comment": "west approach: ruins and broken ground, the lane the player is meant to fight through",
+      "prop": "ruin_stub_tall",
+      "placements": [
+        {"pos": [-9.5, 0.0, -1.0], "rot_y": 92.0},
+        {"pos": [-11.2, 0.0, 2.4], "rot_y": 78.0}
+      ]
+    },
+    {
+      "prop": "ruin_stub_low",
+      "placements": [
+        {"pos": [-7.4, 0.0, 3.6], "rot_y": 104.0},
+        {"pos": [-12.5, 0.0, -4.0], "rot_y": 66.0}
+      ]
+    },
+    {
+      "comment": "north edge: broken wall plus rubble, so the far side is not a clean rectangle",
+      "prop": "wall_segment",
+      "placements": [
+        {"pos": [-3.0, 0.0, -6.8], "rot_y": 0.0},
+        {"pos": [3.2, 0.0, -7.0], "rot_y": 6.0}
+      ]
+    },
+    {
+      "prop": "ruin_arch",
+      "placements": [
+        {"pos": [0.4, 0.0, -8.6], "rot_y": 0.0}
+      ]
+    },
+    {
+      "comment": "rubble at the foot of the walls - reads as collapse rather than decoration. Positions are deliberately kept out of the arena centre and off the test positions the gameplay tests use ((0,0,-2), (0,0,2), (0,0,0)): a rubble_pile at (1.6, 5.4) was 1.71 m from the (0,0,6) spot that test_attack.gd used to stand on, and the physics push-out turned that into a false 'move-cancel is broken' failure.",
+      "prop": "rubble_pile",
+      "placements": [
+        {"pos": [-5.2, 0.0, 5.0], "rot_y": 24.0},
+        {"pos": [1.6, 0.0, 5.9], "rot_y": 118.0},
+        {"pos": [-9.0, 0.0, -0.2], "rot_y": 200.0},
+        {"pos": [6.4, 0.0, -5.6], "rot_y": 310.0},
+        {"pos": [-1.2, 0.0, -7.8], "rot_y": 78.0}
+      ]
+    },
+    {
+      "comment": "the pillars still standing - landmark so the player can orient without a minimap",
+      "prop": "pillar",
+      "placements": [
+        {"pos": [-8.2, 0.0, 6.0], "rot_y": 0.0},
+        {"pos": [-2.0, 0.0, 6.0], "rot_y": 0.0},
+        {"pos": [4.6, 0.0, 6.0], "rot_y": 0.0},
+        {"pos": [-6.0, 0.0, -6.6], "rot_y": 12.0}
+      ]
+    },
+    {
+      "comment": "east side: a fence run partly broken, marking a boundary the player can see through",
+      "prop": "fence_run",
+      "placements": [
+        {"pos": [11.6, 0.0, 2.0], "rot_y": 90.0},
+        {"pos": [11.6, 0.0, -1.2], "rot_y": 90.0}
+      ]
+    },
+    {
+      "prop": "fence_broken",
+      "placements": [
+        {"pos": [11.6, 0.0, 4.9], "rot_y": 90.0}
+      ]
+    },
+    {
+      "prop": "gate_post",
+      "placements": [
+        {"pos": [11.6, 0.0, 6.6], "rot_y": 0.0},
+        {"pos": [11.6, 0.0, -3.0], "rot_y": 0.0}
+      ]
+    },
+    {
+      "comment": "training posts - keep the three that test_attack and the gameplay tests rely on",
+      "prop": "target_post",
+      "keep_existing": true,
+      "placements": [
+        {"pos": [0.0, 0.0, -3.2]},
+        {"pos": [2.6, 0.0, -1.0]},
+        {"pos": [-2.4, 0.0, -2.0]}
+      ]
+    },
+    {
+      "comment": "supplies stacked against the south wall: crates and barrels",
+      "prop": "crate_medium",
+      "placements": [
+        {"pos": [7.0, 0.0, 5.4], "rot_y": 12.0},
+        {"pos": [8.1, 0.0, 5.5], "rot_y": -22.0}
+      ]
+    },
+    {
+      "prop": "crate_small",
+      "placements": [
+        {"pos": [7.55, 0.0, 6.05], "rot_y": 34.0},
+        {"pos": [8.6, 0.0, 6.1], "rot_y": -8.0}
+      ]
+    },
+    {
+      "prop": "crate_large",
+      "placements": [
+        {"pos": [6.0, 0.0, 6.0], "rot_y": -30.0}
+      ]
+    },
+    {
+      "prop": "barrel",
+      "placements": [
+        {"pos": [9.4, 0.0, 5.6], "rot_y": 0.0},
+        {"pos": [10.1, 0.0, 6.2], "rot_y": 41.0},
+        {"pos": [-11.0, 0.0, 5.6], "rot_y": 0.0}
+      ]
+    },
+    {
+      "prop": "barrel_tipped",
+      "placements": [
+        {"pos": [9.75, 0.0, 6.5], "rot_y": 118.0},
+        {"pos": [-11.8, 0.0, 5.0], "rot_y": 240.0}
+      ]
+    },
+    {
+      "comment": "trees frame the arena; conifers in the corners so the space reads as a clearing",
+      "prop": "tree_conifer_trunk",
+      "pair_with": "tree_conifer_canopy",
+      "placements": [
+        {"pos": [-14.5, 0.0, 8.5], "rot_y": 0.0},
+        {"pos": [-13.0, 0.0, -8.5], "rot_y": 0.0},
+        {"pos": [14.0, 0.0, 8.0], "rot_y": 0.0},
+        {"pos": [13.5, 0.0, -6.0], "rot_y": 0.0},
+        {"pos": [-15.5, 0.0, 0.5], "rot_y": 0.0}
+      ]
+    },
+    {
+      "prop": "tree_dead",
+      "placements": [
+        {"pos": [-6.4, 0.0, 2.2], "rot_y": 30.0},
+        {"pos": [6.9, 0.0, -3.0], "rot_y": 210.0},
+        {"pos": [12.2, 0.0, 0.6], "rot_y": 96.0}
+      ]
+    },
+    {
+      "comment": "stones: boulders as cover in the lanes, small stones scattered so the ground is not bare",
+      "prop": "rock_boulder",
+      "placements": [
+        {"pos": [-4.6, 0.0, -1.0], "rot_y": 0.0},
+        {"pos": [5.2, 0.0, 2.4], "rot_y": 60.0},
+        {"pos": [-8.0, 0.0, -4.0], "rot_y": 130.0}
+      ]
+    },
+    {
+      "prop": "rock_small",
+      "placements": [
+        {"pos": [-3.2, 0.0, 4.1], "rot_y": 0.0},
+        {"pos": [2.2, 0.0, 3.0], "rot_y": 40.0},
+        {"pos": [4.9, 0.0, -2.2], "rot_y": 90.0},
+        {"pos": [-6.8, 0.0, -2.6], "rot_y": 12.0},
+        {"pos": [1.0, 0.0, -5.0], "rot_y": 200.0},
+        {"pos": [-10.2, 0.0, 1.2], "rot_y": 300.0},
+        {"pos": [8.8, 0.0, 1.0], "rot_y": 55.0}
+      ]
+    },
+    {
+      "comment": "stumps and a log: signs that this was a wood, not a bare field",
+      "prop": "stump",
+      "placements": [
+        {"pos": [-5.8, 0.0, 5.4], "rot_y": 0.0},
+        {"pos": [9.9, 0.0, 2.6], "rot_y": 0.0}
+      ]
+    },
+    {
+      "prop": "stump_low",
+      "placements": [
+        {"pos": [-9.6, 0.0, 4.2], "rot_y": 0.0},
+        {"pos": [10.6, 0.0, 4.0], "rot_y": 0.0}
+      ]
+    },
+    {
+      "prop": "log_fallen",
+      "placements": [
+        {"pos": [-12.0, 0.0, -2.5], "rot_y": 24.0},
+        {"pos": [5.6, 0.0, 5.0], "rot_y": 155.0}
+      ]
+    }
+  ]
+}
+]
