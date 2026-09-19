@@ -13,6 +13,7 @@ const KEYMAP := {
 	"skill_1": [KEY_Q, KEY_K],
 	"skill_2": [KEY_E, KEY_L],
 	"potion": [KEY_1],
+	"run": [KEY_SHIFT],
 }
 
 const PADMAP := {
@@ -20,6 +21,7 @@ const PADMAP := {
 	"skill_1": [JOY_BUTTON_X],
 	"skill_2": [JOY_BUTTON_Y],
 	"potion": [JOY_BUTTON_B],
+	"run": [JOY_BUTTON_LEFT_SHOULDER],
 	"move_up": [],
 	"move_down": [],
 	"move_left": [],

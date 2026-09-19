@@ -79,6 +79,20 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "WEAPON_ALL_PASS=true"
 
+      - name: Locomotion retime test (walk/run feet do not slide)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_walk_retime.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "LOCOMOTION_RETIME_ALL_PASS=true"
+
+      - name: Fight test (must pass before we ship a build)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_fight.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "FIGHT_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

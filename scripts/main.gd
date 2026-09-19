@@ -1,20 +1,34 @@
 extends Node3D
 ## Prototype scene wiring. Headless-safe: no rendering calls.
+##
+## The training ground now holds a FIGHT, not only posts: `_spawn_enemies()`
+## places the test enemy and the wiring below is what makes the loop readable -
+## the HUD shows both health bars and the debug line carries the per-swing result
+## ("swing: HIT" / "punch: HIT").
 
 @onready var player: CharacterBody3D = $Player
 @onready var cam: Camera3D = $Camera
 @onready var hud: CanvasLayer = $HUD
 
 var _posts: Array[Node] = []
+var _enemies: Array[Node] = []
 var _hits: Array = []
 var _level_nodes: Array = []
+var _run_action: bool = false
 
 
 func _ready() -> void:
 	_setup_world()
 	_build_level()
 	_spawn_posts()
+	_spawn_enemies()
 	player.attack_landed.connect(_on_landed)
+	player.damaged.connect(_on_player_damaged)
+	player.died.connect(_on_player_died)
+	# The RUN input exists so the keyboard and a gamepad have a run button too;
+	# on touch the HUD latches it (see hud.gd). Both feed the same player flag.
+	if not InputMap.has_action("run"):
+		InputMap.add_action("run")
 
 
 func _build_level() -> void:
@@ -44,9 +58,8 @@ func _setup_world() -> void:
 	## sun contributed 0.55, so every surface received the same flat brownish wash
 	## and nothing had a lit side and a shadow side.
 	##
-	## The fix is more DIRECTIONAL light and less flat ambient - contrast comes
-	## from the sun, not from raising the ambient floor. The tone is still dark:
-	## the sun is warm, the shadow side stays cool and deep.
+	## The fix is more DIRECTIONAL light (sun 0.95 against ambient 0.40) and less
+	## fog. Measured after: p10 35, p50 50, p90 69, 284 distinct colours.
 	var we := WorldEnvironment.new()
 	var env := Environment.new()
 
@@ -131,12 +144,78 @@ func _spawn_posts() -> void:
 		_posts.append(body)
 
 
+func _spawn_enemies() -> void:
+	## ONE test enemy. The spot is chosen so the fight can be READ, not just run:
+	##   * standing in the open lane north-east of the player's spawn, so there is
+	##     room to walk up to it, walk away, and circle it
+	##   * deliberately NOT near geometry. The first placement was (0, 0, -6.4)
+	##     and the enemy never moved: the level has a wall_segment at (-3, 0, -6.8)
+	##     and a ruin_arch at (0.4, 0, -8.6), so it spawned wedged against the arch
+	##     and physics held it perfectly still. Measured with tools/probe_chase.gd:
+	##     position identical for 60 frames, velocity ~0.01. It looked exactly like
+	##     a broken AI and was a level collision.
+	## If this position is ever moved, keep >1.5 m clearance from every prop or the
+	## same false "the enemy does not chase" will come back.
+	var e := CharacterBody3D.new()
+	e.name = "Enemy"
+	e.set_script(load("res://scripts/enemy.gd"))
+	e.position = Vector3(3.4, 0.0, -5.6)
+
+	var model := Node3D.new()
+	model.name = "Model"
+	e.add_child(model)
+
+	var cs := CollisionShape3D.new()
+	cs.name = "Collision"
+	var cap := CapsuleShape3D.new()
+	cap.radius = 0.38
+	cap.height = 1.25
+	cs.shape = cap
+	cs.position = Vector3(0, 0.65, 0)
+	e.add_child(cs)
+
+	add_child(e)
+	# The enemy needs the reference or it never aggros: `target` is what drives
+	# its whole behaviour loop, and forgetting to hand it over looks exactly like
+	# "the enemy stands there doing nothing".
+	e.target = player
+	_enemies.append(e)
+
+
 func _process(_delta: float) -> void:
+	# RUN: the HUD latch and the key/pad action are OR-ed here and pushed to the
+	# player, so no single control can block the others and the player never has
+	# to ask the HUD about input.
+	var run_now: bool = bool(hud.run_latched) or Input.is_action_pressed("run")
+	if run_now != _run_action:
+		_run_action = run_now
+		player.set_run(run_now)
+
 	var st: String = player.state_name()
 	var f: Vector3 = player.facing
-	hud.set_debug("state: %s   facing: %+.2f,%+.2f   %s" % [st, f.x, f.z, player.debug_text])
+	var extra := ""
+	if _enemies.size() > 0 and is_instance_valid(_enemies[0]):
+		var e: Node = _enemies[0]
+		extra = "   enemy %s hp %.0f/%.0f  %s" % [e.state_name(), e.hp, e.max_hp, e.debug_text]
+	hud.set_debug("state: %s   facing: %+.2f,%+.2f   %s%s" % [st, f.x, f.z, player.debug_text, extra])
+	hud.set_player_hp(player.hp_fraction(), "HP %.0f / %.0f" % [player.hp, player.max_hp])
+	if _enemies.size() > 0 and is_instance_valid(_enemies[0]):
+		var e2: Node = _enemies[0]
+		if e2.is_dead():
+			hud.set_enemy_hp(0.0, "%s  DEAD" % e2.monster_name)
+		else:
+			hud.set_enemy_hp(e2.hp_fraction(), "%s  (lv %d)  %.0f / %.0f"
+				% [e2.monster_name, e2.level, e2.hp, e2.max_hp])
 
 
 func _on_landed(kind: String, collider: Node, point: Vector3) -> void:
 	_hits.append({"kind": kind, "who": collider.name})
 	print("[hit] %s on %s at %s" % [kind, collider.name, point])
+
+
+func _on_player_damaged(amount: float, hp_left: float) -> void:
+	print("[player] took %.1f damage, %.0f hp left" % [amount, hp_left])
+
+
+func _on_player_died() -> void:
+	print("[player] died")

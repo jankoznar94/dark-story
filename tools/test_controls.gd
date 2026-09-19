@@ -35,8 +35,10 @@ func _run() -> void:
 	var hud: Node = main.get_node("HUD")
 
 	_test_circles(hud)
+	_test_run_button(hud)
 	await _test_layout(hud)
 	await _test_hold_to_attack(main, hud)
+	await _test_run_latch(main, hud)
 
 	print("")
 	print("checks executed: ", checks_run)
@@ -49,6 +51,54 @@ func _run() -> void:
 			print("FAIL: only %d checks ran - not everything was exercised" % checks_run)
 		print("CONTROLS_ALL_PASS=false")
 	quit()
+
+
+## The RUN button is a LATCH (tap = run, tap again = walk), because the joystick
+## already owns the thumb and a hold-to-run button could never be pressed at the
+## same time as it.
+func _test_run_button(hud: Node) -> void:
+	print("== the run button is a latch, not a hold ==")
+	_ok("run button exists", hud.run_button != null)
+	_ok("run button is a toggle", hud.run_button.toggle_mode)
+	_ok("run starts OFF", hud.run_latched == false)
+	_ok("run button is not flat (it draws a circle)",
+		hud.run_button.flat == false)
+	_ok("run button has a label", hud.run_button.text.length() > 0, hud.run_button.text)
+	_ok("run has no hover effect",
+		hud.run_button.get_theme_stylebox("hover") == hud.run_button.get_theme_stylebox("normal"))
+
+
+func _test_run_latch(main: Node, hud: Node) -> void:
+	print("== run latch reaches the player, and running is faster than walking ==")
+	var player: Node = main.get_node("Player")
+	var idle_in: Vector2 = Vector2(0.0, 0.0)
+	var walk_ok: bool = absf(player.current_speed(Vector2(0, -1.0)) - player.walk_speed) < 0.01
+	_ok("stick alone = walk speed", walk_ok)
+
+	hud.run_button.button_pressed = true
+	hud.run_button.toggled.emit(true)
+	await process_frame
+	await process_frame
+	_ok("latch set by the button", hud.run_latched)
+	_ok("RUN reaches the player through main.gd", player.wants_run(Vector2(0, -1.0)))
+	_ok("running is faster than walking",
+		player.current_speed(Vector2(0, -1.0)) > player.walk_speed,
+		"walk %.1f -> run %.1f" % [player.walk_speed, player.run_speed])
+
+	hud.run_button.button_pressed = false
+	hud.run_button.toggled.emit(false)
+	await process_frame
+	await process_frame
+	_ok("latch cleared by the button", not hud.run_latched)
+	_ok("cleared latch = walk again", not player.wants_run(idle_in))
+
+	# the `run` ACTION is the keyboard/pad path and must work on its own
+	Input.action_press("run")
+	_ok("run action alone = run (keyboard/pad path)",
+		player.wants_run(idle_in) and absf(player.current_speed(idle_in) - player.run_speed) < 0.01)
+	Input.action_release("run")
+	await process_frame
+	_ok("released run action = walk again", not player.wants_run(idle_in))
 
 
 func _ok(label: String, cond: bool, detail: String = "") -> void:
@@ -146,6 +196,38 @@ func _test_layout(hud: Node) -> void:
 		_ok("%s: joystick clear of the buttons" % name,
 			joy.position.x + joy.size.x < pos["left"].x - sizes[0].x * 0.5)
 
+		# the run button sits in the MIDDLE of the cross and must not touch it
+		var run: Button = hud.run_button
+		var rc: Vector2 = run.position + run.size * 0.5
+		_ok("%s: run button is centred in the cross" % name,
+			absf(rc.x - cx) < 1.0 and absf(rc.y - cy) < 1.0,
+			"run=(%.0f,%.0f) cross=(%.0f,%.0f)" % [rc.x, rc.y, cx, cy])
+		_ok("%s: run button is the same size as the others" % name,
+			absf(run.size.x - sizes[0].x) < 0.01, str(run.size))
+		var clash := ""
+		for s in Hud.SLOTS:
+			var rr := Rect2(run.position, run.size)
+			var rb2 := Rect2(hud._buttons[s].position, hud._buttons[s].size)
+			if rr.intersects(rb2):
+				clash += "%s " % s
+		_ok("%s: run button does not overlap the four actions" % name, clash == "", clash)
+		var run_off := Rect2(run.position, run.size)
+		_ok("%s: run button fully on screen" % name,
+			run_off.position.x >= 0.0 and run_off.position.y >= 0.0 and
+			run_off.end.x <= vs.x and run_off.end.y <= vs.y)
+
+		# vitals bars: both on screen, not overlapping, player on the left
+		var pb: Control = hud.hp_fill
+		var eb: Control = hud.enemy_fill
+		_ok("%s: HP bars visible" % name, pb.visible and eb.visible)
+		_ok("%s: player bar left, enemy bar right" % name,
+			pb.global_position.x < vs.x * 0.5 and eb.global_position.x > vs.x * 0.4,
+			"p %.0f e %.0f" % [pb.global_position.x, eb.global_position.x])
+		_ok("%s: bars do not overlap" % name,
+			not Rect2(pb.global_position, pb.size).intersects(Rect2(eb.global_position, eb.size)))
+		_ok("%s: bars clear of the right-hand pad" % name,
+			eb.global_position.x + eb.size.x <= pos["right"].x + sizes[0].x * 0.5)
+
 
 func _test_hold_to_attack(main: Node, hud: Node) -> void:
 	print("== hold attack = keep attacking, release = stop ==")
@@ -171,7 +253,19 @@ func _test_hold_to_attack(main: Node, hud: Node) -> void:
 	btn.button_up.emit()
 	_ok("releasing clears the attack action", not Input.is_action_pressed("attack"))
 
-	# after release no NEW swing may start
+	# After the release no NEW swing may start. One attack that was already in
+	# flight when the button was released still lands - that is correct, it is the
+	# same commitment as anywhere else. So drain the in-flight attack first, then
+	# assert nothing new begins. (Asserting straight after the release counted the
+	# in-flight hit as a leak; measured: 2 -> 3, and the 3rd was the one already
+	# running at the moment of release.)
+	var settled: bool = false
+	for i in 120:
+		if not player.is_busy():
+			settled = true
+			break
+		await physics_frame
+	_ok("in-flight attack finished after release", settled)
 	var after_release: int = main._hits.size()
 	for i in 60:
 		await physics_frame

@@ -8,42 +8,44 @@ extends Node3D
 ## The visual is a CHILD of the CharacterBody3D and faces -Z, while gameplay
 ## logic uses `facing`. That means the visual's yaw is the inverse of player
 ## rotation, which is set from player.gd.
-
+##
 ## NOTE: Godot's glTF importer STRIPS the "_Loop" suffix from clip names.
 ## The source file says "Rig|Walk_Loop" but Godot exposes "Rig|Walk".
 ## Verified with tools/list_anims.gd - do not guess these.
+
 const CLIP_IDLE := "Rig|Sword_Idle"          ## combat-ready stance, not a relaxed idle
 const CLIP_WALK := "Rig|Walk"                ## was Rig|Walk_Loop in the source file
+const CLIP_RUN := "Rig|Sprint"               ## the run: short cycle, big stride
 const CLIP_ATTACK := "Rig|Sword_Attack"      ## light swing, 1.50 s
 const CLIP_ATTACK_HEAVY := "Rig|Sword_Attack_RM"
 const CLIP_HIT := "Rig|Hit_Chest"            ## 0.33 s
+const CLIP_DEATH := "Rig|Death01"            ## 2.38 s
 const CLIP_SPELL := "Rig|Spell_Simple_Shoot" ## 0.50 s
 
-## Sword_Attack is 1.50 s long. At 2x that is a 0.75 s swing, which matches the
-## player's windup+active+recover window (0.30+0.12+0.33=0.75) so the blade lands
-## with the hit rather than still swinging afterwards.
-const ATTACK_SPEED := 2.0
-const HEAVY_SPEED := 1.7
+## The sword clips are played at 1x (the clip's own speed). They used to run at
+## 2x with a 0.75 s window, which Jan reported as "the attack animation is very
+## fast" - the blade swept past before the eye could read the swing. The window
+## in player.gd is now 1.08 s and the clip is played at 1x, so the contact frame
+## (frame 10 of 36, MEASURED by tools/blender/measure_gait.py) lands exactly on
+## the damage frame: windup 0.42 s == 42 % of the 1.5 s clip.
+const ATTACK_SPEED := 1.0
+const HEAVY_SPEED := 1.0
 
-## Measured on Rig|Walk_Loop from the source GLB (Blender, toe-contact method):
-## the clip covers 0.963 m of ground per cycle (1.284 m over 1.333 s at a 0.03 m
-## contact threshold) played at 1x. The player moves at 2.6 m/s, so the feet slid
-## by a factor of ~2.7 - which is exactly what Jan reported ("the animation looks
-## like a slow walk while the movement is faster"). Playing the clip at
-## move_speed / WALK_GROUND_SPEED puts the foot plant back on the ground.
-## Re-measure this number if the walk clip is ever replaced; do not re-guess it.
-const WALK_GROUND_SPEED := 0.963
+## MEASURED on the shipped model by tools/blender/measure_gait.py (toe-contact
+## method, same as the original walk calibration). Ground covered per cycle at
+## 1x playback:
+##   Rig|Walk    1.267 m over 1.333 s =  0.951 m/s
+##   Rig|Sprint  1.110 m over 0.667 s =  1.666 m/s
+## The player moves faster than either clip at 1x, so the clip is re-timed from
+## the character's ACTUAL ground speed - otherwise the planted foot slides.
+## Re-measure if a locomotion clip is ever replaced; do not re-guess these.
+const WALK_GROUND_SPEED := 0.951
+const RUN_GROUND_SPEED := 1.666
 
 var model: Node3D
 var anim: AnimationPlayer
 
-## Set by player.gd every frame while walking: how fast the character is actually
-## moving over the ground. The walk clip is re-timed from it so the planted foot
-## does not slide (see WALK_GROUND_SPEED above).
-var walk_speed_scale: float = 1.0
-
 var _current: String = ""
-var _busy_until: float = 0.0
 
 
 func _ready() -> void:
@@ -61,7 +63,7 @@ func _ready() -> void:
 		return
 	_clip_names = anim.get_animation_list()
 	print("[hero] animations available: %d" % _clip_names.size())
-	for want in [CLIP_IDLE, CLIP_WALK, CLIP_ATTACK, CLIP_HIT]:
+	for want in [CLIP_IDLE, CLIP_WALK, CLIP_RUN, CLIP_ATTACK, CLIP_HIT]:
 		if not _clip_names.has(want):
 			push_warning("[hero] missing animation: %s" % want)
 	_play(CLIP_IDLE, 1.0, true)
@@ -95,29 +97,47 @@ func _play(clip: String, speed: float = 1.0, loop: bool = true) -> void:
 		a.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
 
 
+func current_clip() -> String:
+	return _current
+
+
 # ---------------------------------------------------------------- API for player.gd
 func play_idle() -> void:
 	_play(CLIP_IDLE, 1.0, true)
 
 
-func play_walk() -> void:
-	# re-time the clip: at 1x the animation covers 0.963 m/s of ground, so a
-	# character moving at 2.6 m/s must play it at 2.7x for the feet to plant.
-	var s := walk_speed_scale / WALK_GROUND_SPEED
-	s = clampf(s, 0.25, 4.0)
-	if _current == CLIP_WALK and anim != null and anim.is_playing():
+## Locomotion is one call with two inputs: how fast the character is actually
+## moving over the ground, and whether the player asked to run. The clip AND its
+## playback rate follow from those, so the feet stay planted at every speed.
+func play_locomotion(ground_speed: float, running: bool) -> void:
+	var clip := CLIP_RUN if running else CLIP_WALK
+	var base := RUN_GROUND_SPEED if running else WALK_GROUND_SPEED
+	var s := clampf(ground_speed / base, 0.2, 4.0)
+	if _current == clip and anim != null and anim.is_playing():
 		anim.speed_scale = s
 		return
-	_play(CLIP_WALK, s, true)
+	_play(clip, s, true)
+
+
+func play_walk() -> void:
+	play_locomotion(WALK_GROUND_SPEED, false)
+
+
+func play_run() -> void:
+	play_locomotion(RUN_GROUND_SPEED, true)
 
 
 func play_attack(heavy: bool = false) -> void:
 	_play(CLIP_ATTACK_HEAVY if heavy else CLIP_ATTACK,
-		  HEAVY_SPEED if heavy else ATTACK_SPEED, false)
+		HEAVY_SPEED if heavy else ATTACK_SPEED, false)
 
 
 func play_hit() -> void:
 	_play(CLIP_HIT, 1.0, false)
+
+
+func play_death() -> void:
+	_play(CLIP_DEATH, 1.0, false)
 
 
 func play_spell() -> void:

@@ -13,16 +13,10 @@ subdivide_depth = 8
 
 [sub_resource type="StandardMaterial3D" id="StdMat_floor"]
 albedo_texture = ExtResource("5_ground")
-# Tiled at ~4 m per texture repeat: 34 m / 8.5 repeats. Without an explicit scale a
-# 34 m plane would stretch one texture across the whole floor; too many repeats
-# (17) made the tiling read as an obvious grid.
 uv1_scale = Vector3(8.5, 8.5, 1)
 uv1_triplanar = true
 roughness = 0.95
 metallic = 0.0
-# The old floor was ONE flat colour (0.20, 0.175, 0.145) and read as dead brown.
-# A slight tint keeps the grass in the project's dark palette without killing
-# the green the texture provides.
 albedo_color = Color(0.92, 0.98, 0.90, 1)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
