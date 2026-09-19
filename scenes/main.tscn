@@ -1,17 +1,29 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
 [ext_resource type="Script" path="res://scripts/camera_rig.gd" id="3_cam"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+[ext_resource type="Texture2D" path="res://assets/textures/ground_grass.png" id="5_ground"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_floor"]
-size = Vector3(34, 0.4, 34)
+[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
+size = Vector2(34, 34)
+subdivide_width = 8
+subdivide_depth = 8
 
 [sub_resource type="StandardMaterial3D" id="StdMat_floor"]
-albedo_color = Color(0.20, 0.175, 0.145, 1)
-roughness = 0.92
+albedo_texture = ExtResource("5_ground")
+# Tiled at ~4 m per texture repeat: 34 m / 8.5 repeats. Without an explicit scale a
+# 34 m plane would stretch one texture across the whole floor; too many repeats
+# (17) made the tiling read as an obvious grid.
+uv1_scale = Vector3(8.5, 8.5, 1)
+uv1_triplanar = true
+roughness = 0.95
 metallic = 0.0
+# The old floor was ONE flat colour (0.20, 0.175, 0.145) and read as dead brown.
+# A slight tint keeps the grass in the project's dark palette without killing
+# the green the texture provides.
+albedo_color = Color(0.92, 0.98, 0.90, 1)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
 size = Vector3(34, 0.4, 34)
@@ -21,7 +33,7 @@ script = ExtResource("1_main")
 
 [node name="Floor" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 0)
-mesh = SubResource("BoxMesh_floor")
+mesh = SubResource("PlaneMesh_floor")
 surface_material_override/0 = SubResource("StdMat_floor")
 
 [node name="FloorBody" type="StaticBody3D" parent="."]
