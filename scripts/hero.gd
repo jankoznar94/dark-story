@@ -87,6 +87,9 @@ func _play(clip: String, speed: float = 1.0, loop: bool = true) -> void:
 		return
 	_current = clip
 	anim.play(clip, -1.0, speed)
+	# Set it explicitly: play()'s custom_speed is not reliable for RESETTING a
+	# speed_scale left over from the walk clip, and the idle then ran at 2.7x.
+	anim.speed_scale = speed
 	var a: Animation = anim.get_animation(clip)
 	if a:
 		a.loop_mode = Animation.LOOP_LINEAR if loop else Animation.LOOP_NONE
