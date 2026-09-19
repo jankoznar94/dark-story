@@ -25,8 +25,22 @@ const CLIP_SPELL := "Rig|Spell_Simple_Shoot" ## 0.50 s
 const ATTACK_SPEED := 2.0
 const HEAVY_SPEED := 1.7
 
+## Measured on Rig|Walk_Loop from the source GLB (Blender, toe-contact method):
+## the clip covers 0.963 m of ground per cycle (1.284 m over 1.333 s at a 0.03 m
+## contact threshold) played at 1x. The player moves at 2.6 m/s, so the feet slid
+## by a factor of ~2.7 - which is exactly what Jan reported ("the animation looks
+## like a slow walk while the movement is faster"). Playing the clip at
+## move_speed / WALK_GROUND_SPEED puts the foot plant back on the ground.
+## Re-measure this number if the walk clip is ever replaced; do not re-guess it.
+const WALK_GROUND_SPEED := 0.963
+
 var model: Node3D
 var anim: AnimationPlayer
+
+## Set by player.gd every frame while walking: how fast the character is actually
+## moving over the ground. The walk clip is re-timed from it so the planted foot
+## does not slide (see WALK_GROUND_SPEED above).
+var walk_speed_scale: float = 1.0
 
 var _current: String = ""
 var _busy_until: float = 0.0
@@ -84,7 +98,14 @@ func play_idle() -> void:
 
 
 func play_walk() -> void:
-	_play(CLIP_WALK, 1.0, true)
+	# re-time the clip: at 1x the animation covers 0.963 m/s of ground, so a
+	# character moving at 2.6 m/s must play it at 2.7x for the feet to plant.
+	var s := walk_speed_scale / WALK_GROUND_SPEED
+	s = clampf(s, 0.25, 4.0)
+	if _current == CLIP_WALK and anim != null and anim.is_playing():
+		anim.speed_scale = s
+		return
+	_play(CLIP_WALK, s, true)
 
 
 func play_attack(heavy: bool = false) -> void:

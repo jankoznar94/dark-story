@@ -78,6 +78,9 @@ func _physics_process(delta: float) -> void:
 
 	if hero and hero.has_method("play_walk"):
 		if velocity.length() > 0.25:
+			# feed the ACTUAL ground speed, so the clip re-times itself as the
+			# character accelerates and decelerates (accel 14, decel 20)
+			hero.walk_speed_scale = velocity.length()
 			hero.play_walk()
 		else:
 			hero.play_idle()
