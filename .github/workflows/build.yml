@@ -107,6 +107,13 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "AUTOTARGET_ALL_PASS=true"
 
+      - name: Locomotion gait test (cadence and retime of the run and walk)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_locomotion_slide.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "LOCOMOTION_GAIT_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

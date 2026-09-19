@@ -292,6 +292,27 @@ func clear_enemies() -> void:
 	_focus = null
 
 
+## Moves every level prop out of the way so a locomotion test can measure a clean,
+## straight run. The arena is only ~15 m across and the props frame the lanes, so a
+## run at full speed reaches a wall in well under a second - a test that starts
+## outside the arena walks into the south wall and reports its own collision as a
+## failure in the animation code (measured: stopped dead at z = 6.7, clip
+## `Rig|Sword_Idle`, while the retime it was checking was correct).
+##
+## Collision lives on the prop node itself, so the whole StaticBody3D is parked.
+## A test-only helper - NOTHING in production calls it.
+func clear_level_props() -> int:
+	var moved := 0
+	for n in _level_nodes:
+		if not is_instance_valid(n):
+			continue
+		if n is Node3D:
+			(n as Node3D).position.y = -50.0
+			n.visible = false
+			moved += 1
+	return moved
+
+
 func _on_landed(kind: String, collider: Node, point: Vector3) -> void:
 	_hits.append({"kind": kind, "who": collider.name})
 	# whomever the player just swung at is the one whose health bar matters

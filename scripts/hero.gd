@@ -15,7 +15,45 @@ extends Node3D
 
 const CLIP_IDLE := "Rig|Sword_Idle"          ## combat-ready stance, not a relaxed idle
 const CLIP_WALK := "Rig|Walk"                ## was Rig|Walk_Loop in the source file
-const CLIP_RUN := "Rig|Sprint"               ## the run: short cycle, big stride
+## THE RUN USED TO BE `Rig|Sprint`, AND THAT WAS THE "ANIMATION IS TOO FAST" BUG.
+##
+## `Rig|Sprint` covers only 1.110 m per 0.667 s cycle, so at the run speed it has to
+## be played at 3.05 / 1.666 = 1.83x. Cadence is what the eye reads as leg speed:
+##
+##     cadence (steps/s) = clip_rate * 2 / clip_length
+##
+## Sprint at the run speed: 1.83 * 2 / 0.667 = 5.49 steps/s
+## Walk at the walk speed:  1.89 * 2 / 1.333 = 2.84 steps/s
+##
+## Nearly double the walk's, against a human sprint cadence of ~3.4-3.8. That is
+## the whole report ("the animation is too fast for how fast the model moves") as a
+## number, and the walk being fine is why only the run was ever complained about.
+##
+## `Rig|Jog_Fwd` is 0.917 s long with a longer stride, so the same body speed needs
+## a lower rate and gives a lower cadence for the same ground covered.
+##
+## CADENCE IS SET BY THE CONSTANT BELOW, and this is the whole tuning knob:
+##
+##     cadence (steps/s) = 2 * run_speed / (RUN_GROUND_SPEED * cycle_length)
+##
+##   Sprint            6.1 / (0.667 * 1.666) = 5.49 steps/s   <- what he reported
+##   Jog_Fwd @ 1.605   6.1 / (0.917 * 1.605) = 4.14 steps/s   (its authored speed)
+##   Jog_Fwd @ 1.800   6.1 / (0.917 * 1.800) = 3.70 steps/s   <- wired in now
+##
+## 1.800 is deliberately ABOVE the clip's measured 1.605 m/s. That is the point:
+## the retime is `ground_speed / RUN_GROUND_SPEED`, so a larger constant plays the
+## clip SLOWER than its feet would need at this body speed - the legs slow down and
+## the planted foot slides FORWARD by the difference (0.195 m/s here, 6 % of the
+## run). That slide is the accepted cost of Jan's brief "keep the speed, slow the
+## legs down", and it is small enough to read as weight rather than as skating.
+## If the slide is ever measured as too visible, lower this toward 1.605 - but
+## do NOT push it past ~1.9, where the cadence drops below a human jog and the legs
+## start to look like they are wading.
+const CLIP_RUN := "Rig|Jog_Fwd"              ## was Rig|Sprint - see above
+## The run clip's OWN measured ground speed at 1x, kept next to the tuning constant
+## above so the two cannot drift apart silently. This is the value the clip needs to
+## keep the feet planted; RUN_GROUND_SPEED is deliberately higher than it.
+const RUN_CLIP_GROUND_SPEED := 1.605
 const CLIP_ATTACK := "Rig|Sword_Attack"      ## light swing, 1.50 s
 const CLIP_ATTACK_HEAVY := "Rig|Sword_Attack_RM"
 const CLIP_HIT := "Rig|Hit_Chest"            ## 0.33 s
@@ -31,16 +69,34 @@ const CLIP_SPELL := "Rig|Spell_Simple_Shoot" ## 0.50 s
 const ATTACK_SPEED := 1.0
 const HEAVY_SPEED := 1.0
 
-## MEASURED on the shipped model by tools/blender/measure_gait.py (toe-contact
-## method, same as the original walk calibration). Ground covered per cycle at
-## 1x playback:
-##   Rig|Walk    1.267 m over 1.333 s =  0.951 m/s
-##   Rig|Sprint  1.110 m over 0.667 s =  1.666 m/s
-## The player moves faster than either clip at 1x, so the clip is re-timed from
+## MEASURED on the shipped model. The authoritative tool is
+## `python3 tools/anim_cycle_distance.py`, which reads the .glb directly (glTF JSON
+## + forward kinematics, no Blender) and integrates the planted foot's backward
+## travel per cycle with NO contact-window heuristic.
+##
+## DO NOT USE tools/blender/measure_gait.py's numbers for the fast clips - its
+## ±3 cm contact band catches only 1-2 frames on a 16-frame sprint cycle, so it sums
+## the STRIKE frames and reports a foot swinging at ~9 m/s. That bogus number is why
+## the run ran at 1.83x for so long. Ground per cycle at 1x, from the tool above:
+##
+##   Rig|Walk          1.267 m over 1.333 s =  0.951 m/s
+##   Rig|Sprint        1.110 m over 0.667 s =  1.666 m/s
+##   Rig|Jog_Fwd       1.472 m over 0.917 s =  1.605 m/s
+##
+## The player moves faster than any of these at 1x, so the clip is re-timed from
 ## the character's ACTUAL ground speed - otherwise the planted foot slides.
-## Re-measure if a locomotion clip is ever replaced; do not re-guess these.
+##
+## RUN_GROUND_SPEED IS NOT simply Jog_Fwd's 1.605: it is a CADENCE knob held
+## deliberately higher, and that is what slows the run legs down. See CLIP_RUN.
 const WALK_GROUND_SPEED := 0.951
-const RUN_GROUND_SPEED := 1.666
+const RUN_GROUND_SPEED := 1.800
+
+## Instrumentation ONLY, used by tools/probe_clip_constant.gd to point the run
+## clip at a candidate and give it its own constant without editing this file
+## between measurements. Both are OFF by default (empty / -1), so production
+## behaviour is identical - tools/test_locomotion_slide.gd asserts that.
+var clip_run_override: String = ""
+var run_ground_speed_override: float = -1.0
 
 var model: Node3D
 var anim: AnimationPlayer
@@ -121,6 +177,11 @@ func play_idle() -> void:
 func play_locomotion(ground_speed: float, running: bool) -> void:
 	var clip := CLIP_RUN if running else CLIP_WALK
 	var base := RUN_GROUND_SPEED if running else WALK_GROUND_SPEED
+	# instrumentation override, only ever set by tools/probe_clip_constant.gd
+	if running and clip_run_override != "":
+		clip = clip_run_override
+	if running and run_ground_speed_override > 0.0:
+		base = run_ground_speed_override
 	var s := clampf(ground_speed / base, 0.2, 4.0)
 	if _current == clip and anim != null and anim.is_playing():
 		anim.speed_scale = s
