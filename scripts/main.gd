@@ -10,11 +10,21 @@ extends Node3D
 @onready var cam: Camera3D = $Camera
 @onready var hud: CanvasLayer = $HUD
 
+## The monster catalogue: one place that says how strong each kind is and which
+## behaviour script drives it, so `_spawn_enemies()` below is a list of POSITIONS
+## and nothing else.
+const MONSTER_KIND := preload("res://scripts/monster_kind.gd")
+
 var _posts: Array[Node] = []
 var _enemies: Array[Node] = []
 var _hits: Array = []
 var _level_nodes: Array = []
 var _run_action: bool = false
+## The monster the enemy health bar is currently showing: the last one the player
+## actually hit, or the nearest engaged one. A single bar for a pack of six is
+## otherwise a lie - it would show whichever spawn happened to be first in the
+## array, which is unrelated to what the player is fighting.
+var _focus: Node = null
 
 
 func _ready() -> void:
@@ -145,25 +155,42 @@ func _spawn_posts() -> void:
 
 
 func _spawn_enemies() -> void:
-	## ONE test enemy. The spot is chosen so the fight can be READ, not just run:
-	##   * standing in the open lane north-east of the player's spawn, so there is
-	##     room to walk up to it, walk away, and circle it
-	##   * deliberately NOT near geometry. The first placement was (0, 0, -6.4)
-	##     and the enemy never moved: the level has a wall_segment at (-3, 0, -6.8)
-	##     and a ruin_arch at (0.4, 0, -8.6), so it spawned wedged against the arch
-	##     and physics held it perfectly still. Measured with tools/probe_chase.gd:
-	##     position identical for 60 frames, velocity ~0.01. It looked exactly like
-	##     a broken AI and was a level collision.
-	## If this position is ever moved, keep >1.5 m clearance from every prop or the
-	## same false "the enemy does not chase" will come back.
-	var e := CharacterBody3D.new()
-	e.name = "Enemy"
-	e.set_script(load("res://scripts/enemy.gd"))
-	e.position = Vector3(3.4, 0.0, -5.6)
+	## A PACK of six, from data. Two rules decide the positions, and both are
+	## measured rather than eyeballed (see the notes below): every spawn keeps
+	## clearance from the level's props, and none of them sits on a coordinate a
+	## gameplay test teleports the player to.
+	##
+	## The composition is the point of the exercise: the three GHOULS are weaker
+	## than the hero (55 hp -> 4 hero swings, 4-7 damage per punch against the
+	## hero's 180) and they circle instead of queueing, so killing several of them
+	## is a fight rather than a chore. The Ravagers and the Brute are there so the
+	## difference in behaviour is visible in the same session.
+	var spawns := [
+		# --- the fragile pack: close, so they are the first thing encountered ---
+		{"kind": "ghoul", "pos": Vector3(-4.25, 0.0, -4.0)},
+		{"kind": "ghoul", "pos": Vector3(3.75, 0.0, -4.5)},
+		{"kind": "ghoul", "pos": Vector3(-3.0, 0.0, 1.25)},
+		# --- the baseline bruisers, further out ---
+		{"kind": "ravager", "pos": Vector3(6.25, 0.0, 0.0)},
+		{"kind": "ravager", "pos": Vector3(-6.75, 0.0, -0.25)},
+		# --- the heavy, furthest out, down the west lane ---
+		{"kind": "brute", "pos": Vector3(-9.0, 0.0, -6.75)},
+	]
+	for i in spawns.size():
+		var s: Dictionary = spawns[i]
+		var e := _build_enemy(str(s["kind"]), s["pos"] as Vector3)
+		e.name = "Enemy_%s_%d" % [str(s["kind"]).capitalize(), i]
+		_enemies.append(e)
 
-	var model := Node3D.new()
-	model.name = "Model"
-	e.add_child(model)
+
+## Builds one monster from its catalogue entry: the behaviour script decides the
+## AI, the entry decides the numbers. Nothing here is hand-set per monster, so a
+## new kind is a catalogue line plus a spawn line.
+func _build_enemy(kind: String, pos: Vector3) -> CharacterBody3D:
+	var k: Dictionary = MONSTER_KIND.kind(kind)
+	var e := CharacterBody3D.new()
+	e.set_script(load(str(k.get("script", "res://scripts/enemy.gd"))))
+	e.position = pos
 
 	var cs := CollisionShape3D.new()
 	cs.name = "Collision"
@@ -175,11 +202,31 @@ func _spawn_enemies() -> void:
 	e.add_child(cs)
 
 	add_child(e)
-	# The enemy needs the reference or it never aggros: `target` is what drives
-	# its whole behaviour loop, and forgetting to hand it over looks exactly like
-	# "the enemy stands there doing nothing".
+	# `target` is what drives the whole behaviour loop; forgetting it looks exactly
+	# like "the enemy stands there doing nothing".
 	e.target = player
-	_enemies.append(e)
+	# A monster with a leash has to know WHERE HOME IS. Without this every kind
+	# would consider itself straying the moment it moved and walk back to (0,0,0).
+	e.remember_home()
+	return e
+
+
+## Keeps the enemy health bar honest in a fight with several monsters: the bar
+## follows the monster the player last hit, falling back to the nearest one that
+## has noticed them.
+func _update_focus() -> void:
+	if _focus and is_instance_valid(_focus) and _focus.is_engaged() and not _focus.is_dead():
+		return
+	var best: Node = null
+	var best_d := INF
+	for e in _enemies:
+		if not is_instance_valid(e) or e.is_dead() or not e.is_engaged():
+			continue
+		var d: float = e.global_position.distance_to(player.global_position)
+		if d < best_d:
+			best_d = d
+			best = e
+	_focus = best
 
 
 func _process(_delta: float) -> void:
@@ -193,23 +240,50 @@ func _process(_delta: float) -> void:
 
 	var st: String = player.state_name()
 	var f: Vector3 = player.facing
+	_update_focus()
 	var extra := ""
-	if _enemies.size() > 0 and is_instance_valid(_enemies[0]):
-		var e: Node = _enemies[0]
-		extra = "   enemy %s hp %.0f/%.0f  %s" % [e.state_name(), e.hp, e.max_hp, e.debug_text]
+	var alive := _alive_count()
+	extra = "   monsters alive %d/%d" % [alive, _enemies.size()]
 	hud.set_debug("state: %s   facing: %+.2f,%+.2f   %s%s" % [st, f.x, f.z, player.debug_text, extra])
 	hud.set_player_hp(player.hp_fraction(), "HP %.0f / %.0f" % [player.hp, player.max_hp])
-	if _enemies.size() > 0 and is_instance_valid(_enemies[0]):
-		var e2: Node = _enemies[0]
-		if e2.is_dead():
-			hud.set_enemy_hp(0.0, "%s  DEAD" % e2.monster_name)
+	if _focus and is_instance_valid(_focus):
+		if _focus.is_dead():
+			hud.set_enemy_hp(0.0, "%s  DEAD" % _focus.monster_name)
 		else:
-			hud.set_enemy_hp(e2.hp_fraction(), "%s  (lv %d)  %.0f / %.0f"
-				% [e2.monster_name, e2.level, e2.hp, e2.max_hp])
+			hud.set_enemy_hp(_focus.hp_fraction(), "%s  (lv %d)  %.0f / %.0f"
+				% [_focus.monster_name, _focus.level, _focus.hp, _focus.max_hp])
+	else:
+		hud.set_enemy_hp(0.0, "")
+
+
+func _alive_count() -> int:
+	var n := 0
+	for e in _enemies:
+		if is_instance_valid(e) and not e.is_dead():
+			n += 1
+	return n
+
+
+## Removes the whole pack. The gameplay tests that measure a move-lock, a
+## miss-when-facing-away or reach on their own fixed coordinates call this after
+## instantiating the scene, and the reason is measured, not cosmetic: a monster
+## walking into the arc a test is aiming at turns "facing away must miss" into a
+## hit, and a body pressed against the player during an attack window moves them
+## and reports a broken commitment. The pack itself is verified by test_fight.gd,
+## which is the test that is supposed to have monsters in the scene.
+func clear_enemies() -> void:
+	for e in _enemies:
+		if is_instance_valid(e):
+			e.queue_free()
+	_enemies.clear()
+	_focus = null
 
 
 func _on_landed(kind: String, collider: Node, point: Vector3) -> void:
 	_hits.append({"kind": kind, "who": collider.name})
+	# whomever the player just swung at is the one whose health bar matters
+	if _enemies.has(collider):
+		_focus = collider
 	print("[hit] %s on %s at %s" % [kind, collider.name, point])
 
 

@@ -29,6 +29,13 @@ func _init() -> void:
 
 func _drive() -> void:
 	await physics_frame
+	# The pack is spawned by main.gd, not by the scene, but it has to go: this test
+	# teleports the player to fixed coordinates and asserts on a direction, and a
+	# monster that walked into that arc would be reported as a broken melee cone.
+	# tools/test_fight.gd is the test that runs WITH monsters - this one measures
+	# the swing itself.
+	main.clear_enemies()
+	await physics_frame
 	var player: Node = main.get_node("Player")
 	player.attack_landed.connect(func(kind: String, collider: Node, pt: Vector3) -> void:
 		hits.append({"kind": kind, "who": collider.name, "at": pt}))

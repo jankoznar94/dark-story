@@ -31,6 +31,10 @@ func _run() -> void:
 	root.add_child(main)
 	await process_frame
 	await process_frame
+	# This test drives the HUD through Input actions, so it must not be fighting a
+	# pack at the same time - a monster attacking the player mid-assertion changes
+	# the state the assertions read. tools/test_fight.gd covers fighting monsters.
+	main.clear_enemies()
 
 	var hud: Node = main.get_node("HUD")
 
