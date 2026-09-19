@@ -1,0 +1,12 @@
+{
+  "presets": [
+    {"name": "A_current", "sun": 0.95, "amb": 0.34, "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.018, "shadow_opacity": 0.62},
+    {"name": "B_more_sun", "sun": 1.15, "amb": 0.30, "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.018, "shadow_opacity": 0.62, "fill": 0.22},
+    {"name": "C_cooler", "sun": 0.95, "amb": 0.34, "sun_color": [0.96, 0.97, 1.0], "amb_color": [0.16, 0.17, 0.20], "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.018, "shadow_opacity": 0.62, "fill": 0.22},
+    {"name": "D_warmer", "sun": 0.95, "amb": 0.34, "sun_color": [1.0, 0.88, 0.68], "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.018, "shadow_opacity": 0.62, "fill": 0.22},
+    {"name": "E_soft_shadow", "sun": 0.95, "amb": 0.40, "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.014, "shadow_opacity": 0.45, "fill": 0.30},
+    {"name": "F_contrasty", "sun": 1.05, "amb": 0.22, "brightness": 0.92, "contrast": 1.32, "saturation": 0.80, "fog": 0.022, "shadow_opacity": 0.70, "fill": 0.18},
+    {"name": "G_grey_tonemap", "sun": 0.95, "amb": 0.34, "brightness": 0.94, "contrast": 1.20, "saturation": 0.86, "fog": 0.018, "shadow_opacity": 0.62, "fill": 0.22, "tonemap": 3},
+    {"name": "H_bright_clean", "sun": 1.05, "amb": 0.45, "brightness": 1.00, "contrast": 1.12, "saturation": 0.90, "fog": 0.012, "shadow_opacity": 0.52, "fill": 0.28}
+  ]
+}
