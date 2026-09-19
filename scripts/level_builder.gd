@@ -85,6 +85,19 @@ static func _spawn(parent: Node3D, prop: String, pos: Vector3, rot_y: float) -> 
 	var cs := CollisionShape3D.new()
 	var shape := ConcavePolygonShape3D.new()
 	shape.set_faces(mesh.get_faces())
+	# BACKFACE COLLISION IS NOT OPTIONAL, it is the fix for "the hero gets stuck in
+	# an object and cannot move" (Jan, Sept 2026). Measured on the shipped level:
+	# against a trimesh WITHOUT this flag the hero ends up ~6 cm INSIDE the wall and
+	# is then frozen - 0.000 m of travel over 60-90 frames in four different
+	# directions while `velocity` still reads the full 2.600 m/s, and
+	# `body_test_motion` reports the motion BLOCKED even pointed away from the wall
+	# along the contact normal. A 0.15 m teleport clear releases him instantly
+	# (2.380 m walked out), so it is a penetration state, not a direction.
+	# With the flag on, every spot on the level releases (see
+	# tools/probe_fix_candidates.gd). A box shape would also release, but it would
+	# turn the thin broken walls into 5.66 x 0.55 m solid slabs and delete the
+	# cover the layout is built around, so the flag is the right fix.
+	shape.backface_collision = true
 	cs.shape = shape
 	body.add_child(cs)
 

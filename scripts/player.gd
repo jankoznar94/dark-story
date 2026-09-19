@@ -25,12 +25,32 @@ enum Atk { NONE, WINDUP, ACTIVE, RECOVER }
 enum Kind { LIGHT, HEAVY }
 
 @export_group("Movement")
-@export var walk_speed: float = 2.6          ## deliberately slow (D2 walk pace)
-@export var run_speed: float = 4.4           ## the "run" the player asked for
-@export var accel: float = 14.0
-@export var decel: float = 20.0
-@export var turn_speed: float = 9.0          ## how fast the body swings to face a new direction
-@export var turn_speed_attacking: float = 3.4 ## ... and how fast while swinging (reduced, not zero)
+## PACING CHANGE (Jan, Sept 2026): "the run speed is too high, make it about 30 %
+## slower, and adapt the animation to it."
+##
+## Top speeds scaled by 0.70:
+##   walk  2.6 -> 1.8      run  4.4 -> 3.05
+##
+## The clip retime follows automatically, because `play_locomotion()` is fed the
+## ACTUAL ground speed - that is the "adapt the animation" half of the request, and
+## no new constant is needed for it. What is NOT automatic is the feel: the accel,
+## decel and turn figures below are RATES, and leaving them alone would make the
+## character cover less ground per second while still snapping to full speed and
+## spinning just as fast - twitchy, which is the opposite of the point.
+##
+## So they are scaled to preserve the invariants that produce the feel:
+##   time to top speed  4.4/14.0 = 0.314 s  ->  3.05/9.7  = 0.314 s
+##   time to a stop     4.4/20.0 = 0.220 s  ->  3.05/13.9 = 0.219 s
+##   turn radius        2.6/9.0  = 0.289 m  ->  1.8/6.2   = 0.290 m
+##   turn while swinging is a fixed FRACTION of the free turn rate (0.38 x), so it
+##   scales with it: 3.4 -> 2.35. Never share one constant between the two call
+##   sites or the pair silently collapses into one rate.
+@export var walk_speed: float = 1.8          ## deliberately slow (D2 walk pace)
+@export var run_speed: float = 3.05          ## 0.70 x the old 4.4, per Jan's request
+@export var accel: float = 9.7
+@export var decel: float = 13.9
+@export var turn_speed: float = 6.2          ## how fast the body swings to face a new direction
+@export var turn_speed_attacking: float = 2.35 ## ... and how fast while swinging (reduced, not zero)
 @export var run_deadzone: float = 0.72       ## joystick magnitude that means "run"
 
 @export_group("Light attack (timing in seconds)")
@@ -138,9 +158,91 @@ func is_dead() -> bool:
 
 
 ## Movement input this frame, normalised joystick + keyboard in one vector.
+##
+## ---------------------------------------------------------------- WHY THIS EXISTS
+## Jan's report (Sept 2026): "the run speed is still dependent on the position of
+## the left joystick. When my finger is only slightly outside the circle he runs
+## slowly, when it is far outside he runs at full speed. The run speed should be
+## CONSTANT."
+##
+## He is right, and the earlier "constant run speed" test could not see it. Read
+## Godot's VirtualJoystick source: `_update_joystick()` does NOT emit a unit
+## vector for a pushed stick. Above the dead zone it computes
+##
+##     scaled = inverse_lerp(deadzone*R, R, length)      # 0.0 .. 1.0
+##     input_vector = direction * scaled
+##
+## and `_handle_input_actions()` presses each action with that magnitude. So the
+## joystick hands out a CONTINUOUS 0..1 strength, and the old code fed it straight
+## into `target_vel = want * current_speed(iv)`. A stick 30 % out walked at 0.30 x
+## run speed and only a fully-deflected one reached `run_speed` - exactly the
+## graded speed Jan describes. `Input.get_vector()` does not launder it either:
+## it combines action strengths per axis and only normalises when the result is
+## LONGER than 1, so it returns the graded vector unchanged.
+##
+## tools/test_controls.gd missed it because it pressed the actions with
+## `Input.action_press(axis, 1.0)` - a synthetic FULL deflection, i.e. it measured
+## the one case that already worked. The assertion it made in response was true and
+## useless.
+##
+## THE FIX: the stick is a DIRECTION, not a throttle. `get_vector` keeps whatever
+## magnitude it likes and `_move_input` returns `direction * speed_magnitude`,
+## where the magnitude is a per-device setting:
+##
+##   * TOUCH (and the virtual joystick generally) -> `touch_move_magnitude`, 1.0:
+##     any deflection past the dead zone travels at FULL speed. That is the
+##     constant run Jan asked for. Note this is NOT the same thing as the "run when
+##     the stick is pushed far" rule that was tried and removed - run is still the
+##     separate latch/action, never derived from the stick. It only decides HOW
+##     FAST you travel while running, never WHETHER you run.
+##   * KEYBOARD -> whatever the device reports, i.e. `Input.get_vector`'s own
+##     magnitude, which for digital keys is 1.0 anyway.
+##
+## `deadzone_ratio` on the joystick is 0.18 and `VirtualJoystick` applies it
+## itself, so anything that arrives here already passed a deliberate push.
+##
+## The keyboard branch is what makes the test meaningful: a test can drive the
+## actions with a graded strength and MUST then see a graded speed (that is the
+## device being honest), while the same graded push through a VirtualJoystick must
+## come out at full speed. A single rule that forces 1.0 for everything would pass
+## the joystick case and destroy analogue input everywhere else.
+const JOYSTICK_DEVICE_DEADZONE := 0.15   ## ignore stick noise on the DEVICE check
+@export var touch_move_magnitude: float = 1.0  ## stick deflection -> travel speed (1.0 = constant)
+
+
+## True while a virtual stick is driving the movement, pushed by main.gd from the
+## HUD's joystick state (VirtualJoystick.is_pressed is C++-only, so the HUD tracks
+## it). A stick deflection is a DIRECTION here, not a throttle - see _move_input().
+var stick_active: bool = false
+
+
+## Called by main.gd once per frame, exactly like set_run().
+func set_stick_active(on: bool) -> void:
+	stick_active = on
+
+
+## True when this frame's movement came from a stick rather than keys.
+##
+## A real joypad axis is checked first: when analogue movement is wired to the
+## actions (the gamepad path), the stick's own partial deflection is a legitimate
+## throttle and must stay one. The virtual stick is the case that must NOT be, which
+## is what the HUD flag covers.
+func input_is_stick() -> bool:
+	for d in Input.get_connected_joypads():
+		if absf(Input.get_joy_axis(d, JOY_AXIS_LEFT_X)) > JOYSTICK_DEVICE_DEADZONE \
+				or absf(Input.get_joy_axis(d, JOY_AXIS_LEFT_Y)) > JOYSTICK_DEVICE_DEADZONE:
+			return true
+	return stick_active
+
+
 func _move_input() -> Vector2:
 	var iv := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	last_move_input = iv
+	if iv.length() < 0.001:
+		return Vector2.ZERO
+	if input_is_stick():
+		# direction, not throttle: full speed for any deliberate deflection
+		return iv.normalized() * touch_move_magnitude
 	return iv
 
 

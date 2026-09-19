@@ -131,6 +131,13 @@ func _setup_world() -> void:
 
 func _spawn_posts() -> void:
 	## Three inert posts so we can check that a swing lands where it looks like it lands.
+	##
+	## The collision is a BoxShape3D here, NOT the trimesh that levels/ use, and that
+	## is deliberate: measured, the hero stops cleanly at a box prop and comes away
+	## from it in any direction. A trimesh needs `backface_collision = true` to
+	## behave (see level_builder.gd); a solid box has no thin faces to embed in at
+	## all, so there is no flag to get wrong. These posts are also what
+	## tools/test_attack.gd swings at, so keeping them solid keeps that test honest.
 	var spots := [Vector3(0, 0, -3.2), Vector3(2.6, 0, -1.0), Vector3(-2.4, 0, -2.0)]
 	for i in spots.size():
 		var body := StaticBody3D.new()
@@ -237,6 +244,12 @@ func _process(_delta: float) -> void:
 	if run_now != _run_action:
 		_run_action = run_now
 		player.set_run(run_now)
+
+	# Which DEVICE is driving the movement this frame. A virtual stick hands out a
+	# continuous strength, and the player must read that as a direction rather than a
+	# throttle or the run speed grades with how far the thumb is pushed (Jan's
+	# report). Pushed once per frame, same pattern as the RUN latch.
+	player.set_stick_active(bool(hud.stick_active))
 
 	var st: String = player.state_name()
 	var f: Vector3 = player.facing

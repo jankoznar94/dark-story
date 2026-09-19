@@ -50,6 +50,11 @@ var run_button: Button
 ## others.
 var run_latched: bool = false
 
+## True while the virtual stick is being held. Tracked from the joystick's own
+## signals because `VirtualJoystick.is_pressed` is C++-only (never bound), and read
+## by main.gd -> player.gd once per frame. See the note in _build().
+var stick_active: bool = false
+
 var hp_fill: ColorRect
 var hp_label: Label
 var enemy_fill: ColorRect
@@ -74,6 +79,16 @@ func _build() -> void:
 	joystick.action_up = "move_up"
 	joystick.action_down = "move_down"
 	joystick.deadzone_ratio = 0.18
+	# A virtual stick reports a CONTINUOUS strength above its dead zone, so the
+	# player has to know whether a stick is driving this frame: a stick push is a
+	# DIRECTION (full speed for any deliberate deflection) while the arrow keys keep
+	# reporting their own magnitude. VirtualJoystick exposes `is_pressed` only to
+	# C++ (it is not in _bind_methods), so the state is tracked here from the
+	# signals and pushed to the player by main.gd - exactly like the RUN latch.
+	joystick.pressed.connect(func() -> void: stick_active = true)
+	joystick.released.connect(func(_v: Vector2) -> void: stick_active = false)
+	joystick.flick_canceled.connect(func() -> void: stick_active = false)
+	joystick.tree_exiting.connect(func() -> void: stick_active = false)
 	add_child(joystick)
 
 	for slot in SLOTS:

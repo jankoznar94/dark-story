@@ -106,6 +106,21 @@ func _test_run_latch(main: Node, hud: Node) -> void:
 	_ok("released run action = walk again", not player.wants_run(idle_in))
 
 
+## How far a body travelling at `v` can get from a standstill in `t` seconds, given
+## the player's own accel. The "did he move" bar has to be derived from this rather
+## than picked: peak speed is reached after only 0.314 s of the 0.7 s window, so the
+## AVERAGE is ~0.77 x top speed and a bar set at the peak value fails a run that is
+## working perfectly. Blocked reads 0.000 m, so a bar at 60 % of the physical
+## maximum still separates the two unambiguously.
+func _travel_bar(player: Node, v: float, t: float) -> float:
+	var a: float = player.accel
+	var to_top: float = v / a
+	var dist: float = 0.5 * a * to_top * to_top
+	if t > to_top:
+		dist += v * (t - to_top)
+	return dist * 0.6
+
+
 func _ok(label: String, cond: bool, detail: String = "") -> void:
 	checks_run += 1
 	if cond:
@@ -115,22 +130,33 @@ func _ok(label: String, cond: bool, detail: String = "") -> void:
 		fails.append(label)
 
 
-## Jan's report: "the run speed seems to increase the more I pull the stick to the
-## side, but the run speed should be constant."
+## Jan's report, TWICE. The first time: "the run speed seems to increase the more I
+## pull the stick to the side, but the run speed should be constant." The answer
+## then was that `Input.get_vector` normalises, and the test pressed every action
+## with `Input.action_press(axis, 1.0)` - a synthetic FULL deflection.
 ##
-## The movement code is `target_vel = want * current_speed(iv)`, where `want` is the
-## RAW Input.get_vector() output. Nothing normalises it, so the claim is only true
-## if get_vector itself cannot return a length > 1. Rather than assume that, this
-## presses the move actions with explicit strengths - which is exactly what a
-## virtual joystick does - and then measures the character's real top speed.
+## The second report says the same thing again and is right: "when my finger is only
+## slightly outside the circle he runs slowly, when it is far outside he runs at full
+## speed." The old test could not see it because it only ever measured a full
+## deflection, i.e. the one case that already worked. Read Godot's
+## `VirtualJoystick::_update_joystick()`: above the dead zone it emits
+## `direction * inverse_lerp(deadzone*R, R, length)`, a CONTINUOUS 0..1 strength, and
+## `Input.get_vector` returns that graded vector unchanged (it normalises only above
+## length 1). So the stick really was a throttle.
 ##
-## Measured on this build: get_vector normalises every deflection above 0.707, so a
-## full diagonal returns length 1.0000 and the run stays at 4.400 m/s. The test
-## exists so that a future change (an un-normalised deadzone curve, a third stick
-## source, a different Godot behaviour) fails here instead of on Jan's phone.
+## This test therefore asserts the opposite for the stick, and it does so through the
+## real mechanism rather than by poking a property:
+##   * a GRADED keyboard press (a device reporting partial strength, e.g. an analogue
+##     gamepad axis) must still produce a graded speed - that is the device being
+##     honest, and a blanket "force magnitude 1.0" fix would break it;
+##   * the SAME graded deflection with the stick flagged must come out at FULL speed
+##     and the top speed must not vary with the deflection.
+## The regression that matters is the last one: the spread across 0.30 / 0.60 / 1.0
+## deflections was 0.30 x run_speed before the fix.
 func _test_constant_run_speed(main: Node) -> void:
 	print("== run speed is CONSTANT, whatever the stick deflection ==")
 	var player: Node = main.get_node("Player")
+	var hud: Node = main.get_node("HUD")
 	var axes := ["move_up", "move_down", "move_left", "move_right"]
 
 	# DRAIN FIRST. The previous sub-test leaves an attack in flight, and translation
@@ -147,57 +173,133 @@ func _test_constant_run_speed(main: Node) -> void:
 		"state %s" % player.state_name())
 
 	# CLEAR GROUND. The attack sub-test leaves the player standing right against the
-	# post it swung at, and one run of 90 frames (1.5 s at 4.4 m/s = 6.6 m) drives
-	# him into the post 3.2 m away - the measurement then reads 0.000 m/s, which is a
-	# collision and not a movement bug. So each deflection starts from the arena
-	# centre and runs only ~0.7 s (about 2.3 m of travel), and the test ASSERTS that
-	# he actually travelled rather than being blocked.
+	# post it swung at, and a run of 90 frames drives him into the post 3.2 m away -
+	# the measurement then reads 0.000 m/s, which is a collision and not a movement
+	# bug. So each deflection starts from the arena centre and runs only ~0.7 s, and
+	# the test ASSERTS that he actually travelled rather than being blocked.
 	var start := Vector3(0, 0, 0)
 
-	var deflections := [
-		["straight, full", [["move_up", 1.0]]],
-		["sideways, full", [["move_left", 1.0]]],
-		["diagonal, full", [["move_up", 1.0], ["move_left", 1.0]]],
-		["diagonal, 0.75", [["move_up", 0.75], ["move_left", 0.75]]],
-		["diagonal, 0.9", [["move_up", 0.9], ["move_left", 0.9]]],
-		["near-full diagonal 0.95", [["move_up", 0.95], ["move_left", 0.95]]],
-	]
-	var speeds: Array = []
-	for d in deflections:
-		var name: String = d[0]
-		var presses: Array = d[1]
+	var deflections := [0.30, 0.60, 0.90, 1.0]
+	var stick_speeds: Array = []
+	var key_speeds: Array = []
+
+	# --- the keyboard/gamepad path: the device's own magnitude must be respected ---
+	print("  -- a graded press with NO stick flagged (keyboard / analogue pad) --")
+	for f in deflections:
 		for a in axes:
 			Input.action_release(a)
-		for p in presses:
-			Input.action_press(p[0], p[1])
+		Input.action_press("move_up", f)
+		await physics_frame
 		var iv: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
-		_ok("stick %s: input length is normalised (<= 1.0)" % name,
-			iv.length() <= 1.0001, "len %.4f" % iv.length())
+		var want: Vector2 = player.call("_move_input")
+		hud.stick_active = false
 		player.global_position = start
 		player.velocity = Vector3.ZERO
 		player.set_run(true)
-		var free := 0
+		var peak := 0.0
 		for i in 42:
 			await physics_frame
-			if player.velocity.length() > player.run_speed * 0.95:
-				free += 1
+			peak = maxf(peak, player.velocity.length())
 		var travelled: float = player.global_position.distance_to(start)
-		_ok("stick %s: the character actually moved (not blocked)" % name,
-			travelled > 1.0, "travelled %.2f m" % travelled)
-		var v: float = player.run_speed if free > 0 else player.velocity.length()
-		speeds.append(v)
-		_ok("stick %s: run speed equals run_speed" % name,
-			absf(v - player.run_speed) < 0.05,
-			"%.3f m/s vs %.3f" % [v, player.run_speed])
+		# The expected speed follows the ACTUAL input length, not the press strength:
+		# `Input.get_vector` applies each action's own deadzone (`input/<action>/
+		# deadzone` is 0.2) and rescales, so a 0.30 press arrives as 0.125. Asserting
+		# against `f` here would be asserting the wrong quantity.
+		var expected: float = player.run_speed * iv.length()
+		_ok("pad %.2f: input stays graded (%.3f) and speed follows it" % [f, iv.length()],
+			absf(want.length() - iv.length()) < 0.02 and absf(peak - expected) < 0.15,
+			"input %.3f, top speed %.3f m/s vs wanted %.3f" % [want.length(), peak, expected])
+		# the bar scales with the distance that deflection can actually cover in
+		# 0.7 s: a flat 0.3 m bar fails a legitimately slow press (0.125 x 3.05
+		# covers 0.27 m) and would be asserting the wrong thing
+		_ok("pad %.2f: the character actually moved (not blocked)" % f,
+			travelled > _travel_bar(player, expected, 0.7),
+			"travelled %.2f m, bar %.2f m"
+			% [travelled, _travel_bar(player, expected, 0.7)])
+		key_speeds.append(peak)
+		player.set_run(false)
 	for a in axes:
 		Input.action_release(a)
-	player.set_run(false)
 
+	# --- the VIRTUAL STICK: a graded deflection must NOT grade the speed ---
+	print("  -- the same graded deflection with the stick flagged (the fix) --")
+	for f in deflections:
+		for a in axes:
+			Input.action_release(a)
+		Input.action_press("move_up", f)
+		await physics_frame
+		var iv: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		_ok("stick %.2f: the joystick really does report a graded strength" % f,
+			iv.length() > 0.05 and iv.length() < 1.0001,
+			"get_vector len %.4f" % iv.length())
+		# NOTE: flag the HUD, not the player. main.gd pushes `hud.stick_active` into
+		# the player EVERY frame, so a flag set directly on the player is reverted
+		# before the first physics frame of the measurement - which is how the first
+		# run of this test still measured a graded speed after the fix.
+		# Set it on the HUD (main.gd re-pushes it every frame) AND on the player, so
+		# the very first iteration cannot read a stale value before main.gd's
+		# _process has run. main.gd then keeps them in sync from here on.
+		hud.stick_active = true
+		player.set_stick_active(true)
+		await process_frame
+		var want: Vector2 = player.call("_move_input")
+		_ok("stick %.2f: the player reads it as a DIRECTION (full magnitude)" % f,
+			absf(want.length() - player.touch_move_magnitude) < 0.001,
+			"_move_input len %.4f" % want.length())
+		player.global_position = start
+		player.velocity = Vector3.ZERO
+		player.set_run(true)
+		var peak := 0.0
+		for i in 42:
+			await physics_frame
+			peak = maxf(peak, player.velocity.length())
+		var travelled: float = player.global_position.distance_to(start)
+		_ok("stick %.2f: top speed is run_speed" % f,
+			absf(peak - player.run_speed) < 0.05,
+			"%.3f m/s vs %.3f" % [peak, player.run_speed])
+		_ok("stick %.2f: the character actually moved (not blocked)" % f,
+			travelled > _travel_bar(player, player.run_speed, 0.7),
+			"travelled %.2f m, bar %.2f m"
+			% [travelled, _travel_bar(player, player.run_speed, 0.7)])
+		stick_speeds.append(peak)
+		player.set_run(false)
+	for a in axes:
+		Input.action_release(a)
+	hud.stick_active = false
+
+	# --- the regression itself, as ONE number ---
 	var spread: float = 0.0
-	for s in speeds:
-		spread = maxf(spread, absf(s - speeds[0]))
-	_ok("run speed does not vary with stick deflection", spread < 0.05,
-		"spread %.3f m/s over %d deflections" % [spread, speeds.size()])
+	for s in stick_speeds:
+		spread = maxf(spread, absf(s - stick_speeds[0]))
+	_ok("run speed does NOT vary with stick deflection",
+		spread < 0.05,
+		"spread %.3f m/s over %d deflections (was 0.30 x run_speed = %.2f m/s before the fix)"
+		% [spread, stick_speeds.size(), 0.30 * player.run_speed])
+	var key_spread: float = 0.0
+	for s in key_speeds:
+		key_spread = maxf(key_spread, absf(s - key_speeds[0]))
+	_ok("...but a GRADED device input still grades the speed (not force-1.0)",
+		key_spread > 0.5,
+		"spread %.3f m/s across the same deflections with no stick flagged" % key_spread)
+
+	# --- and the HUD must actually track the joystick ---
+	print("  -- the HUD knows when the stick is held --")
+	var joy: VirtualJoystick = hud.joystick
+	_ok("the HUD listens to the joystick's pressed signal",
+		joy.pressed.get_connections().size() >= 1)
+	_ok("the HUD listens to the joystick's released signal",
+		joy.released.get_connections().size() >= 1)
+	_ok("the HUD listens to flick_canceled (a flicked stick must not stick)",
+		joy.flick_canceled.get_connections().size() >= 1)
+	hud.stick_active = false
+	joy.pressed.emit()
+	await process_frame
+	_ok("holding the stick sets the flag", hud.stick_active)
+	await process_frame
+	_ok("main.gd pushes the flag into the player", player.stick_active)
+	joy.released.emit(Vector2.ZERO)
+	await process_frame
+	_ok("releasing the stick clears the flag", not hud.stick_active)
 
 
 func _test_circles(hud: Node) -> void:
