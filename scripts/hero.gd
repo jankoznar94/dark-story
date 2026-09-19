@@ -88,8 +88,17 @@ func _play(clip: String, speed: float = 1.0, loop: bool = true) -> void:
 	if _current == clip and anim.is_playing():
 		return
 	_current = clip
-	anim.play(clip, -1.0, speed)
-	# Set it explicitly: play()'s custom_speed is not reliable for RESETTING a
+	# custom_speed stays 1.0 and the retime is carried by `speed_scale` ALONE.
+	#
+	# MEASURED (tools/probe_clip_rate2.gd, matrix of custom_speed x speed_scale):
+	# Godot 4 MULTIPLIES the two. `play(clip, -1.0, s)` together with
+	# `speed_scale = s` ran every locomotion clip at s^2 - the walk at 2.734^2 =
+	# 7.5x and the run at 2.641^2 = 7.0x. Jan reported it as "after switching from
+	# walk to run the animation is extremely fast, and only settles after stopping
+	# and starting again": the run's acceleration window changes the rate the most,
+	# so the doubled multiplier is worst exactly at the switch.
+	anim.play(clip, -1.0, 1.0)
+	# Set explicitly: play()'s custom_speed is not reliable for RESETTING a
 	# speed_scale left over from the walk clip, and the idle then ran at 2.7x.
 	anim.speed_scale = speed
 	var a: Animation = anim.get_animation(clip)

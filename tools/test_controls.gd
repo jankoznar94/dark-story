@@ -43,6 +43,7 @@ func _run() -> void:
 	await _test_layout(hud)
 	await _test_hold_to_attack(main, hud)
 	await _test_run_latch(main, hud)
+	await _test_constant_run_speed(main)
 
 	print("")
 	print("checks executed: ", checks_run)
@@ -112,6 +113,91 @@ func _ok(label: String, cond: bool, detail: String = "") -> void:
 	else:
 		print("  FAIL ", label, "  ", detail)
 		fails.append(label)
+
+
+## Jan's report: "the run speed seems to increase the more I pull the stick to the
+## side, but the run speed should be constant."
+##
+## The movement code is `target_vel = want * current_speed(iv)`, where `want` is the
+## RAW Input.get_vector() output. Nothing normalises it, so the claim is only true
+## if get_vector itself cannot return a length > 1. Rather than assume that, this
+## presses the move actions with explicit strengths - which is exactly what a
+## virtual joystick does - and then measures the character's real top speed.
+##
+## Measured on this build: get_vector normalises every deflection above 0.707, so a
+## full diagonal returns length 1.0000 and the run stays at 4.400 m/s. The test
+## exists so that a future change (an un-normalised deadzone curve, a third stick
+## source, a different Godot behaviour) fails here instead of on Jan's phone.
+func _test_constant_run_speed(main: Node) -> void:
+	print("== run speed is CONSTANT, whatever the stick deflection ==")
+	var player: Node = main.get_node("Player")
+	var axes := ["move_up", "move_down", "move_left", "move_right"]
+
+	# DRAIN FIRST. The previous sub-test leaves an attack in flight, and translation
+	# is blocked for the whole commitment window - measuring then reads 0.000 m/s and
+	# the failure lands on this test instead of on nothing at all. (It did exactly
+	# that on the first run: "run speed 0.000 m/s vs 4.400".)
+	Input.action_release("attack")
+	Input.action_release("skill_1")
+	for i in 300:
+		if not player.is_busy():
+			break
+		await physics_frame
+	_ok("no attack in flight before measuring run speed", not player.is_busy(),
+		"state %s" % player.state_name())
+
+	# CLEAR GROUND. The attack sub-test leaves the player standing right against the
+	# post it swung at, and one run of 90 frames (1.5 s at 4.4 m/s = 6.6 m) drives
+	# him into the post 3.2 m away - the measurement then reads 0.000 m/s, which is a
+	# collision and not a movement bug. So each deflection starts from the arena
+	# centre and runs only ~0.7 s (about 2.3 m of travel), and the test ASSERTS that
+	# he actually travelled rather than being blocked.
+	var start := Vector3(0, 0, 0)
+
+	var deflections := [
+		["straight, full", [["move_up", 1.0]]],
+		["sideways, full", [["move_left", 1.0]]],
+		["diagonal, full", [["move_up", 1.0], ["move_left", 1.0]]],
+		["diagonal, 0.75", [["move_up", 0.75], ["move_left", 0.75]]],
+		["diagonal, 0.9", [["move_up", 0.9], ["move_left", 0.9]]],
+		["near-full diagonal 0.95", [["move_up", 0.95], ["move_left", 0.95]]],
+	]
+	var speeds: Array = []
+	for d in deflections:
+		var name: String = d[0]
+		var presses: Array = d[1]
+		for a in axes:
+			Input.action_release(a)
+		for p in presses:
+			Input.action_press(p[0], p[1])
+		var iv: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		_ok("stick %s: input length is normalised (<= 1.0)" % name,
+			iv.length() <= 1.0001, "len %.4f" % iv.length())
+		player.global_position = start
+		player.velocity = Vector3.ZERO
+		player.set_run(true)
+		var free := 0
+		for i in 42:
+			await physics_frame
+			if player.velocity.length() > player.run_speed * 0.95:
+				free += 1
+		var travelled: float = player.global_position.distance_to(start)
+		_ok("stick %s: the character actually moved (not blocked)" % name,
+			travelled > 1.0, "travelled %.2f m" % travelled)
+		var v: float = player.run_speed if free > 0 else player.velocity.length()
+		speeds.append(v)
+		_ok("stick %s: run speed equals run_speed" % name,
+			absf(v - player.run_speed) < 0.05,
+			"%.3f m/s vs %.3f" % [v, player.run_speed])
+	for a in axes:
+		Input.action_release(a)
+	player.set_run(false)
+
+	var spread: float = 0.0
+	for s in speeds:
+		spread = maxf(spread, absf(s - speeds[0]))
+	_ok("run speed does not vary with stick deflection", spread < 0.05,
+		"spread %.3f m/s over %d deflections" % [spread, speeds.size()])
 
 
 func _test_circles(hud: Node) -> void:
