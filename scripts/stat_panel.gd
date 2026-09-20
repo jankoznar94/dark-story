@@ -24,9 +24,20 @@ signal item_used(item)
 
 
 func _ready() -> void:
+	# THE RECT IS THE HIT AREA. An anchors preset alone does NOT give a Control a
+	# size when its parent is a CanvasLayer - measured: `size == (0, 0)` with the
+	# anchors at 0..1, so every tap fell outside and `_gui_input` was never called.
+	# This window was hit-tested only through direct `_gui_input` calls in the
+	# tests, so the defect had never been visible.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	get_viewport().size_changed.connect(_resize_to_viewport)
+	_resize_to_viewport()
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+
+
+func _resize_to_viewport() -> void:
+	size = get_viewport_rect().size
 
 
 func setup(p_stats, p_inventory) -> void:

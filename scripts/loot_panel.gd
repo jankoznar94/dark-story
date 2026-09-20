@@ -47,11 +47,24 @@ var _box: Rect2 = Rect2()
 
 
 func _ready() -> void:
+	# THE RECT IS THE HIT AREA, and an anchors preset alone does NOT give a Control
+	# a size when its parent is a CanvasLayer: measured, `size == (0, 0)` with the
+	# anchors set to 0..1, so every tap fell outside the panel and `_gui_input` was
+	# never called. Jan's report - "the items in the body cannot be taken" - is
+	# exactly that, and it looked like a broken list rather than a broken rect.
+	# The size is therefore tied to the viewport, and re-applied on every resize.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_resize_to_viewport()
+	get_viewport().size_changed.connect(_resize_to_viewport)
 	# IGNORE while closed: the taps belong to the game then. STOP while open, so
 	# the tap that takes an item cannot also reach the world.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false
+
+
+func _resize_to_viewport() -> void:
+	size = get_viewport_rect().size
+	layout_now()
 
 
 func setup(p_loot, p_inventory, p_stats) -> void:
@@ -123,6 +136,10 @@ func layout_now() -> void:
 	var cr: float = title_h * 0.8
 	_close_rect = Rect2(Vector2(_box.end.x - PAD - cr, _box.position.y + (title_h - cr) * 0.5),
 		Vector2(cr, cr))
+	# NO `queue_redraw()` HERE. It used to end this function, and `_draw()` calls
+	# this function - so the Control marked itself dirty from inside its own draw
+	# and could redraw forever (the "the game locks up" half of the report). Every
+	# caller that CHANGES something already asks for the repaint itself.
 
 
 # ---------------------------------------------------------------------- input
@@ -144,7 +161,6 @@ func _gui_input(event: InputEvent) -> void:
 ## A tap: an item row takes that item, the bottom row takes everything, the close
 ## box closes, and anywhere else on the backdrop closes too (the phone habit).
 func _handle(p: Vector2) -> void:
-	layout_now()
 	if _close_rect.has_point(p):
 		set_open(false)
 		return

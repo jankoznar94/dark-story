@@ -76,9 +76,20 @@ const DRAG_SLOP := 12.0
 func _ready() -> void:
 	# The window covers the screen so it can swallow taps; `_draw` only paints the
 	# panel itself, so the arena stays visible around it.
+	# THE RECT IS THE HIT AREA. An anchors preset alone does NOT give a Control a
+	# size when its parent is a CanvasLayer - measured: `size == (0, 0)` with the
+	# anchors at 0..1, so every tap fell outside and `_gui_input` was never called.
+	# This window was hit-tested only through direct `_gui_input` calls in the
+	# tests, so the defect had never been visible.
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	get_viewport().size_changed.connect(_resize_to_viewport)
+	_resize_to_viewport()
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
+
+
+func _resize_to_viewport() -> void:
+	size = get_viewport_rect().size
 
 
 func setup(p_model, p_stats) -> void:
@@ -125,7 +136,10 @@ func layout_now() -> void:
 	_bag_origin = _panel.position + Vector2(PAD, PAD + m * 0.045)
 	_slot_origin = _bag_origin + Vector2(_cell * float(Inv.COLS) + GAP, 0.0)
 	_slot_size = Vector2(_cell * float(SLOT_COLS), _cell * float(SLOT_ROWS))
-	queue_redraw()
+	# NO `queue_redraw()` HERE. `_draw()` calls this function, so ending it with a
+	# redraw request made the Control mark itself dirty from inside its own draw -
+	# a redraw loop on every open panel. Callers that CHANGE something already ask
+	# for the repaint themselves (set_open, the model's `changed` signal).
 
 
 func cell_at(p: Vector2) -> Vector2i:

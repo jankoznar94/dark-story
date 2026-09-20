@@ -58,34 +58,45 @@ func _ready() -> void:
 	camera = get_viewport().get_camera_3d()
 
 
-## Rolls `ilvl`-appropriate loot for a monster that died at `origin`, puts a BODY
-## there and stores the items inside it. Returns the number of items the body
-## holds (0 means no body was created - nothing to open).
-func spawn_for_death(origin: Vector3, ilvl: int, monster_name: String = "?",
-		rng: RandomNumberGenerator = null) -> int:
+## Rolls `ilvl`-appropriate loot for a monster that died and makes THAT MONSTER the
+## corpse. Returns the number of items the body holds (0 means nothing to open).
+##
+## THE MONSTER ITSELF IS THE CORPSE - no second object is created. Jan's report
+## (Sept 2026): "when an enemy dies, its corpse shows up as another separate object
+## next to the real 3D model. I want the REAL corpse to be the one that gets picked
+## - directly the 3D model that fought and died." So the enemy node, which already
+## stays in the world after death, gets a label and a tap target as a CHILD, and its
+## own rigged model is tipped over onto the ground.
+##
+## The enemy also stops colliding: a corpse must not block a step or swallow a
+## swing, and both of those are layer 1 behaviours.
+func spawn_for_death(enemy: Node3D, ilvl: int, rng: RandomNumberGenerator = null) -> int:
+	if enemy == null or not is_instance_valid(enemy):
+		return 0
 	var items: Array = ItemGen.roll_drop(ilvl, rng)
 	if items.is_empty():
 		return 0
-	spawn_body(origin, items, rng, monster_name)
+	var node: Node3D = LootBody.new()
+	node.name = "Corpse"
+	enemy.add_child(node)
+	node.dress_corpse(enemy, str(enemy.monster_name))
+	_bodies.append(node)
+	_loot[node] = items
 	return items.size()
 
 
-## A body at `origin` holding `items`. Kept separate from the roll so a test (and
-## a chest, later) can leave a hand-built body behind.
+## A STAND-IN body at `origin` holding `items`, for a test (or a chest later) where
+## there is no monster to adopt. The real path is `spawn_for_death`.
 ##
-## `monster_name` is what the body is LABELLED with. It comes from the monster
-## that fell rather than from the first item: a body reading "Tělo: krátký meč"
-## tells the player the wrong thing about what is lying there.
+## `monster_name` is what the body is LABELLED with: a body reading "Tělo: krátký
+## meč" tells the player the wrong thing about what is lying there.
 func spawn_body(origin: Vector3, items: Array, rng: RandomNumberGenerator = null,
 		monster_name: String = "?") -> Node3D:
-	var spot: Vector3 = _find_clear_spot(origin, rng)
 	var node: Node3D = LootBody.new()
 	node.name = "Body_%d" % (_bodies.size() + 1)
 	add_child(node)
-	# setup before the position: the node builds its meshes in _ready, and the
-	# label must say which monster fell before it is ever drawn.
 	node.setup(monster_name)
-	node.global_position = spot
+	node.global_position = _find_clear_spot(origin, rng)
 	_bodies.append(node)
 	_loot[node] = items
 	return node

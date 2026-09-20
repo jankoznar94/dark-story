@@ -72,6 +72,8 @@ func _run() -> void:
 	# running at its first suspension point and its output interleaves with the
 	# next section's - which made a real failure ("the hero sheet opens") print
 	# inside a different section's block, and it took a round of guessing to see it.
+	_test_panels_are_hit_testable()
+	_test_layout_does_not_redraw_itself()
 	await _test_pause_and_resume()
 	await _test_ways_out()
 	await _test_body_left_by_a_kill()
@@ -101,6 +103,62 @@ func _test_no_direct_input() -> void:
 		f.close()
 	_ok("every gameplay script reads input through input_gate.gd", offenders.is_empty(),
 		str(offenders))
+
+
+# ------------------------------------------- 0. the panel is a real hit area
+## Jan's report: "the corpse can be opened, but the items cannot be taken from it."
+## Two defects, both structural, both measured:
+##   * the panel had `size == (0, 0)`, so every tap fell OUTSIDE it and `_gui_input`
+##     was never called. An anchors preset does not give a Control a size when its
+##     parent is a CanvasLayer, and every earlier test called `_gui_input` directly,
+##     which skips the rect test - so the window looked perfectly healthy.
+##   * `_draw()` called `layout_now()`, which ended with `queue_redraw()`: the
+##     Control marked itself dirty from inside its own draw.
+func _test_panels_are_hit_testable() -> void:
+	print("== 0. every panel really covers the screen (a tap has somewhere to land) ==")
+	var hud: Node = main.get_node("HUD")
+	var vs: Vector2 = root.get_visible_rect().size
+	_ok("the viewport has a real size to lay out from", vs.x > 0.0 and vs.y > 0.0,
+		str(vs))
+	for pair in [["loot_panel", hud.loot_panel], ["inventory_ui", hud.inventory_ui],
+			["stat_panel", hud.stat_panel]]:
+		var c: Control = pair[1]
+		_ok("%s covers the screen" % pair[0],
+			c.size.x >= vs.x * 0.99 and c.size.y >= vs.y * 0.99,
+			"size %s vs viewport %s" % [str(c.size), str(vs)])
+		_ok("%s would receive a tap in the middle of the screen" % pair[0],
+			Rect2(c.position, c.size).has_point(vs * 0.5),
+			"rect %s" % str(Rect2(c.position, c.size)))
+
+
+## A `_draw()` that marks itself dirty is an infinite redraw loop - the "the game
+## locks up" half of the report. `_draw` never runs headless, so this is asserted on
+## the SOURCE: `layout_now()` must not contain a `queue_redraw`.
+func _test_layout_does_not_redraw_itself() -> void:
+	print("== 0b. layout does not schedule a redraw from inside a draw ==")
+	var offenders: Array = []
+	for path in ["res://scripts/loot_panel.gd", "res://scripts/inventory_ui.gd",
+			"res://scripts/stat_panel.gd"]:
+		var f := FileAccess.open(path, FileAccess.READ)
+		if f == null:
+			offenders.append("%s: UNREADABLE" % path)
+			continue
+		var in_layout := false
+		var line_no := 0
+		while not f.eof_reached():
+			var line := f.get_line()
+			line_no += 1
+			var t := line.strip_edges()
+			if t.begins_with("func layout_now"):
+				in_layout = true
+				continue
+			if in_layout and t.begins_with("func "):
+				in_layout = false
+			if in_layout and not t.begins_with("#") and t.contains("queue_redraw"):
+				offenders.append("%s:%d" % [path.get_file(), line_no])
+		f.close()
+	_ok("no layout_now() queues a redraw (that is what made _draw() recurse)",
+		offenders.is_empty(), str(offenders))
 
 
 # ------------------------------------------------------- 1./2. pause and resume
@@ -263,6 +321,32 @@ func _test_body_left_by_a_kill() -> void:
 		b.label != null and b.label.text == "Tělo: %s" % b.monster_name
 		and b.monster_name != "?",
 		str(b.label.text) if b.label else "no label")
+
+	# --- THE CORPSE IS THE MONSTER ITSELF (Jan's report) -------------------------
+	# "its corpse shows up as another separate object next to the real 3D model. I
+	# want the REAL corpse to be the one that gets picked." So the body must be a
+	# CHILD of the monster node, and that monster's own rigged model must still be
+	# there - not replaced, and not duplicated beside it.
+	var parent: Node = b.get_parent()
+	_ok("the body lives INSIDE the monster node, not beside it",
+		parent != null and parent.has_method("is_dead"), str(parent.name) if parent else "none")
+	_ok("...and that monster is the one that died", parent != null and parent.is_dead())
+	_ok("the corpse keeps the monster's OWN rigged model",
+		parent != null and parent.get_model_root() != null
+		and parent.get_model_root().get_child_count() > 0,
+		"%d children under the model root" % (
+			parent.get_model_root().get_child_count() if parent != null
+			and parent.get_model_root() != null else -1))
+	# One corpse per death. A second node standing next to the model was the bug.
+	var stray := 0
+	for c in main.get_children():
+		if str(c.name).begins_with("Body_"):
+			stray += 1
+	_ok("no separate corpse object was spawned beside the monster", stray == 0,
+		"%d stray Body_ nodes" % stray)
+	_ok("the corpse no longer collides with the world (a body must not block a step)",
+		parent != null and parent.collision_layer == 0,
+		"layer %d" % (parent.collision_layer if parent else -1))
 
 
 # ------------------------------------------------------------ 5. opening a body

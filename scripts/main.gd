@@ -152,9 +152,11 @@ func _on_enemy_died(e: Node) -> void:
 	if loot == null or not is_instance_valid(e):
 		return
 	var ilvl: int = int(e.level) + 3
-	var n: int = loot.spawn_for_death(e.global_position, ilvl, str(e.monster_name))
+	# THE MONSTER ITSELF becomes the corpse: same rig, same tint, same death pose the
+	# player just watched. Nothing new is spawned next to it.
+	var n: int = loot.spawn_for_death(e, ilvl)
 	if n > 0:
-		print("[loot] %s left a body with %d item(s)" % [e.name, n])
+		print("[loot] %s is now a corpse holding %d item(s)" % [e.name, n])
 
 
 ## The HUD's "Tělo" button: open the nearest body within reach, if there is one.

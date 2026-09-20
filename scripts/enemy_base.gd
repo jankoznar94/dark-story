@@ -84,6 +84,9 @@ var _home: Vector3 = Vector3.ZERO
 ## Guards the death signal: `take_damage` can be called again on a corpse (a ray
 ## can still land on it), and loot must not fall twice for one monster.
 var _death_announced: bool = false
+## Set when this monster dies. The death clip plays once and is then FROZEN, so the
+## body the player opens is the last frame of the fight rather than a limp loop.
+var _freeze_after_death: bool = false
 
 # --- Movement / attack / vitals, all overridden from the catalogue in _ready ---
 @export_group("Movement")
@@ -285,8 +288,19 @@ func is_engaged() -> bool:
 	return aggro and not is_dead()
 
 
+## The rigged model this monster is wearing, so a corpse can be tipped over as the
+## real body rather than replaced by a second object (see loot_body.dress_corpse).
+func get_model_root() -> Node3D:
+	return model_root
+
+
 func _physics_process(delta: float) -> void:
 	if is_dead():
+		# FROZEN: stop dead in the death pose. `move_and_slide` here would let a
+		# corpse drift for the frames its decay velocity lasts, and re-playing the
+		# death clip would make it writhe forever.
+		if _freeze_after_death and anim != null:
+			anim.speed_scale = 0.0
 		return
 	## PAUSED: a full-screen panel (the bag, the hero sheet, an opened body) stops
 	## the world. Jan's report was "the game should pause when the inventory opens,
@@ -483,6 +497,12 @@ func take_damage(amount: float) -> void:
 		_state = Atk.NONE
 		velocity = Vector3.ZERO
 		_play(CLIP_DEATH, 1.0, false)
+		# A corpse must not block a step or swallow a swing, and both are layer 1
+		# behaviours. It stays in the world as the body the player opens.
+		collision_layer = 0
+		# and it keeps the pose it died in: the death clip is played ONCE and then
+		# frozen, so the body the player sees is the last frame of the fight.
+		_freeze_after_death = true
 		if not _death_announced:
 			_death_announced = true
 			died.emit()
