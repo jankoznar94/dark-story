@@ -47,24 +47,17 @@ var _box: Rect2 = Rect2()
 
 
 func _ready() -> void:
-	# THE RECT IS THE HIT AREA, and an anchors preset alone does NOT give a Control
-	# a size when its parent is a CanvasLayer: measured, `size == (0, 0)` with the
-	# anchors set to 0..1, so every tap fell outside the panel and `_gui_input` was
-	# never called. Jan's report - "the items in the body cannot be taken" - is
-	# exactly that, and it looked like a broken list rather than a broken rect.
-	# The size is therefore tied to the viewport, and re-applied on every resize.
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	_resize_to_viewport()
-	get_viewport().size_changed.connect(_resize_to_viewport)
+	# THE RECT IS THE HIT AREA. `set_anchors_preset()` alone was NOT enough:
+	# measured, `size == (0, 0)` with the anchors at 0..1, because the OFFSETS were
+	# left at their defaults, which cancel the parent rect. Every tap then fell
+	# outside the panel and `_gui_input` was never called - Jan's report, "the items
+	# in the body cannot be taken", which looked like a broken list rather than a
+	# broken rect. The preset that sets BOTH is what makes it full-screen.
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# IGNORE while closed: the taps belong to the game then. STOP while open, so
 	# the tap that takes an item cannot also reach the world.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false
-
-
-func _resize_to_viewport() -> void:
-	size = get_viewport_rect().size
-	layout_now()
 
 
 func setup(p_loot, p_inventory, p_stats) -> void:
