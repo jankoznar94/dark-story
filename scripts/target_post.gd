@@ -13,7 +13,12 @@ func _ready() -> void:
 	mesh.material_override = _mat
 
 
-func take_hit(kind) -> void:
+## The swing hands in the rolled damage as a second argument, because it comes
+## from the hero's equipped weapon. The post takes no damage at all - it only
+## flashes - but the signature has to match, or Godot refuses the call and the
+## whole swing silently reports a miss (measured: CASE1 hits=0 with a
+## "Invalid call" error three lines above it).
+func take_hit(_kind, _damage: float = -1.0) -> void:
 	_flash = 0.25
 	_mat.albedo_color = Color(0.85, 0.35, 0.20)
 

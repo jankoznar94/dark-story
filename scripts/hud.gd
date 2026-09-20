@@ -42,9 +42,21 @@ const LABELS := {
 ## The fifth, centre button. It is a LATCH (run_toggled), never an Input action.
 const RUN_LABEL := "Běh"
 
+## The two UI panels and the buttons that open them. Small square buttons under
+## the vitals, never under the thumbs: the inventory is a READ-AND-DRAG screen, so
+## it may take the whole middle of the display.
+const INVENTORY_LABEL := "Věci"
+const STATS_LABEL := "Hrdina"
+
 var joystick: VirtualJoystick
 var debug_label: Label
 var run_button: Button
+var inv_button: Button
+var stats_button: Button
+var inventory_ui: Control
+var stat_panel: Control
+var toast_label: Label
+var toast_t: float = 0.0
 ## Latched run state, read by main.gd -> player.gd once per frame. The joystick
 ## and the `run` key/button are OR-ed into it, so no single control can block the
 ## others.
@@ -109,12 +121,31 @@ func _build() -> void:
 	run_button.toggle_mode = true
 	run_button.toggled.connect(_on_run_toggled)
 
+	# Opening a panel PAUSES the fight (below), so neither button may be reachable
+	# while the other panel is up: a tap meant for the inventory must never also
+	# swing at a monster.
+	inv_button = _square_button(INVENTORY_LABEL)
+	inv_button.name = "Btn_inventory"
+	inv_button.pressed.connect(func() -> void: _toggle_panel(1))
+	stats_button = _square_button(STATS_LABEL)
+	stats_button.name = "Btn_stats"
+	stats_button.pressed.connect(func() -> void: _toggle_panel(2))
+
 	debug_label = Label.new()
 	debug_label.add_theme_color_override("font_color", Color(0.85, 0.78, 0.62))
 	debug_label.add_theme_font_size_override("font_size", 16)
 	add_child(debug_label)
 
 	_build_bars()
+
+	# A toast for the loot refusals ("V inventáři není místo.") - a rule the player
+	# cannot see is a rule that reads as a bug.
+	toast_label = Label.new()
+	toast_label.name = "Toast"
+	toast_label.add_theme_color_override("font_color", Color(0.95, 0.85, 0.62))
+	toast_label.add_theme_font_size_override("font_size", 16)
+	toast_label.visible = false
+	add_child(toast_label)
 
 	var touch := DisplayServer.is_touchscreen_available() or OS.has_feature("mobile")
 	joystick.visible = touch
@@ -202,8 +233,101 @@ func _circle(fill: Color, edge: Color) -> StyleBoxFlat:
 	return sb
 
 
+## One square button for the two panels. Same palette and the same
+## no-hover rule as the round ones; NOT round, so it never reads as an action the
+## player uses mid-fight.
+func _square_button(label: String) -> Button:
+	var b := Button.new()
+	b.text = label
+	b.focus_mode = Control.FOCUS_NONE
+	b.flat = false
+	b.clip_text = true
+	b.custom_minimum_size = Vector2.ZERO
+	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", COL_TEXT)
+	b.add_theme_color_override("font_color_pressed", COL_TEXT_PRESSED)
+	b.add_theme_color_override("font_color_hover", COL_TEXT)
+	b.add_theme_color_override("font_color_focus", COL_TEXT)
+	var idle := StyleBoxFlat.new()
+	idle.bg_color = COL_FILL
+	idle.border_color = COL_EDGE
+	idle.set_border_width_all(2)
+	idle.set_corner_radius_all(4)
+	var down := StyleBoxFlat.new()
+	down.bg_color = COL_FILL_PRESSED
+	down.border_color = COL_EDGE_PRESSED
+	down.set_border_width_all(2)
+	down.set_corner_radius_all(4)
+	b.add_theme_stylebox_override("normal", idle)
+	b.add_theme_stylebox_override("hover", idle)
+	b.add_theme_stylebox_override("focus", idle)
+	b.add_theme_stylebox_override("disabled", idle)
+	b.add_theme_stylebox_override("pressed", down)
+	add_child(b)
+	return b
+
+
 func _on_run_toggled(on: bool) -> void:
 	run_latched = on
+
+
+func _toggle_panel(which: int) -> void:
+	## 1 = inventory, 2 = stats. They are mutually exclusive: both are full-screen
+	## and both pause the fight, so having both up at once would only hide one.
+	var want_inv := which == 1
+	var want_stats := which == 2
+	if want_inv and inventory_ui != null and not inventory_ui.open:
+		stat_panel.set_open(false)
+	if want_stats and stat_panel != null and not stat_panel.open:
+		inventory_ui.set_open(false)
+	if want_inv:
+		inventory_ui.set_open(not inventory_ui.open)
+	elif want_stats:
+		stat_panel.set_open(not stat_panel.open)
+	_apply_panel_state()
+
+
+## True while any full-screen panel is up. main.gd reads this to pause the world:
+## an inventory you cannot be punched in is the D2 behaviour, and it is also what
+## makes a drag reliable on a phone (a monster walking into you mid-drag would
+## move the world under the pointer).
+func panel_open() -> bool:
+	return (inventory_ui != null and inventory_ui.open) \
+		or (stat_panel != null and stat_panel.open)
+
+
+func _apply_panel_state() -> void:
+	var p := panel_open()
+	# While a panel is up the FIGHT controls are hidden, so a tap meant for the
+	# inventory cannot also press attack. The panels themselves keep the taps.
+	for slot in SLOTS:
+		_buttons[slot].visible = not p
+	run_button.visible = not p
+	joystick.visible = not p and (DisplayServer.is_touchscreen_available() or OS.has_feature("mobile"))
+	inv_button.visible = not p
+	stats_button.visible = not p
+	debug_label.visible = not p
+	_bars["p_back"].visible = not p
+	_bars["p_fill"].visible = not p
+	hp_label.visible = not p
+	_bars["e_back"].visible = not p
+	_bars["e_fill"].visible = not p
+	enemy_label.visible = not p
+
+
+func toast(text: String) -> void:
+	if toast_label == null:
+		return
+	toast_label.text = text
+	toast_label.visible = text != ""
+	toast_t = 2.4 if text != "" else 0.0
+
+
+func _process(delta: float) -> void:
+	if toast_t > 0.0:
+		toast_t -= delta
+		if toast_t <= 0.0 and toast_label != null:
+			toast_label.visible = false
 
 
 func _layout(size: Vector2 = Vector2.ZERO) -> void:
@@ -237,6 +361,20 @@ func _layout(size: Vector2 = Vector2.ZERO) -> void:
 
 	debug_label.position = Vector2(margin, margin * 0.5)
 
+	# --- the two panel buttons, centred horizontally at the top of the bag area.
+	# They must NOT sit under the thumbs: the thumb zone is the bottom corners,
+	# which the joystick and the action cross already own.
+	var bw: float = maxf(56.0, m * 0.16)
+	var bh2: float = maxf(28.0, m * 0.070)
+	var gap2: float = m * 0.02
+	var total: float = bw * 2.0 + gap2
+	var bx: float = (vs.x - total) * 0.5
+	var by: float = margin * 0.4
+	_square_place(inv_button, Vector2(bx, by), Vector2(bw, bh2))
+	_square_place(stats_button, Vector2(bx + bw + gap2, by), Vector2(bw, bh2))
+	toast_label.position = Vector2(bx, by + bh2 + m * 0.012)
+	toast_label.add_theme_font_size_override("font_size", int(maxf(12.0, m * 0.024)))
+
 	# vitals: player bar under the debug line, enemy bar on the right above the pad
 	_bar_w = clampf(vs.x * 0.26, 160.0, 420.0)
 	var bh: float = maxf(14.0, m * 0.028)
@@ -257,6 +395,16 @@ func _layout(size: Vector2 = Vector2.ZERO) -> void:
 func _box(c: Control, pos: Vector2, size: Vector2) -> void:
 	c.position = pos
 	c.size = size
+
+
+## Places one of the two square panel buttons. Kept separate from `_place` so the
+## round-action sizing (corner radius, font from the diameter) is never applied to
+## a rectangle.
+func _square_place(b: Button, pos: Vector2, size: Vector2) -> void:
+	b.custom_minimum_size = Vector2.ZERO
+	b.size = size
+	b.position = pos
+	b.add_theme_font_size_override("font_size", int(maxf(11.0, size.y * 0.45)))
 
 
 func _place(b: Button, pos: Vector2, size: float) -> void:

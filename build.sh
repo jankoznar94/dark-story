@@ -77,6 +77,11 @@ OUT2=$("$GODOT" --headless --path . --script res://tools/test_controls.gd 2>&1)
 echo "$OUT2" | grep -E "FAIL|checks executed|CONTROLS_ALL_PASS"
 echo "$OUT2" | grep -q "CONTROLS_ALL_PASS=true" || { echo "CONTROLS TEST FAILED - not building"; exit 1; }
 
+echo "== loot + inventory test (must pass) =="
+OUT3=$("$GODOT" --headless --path . --script res://tools/test_inventory.gd 2>&1)
+echo "$OUT3" | grep -E "FAIL|checks executed|INVENTORY_ALL_PASS"
+echo "$OUT3" | grep -q "INVENTORY_ALL_PASS=true" || { echo "INVENTORY TEST FAILED - not building"; exit 1; }
+
 rm -rf build
 mkdir -p build/web build/windows build/android
 

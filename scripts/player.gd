@@ -94,7 +94,48 @@ enum Kind { LIGHT, HEAVY }
 @export var heavy_arc: float = 105.0
 
 @export_group("Vitals")
+## Kept ONLY as the fallback for a player node built without an inventory (the
+## tests that build a bare player). The real maximum comes from `hero_stats.gd`,
+## which sums the equipment - see `set_loadout()`.
 @export var max_hp: float = 180.0
+
+## ------------------------------------------------------------------- loadout
+## The hero's gear, handed in by main.gd. player.gd deliberately knows NOTHING
+## about items, affixes or slots: it asks `stats` for four numbers. That is what
+## keeps the item system out of the combat code.
+var stats = null
+
+
+## Wires in the stat sheet and applies it. After this the hero's maximum life is
+## whatever the sheet says, and the current life is left at or below it.
+func set_loadout(p_stats) -> void:
+	stats = p_stats
+	apply_stats()
+
+
+## Re-reads the five numbers the sheet owns. Called on every equip / unequip, so
+## putting a ring on immediately changes the maximum life AND the next swing.
+func apply_stats(refill: bool = false) -> void:
+	if stats == null:
+		return
+	var old_max := max_hp
+	max_hp = stats.max_hp()
+	if refill or hp <= 0.0:
+		hp = max_hp
+	elif old_max > 0.0 and hp > max_hp:
+		hp = max_hp
+
+
+## The damage this swing deals: rolled inside the weapon's own range, which comes
+## from the equipped weapon's base type plus its affixes. Unarmed falls back to
+## the small flat range in hero_stats.gd, so the hero is never harmless.
+func roll_damage() -> float:
+	if stats == null:
+		return randf_range(16.0, 25.0)
+	var r: Vector2 = stats.damage_range()
+	if r.y <= r.x:
+		return maxf(1.0, r.y)
+	return randf_range(r.x, r.y)
 
 ## ------------------------------------------------------------------ auto-target
 ## Jan's brief: "in Diablo 2 with a gamepad the player does not just swing into
@@ -719,7 +760,9 @@ func _do_melee() -> void:
 				continue
 			already.append(id)
 			if c.has_method("take_hit"):
-				c.take_hit(_kind)
+				# The damage is rolled from the EQUIPPED weapon, so the item on the
+				# ground is the number that decides the fight.
+				c.take_hit(_kind, roll_damage())
 				attack_landed.emit("light" if _kind == Kind.LIGHT else "heavy", c, res.position)
 				hit_any = true
 	if not hit_any:

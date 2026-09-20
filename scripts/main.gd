@@ -14,12 +14,30 @@ extends Node3D
 ## behaviour script drives it, so `_spawn_enemies()` below is a list of POSITIONS
 ## and nothing else.
 const MONSTER_KIND := preload("res://scripts/monster_kind.gd")
+const InvModel := preload("res://scripts/inventory_model.gd")
+const HeroStats := preload("res://scripts/hero_stats.gd")
+const ItemGen := preload("res://scripts/item_gen.gd")
 
 var _posts: Array[Node] = []
 var _enemies: Array[Node] = []
 var _hits: Array = []
 var _level_nodes: Array = []
 var _run_action: bool = false
+## The loot system: every dropped item lives under this node, and it owns the
+## pickup rule. Created in code like the monsters, so it has no scene file to
+## keep in sync.
+var loot: Node3D
+## The hero's gear and the numbers derived from it. player.gd reads `stats` for
+## its maximum life and its damage, so the item system never leaks into combat.
+var inventory
+var stats
+## The item the player's mouse is over, or null. Only used to make the pickup
+## readable on desktop; a tap works without it.
+var _last_pick_toast: String = ""
+## The drop the camera is currently over, so a click on a NAME can be told apart
+## from a click on the ground. Resolved by the pickup ray, not by a hover test.
+var _pending_pick_ray: Vector2 = Vector2.ZERO
+var _has_pick_ray: bool = false
 ## The monster the enemy health bar is currently showing: the last one the player
 ## actually hit, or the nearest engaged one. A single bar for a pack of six is
 ## otherwise a lie - it would show whichever spawn happened to be first in the
@@ -31,6 +49,7 @@ func _ready() -> void:
 	_setup_world()
 	_build_level()
 	_spawn_posts()
+	_setup_loot_and_inventory()
 	_spawn_enemies()
 	player.attack_landed.connect(_on_landed)
 	player.damaged.connect(_on_player_damaged)
@@ -39,6 +58,81 @@ func _ready() -> void:
 	# on touch the HUD latches it (see hud.gd). Both feed the same player flag.
 	if not InputMap.has_action("run"):
 		InputMap.add_action("run")
+
+
+## The hero's gear, the stat sheet derived from it, and the loot system. All three
+## are built in code and wired to each other HERE, so there is exactly one place
+## that knows how an item becomes a number on the hero.
+func _setup_loot_and_inventory() -> void:
+	stats = HeroStats.new(1)
+	inventory = InvModel.new()
+	# The starting weapon is a real item rolling the same 16-25 the game shipped
+	# with, so the balance numbers in monster_kind.gd keep their meaning.
+	for it in ItemGen.starter_loadout():
+		var res: Dictionary = inventory.equip(it)
+		if not bool(res.get("ok", false)):
+			push_warning("main: could not equip the starter weapon: %s" % res.get("reason", ""))
+	stats.recompute(inventory.equipped_items())
+	player.set_loadout(stats)
+	player.hp = stats.max_hp()
+
+	loot = load("res://scripts/loot_manager.gd").new()
+	loot.name = "Loot"
+	add_child(loot)
+	loot.bag_full_of.connect(_on_bag_full)
+
+	# The two panels live on the HUD (a CanvasLayer), built in code like the rest
+	# of it. They are what the player sees; the MODEL above is what the rules are.
+	var inv_ui: Control = load("res://scripts/inventory_ui.gd").new()
+	inv_ui.name = "InventoryUI"
+	hud.add_child(inv_ui)
+	inv_ui.setup(inventory, stats)
+	var sp: Control = load("res://scripts/stat_panel.gd").new()
+	sp.name = "StatPanel"
+	hud.add_child(sp)
+	sp.setup(stats, inventory)
+	hud.inventory_ui = inv_ui
+	hud.stat_panel = sp
+
+	# One signal from either panel: whatever changed, re-derive the hero's numbers
+	# and let the sheet redraw. Nothing else is allowed to touch `stats`.
+	inv_ui.item_used.connect(_on_loadout_changed)
+	sp.item_used.connect(_on_loadout_changed)
+	inv_ui.notify.connect(_on_notify)
+	print("[items] starter weapon: %s, life %.0f, damage %.0f-%.0f"
+		% [inventory.main_hand().display_name() if inventory.main_hand() else "unarmed",
+			stats.max_hp(), stats.damage_range().x, stats.damage_range().y])
+
+
+func _on_loadout_changed(_item = null) -> void:
+	stats.recompute(inventory.equipped_items())
+	player.apply_stats()
+	# Only the sheet needs a repaint: the inventory window already refreshes off
+	# the model's `changed` signal, and a CanvasLayer has no queue_redraw of its own.
+	if hud.stat_panel != null:
+		hud.stat_panel.queue_redraw()
+
+
+func _on_notify(text: String) -> void:
+	if text != "":
+		hud.toast(text)
+
+
+func _on_bag_full(item) -> void:
+	# The item STAYS on the ground - silently destroying it would be the worst bug
+	# a loot game can have, so the game says why instead.
+	hud.toast("Batoh je plný - %s zůstává na zemi." % item.display_name())
+
+
+## A monster died: roll its loot and put it on the ground near the corpse. This is
+## the whole Diablo loop in one line - the rest is already data.
+func _on_enemy_died(e: Node) -> void:
+	if loot == null or not is_instance_valid(e):
+		return
+	var ilvl: int = int(e.level) + 3
+	var n: int = loot.spawn_for_death(e.global_position, ilvl)
+	if n > 0:
+		print("[loot] %s dropped %d item(s)" % [e.name, n])
 
 
 func _build_level() -> void:
@@ -215,6 +309,9 @@ func _build_enemy(kind: String, pos: Vector3) -> CharacterBody3D:
 	# A monster with a leash has to know WHERE HOME IS. Without this every kind
 	# would consider itself straying the moment it moved and walk back to (0,0,0).
 	e.remember_home()
+	# The Diablo loop: something dies, something falls on the ground. Wired as a
+	# signal so the AI never calls the loot system directly.
+	e.died.connect(func() -> void: _on_enemy_died(e))
 	return e
 
 
@@ -236,7 +333,49 @@ func _update_focus() -> void:
 	_focus = best
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	## The TAP that picks loot up. Jan's brief: "clicking the NAME picks the item
+	## up into the inventory." A tap on the item's name (or on its model - one
+	## Area3D covers both) casts a ray into the world and hands the hit to the
+	## loot manager, which owns the range check and the bag-full rule.
+	##
+	## Deliberately `_unhandled_input`: a tap that lands on the HUD, on an open
+	## panel or on the joystick is consumed there and never reaches this, so
+	## opening the inventory cannot also vacuum an item off the ground.
+	if hud != null and hud.panel_open():
+		return
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		# touch index 0 is always the joystick thumb; only an additional finger can
+		# be a deliberate tap on the ground, because the stick owns the first one.
+		if t.pressed and t.index > 0:
+			_try_pick(t.position)
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_try_pick(mb.position)
+
+
+func _try_pick(screen_pos: Vector2) -> void:
+	if loot == null or inventory == null:
+		return
+	var got: Variant = loot.try_pick_at_screen(screen_pos, inventory, player.global_position)
+	if got == null:
+		return
+	_last_pick_toast = got.display_name()
+	hud.toast("Sebráno: %s" % _last_pick_toast)
+	print("[loot] picked up %s" % _last_pick_toast)
+
+
 func _process(_delta: float) -> void:
+	# A panel (inventory / hero sheet) PAUSES the fight. Diablo does the same, and
+	# on a phone it is also what makes a drag reliable: a monster walking into the
+	# player would move the world under the finger mid-drag.
+	if hud != null and hud.panel_open():
+		hud.set_debug("inventář otevřen - hra je pozastavená")
+		hud.set_player_hp(player.hp_fraction(), "HP %.0f / %.0f" % [player.hp, player.max_hp])
+		return
+
 	# RUN: the HUD latch and the key/pad action are OR-ed here and pushed to the
 	# player, so no single control can block the others and the player never has
 	# to ask the HUD about input.
@@ -290,6 +429,13 @@ func clear_enemies() -> void:
 			e.queue_free()
 	_enemies.clear()
 	_focus = null
+
+
+## Removes everything lying on the ground. Test-only, like clear_enemies(): a
+## measured section must not be disturbed by an item its own kills dropped.
+func clear_loot() -> void:
+	if loot != null and is_instance_valid(loot):
+		loot.clear()
 
 
 ## Moves every level prop out of the way so a locomotion test can measure a clean,

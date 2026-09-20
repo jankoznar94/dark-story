@@ -24,6 +24,9 @@ extends CharacterBody3D
 ##      trap this refactor exists to remove.
 
 signal attack_landed(collider: Node, point: Vector3)
+## Emitted once, when this monster's life reaches zero. main.gd hangs the loot
+## roll off it, so the AI never has to know that loot exists.
+signal died
 
 ## The balance sheet lives in one place (hp, damage, speeds, tint) so a monster is
 ## a data entry and the "weaker than the hero" claim can be asserted in a test.
@@ -75,6 +78,9 @@ var _clip_names: PackedStringArray = PackedStringArray()
 var _mat: StandardMaterial3D
 var _flash: float = 0.0
 var _home: Vector3 = Vector3.ZERO
+## Guards the death signal: `take_damage` can be called again on a corpse (a ray
+## can still land on it), and loot must not fall twice for one monster.
+var _death_announced: bool = false
 
 # --- Movement / attack / vitals, all overridden from the catalogue in _ready ---
 @export_group("Movement")
@@ -457,13 +463,20 @@ func take_damage(amount: float) -> void:
 		_state = Atk.NONE
 		velocity = Vector3.ZERO
 		_play(CLIP_DEATH, 1.0, false)
+		if not _death_announced:
+			_death_announced = true
+			died.emit()
 
 
-## The player's melee fan calls take_hit(kind) on whatever it raycasts into.
-func take_hit(_kind) -> void:
+## The player's melee fan calls take_hit(kind, damage) on whatever it raycasts
+## into. The damage is passed IN rather than rolled here, because it comes from
+## the hero's equipped weapon - the enemy has no business knowing about items.
+## A bare tool call without a number falls back to the pre-item range, so the
+## tests that only want to kill a monster (take_hit(0)) keep working.
+func take_hit(_kind, damage: float = -1.0) -> void:
 	if is_dead():
 		return
-	take_damage(randf_range(16.0, 25.0))
+	take_damage(damage if damage > 0.0 else randf_range(16.0, 25.0))
 
 
 ## Called by main.gd right after the monster is placed, so it knows which spot it

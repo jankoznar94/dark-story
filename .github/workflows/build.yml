@@ -114,6 +114,13 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "LOCOMOTION_GAIT_ALL_PASS=true"
 
+      - name: Loot + inventory test (D2 grid, slots, affixes, pickups)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_inventory.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "INVENTORY_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
