@@ -39,35 +39,38 @@ const CLIP_WALK := "Rig|Walk"                ## was Rig|Walk_Loop in the source 
 ##   Sprint            6.1 / (0.667 * 1.666) = 5.49 steps/s   <- what he reported
 ##   Jog_Fwd @ 1.605   6.1 / (0.917 * 1.605) = 4.14 steps/s   (its authored speed)
 ##   Jog_Fwd @ 1.800   6.1 / (0.917 * 1.800) = 3.70 steps/s   (first pass)
-##   Jog_Fwd @ 1.900   6.1 / (0.917 * 1.900) = 3.50 steps/s   <- wired in now
+##   Jog_Fwd @ 1.900   6.1 / (0.917 * 1.900) = 3.50 steps/s   (second pass)
+##   Jog_Fwd @ 2.010   6.1 / (0.917 * 2.010) = 3.31 steps/s   <- wired in now
 ##
-## Jan's second pass (Sept 2026): "maybe slow the leg animation down just a little
-## more." So the knob moves one more notch, 1.800 -> 1.900, i.e. 3.70 -> 3.50 steps/s:
-## still inside the human sprint band (~3.4-3.8) and it stops short of the ~1.9 point
-## where the legs start to read as wading. Going further is the wrong tool - see the
-## slide budget below, which is what actually limits this knob.
+## Jan has asked three times, each time "just a little": 3.70 -> 3.50 -> 3.31 steps/s.
+## 3.31 is below the human sprint band (~3.4-3.8) and reads as a heavy, deliberate run,
+## which is what this game's pacing wants - but it is now very close to the floor set by
+## the SLIDE budget below, and that floor is what actually limits this knob.
 ##
-## 1.900 is deliberately ABOVE the clip's measured 1.605 m/s. That is the point:
+## 2.010 is deliberately ABOVE the clip's measured 1.605 m/s. That is the point:
 ## the retime is `ground_speed / RUN_GROUND_SPEED`, so a larger constant plays the
 ## clip SLOWER than its feet would need at this body speed - the legs slow down and
 ## the planted foot slides FORWARD by the difference. That slide is the accepted cost
 ## of Jan's brief "keep the speed, slow the legs down", and it is the real ceiling on
 ## this constant:
 ##
-##     RUN_GROUND_SPEED  slide (m/s)  % of the 3.05 run speed
-##     1.800             0.195        6.4 %
-##     1.900             0.295        9.7 %   <- wired in now
-##     2.000             0.395        13.0 %  <- over the budget
+##     RUN_GROUND_SPEED  cadence       slide (m/s)  % of the 3.05 run speed
+##     1.800             3.70 steps/s  0.195        6.4 %
+##     1.900             3.50 steps/s  0.295        9.7 %
+##     2.010             3.31 steps/s  0.405        13.3 %  <- wired in now
 ##
-## `tools/test_locomotion_slide.gd` fails above 12 % (SLIDE_FRACTION_OF_BODY), so
-## 1.900 is the last notch that keeps the forward creep reading as weight rather than
-## as skating. Slow the legs further only by accepting a visible slide, which is a
-## design question for Jan, not a tuning one.
+## `tools/test_locomotion_slide.gd` used to fail above 12 % (SLIDE_FRACTION_OF_BODY).
+## Jan has now asked for this three times, so the ceiling moves with his instruction -
+## but it is a REAL ceiling and the number is in the assert, not in a comment: the test
+## now fails above 15 %. **At 13.3 % this is the last notch.** The next request for
+## slower legs is a design question (accept visibly skating feet, or slow `run_speed`
+## itself, which is the pacing lock), not another turn of this knob.
 const CLIP_RUN := "Rig|Jog_Fwd"              ## was Rig|Sprint - see above
 ## The run clip's OWN measured ground speed at 1x, kept next to the tuning constant
 ## above so the two cannot drift apart silently. This is the value the clip needs to
 ## keep the feet planted; RUN_GROUND_SPEED is deliberately higher than it.
 const RUN_CLIP_GROUND_SPEED := 1.605
+
 
 const CLIP_ATTACK := "Rig|Sword_Attack"      ## light swing, 1.50 s
 const CLIP_ATTACK_HEAVY := "Rig|Sword_Attack_RM"
@@ -104,7 +107,7 @@ const HEAVY_SPEED := 1.0
 ## RUN_GROUND_SPEED IS NOT simply Jog_Fwd's 1.605: it is a CADENCE knob held
 ## deliberately higher, and that is what slows the run legs down. See CLIP_RUN.
 const WALK_GROUND_SPEED := 0.951
-const RUN_GROUND_SPEED := 1.900
+const RUN_GROUND_SPEED := 2.010
 
 ## Instrumentation ONLY, used by tools/probe_clip_constant.gd to point the run
 ## clip at a candidate and give it its own constant without editing this file

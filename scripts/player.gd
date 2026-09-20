@@ -62,6 +62,25 @@ enum Kind { LIGHT, HEAVY }
 ## Total window 1.08 s < the 1.50 s clip: the recovery is trimmed by playing the
 ## next clip over the tail, which is what makes a held attack chain smoothly.
 @export var light_windup: float = 0.42
+## How far the blade must be off the target before the swing will start. Jan's rule
+## (Sept 2026): "if I have no enemy in front of me, I should not swing the sword at
+## all - finding the target has priority. Once the target is directly in front of me,
+## the attack may start."
+##
+## His report was a hero who swung after every step while a monster stood behind him
+## and turned "a few degrees after every swing". Two things caused it and both are
+## fixed here:
+##   * `_auto_approach()` reported "swing now" the instant the body was inside
+##     `auto_approach_stop`, but `_begin_attack` snapshots `facing` at the ACTIVE frame
+##     - so the blade left along a facing that was still tens of degrees off the target.
+##     The swing has to WAIT for the aim, not fire and let the body catch up.
+##   * the distance-only fallback (below) re-fired the swing every time the commitment
+##     window closed, so the turn was chopped into one slice per swing.
+## This is the gate that makes the approach a continuous run + turn instead: no swing
+## until the aim is settled. Measured with the aim gate at 12 deg, a held attack on a
+## monster directly behind produced ZERO swings in 180 frames while still completing
+## the turn and then hitting - instead of roughly one swing per 1.1 s slice.
+@export var attack_aim_tolerance_deg: float = 12.0
 @export var light_active: float = 0.16
 @export var light_recover: float = 0.50
 @export var light_range: float = 1.7
@@ -100,8 +119,16 @@ enum Kind { LIGHT, HEAVY }
 ## How close the auto-walk stops. Just inside light_range (1.7 m) so the swing
 ## that follows can actually reach.
 @export var auto_approach_stop: float = 1.45
-## How much of the walk speed the auto-approach uses. Deliberately below 1.0: the
-## approach should read as a deliberate step-in, not as the player being yanked.
+## How much of the run speed the auto-approach uses when the player has asked to RUN.
+## Jan's second pass: "when it searches for a target and walks to it, it always goes
+## at a slow walk - I need it to run to it too." The approach follows the player's own
+## run intent (the HUD latch / Shift / pad), so the answer is "run when the RUN button
+## is on". At 1.0 it matches `run_speed` exactly and `play_locomotion()` retimes the
+## clip from the actual ground speed, so there is no new animation constant.
+@export var auto_approach_run_speed_scale: float = 1.0
+## How much of the walk speed the auto-approach uses when the player has NOT asked to
+## run. Deliberately below 1.0: the approach should read as a deliberate step-in, not
+## as the player being yanked.
 @export var auto_approach_speed_scale: float = 0.85
 ## Seconds after LOSING a target before a new one may be acquired. Measured, not
 ## guessed: two Ghouls 3.4 m and 3.6 m away sit at nearly the same score, and
@@ -361,13 +388,21 @@ func _physics_process(delta: float) -> void:
 	# keeps the character swinging until it is released (Jan's brief). Skills stay
 	# on just_pressed so they cannot be spammed by holding.
 	#
-	# NOTE: this is the FALLBACK path. When the auto-target has a monster in reach,
-	# the swing already started above and returned. Here it covers the two cases
-	# that must keep working exactly as before auto-target existed: swinging at
-	# something that is not a monster (the training posts) and swinging with no
-	# target in the cone at all. Removing it made a held attack do nothing whenever
-	# no monster was around - tools/test_controls.gd caught it.
-	if attack_held:
+	# NOTE: this is the FALLBACK path, and it is deliberately NOT reached while a live
+	# auto-target exists. Jan's rule (Sept 2026): "if I have no enemy in front of me,
+	# I should not swing the sword at all - finding the target has priority." With a
+	# target held, the distance-only fallback used to re-fire the swing every time the
+	# commitment window closed, which chopped a 180 deg turn into one slice per swing
+	# AND made him chop at nothing while still turning. The assist above owns the
+	# attack in that case and starts it only once the aim is settled.
+	#
+	# What must keep working here, exactly as before auto-target existed: swinging at
+	# something that is NOT a monster (the training posts) and swinging with no target
+	# at all. Removing that made a held attack do nothing whenever no monster was
+	# around - tools/test_controls.gd caught it. The distinction is `target == null`,
+	# NOT `target out of range`: a target that died or walked away mid-swing has
+	# already been dropped by the bookkeeping at the top, so it cannot get stuck here.
+	if attack_held and target == null:
 		_begin_attack(Kind.LIGHT)
 	elif Input.is_action_just_pressed("skill_1"):
 		_begin_attack(Kind.HEAVY)
@@ -547,23 +582,48 @@ func _auto_approach(delta: float, iv: Vector2) -> Vector3:
 		_face(to.normalized(), delta, turn_speed_attacking)
 		return Vector3.ZERO
 
+	# RUN to him when the player asked to run. Jan: "it always goes at a slow walk -
+	# I need it to run to it too." The approach follows the player's OWN run intent
+	# (the HUD latch / Shift / pad), so the answer is "run when RUN is on". One speed
+	# for both legs of the move (turn-in and walk-in) - switching speeds between them
+	# was an accident of when the `d <= stop` branch started swinging.
+	var running := wants_run(iv)
+	var speed := (run_speed * auto_approach_run_speed_scale) if running \
+		else (walk_speed * auto_approach_speed_scale)
 	_face(to.normalized(), delta, turn_speed)
 	if d <= auto_approach_stop:
-		# in reach: hold still and swing. Facing is already settled above.
-		velocity = velocity.move_toward(Vector3.ZERO, decel * delta)
+		# In reach. Hold still and swing - but ONLY once the aim is settled:
+		# `_begin_attack` snapshots `facing` at the ACTIVE frame, so a swing started
+		# while the body is still turning lands along an off-target facing. That is
+		# what made the hero chop the turn into one slice per swing ("after every
+		# swing it turns a few degrees"). Waiting here turns the approach into a
+		# continuous run + turn, and the swing fires the moment the target is in front.
+		if rad_to_deg(facing.angle_to(to.normalized())) <= attack_aim_tolerance_deg:
+			velocity = velocity.move_toward(Vector3.ZERO, decel * delta)
+			move_and_slide()
+			if hero and hero.has_method("play_idle"):
+				hero.play_idle()
+			return to.normalized()
+		# not lined up yet: keep the legs moving so the turn reads as a movement, not
+		# as standing still and pivoting on the spot
+		auto_approaching = true
+		velocity = velocity.move_toward(to.normalized() * speed, accel * delta)
 		move_and_slide()
-		if hero and hero.has_method("play_idle"):
-			hero.play_idle()
-		return to.normalized()
+		if hero and hero.has_method("play_locomotion"):
+			var gs0 := velocity.length()
+			if gs0 > 0.25:
+				hero.play_locomotion(gs0, running and gs0 > walk_speed * 1.2)
+			else:
+				hero.play_idle()
+		return Vector3.ZERO
 
 	auto_approaching = true
-	var speed := walk_speed * auto_approach_speed_scale
 	velocity = velocity.move_toward(to.normalized() * speed, accel * delta)
 	move_and_slide()
 	if hero and hero.has_method("play_locomotion"):
 		var gs := velocity.length()
 		if gs > 0.25:
-			hero.play_locomotion(gs, false)
+			hero.play_locomotion(gs, running and gs > walk_speed * 1.2)
 		else:
 			hero.play_idle()
 	return Vector3.ZERO

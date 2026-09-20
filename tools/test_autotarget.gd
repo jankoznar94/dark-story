@@ -369,14 +369,94 @@ func _run() -> void:
 		"target=%s (nearer idle=%s)"
 		% [player.target.name if player.target != null else "null", nearer.name])
 
+	print("== 11. he does NOT swing while he is still turning to the target ==")
+	await _reset()
+	# Jan's report: with a monster directly behind him and the attack held, "after every
+	# swing it turns a few degrees" - i.e. the turn was chopped into one slice per swing.
+	# The cause was the swing firing as soon as the body was in REACH, while `facing` was
+	# still tens of degrees off; `_begin_attack` snapshots `facing` at the ACTIVE frame,
+	# so those swings also went into thin air. The rule: no swing until the aim is settled.
+	var behind11: Node = _spawn("ghoul", Vector3(0, 0, 2.6))
+	await physics_frame
+	# A GDScript lambda captures LOCALS BY VALUE, so `total_swings += 1` inside it would
+	# increment a copy and the counter would read 0 forever - the assertion "not one swing
+	# was off aim 0 of 0" then passes for a structural reason while the code swings away.
+	# Arrays are reference types, so the counts survive the capture.
+	var swings := [0, 0]      # [total, off-aim]
+	var probe := func(kind: String, origin: Vector3, dir: Vector3) -> void:
+		swings[0] += 1
+		var to: Vector3 = behind11.global_position - player.global_position
+		to.y = 0.0
+		if rad_to_deg(dir.angle_to(to.normalized())) > player.attack_aim_tolerance_deg + 1.0:
+			swings[1] += 1
+	player.attack_started.connect(probe)
+	Input.action_press("attack")
+	# Long enough for the 180 deg turn (a couple of seconds at the shipped turn rate)
+	# plus the first swing, so this cannot pass by simply never swinging at all.
+	for i in 300:
+		await physics_frame
+		if swings[0] >= 1:
+			break
+	_ok("not one swing was thrown while the aim was still off target",
+		swings[1] == 0,
+		"%d of %d swings were off-aim (tolerance %.0f deg)"
+		% [swings[1], swings[0], player.attack_aim_tolerance_deg])
+	_ok("...and the swing DID come once the aim settled", swings[0] >= 1,
+		"%d swings" % swings[0])
+	_ok("the turn was a continuous movement, not one slice per swing",
+		swings[0] <= 2, "%d swings before the aim settled" % swings[0])
+	player.attack_started.disconnect(probe)
+	Input.action_release("attack")
+
+	print("== 12. the approach RUNS to the target when RUN is on ==")
+	await _reset()
+	# Jan: "when it searches for a target and walks to it, it always goes at a slow walk
+	# - I need it to run to it too." The approach follows the player's own run intent,
+	# so this sets the HUD latch exactly as the RUN button does on the device.
+	var far12: Node = _spawn("ghoul", Vector3(-1.5, 0, -5.4))
+	await physics_frame
+	main.hud.run_latched = true
+	Input.action_press("attack")
+	var peak_run := 0.0
+	var walked_in := false
+	for i in 150:
+		await physics_frame
+		peak_run = maxf(peak_run, player.velocity.length())
+		if player.global_position.distance_to(far12.global_position) < 1.7:
+			walked_in = true
+			break
+	_ok("the auto-approach exceeded the WALK speed", peak_run > player.walk_speed * 1.2,
+		"peak %.2f m/s against walk %.2f" % [peak_run, player.walk_speed])
+	_ok("it reached roughly the run speed", peak_run > player.run_speed * 0.85,
+		"peak %.2f m/s against run %.2f" % [peak_run, player.run_speed])
+	_ok("he still arrived at the monster", walked_in)
+	Input.action_release("attack")
+	main.hud.run_latched = false
+
+	print("== 13. with RUN off the approach still WALKS ==")
+	await _reset()
+	var far13: Node = _spawn("ghoul", Vector3(-1.5, 0, -5.4))
+	await physics_frame
+	main.hud.run_latched = false
+	Input.action_press("attack")
+	var peak_walk := 0.0
+	for i in 150:
+		await physics_frame
+		peak_walk = maxf(peak_walk, player.velocity.length())
+		if player.global_position.distance_to(far13.global_position) < 1.7:
+			break
+	_ok("the walk-in stayed at a walk", peak_walk < player.run_speed * 0.85,
+		"peak %.2f m/s against run %.2f" % [peak_walk, player.run_speed])
+	Input.action_release("attack")
+
 	print("")
 	print("checks executed: ", checks)
-	if fails.is_empty() and checks >= 18:
+	if fails.is_empty() and checks >= 31:
 		print("AUTOTARGET_ALL_PASS=true")
 	else:
 		for f in fails:
 			print("FAIL: ", f)
-		if checks < 18:
+		if checks < 31:
 			print("FAIL: only %d checks ran - not everything was exercised" % checks)
 		print("AUTOTARGET_ALL_PASS=false")
 	quit()
