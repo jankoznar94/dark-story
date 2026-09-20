@@ -139,31 +139,79 @@ func _run() -> void:
 	_ok("the walk-in ended in a swing that landed", m.hp < mhp0,
 		"%.0f -> %.0f hp in %.1f s" % [mhp0, m.hp, frames_used / 60.0])
 
-	print("== 2. a monster BEHIND the player is NOT picked ==")
+	print("== 2. a monster BEHIND the player is NOT picked WHILE one is in front ==")
 	await _reset()
-	var behind: Node = _spawn("ghoul", Vector3(0, 0, 4.0))
+	# Jan's correction (Sept 2026) split this case in two. The old version asserted "a
+	# monster behind is never picked", and that was too strong: he reported a hero who
+	# "attacks nobody when nobody is in the direction he looks - not even an enemy
+	# standing right behind him". What must survive is PRECEDENCE: while something is
+	# in the cone, the body behind it stays ignored (case 2), and only when the cone is
+	# EMPTY does the nearest body win, wherever it stands (case 2b).
+	var front2: Node = _spawn("ghoul", Vector3(-1.5, 0, -3.6))
+	var behind: Node = _spawn("ghoul", Vector3(0, 0, 1.5))
 	await physics_frame
 	Input.action_press("attack")
+	var saw_behind := false
 	for i in 90:
 		await physics_frame
-	_ok("no target was picked behind the character", player.target == null,
-		"target=%s" % (player.target.name if player.target != null else "null"))
-	_ok("he did not turn round and walk to it",
-		player.global_position.distance_to(Vector3(0, 0, 0)) < 0.4,
-		"moved %.2f m" % player.global_position.distance_to(Vector3(0, 0, 0)))
-	_ok("the untargeted monster took no damage", behind.hp == behind.max_hp,
-		"%.0f hp" % behind.hp)
+		if player.target == behind:
+			saw_behind = true
+	_ok("the monster in the cone was preferred over the nearer one behind",
+		player.target == front2, "target=%s" % (player.target.name if player.target != null else "null"))
+	_ok("the body behind was never picked while one was in the cone", not saw_behind)
+	Input.action_release("attack")
 
-	print("== 3. the cone is a cone: a monster outside it is NOT picked ==")
+	print("== 2b. with the cone EMPTY, the nearest body is picked even BEHIND him ==")
 	await _reset()
-	# 80 deg off the nose, 3 m away: well inside range, well outside the 55 deg cone
-	var wide := Vector3(0, 0, -1).rotated(Vector3.UP, deg_to_rad(80.0)) * 3.0
-	var side: Node = _spawn("ghoul", wide)
+	# Nothing in front at all; one monster directly behind, close. Before this rule
+	# existed the hero swung at air and the monster never took a hit.
+	var back: Node = _spawn("ghoul", Vector3(0, 0, 2.6))
+	await physics_frame
+	var back_hp0: float = back.hp
+	Input.action_press("attack")
+	var acquired_behind := false
+	for i in 180:
+		await physics_frame
+		if player.target == back:
+			acquired_behind = true
+		if back.hp < back_hp0:
+			break
+	_ok("the nearest body behind him was acquired", acquired_behind,
+		"target=%s" % (player.target.name if player.target != null else "null"))
+	_ok("he turned round and hit it", back.hp < back_hp0,
+		"%.0f -> %.0f hp" % [back_hp0, back.hp])
+	# the turn is what makes the pick readable: it must END up facing the monster
+	var dot: float = player.facing.dot(Vector3(0, 0, 1))
+	_ok("he finished the turn facing it", dot > 0.8, "facing.z %.3f" % player.facing.z)
+	Input.action_release("attack")
+
+	print("== 2c. a body behind him but OUT OF RANGE is still not picked ==")
+	await _reset()
+	var far_behind: Node = _spawn("ghoul", Vector3(0, 0, 12.0))
 	await physics_frame
 	Input.action_press("attack")
 	for i in 60:
 		await physics_frame
-	_ok("a monster 80 deg off the facing was not picked", player.target == null,
+	_ok("the distance tier still obeys target_range", player.target == null,
+		"target=%s" % (player.target.name if player.target != null else "null"))
+	Input.action_release("attack")
+
+	print("== 3. the cone is a PREFERENCE: outside it, only the distance tier applies ===")
+	await _reset()
+	# 80 deg off the nose, 3 m away: well inside range, outside the 55 deg cone AND
+	# nothing else in range - so this is now the distance tier's own boundary check
+	# (before the distance tier existed it tested the cone as a hard filter).
+	var wide := Vector3(0, 0, -1).rotated(Vector3.UP, deg_to_rad(80.0)) * 3.0
+	var side: Node = _spawn("ghoul", wide)
+	await physics_frame
+	Input.action_press("attack")
+	var picked_side := false
+	for i in 60:
+		await physics_frame
+		if player.target == side:
+			picked_side = true
+	# 80 deg is outside the 55 deg cone but INSIDE range: the distance tier MUST pick it
+	_ok("a body 80 deg off the nose is picked once the cone is empty", picked_side,
 		"target=%s" % (player.target.name if player.target != null else "null"))
 	Input.action_release("attack")
 

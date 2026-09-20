@@ -38,22 +38,37 @@ const CLIP_WALK := "Rig|Walk"                ## was Rig|Walk_Loop in the source 
 ##
 ##   Sprint            6.1 / (0.667 * 1.666) = 5.49 steps/s   <- what he reported
 ##   Jog_Fwd @ 1.605   6.1 / (0.917 * 1.605) = 4.14 steps/s   (its authored speed)
-##   Jog_Fwd @ 1.800   6.1 / (0.917 * 1.800) = 3.70 steps/s   <- wired in now
+##   Jog_Fwd @ 1.800   6.1 / (0.917 * 1.800) = 3.70 steps/s   (first pass)
+##   Jog_Fwd @ 1.900   6.1 / (0.917 * 1.900) = 3.50 steps/s   <- wired in now
 ##
-## 1.800 is deliberately ABOVE the clip's measured 1.605 m/s. That is the point:
+## Jan's second pass (Sept 2026): "maybe slow the leg animation down just a little
+## more." So the knob moves one more notch, 1.800 -> 1.900, i.e. 3.70 -> 3.50 steps/s:
+## still inside the human sprint band (~3.4-3.8) and it stops short of the ~1.9 point
+## where the legs start to read as wading. Going further is the wrong tool - see the
+## slide budget below, which is what actually limits this knob.
+##
+## 1.900 is deliberately ABOVE the clip's measured 1.605 m/s. That is the point:
 ## the retime is `ground_speed / RUN_GROUND_SPEED`, so a larger constant plays the
 ## clip SLOWER than its feet would need at this body speed - the legs slow down and
-## the planted foot slides FORWARD by the difference (0.195 m/s here, 6 % of the
-## run). That slide is the accepted cost of Jan's brief "keep the speed, slow the
-## legs down", and it is small enough to read as weight rather than as skating.
-## If the slide is ever measured as too visible, lower this toward 1.605 - but
-## do NOT push it past ~1.9, where the cadence drops below a human jog and the legs
-## start to look like they are wading.
+## the planted foot slides FORWARD by the difference. That slide is the accepted cost
+## of Jan's brief "keep the speed, slow the legs down", and it is the real ceiling on
+## this constant:
+##
+##     RUN_GROUND_SPEED  slide (m/s)  % of the 3.05 run speed
+##     1.800             0.195        6.4 %
+##     1.900             0.295        9.7 %   <- wired in now
+##     2.000             0.395        13.0 %  <- over the budget
+##
+## `tools/test_locomotion_slide.gd` fails above 12 % (SLIDE_FRACTION_OF_BODY), so
+## 1.900 is the last notch that keeps the forward creep reading as weight rather than
+## as skating. Slow the legs further only by accepting a visible slide, which is a
+## design question for Jan, not a tuning one.
 const CLIP_RUN := "Rig|Jog_Fwd"              ## was Rig|Sprint - see above
 ## The run clip's OWN measured ground speed at 1x, kept next to the tuning constant
 ## above so the two cannot drift apart silently. This is the value the clip needs to
 ## keep the feet planted; RUN_GROUND_SPEED is deliberately higher than it.
 const RUN_CLIP_GROUND_SPEED := 1.605
+
 const CLIP_ATTACK := "Rig|Sword_Attack"      ## light swing, 1.50 s
 const CLIP_ATTACK_HEAVY := "Rig|Sword_Attack_RM"
 const CLIP_HIT := "Rig|Hit_Chest"            ## 0.33 s
@@ -89,7 +104,7 @@ const HEAVY_SPEED := 1.0
 ## RUN_GROUND_SPEED IS NOT simply Jog_Fwd's 1.605: it is a CADENCE knob held
 ## deliberately higher, and that is what slows the run legs down. See CLIP_RUN.
 const WALK_GROUND_SPEED := 0.951
-const RUN_GROUND_SPEED := 1.800
+const RUN_GROUND_SPEED := 1.900
 
 ## Instrumentation ONLY, used by tools/probe_clip_constant.gd to point the run
 ## clip at a candidate and give it its own constant without editing this file

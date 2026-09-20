@@ -114,6 +114,28 @@ enum Kind { LIGHT, HEAVY }
 ## a metre, or 0.6 deg". It is a tie-break, not a priority: an engaged monster that
 ## is clearly further away does not get picked over one standing on the nose.
 @export var engagement_margin: float = 1.2
+## Jan's rule (Sept 2026): "the search works by the direction the player looks, but
+## when nobody is in that direction the hero attacks nobody - not even when an enemy
+## stands right behind him. When there is nobody WHERE HE LOOKS, other directions must
+## count too, by how CLOSE the enemy is. He turns to the nearest one and attacks."
+##
+## So the cone is the PREFERENCE, not a filter that can leave the player swinging at
+## air. The scan has two tiers, in this order:
+##   1. the 55 deg cone around `facing`, scored by angle first and distance second
+##      (unchanged - a monster you are looking at always wins);
+##   2. only when the cone is EMPTY, the NEAREST monster inside `target_range`,
+##      whatever direction it stands in - including directly behind. The turn that
+##      follows is what makes the pick readable: the marker and the body both swing
+##      onto it before the blade does.
+## The distance tier is NOT a proximity radius of its own; it is still bounded by
+## `target_range`, so a held attack never drags the player across the arena to
+## something he had no way of knowing about.
+##
+## A monster acquired this way is kept while it is alive and in range, WITHOUT the
+## keep-cone test - otherwise the keep check would drop it on the next frame (it is
+## behind, which is outside the 75 deg keep-cone) and the re-arm window would stop him
+## ever turning round. It becomes an ordinary cone target the moment the turn brings it
+## inside `target_cone_half_deg`.
 
 @onready var hero: Node3D = $Hero
 
@@ -128,6 +150,10 @@ var run_requested: bool = false
 var target: Node3D = null
 ## True while the player is on auto-approach toward `target`.
 var auto_approaching: bool = false
+## True when `target` was chosen by the cone (tier 1), false when it came from the
+## nearest-in-range fallback (tier 2). It relaxes the keep test for a target the
+## player is still turning toward - see the scan comment above.
+var _target_from_cone: bool = true
 
 var _state: int = Atk.NONE
 var _kind: int = Kind.LIGHT
@@ -393,9 +419,24 @@ func _update_target(delta: float, want: Vector3, attack_held: bool) -> void:
 		else:
 			var keep := _flat_to(target.global_position)
 			var keep_d := keep.length()
-			if keep_d > target_range or (keep_d > 0.05
-					and rad_to_deg(facing.angle_to(keep.normalized())) > target_keep_half_deg):
-				_drop_target()
+			var keep_angle := rad_to_deg(facing.angle_to(keep.normalized()))
+			if _target_from_cone:
+				if keep_d > target_range or (keep_d > 0.05
+						and keep_angle > target_keep_half_deg):
+					_drop_target()
+			else:
+				# Acquired by the DISTANCE tier: held on RANGE ALONE, because the body
+				# may sit outside any keep-cone for the whole turn (he is behind us -
+				# that is why he was picked). An angle test here would drop him on the
+				# very next frame and the re-arm window would stop the player ever
+				# turning round; measured, he acquired and lost it every 0.35 s and
+				# never turned a single degree. The moment the turn brings him inside
+				# `target_cone_half_deg` he becomes an ordinary cone target and the
+				# keep-cone applies again.
+				if keep_angle <= target_cone_half_deg:
+					_target_from_cone = true
+				elif keep_d > target_range:
+					_drop_target()
 
 	if target != null:
 		return
@@ -407,6 +448,10 @@ func _update_target(delta: float, want: Vector3, attack_held: bool) -> void:
 	var best_score := -INF
 	var best_engaged: Node3D = null
 	var best_engaged_score := -INF
+	# Tier 2 candidate: the NEAREST monster inside `target_range`, whatever direction
+	# it stands in. Used only when the cone came up empty.
+	var nearest: Node3D = null
+	var nearest_d := INF
 	for c in get_parent().get_children():
 		if c == self or not (c is CharacterBody3D):
 			continue
@@ -418,6 +463,9 @@ func _update_target(delta: float, want: Vector3, attack_held: bool) -> void:
 		var d := to.length()
 		if d < 0.01 or d > target_range:
 			continue
+		if d < nearest_d:
+			nearest_d = d
+			nearest = c
 		var off := rad_to_deg(facing.angle_to(to.normalized()))
 		if off > target_cone_half_deg:
 			continue
@@ -442,8 +490,20 @@ func _update_target(delta: float, want: Vector3, attack_held: bool) -> void:
 	if best_engaged != null and best_engaged_score >= best_score - engagement_margin:
 		best = best_engaged
 
+	# NOTHING IN THE CONE -> fall through to the nearest body in range, even directly
+	# behind. Jan's report: "when nobody is in the direction he looks he attacks nobody,
+	# not even an enemy standing right behind him." The cone stays the PREFERENCE (a
+	# monster the player is looking at is always taken first, however close the one
+	# behind is); this tier exists so a held attack is never a swing at nothing. It
+	# still obeys `target_range`, so it never drags the player somewhere unexpected.
+	var from_cone := true
+	if best == null:
+		best = nearest
+		from_cone = false
+
 	if best != target:
 		target = best
+		_target_from_cone = from_cone
 		auto_approaching = false
 		debug_text = "target: %s" % (best.name if best != null else "none")
 		target_changed.emit(best)
@@ -520,7 +580,27 @@ func _flat_to(p: Vector3) -> Vector3:
 
 func _face(dir: Vector3, delta: float, speed: float = -1.0) -> void:
 	var ts: float = turn_speed if speed < 0.0 else speed
-	facing = facing.lerp(dir.normalized(), clampf(ts * delta, 0.0, 1.0)).normalized()
+	var d := dir.normalized()
+	if d.length_squared() < 0.5:
+		return
+	# THE TURN IS DONE ON THE ANGLE, NOT ON THE VECTOR.
+	#
+	# This used to be `facing.lerp(d, ts*delta).normalized()`, which is exponential
+	# decay of the angle and feels right for well-separated directions - but a lerp
+	# between two nearly OPPOSITE unit vectors collapses to a vector of ~zero length,
+	# and normalising that turns the body almost nothing. Measured with a monster
+	# exactly behind: the player acquired it, walked BACKWARD to it facing away, swung
+	# away from it and never landed a hit, with `facing.z` pinned at -1.000 for 90
+	# straight frames. The failure was invisible before the distance tier existed,
+	# because nothing ever picked a body behind the player.
+	#
+	# Decaying the SIGNED ANGLE by the same `ts*delta` factor reproduces the old
+	# dynamics exactly for every direction that used to work (same exponential, same
+	# rate) and has no degenerate case: a 180 deg turn starts turning immediately, the
+	# short way.
+	var ang := facing.signed_angle_to(d, Vector3.UP)
+	var step := ang * clampf(ts * delta, 0.0, 1.0)
+	facing = facing.rotated(Vector3.UP, step).normalized()
 	var yaw := atan2(-facing.x, -facing.z)
 	rotation.y = yaw
 
