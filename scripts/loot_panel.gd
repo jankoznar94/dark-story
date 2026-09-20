@@ -30,6 +30,21 @@ const COL_TAKE_EDGE := Color(0.45, 0.55, 0.30)
 
 const PAD := 12.0
 
+## How long the window must be on screen before a tap can dismiss it. THE TAP THAT
+## OPENS THE BODY IS THE SAME TAP THE WINDOW SEES: `main.gd` opens the panel off the
+## loot manager's `body_opened` signal while the touch is still being delivered, the
+## panel is full-rect and swallows what is left of it, and the tap is nowhere near
+## the window's own box (the corpse is at the player's feet, the window is centred),
+## so the "tap outside the panel closes it" exit fired IMMEDIATELY.
+##
+## Jan's report (Sept 2026): "when I try to open the loot, nothing appears. The
+## joystick and the action buttons just disappear, the loot is not visible and so it
+## cannot be selected." That is exactly this: everything the panel does on open
+## happened (the HUD hid the fight controls) and the window was gone in the same
+## frame. Measured in a real window with a real tap: the panel was open with 1 row
+## and CLOSED again from `loot_panel._gui_input` -> `_handle` -> `set_open(false)`.
+const CLOSE_ARM_MS := 250
+
 signal item_taken(item)
 signal closed
 
@@ -44,6 +59,9 @@ var _rows: Array = []         ## Array[Rect2], parallel to _items
 var _all_rect: Rect2 = Rect2()
 var _close_rect: Rect2 = Rect2()
 var _box: Rect2 = Rect2()
+## Milliseconds left before a tap may dismiss the window. Set on every open; see
+## CLOSE_ARM_MS for why the tap that opened the body must not close it again.
+var _arm_ms: float = 0.0
 
 
 func _ready() -> void:
@@ -92,6 +110,9 @@ func set_open(on: bool) -> void:
 	open = on
 	visible = on
 	mouse_filter = Control.MOUSE_FILTER_STOP if on else Control.MOUSE_FILTER_IGNORE
+	# THE SAME TAP MUST NOT CLOSE WHAT IT JUST OPENED. Every open arms this timer,
+	# and `_handle` ignores a dismiss until it runs out (see CLOSE_ARM_MS).
+	_arm_ms = CLOSE_ARM_MS if on else 0.0
 	# LAY OUT NOW, do not wait for `_draw`. The other two panels only lay out in
 	# `_draw` because they are pure pictures; this one is hit-tested, and a tap can
 	# arrive on the same frame the window opened. Measured: without this the row
@@ -102,6 +123,15 @@ func set_open(on: bool) -> void:
 	if not on:
 		_body = null
 		closed.emit()
+
+
+## The open guard is TIME-based, so it needs a clock; `_process` is enabled for the
+## few frames the timer is alive and nothing else. Without this the guard would be
+## frozen at whatever the first frame set it to and the window could never be closed
+## by a tap outside it at all.
+func _process(delta: float) -> void:
+	if _arm_ms > 0.0:
+		_arm_ms = maxf(0.0, _arm_ms - delta * 1000.0)
 
 
 # ------------------------------------------------------------------- geometry
@@ -153,9 +183,15 @@ func _gui_input(event: InputEvent) -> void:
 
 ## A tap: an item row takes that item, the bottom row takes everything, the close
 ## box closes, and anywhere else on the backdrop closes too (the phone habit).
+##
+## The dismiss paths are GATED by `_arm_ms`: the touch that opened the body is the
+## same touch this Control receives, so without the gate the window closed in the
+## same frame it appeared. Rows and the take-all button are NOT gated - a tap that
+## lands on an item is unambiguous, whatever frame it arrives in.
 func _handle(p: Vector2) -> void:
 	if _close_rect.has_point(p):
-		set_open(false)
+		if _arm_ms <= 0.0:
+			set_open(false)
 		return
 	for i in _rows.size():
 		if (_rows[i] as Rect2).has_point(p):
@@ -164,7 +200,7 @@ func _handle(p: Vector2) -> void:
 	if _all_rect.has_point(p):
 		take_all()
 		return
-	if not _box.has_point(p):
+	if not _box.has_point(p) and _arm_ms <= 0.0:
 		set_open(false)
 
 

@@ -29,6 +29,10 @@ var monster_name: String = "?"
 var opened: bool = false
 ## The model that is the corpse: the monster's own, or the built stand-in.
 var model: Node3D = null
+## The fallback BUNDLE built by `_build()` when there was no monster model to adopt.
+## It is held in one variable so `dress_corpse()` can throw it away in one call:
+## `_ready()` has already run by then, so the bundle exists and must not survive.
+var _standin: Node3D = null
 var label: Label3D
 var _area: Area3D
 var _built: bool = false
@@ -48,9 +52,23 @@ func setup(p_name: String, tint: Color = COL_BODY) -> void:
 ## KEEPS THIS MONSTER'S OWN MODEL as the corpse and tips it over. Called by
 ## loot_manager when a monster dies, so the thing the player walks up to and taps is
 ## the body that fought him - same rig, same tint, same death pose.
+## 
+## THE ORDER OF THIS CALL IS THE BUG THAT SHIPPED (Sept 2026). `spawn_for_death`
+## adds this node to the tree and only THEN calls `dress_corpse`, so `_ready()` has
+## already run - and `_ready()` builds the fallback bundle for the case where there
+## is no model to adopt. The result was a lump of near-black geometry (albedo
+## 0.12) lying beside the monster's own body. Jan's report: "when an enemy dies,
+## apart from its dead body a black object appears as well. We do not want that."
+##
+## The stand-in is therefore DISCARDED here, before the label and the pick box are
+## re-used, and the discard is by NODE IDENTITY (`_standin`), never by a flag: the
+## earlier round of this bug was "verified" by counting stray top-level nodes,
+## which the stand-in is not - it is a CHILD of the corpse, so the assertion passed
+## while the black object shipped.
 func dress_corpse(enemy: Node3D, p_name: String) -> void:
 	monster_name = p_name
 	model = enemy
+	_discard_stand_in()
 	# --- tip it onto the ground --------------------------------------------------
 	# The rig stands with its feet at y = 0, so a rotation about X lays it out along
 	# Z from where it fell. Rotated in the DEATH POSE rather than reset to the rest
@@ -62,6 +80,19 @@ func dress_corpse(enemy: Node3D, p_name: String) -> void:
 	_add_label()
 	_add_area()
 	_built = true
+
+
+## Removes the fallback bundle a `_ready()` that ran too early may have built. One
+## node holds it (`_standin`), so this is a single detach and there is nothing to
+## hunt for among the corpse's children.
+func _discard_stand_in() -> void:
+	if _standin == null:
+		return
+	remove_child(_standin)
+	_standin.queue_free()
+	_standin = null
+	if model != null and model.get_parent() == null:
+		model = null
 
 
 func _ready() -> void:
@@ -80,6 +111,14 @@ func _build(tint: Color) -> void:
 	mat.roughness = 0.98
 	mat.metallic = 0.0
 
+	# The bundle root is the NODE `_discard_stand_in()` detaches. The parts are
+	# children of it, so throwing the corpse's real model in means throwing all of
+	# it away in one call.
+	var bundle := Node3D.new()
+	bundle.name = "StandIn"
+	add_child(bundle)
+	_standin = bundle
+
 	var torso := MeshInstance3D.new()
 	torso.name = "Torso"
 	var bm := BoxMesh.new()
@@ -87,7 +126,7 @@ func _build(tint: Color) -> void:
 	torso.mesh = bm
 	torso.position = Vector3(0, 0.17, 0)
 	torso.material_override = mat
-	add_child(torso)
+	bundle.add_child(torso)
 	model = torso
 
 	var head := MeshInstance3D.new()
@@ -100,7 +139,7 @@ func _build(tint: Color) -> void:
 	head.mesh = sm
 	head.position = Vector3(0.34, 0.16, 0.05)
 	head.material_override = mat
-	add_child(head)
+	bundle.add_child(head)
 
 	var limb := MeshInstance3D.new()
 	limb.name = "Limb"
@@ -110,7 +149,7 @@ func _build(tint: Color) -> void:
 	limb.position = Vector3(-0.42, 0.10, -0.12)
 	limb.rotation_degrees = Vector3(0, 22, 0)
 	limb.material_override = mat
-	add_child(limb)
+	bundle.add_child(limb)
 
 	_add_label()
 	_add_area()

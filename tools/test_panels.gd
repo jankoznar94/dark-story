@@ -397,9 +397,35 @@ func _test_body_left_by_a_kill() -> void:
 			stray += 1
 	_ok("no separate corpse object was spawned beside the monster", stray == 0,
 		"%d stray Body_ nodes" % stray)
+	# ...AND THE COUNT ABOVE IS NOT ENOUGH - that is exactly why the black object
+	# shipped. `loot_body._ready()` runs when `spawn_for_death` adds the node to the
+	# tree, i.e. BEFORE `dress_corpse()` adopts the monster, so the fallback bundle
+	# was already built and it is a CHILD of the corpse, not a top-level Body_ node.
+	# Jan: "when an enemy dies, apart from its dead body a black object appears as
+	# well. We do not want that." So the assertion is about the GEOMETRY the corpse
+	# actually shows: every mesh under it must be the adopted monster's own.
+	_ok("the corpse carries no fallback bundle", b.get_node_or_null("StandIn") == null,
+		"a StandIn child was left on the corpse")
+	var corpse_meshes := 0
+	var own_model: Node = parent.get_model_root() if parent != null else null
+	_count_meshes(b, corpse_meshes, own_model)
+	_ok("every mesh the corpse draws is the monster's OWN model", corpse_meshes == 0,
+		"%d mesh(es) outside the monster's model" % corpse_meshes)
 	_ok("the corpse no longer collides with the world (a body must not block a step)",
 		parent != null and parent.collision_layer == 0,
 		"layer %d" % (parent.collision_layer if parent else -1))
+
+
+## Meshes under `node` that are NOT inside `own_model` - i.e. geometry the corpse
+## draws that is not the monster's own body. Counted by walking the tree, because
+## the defect was a child of a child and a name lookup would miss a rename.
+func _count_meshes(node: Node, out: int, own_model: Node) -> void:
+	for c in node.get_children():
+		if c == own_model:
+			continue
+		if c is MeshInstance3D:
+			out += 1
+		_count_meshes(c, out, own_model)
 
 
 # ------------------------------------------------------------ 5. opening a body
@@ -488,17 +514,32 @@ func _test_opening_a_body() -> void:
 	_ok("...and the item STAYS in the body (never destroyed)",
 		loot.items_in(fresh).size() == before_n, "%d items" % loot.items_in(fresh).size())
 
-	# --- a tap outside the panel closes it
+	# --- a tap outside the panel closes it - BUT NOT THE TAP THAT OPENED IT.
+	# The window is full-rect and swallows the rest of the very touch that opened the
+	# body, so `_handle` used to fire its "tapped outside" exit in the SAME frame:
+	# Jan saw the joystick disappear and no window at all. The guard is time-based
+	# (`loot_panel.CLOSE_ARM_MS`), so this test asserts BOTH halves: an immediate tap
+	# changes nothing, and a tap after the guard expires closes the window.
 	hud.open_loot_for(fresh)
 	await physics_frame
 	panel.layout_now()
-	var out := InputEventScreenTouch.new()
-	out.pressed = true
-	out.index = 1
-	out.position = Vector2(2.0, 2.0)
-	panel._gui_input(out)
+	_ok("the window is armed against the tap that opened it",
+		panel._arm_ms > 0.0, "%.0f ms left" % panel._arm_ms)
+	var immediate := InputEventScreenTouch.new()
+	immediate.pressed = true
+	immediate.index = 1
+	immediate.position = Vector2(2.0, 2.0)
+	panel._gui_input(immediate)
 	await physics_frame
-	_ok("a tap outside the window closes it", not panel.open)
+	_ok("the tap that opened the body does NOT close it again", panel.open,
+		"open=%s" % str(panel.open))
+	# Wait the guard out. `_process` runs on real deltas, so drive it directly rather
+	# than sleeping a quarter of a second in a headless suite.
+	panel._arm_ms = 0.0
+	panel._gui_input(immediate)
+	await physics_frame
+	_ok("a later tap outside the window closes it", not panel.open,
+		"open=%s" % str(panel.open))
 
 	# --- closing the loot window resumes the world too
 	main.clear_loot()
