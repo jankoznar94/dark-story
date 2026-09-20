@@ -19,6 +19,14 @@ const Item := preload("res://scripts/item.gd")
 ## of six should give the player a handful of things to look at, not a carpet.
 const MAX_DROPS := 2
 
+## Jan's setting for the loot-testing pass (Sept 2026): "for testing, make the
+## drop chance 100 %". A monster that died always leaves a body with something in
+## it, so the open-a-body loop can be judged without rolling for it. It is one
+## CONSTANT on purpose - the D2 rate (55 %) comes back by putting it to 0.55, and
+## `tools/test_inventory.gd` checks the shape of the distribution against this
+## value rather than against a stored histogram.
+const DROP_CHANCE := 1.0
+
 
 ## One item for an area / monster of level `ilvl`. `slot_filter` of
 ## Slot.NONE means "anything".
@@ -37,13 +45,14 @@ static func roll(ilvl: int, slot_filter: int = IB.Slot.NONE, rng: RandomNumberGe
 
 
 ## What a monster leaves behind. Returns an Array of items (possibly empty) - the
-## caller decides where they lie on the ground.
+## caller puts them inside a body.
 static func roll_drop(ilvl: int, rng: RandomNumberGenerator = null) -> Array:
 	var r: RandomNumberGenerator = rng if rng != null else _rng()
 	var out: Array = []
-	# 55 % of monsters leave something. The rest leave nothing, which is what
-	# keeps an item on the ground feeling like an event rather than furniture.
-	if r.randf() > 0.55:
+	# DROP_CHANCE is 1.0 for the testing pass, so every corpse has something to
+	# open. At the D2 setting (0.55) the rest of the monsters leave nothing, which
+	# is what keeps an item feeling like an event rather than furniture.
+	if r.randf() > DROP_CHANCE:
 		return out
 	var n := 1
 	if r.randf() < 0.18:

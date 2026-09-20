@@ -68,14 +68,48 @@ func _run() -> void:
 
 	print("== 2. the pack spawned, one node per kind entry ==")
 	var pack: Array = main._enemies
-	_ok("several monsters are in the scene", pack.size() >= 5, "%d monsters" % pack.size())
+	_ok("several monsters are in the scene", pack.size() >= 4, "%d monsters" % pack.size())
 	var kinds := {}
 	for e in pack:
 		kinds[e.monster_name] = int(kinds.get(e.monster_name, 0)) + 1
 	print("     composition: ", kinds)
-	_ok("there are at least three distinct kinds", kinds.size() >= 3, str(kinds.keys()))
+	# TWO kinds is the deliberate composition since Jan's Sept 2026 report ("at the
+	# start there are too many enemies"). The earlier pack of six with a Brute was
+	# the thing he could not try anything against, so "at least three kinds" was a
+	# test of a brief that no longer exists.
+	_ok("there are two distinct kinds", kinds.size() >= 2, str(kinds.keys()))
 	_ok("there is a weak pack of several", int(kinds.get("Ghoul", 0)) >= 3,
 		"%d Ghouls" % int(kinds.get("Ghoul", 0)))
+
+	print("== 2b. the STARTING AREA is empty (Jan's brief) ==")
+	var player0: Node = main.get_node("Player")
+	var nearest := INF
+	var nearest_name := ""
+	for e in pack:
+		var d: float = e.global_position.distance_to(player0.global_position)
+		if d < nearest:
+			nearest = d
+			nearest_name = e.monster_name
+	# Every kind's aggro radius is 5-5.5 m, so a monster outside that cannot wake up
+	# however long the player stands still. The bar is derived from the catalogue,
+	# not picked: it has to hold for the WIDEST aggro in monster_kind.gd.
+	var widest := 0.0
+	for id in MK.kinds():
+		widest = maxf(widest, float((MK.kinds()[id] as Dictionary)["aggro"]))
+	_ok("no monster is inside its own aggro radius of the player's spawn",
+		nearest > widest,
+		"nearest %s at %.2f m, widest aggro %.2f m" % [nearest_name, nearest, widest])
+	_ok("nothing has noticed the player at the start",
+		pack.filter(func(e): return e.aggro).is_empty(),
+		"%d engaged" % pack.filter(func(e): return e.aggro).size())
+	# and nothing is in reach of a swing either: the first thing that happens in a
+	# session must not be a fight.
+	var nearest_post := INF
+	for c in main.get_children():
+		if c is StaticBody3D and c.name != "FloorBody":
+			nearest_post = minf(nearest_post, c.global_position.distance_to(player0.global_position))
+	_ok("the spawn point is clear of the level's props too", nearest_post > 1.5,
+		"nearest prop %.2f m" % nearest_post)
 	for e in pack:
 		_ok("%s carries its own numbers" % e.name,
 			e.max_hp > 0.0 and e.hp == e.max_hp and e.attack_range > 0.0
@@ -223,10 +257,29 @@ func _run() -> void:
 	print("== 9. the HUD follows both health pools ==")
 	main._process(0.016)
 	var hud: Node = main.get_node("HUD")
-	_ok("the enemy bar names a monster of the pack",
-		hud.enemy_label.text.length() > 0
-		and _any_name_matches(pack, hud.enemy_label.text),
-		hud.enemy_label.text)
+	# DETERMINISTIC, not "whatever the earlier sections left engaged". The pack now
+	# starts far down the lane, so by this point nothing may be engaged at all and
+	# the bar is legitimately empty - which made an assertion about its CONTENT test
+	# the previous sections rather than the HUD. So one monster is put in the
+	# player's face first, and the bar must then name THAT monster.
+	var last: Node = _alive_of(pack, "Ghoul", null)
+	if last == null:
+		last = _first_of(pack, "Ravager")
+	if last != null:
+		player.global_position = last.global_position + Vector3(0, 0, 1.2)
+		last.aggro = true
+		main._process(0.016)
+		_ok("the enemy bar names the monster the player is actually fighting",
+			hud.enemy_label.text.length() > 0
+			and _any_name_matches(pack, hud.enemy_label.text),
+			"%s vs pack of %d" % [hud.enemy_label.text, pack.size()])
+		_ok("...and it carries that monster's level and life",
+			hud.enemy_label.text.contains("lv") and hud.enemy_label.text.contains("/"),
+			hud.enemy_label.text)
+		_ok("the enemy bar is filled while it is alive", hud.enemy_fill.size.x > 0.0,
+			"%.1f px" % hud.enemy_fill.size.x)
+	else:
+		_ok("a monster survived the earlier sections for the HUD check", false, "none")
 	_ok("the player bar shows HP", hud.hp_label.text.contains("HP"), hud.hp_label.text)
 	_ok("the player bar is filled", hud.hp_fill.size.x > 0.0,
 		"%.1f px" % hud.hp_fill.size.x)

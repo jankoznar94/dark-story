@@ -45,16 +45,33 @@ const RUN_LABEL := "Běh"
 ## The two UI panels and the buttons that open them. Small square buttons under
 ## the vitals, never under the thumbs: the inventory is a READ-AND-DRAG screen, so
 ## it may take the whole middle of the display.
+##
+## They stay VISIBLE while one of them is open - that is how the panel is closed
+## again: tap the same button a second time. Jan's report (Sept 2026) was
+## "the inventory cannot be turned off, I found no working button that hides it",
+## and the cause was that every panel button was hidden by `_apply_panel_state()`
+## the moment a panel came up, so the only control that could close the window
+## disappeared with it. The close path is now threefold: the same button, ESC /
+## the phone's back gesture, and a tap outside the panel while the loot list is
+## up.
 const INVENTORY_LABEL := "Věci"
 const STATS_LABEL := "Hrdina"
+## The label of the loot panel's own button. It exists so the "press ESC and
+## nothing happens" complaint cannot come back on a phone, which has no ESC.
+const LOOT_LABEL := "Tělo"
 
 var joystick: VirtualJoystick
 var debug_label: Label
 var run_button: Button
 var inv_button: Button
 var stats_button: Button
+var loot_button: Button
 var inventory_ui: Control
 var stat_panel: Control
+## The window that shows what is inside an opened body. It lives here rather than
+## in main.gd so every full-screen surface answers `panel_open()` in one place -
+## the pause and the control hiding hang off that single question.
+var loot_panel: Control
 var toast_label: Label
 var toast_t: float = 0.0
 ## Latched run state, read by main.gd -> player.gd once per frame. The joystick
@@ -126,10 +143,14 @@ func _build() -> void:
 	# swing at a monster.
 	inv_button = _square_button(INVENTORY_LABEL)
 	inv_button.name = "Btn_inventory"
-	inv_button.pressed.connect(func() -> void: _toggle_panel(1))
+	inv_button.pressed.connect(func() -> void: _toggle_panel(1, false))
 	stats_button = _square_button(STATS_LABEL)
 	stats_button.name = "Btn_stats"
-	stats_button.pressed.connect(func() -> void: _toggle_panel(2))
+	stats_button.pressed.connect(func() -> void: _toggle_panel(2, false))
+	# The loot panel's button is wired by main.gd, because opening it needs to know
+	# which body is within reach - that is a world question, not a HUD one.
+	loot_button = _square_button(LOOT_LABEL)
+	loot_button.name = "Btn_loot"
 
 	debug_label = Label.new()
 	debug_label.add_theme_color_override("font_color", Color(0.85, 0.78, 0.62))
@@ -271,41 +292,87 @@ func _on_run_toggled(on: bool) -> void:
 	run_latched = on
 
 
-func _toggle_panel(which: int) -> void:
-	## 1 = inventory, 2 = stats. They are mutually exclusive: both are full-screen
-	## and both pause the fight, so having both up at once would only hide one.
+func _toggle_panel(which: int, notify: bool = true) -> void:
+	## 1 = inventory, 2 = stats, 3 = what is inside an opened body. They are
+	## mutually exclusive: all three are full-screen and all three pause the fight,
+	## so having two up at once would only hide one.
+	##
+	## `notify` is only true for the HUD's own buttons. A player who closes a panel
+	## with ESC (or with the phone's back gesture) hears nothing about it - a toast
+	## for "the window you just dismissed" is noise. A player who presses the
+	## INVENTORY button while the body window is up does hear why: the window he
+	## asked for is not the one that is on screen.
 	var want_inv := which == 1
 	var want_stats := which == 2
-	if want_inv and inventory_ui != null and not inventory_ui.open:
-		stat_panel.set_open(false)
-	if want_stats and stat_panel != null and not stat_panel.open:
-		inventory_ui.set_open(false)
-	if want_inv:
-		inventory_ui.set_open(not inventory_ui.open)
-	elif want_stats:
-		stat_panel.set_open(not stat_panel.open)
+	var want_loot := which == 3
+	if notify and panel_open() and not _is_open(which):
+		# REFUSED, not swapped. The toast alone was not enough: the code below still
+		# closed the open panel and opened the asked-for one, so the message said
+		# "close the inventory first" while the inventory silently went away.
+		toast("Zavři napřed %s." % _open_panel_name())
+		return
+	if _is_open(which):
+		_set_panel(which, false)
+	else:
+		_set_panel(1, false)
+		_set_panel(2, false)
+		_set_panel(3, false)
+		_set_panel(which, true)
 	_apply_panel_state()
+
+
+func _is_open(which: int) -> bool:
+	if which == 1:
+		return inventory_ui != null and inventory_ui.open
+	if which == 2:
+		return stat_panel != null and stat_panel.open
+	if which == 3:
+		return loot_panel != null and loot_panel.open
+	return false
+
+
+func _set_panel(which: int, on: bool) -> void:
+	if which == 1 and inventory_ui != null:
+		inventory_ui.set_open(on)
+	elif which == 2 and stat_panel != null:
+		stat_panel.set_open(on)
+	elif which == 3 and loot_panel != null:
+		loot_panel.set_open(on)
+
+
+func _open_panel_name() -> String:
+	if _is_open(1):
+		return "inventář"
+	if _is_open(2):
+		return "hrdinu"
+	if _is_open(3):
+		return "tělo"
+	return "panel"
 
 
 ## True while any full-screen panel is up. main.gd reads this to pause the world:
 ## an inventory you cannot be punched in is the D2 behaviour, and it is also what
 ## makes a drag reliable on a phone (a monster walking into you mid-drag would
 ## move the world under the pointer).
+##
+## The LOOT window is part of this on purpose - the fight is paused while the
+## player reads what fell out of the body.
 func panel_open() -> bool:
-	return (inventory_ui != null and inventory_ui.open) \
-		or (stat_panel != null and stat_panel.open)
+	return _is_open(1) or _is_open(2) or _is_open(3)
 
 
 func _apply_panel_state() -> void:
 	var p := panel_open()
 	# While a panel is up the FIGHT controls are hidden, so a tap meant for the
-	# inventory cannot also press attack. The panels themselves keep the taps.
+	# inventory cannot also press attack. The PANEL buttons stay: they are the way
+	# out of the window, and hiding them is exactly the bug Jan reported.
 	for slot in SLOTS:
 		_buttons[slot].visible = not p
 	run_button.visible = not p
 	joystick.visible = not p and (DisplayServer.is_touchscreen_available() or OS.has_feature("mobile"))
-	inv_button.visible = not p
-	stats_button.visible = not p
+	inv_button.visible = true
+	stats_button.visible = true
+	loot_button.visible = true
 	debug_label.visible = not p
 	_bars["p_back"].visible = not p
 	_bars["p_fill"].visible = not p
@@ -313,6 +380,26 @@ func _apply_panel_state() -> void:
 	_bars["e_back"].visible = not p
 	_bars["e_fill"].visible = not p
 	enemy_label.visible = not p
+
+
+## Every panel closed at once. Used by ESC / the back gesture on a phone.
+func close_panels() -> void:
+	_set_panel(1, false)
+	_set_panel(2, false)
+	_set_panel(3, false)
+	_apply_panel_state()
+
+
+## Opens the body window on `body`, closing whatever else was up. Called by
+## main.gd, because "which body is within reach" is a world question and the HUD
+## has no business walking the loot tree.
+func open_loot_for(body) -> void:
+	if loot_panel == null:
+		return
+	_set_panel(1, false)
+	_set_panel(2, false)
+	loot_panel.set_body(body)
+	_apply_panel_state()
 
 
 func toast(text: String) -> void:
@@ -372,6 +459,7 @@ func _layout(size: Vector2 = Vector2.ZERO) -> void:
 	var by: float = margin * 0.4
 	_square_place(inv_button, Vector2(bx, by), Vector2(bw, bh2))
 	_square_place(stats_button, Vector2(bx + bw + gap2, by), Vector2(bw, bh2))
+	_square_place(loot_button, Vector2(bx + (bw + gap2) * 2.0, by), Vector2(bw, bh2))
 	toast_label.position = Vector2(bx, by + bh2 + m * 0.012)
 	toast_label.add_theme_font_size_override("font_size", int(maxf(12.0, m * 0.024)))
 

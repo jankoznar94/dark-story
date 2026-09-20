@@ -24,6 +24,11 @@ signal target_changed(target: Node3D)
 enum Atk { NONE, WINDUP, ACTIVE, RECOVER }
 enum Kind { LIGHT, HEAVY }
 
+## Every INPUT READ in this file goes through this gate, so a full-screen panel
+## (inventory, hero sheet, an opened body) really pauses the fight. A read that
+## bypasses it is a pause that silently does not pause - see scripts/input_gate.gd.
+const GATE := preload("res://scripts/input_gate.gd")
+
 @export_group("Movement")
 ## PACING CHANGE (Jan, Sept 2026): "the run speed is too high, make it about 30 %
 ## slower, and adapt the animation to it."
@@ -322,15 +327,16 @@ func set_stick_active(on: bool) -> void:
 ## throttle and must stay one. The virtual stick is the case that must NOT be, which
 ## is what the HUD flag covers.
 func input_is_stick() -> bool:
-	for d in Input.get_connected_joypads():
-		if absf(Input.get_joy_axis(d, JOY_AXIS_LEFT_X)) > JOYSTICK_DEVICE_DEADZONE \
-				or absf(Input.get_joy_axis(d, JOY_AXIS_LEFT_Y)) > JOYSTICK_DEVICE_DEADZONE:
-			return true
+	# Read through the GATE, never `Input` directly: with a panel open every read
+	# must come back false, and "this script missed the gate" is a pause that does
+	# not pause. See scripts/input_gate.gd.
+	if GATE.joypad_deflected(JOYSTICK_DEVICE_DEADZONE):
+		return true
 	return stick_active
 
 
 func _move_input() -> Vector2:
-	var iv := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	var iv := GATE.vector("move_left", "move_right", "move_up", "move_down")
 	last_move_input = iv
 	if iv.length() < 0.001:
 		return Vector2.ZERO
@@ -349,7 +355,7 @@ func _move_input() -> Vector2:
 ## the game would have had no walk at all. A separate run input is the only thing
 ## that works for touch, keyboard and pad alike.
 func wants_run(_iv: Vector2 = Vector2.ZERO) -> bool:
-	return run_requested or Input.is_action_pressed("run")
+	return run_requested or GATE.held("run")
 
 
 ## Called by main.gd from the HUD's RUN latch. Kept as a plain flag so the player
@@ -368,9 +374,18 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	## PAUSED: the bag, the hero sheet or an opened body stops the hero too.
+	## Without this the INPUT GATE alone would stop him WALKING but not finish the
+	## swing he is committed to, and the attack window would keep advancing while
+	## the world is frozen - a monster could not hit him and he could not hit back,
+	## but the animation and the state machine would still be running.
+	if GATE.blocked():
+		velocity = Vector3.ZERO
+		return
+
 	var iv := _move_input()
 	var want := Vector3(iv.x, 0.0, iv.y)
-	var attack_held := Input.is_action_pressed("attack")
+	var attack_held := GATE.held("attack")
 
 	# --- auto-target bookkeeping ---
 	# Deliberately BEFORE the attack-window early return. A released button or a
@@ -445,7 +460,7 @@ func _physics_process(delta: float) -> void:
 	# already been dropped by the bookkeeping at the top, so it cannot get stuck here.
 	if attack_held and target == null:
 		_begin_attack(Kind.LIGHT)
-	elif Input.is_action_just_pressed("skill_1"):
+	elif GATE.just("skill_1"):
 		_begin_attack(Kind.HEAVY)
 
 

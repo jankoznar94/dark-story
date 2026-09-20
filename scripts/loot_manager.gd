@@ -1,36 +1,55 @@
 extends Node3D
-## What monsters leave on the ground. One place that owns the drops, so the
-## pickup rule exists once and every caller (a death, a chest, a test) uses it.
+## What monsters leave behind, World-of-Warcraft style: a BODY with the items
+## inside it, not a carpet of objects on the floor.
 ##
-## D2's rule for the drop POSITION: a body is thrown a short distance from the
-## corpse, on a spot that is not inside a wall and not inside another drop. Never
-## under the corpse, because that is where the player is standing.
+## Jan's brief (Sept 2026): "maybe it is better if the items do not fall on the
+## ground, but it is like in World of Warcraft - the player opens the body and
+## picks the items out of it. For testing, make the drop chance 100 % now."
 ##
-## Only one item is picked up per click. It goes straight into the bag; if the bag
-## is full the drop STAYS on the ground and the game says so, because silently
-## destroying a rare the player can see is the worst bug a loot game can have.
+## So this class owns two things and nothing else:
+##   * a BODY node per corpse (`scripts/loot_body.gd`) - placed near the corpse,
+##     clear of geometry, with the items held as DATA (never as nodes);
+##   * the OPENING rule: a tap that lands on a body within `OPEN_RANGE` returns
+##     the items that were inside and leaves an empty body behind.
+##
+## The item is still pure data (`item.gd`), so the same object goes from the body
+## into the bag without being re-parented - the rule that stops a save or a
+## `queue_free` from duplicating or losing it.
+##
+## D2's rule for the drop POSITION survives: a body is thrown a short distance
+## from where the monster fell, on a spot that is not inside a wall. It is never
+## under the monster, because the player is standing there.
 
-const LootDrop := preload("res://scripts/loot_drop.gd")
+const LootBody := preload("res://scripts/loot_body.gd")
 const ItemGen := preload("res://scripts/item_gen.gd")
 
-## How far from the corpse the drop is thrown, and how many spots are tried
-## before giving up and dropping it at the corpse (the D2 "it stays where it
-## fell" behaviour - better a reachable item than none).
-const THROW_MIN := 0.6
-const THROW_MAX := 1.4
+## How far from the corpse the body is thrown, and how many spots are tried
+## before giving up and leaving it where the monster fell.
+const THROW_MIN := 0.7
+const THROW_MAX := 1.6
 const THROW_TRIES := 8
 
-## How far a click can reach a name. Diablo lets you click a name across the
-## screen; this is generous on purpose so a phone tap is not a test of aim, but
-## still bounded so the player cannot vacuum the arena from one spot.
-const PICK_RANGE := 8.0
+## How far a tap can reach a body. A little shorter than the old ground-drop
+## range: a body is a thing you walk up to, and the rule has to read as such.
+const OPEN_RANGE := 6.0
 
-## Physics layer holding items (see loot_drop.gd).
-const LAYER := 2
+## Physics layer holding the bodies. Items used to be layer 2; the bags' own ray
+## asks for 1|2, so a body on its own layer can never be mistaken for an item.
+##
+## The value mirrors `loot_body.LAYER_CORPSE`. It is a literal because GDScript 4
+## cannot read a const out of a preloaded script in a `const` expression
+## ("Invalid operands to operator |, int and Nil"), and `tools/test_panels.gd`
+## asserts the two really agree so the duplication cannot drift.
+const LAYER := 4
 
 signal item_picked(item)
+signal bag_full_of(item)
+## A body was opened and gave up its items (may be empty when it had none).
+signal body_opened(body, items)
 
-var _drops: Array = []
+var _bodies: Array = []
+## body node -> Array of items still inside it.
+var _loot: Dictionary = {}
 ## The camera, used to turn a screen tap into a world ray. Set by main.gd.
 var camera: Camera3D
 
@@ -39,167 +58,221 @@ func _ready() -> void:
 	camera = get_viewport().get_camera_3d()
 
 
-## Rolls `ilvl`-appropriate loot for a monster that died at `origin` and puts it
-## on the ground. Returns the number of items that actually landed.
-func spawn_for_death(origin: Vector3, ilvl: int, rng: RandomNumberGenerator = null) -> int:
+## Rolls `ilvl`-appropriate loot for a monster that died at `origin`, puts a BODY
+## there and stores the items inside it. Returns the number of items the body
+## holds (0 means no body was created - nothing to open).
+func spawn_for_death(origin: Vector3, ilvl: int, monster_name: String = "?",
+		rng: RandomNumberGenerator = null) -> int:
 	var items: Array = ItemGen.roll_drop(ilvl, rng)
-	var placed := 0
-	for it in items:
-		if spawn_item(it, origin):
-			placed += 1
-	return placed
+	if items.is_empty():
+		return 0
+	spawn_body(origin, items, rng, monster_name)
+	return items.size()
 
 
-## Puts ONE item on the ground near `origin`. Returns false when no clear spot
-## exists - the caller then decides whether to drop it anyway.
-func spawn_item(item, origin: Vector3, rng: RandomNumberGenerator = null) -> bool:
+## A body at `origin` holding `items`. Kept separate from the roll so a test (and
+## a chest, later) can leave a hand-built body behind.
+##
+## `monster_name` is what the body is LABELLED with. It comes from the monster
+## that fell rather than from the first item: a body reading "Tělo: krátký meč"
+## tells the player the wrong thing about what is lying there.
+func spawn_body(origin: Vector3, items: Array, rng: RandomNumberGenerator = null,
+		monster_name: String = "?") -> Node3D:
+	var spot: Vector3 = _find_clear_spot(origin, rng)
+	var node: Node3D = LootBody.new()
+	node.name = "Body_%d" % (_bodies.size() + 1)
+	add_child(node)
+	# setup before the position: the node builds its meshes in _ready, and the
+	# label must say which monster fell before it is ever drawn.
+	node.setup(monster_name)
+	node.global_position = spot
+	_bodies.append(node)
+	_loot[node] = items
+	return node
+
+
+## D2's placement rule, unchanged: try a handful of throw angles, take the first
+## clear one, fall back to the corpse spot so the body is never lost.
+func _find_clear_spot(origin: Vector3, rng: RandomNumberGenerator = null) -> Vector3:
 	var r: RandomNumberGenerator = rng if rng != null else RandomNumberGenerator.new()
 	r.randomize()
 	var best := origin
-	var found := false
 	for i in THROW_TRIES:
 		var a := r.randf_range(0.0, TAU)
 		var d := r.randf_range(THROW_MIN, THROW_MAX)
 		var p := origin + Vector3(cos(a) * d, 0.0, sin(a) * d)
 		p = _snap_to_ground(p)
 		if _spot_is_clear(p):
-			best = p
-			found = true
-			break
-	if not found:
-		best = _snap_to_ground(origin)
-	var node := LootDrop.new()
-	node.name = "Drop_%d" % item.uid
-	add_child(node)
-	node.setup(item)
-	node.global_position = best
-	_drops.append(node)
-	return found
+			return p
+	return _snap_to_ground(best)
 
 
-## A drop must not sit inside a wall or a prop. Cheaper and more reliable than a
-## shape cast: an item is small and the level is coarse, so a sphere overlap test
-## against the level's static bodies is exact enough and cannot fail open.
+## A body must not sit inside a wall or a prop, and must not sit ON another body:
+## two corpses in one spot read as one corpse and the second one's loot becomes
+## very hard to tap. Measured: without the second query a pack killed in one place
+## produced bodies 0.04 m apart, i.e. inside each other.
+##
+## Two queries, because the two obstacles live on different layers: the level is on
+## layer 1 (static bodies), the bodies are Area3D on layer 4 - and an Area3D is
+## invisible to a query that does not ask for areas.
 func _spot_is_clear(p: Vector3) -> bool:
-	var space := get_world_3d().direct_space_state
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var shape := SphereShape3D.new()
-	shape.radius = 0.35
+	shape.radius = 0.40
+	var at := Transform3D(Basis(), p + Vector3(0, 0.35, 0))
+
+	# 1. the level
 	var q := PhysicsShapeQueryParameters3D.new()
 	q.shape = shape
-	q.transform = Transform3D(Basis(), p + Vector3(0, 0.35, 0))
+	q.transform = at
 	q.collision_mask = 1
-	var hits := space.intersect_shape(q, 4)
+	var hits: Array = space.intersect_shape(q, 4)
 	for h in hits:
 		var c: Object = h["collider"]
-		# the floor is on layer 1 too; an item ON the floor is the normal case
+		# the floor is on layer 1 too; a body ON the floor is the normal case
 		if c is StaticBody3D and c.name == "FloorBody":
 			continue
+		return false
+
+	# 2. the bodies already lying there
+	var q2 := PhysicsShapeQueryParameters3D.new()
+	q2.shape = shape
+	q2.transform = at
+	q2.collision_mask = LAYER
+	q2.collide_with_areas = true
+	var hits2: Array = space.intersect_shape(q2, 8)
+	if not hits2.is_empty():
 		return false
 	return true
 
 
-## Drops are placed on the ground plane. The floor is flat and at y = 0, so this
-## is a constant rather than a raycast - and a raycast here would find the item's
-## own Area3D on layer 2 if the layers were ever mis-set.
+## Bodies lie on the ground plane. The floor is flat and at y = 0, so this is a
+## constant rather than a raycast - a raycast here would find the body's own
+## Area3D and report a self-collision.
 func _snap_to_ground(p: Vector3) -> Vector3:
 	return Vector3(p.x, 0.0, p.z)
 
 
-## Everything currently on the ground, for tests and for the debug line.
-func drops() -> Array:
-	return _drops.duplicate()
+# ------------------------------------------------------------------- inspection
+## Every body in the world, for tests and for the debug line.
+func bodies() -> Array:
+	return _bodies.duplicate()
 
 
+func body_count() -> int:
+	return _bodies.size()
+
+
+## The items still inside a body. Empty array when the body is empty or unknown.
+func items_in(body) -> Array:
+	if not _loot.has(body):
+		return []
+	return (_loot[body] as Array).duplicate()
+
+
+## Total items left on the ground inside every body. What the old `drop_count()`
+## answered, kept because the kill wiring is measured with it.
 func drop_count() -> int:
-	return _drops.size()
-
-
-## Takes one drop away. Returns the item, or null when the node was not ours.
-func take(drop_node):
-	if not _drops.has(drop_node):
-		return null
-	_drops.erase(drop_node)
-	var it: Variant = drop_node.item
-	drop_node.queue_free()
-	return it
+	var n := 0
+	for b in _loot:
+		n += (_loot[b] as Array).size()
+	return n
 
 
 func clear() -> void:
-	for d in _drops:
-		if is_instance_valid(d):
-			d.queue_free()
-	_drops.clear()
+	for b in _bodies:
+		if is_instance_valid(b):
+			b.queue_free()
+	_bodies.clear()
+	_loot.clear()
 
 
-# ------------------------------------------------------------------- picking
-## The screen-space tap that D2 uses: a click on the NAME (or on the model)
-## picks the item up. Ray from the camera through the tap, then look for a drop
-## among the colliders - the item's own Area3D covers both the model and the
-## name, so "click the name" and "click the sword" are one code path.
+# --------------------------------------------------------------------- opening
+## The screen-space tap that opens a body. Ray from the camera through the tap,
+## then look for a body among the colliders: its own Area3D covers the bundle and
+## the label, so "tap the body" and "tap its name" are one code path.
 ##
-## Returns the picked item, or null when the tap hit nothing.
-func try_pick_at_screen(screen_pos: Vector2, inventory, player_pos: Vector3):
+## Mask 1|4: a wall between the camera and the body must block the tap, while the
+## bodies themselves live on their own layer. `collide_with_areas` is required -
+## a body is an Area3D on purpose, so it never blocks a step.
+##
+## Returns the items the body held, or null when the tap hit nothing openable.
+func open_at_screen(screen_pos: Vector2, player_pos: Vector3) -> Variant:
 	if camera == null or not camera.is_inside_tree():
 		camera = get_viewport().get_camera_3d()
 		if camera == null:
 			return null
-	var from := camera.project_ray_origin(screen_pos)
-	var dir := camera.project_ray_normal(screen_pos)
-	var space := get_world_3d().direct_space_state
-	# mask 1|2: a wall in front of the item must block the pick, but the item's
-	# own Area3D is what we are looking for
+	var from: Vector3 = camera.project_ray_origin(screen_pos)
+	var dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(from, from + dir * 100.0)
 	q.collision_mask = 1 | LAYER
 	q.collide_with_areas = true
-	var res := space.intersect_ray(q)
+	var res: Dictionary = space.intersect_ray(q)
 	if res.is_empty():
 		return null
-	var hit: Object = res["collider"]
-	var node := _drop_of(hit)
+	var node: Node = _body_of(res["collider"])
 	if node == null:
 		return null
-	if node.global_position.distance_to(player_pos) > PICK_RANGE:
+	if node.global_position.distance_to(player_pos) > OPEN_RANGE:
 		return null
-	return _pick_into(node, inventory)
+	return open(node)
 
 
-## Same rules, driven directly (used by the developer picker and by tests, where
-## there is no camera).
-func try_pick(drop_node, inventory, player_pos: Vector3):
-	if not _drops.has(drop_node):
+## Same rules, driven directly (used by tests, where there is no camera).
+##
+## OPENING IS NOT TAKING. This returns what is inside and marks the body as
+## looked-at; it does NOT empty it. Two reasons, and both are the kind of thing
+## that reads as a bug to a player:
+##   * closing the window without taking anything must leave the loot where it was
+##     - "I opened it, looked, and the items were gone" is a lost rare;
+##   * an `open()` that consumed the contents made the two entry points to the same
+##     body fight each other: the panel's per-item `take_item()` found nothing left
+##     to take. Measured: `take_item` returned null on a body that had just been
+##     opened, with an empty bag and a legal cell.
+func open(body, player_pos: Vector3 = Vector3.ZERO) -> Variant:
+	if not _bodies.has(body):
 		return null
-	if drop_node.global_position.distance_to(player_pos) > PICK_RANGE:
+	if player_pos != Vector3.ZERO and body.global_position.distance_to(player_pos) > OPEN_RANGE:
 		return null
-	return _pick_into(drop_node, inventory)
+	var items: Array = _loot.get(body, [])
+	body.opened = true
+	if body.label != null:
+		# Read, not taken: the label dims so the player can see he has already been
+		# in this one, which is how a field of five bodies stays readable.
+		body.label.modulate = Color(0.72, 0.68, 0.60) if not items.is_empty() \
+			else Color(0.45, 0.42, 0.37)
+	body_opened.emit(body, items)
+	return items.duplicate()
 
 
-func _pick_into(drop_node, inventory):
-	if inventory == null:
-		return null
-	var it: Variant = drop_node.item
-	if not inventory.add(it):
-		# The bag is full: the item STAYS. Never destroy it.
-		debug_full(drop_node)
-		return null
-	take(drop_node)
-	item_picked.emit(it)
-	return it
-
-
-## Emitted so main.gd can put a line on screen. Kept as a signal rather than a
-## direct HUD call, so the loot code has no UI dependency.
-signal bag_full_of(item)
-
-func debug_full(drop_node) -> void:
-	bag_full_of.emit(drop_node.item)
-
-
-## Walks up from a collider to the drop that owns it, without relying on node
-## names - a name lookup is what breaks the moment there are two drops.
-func _drop_of(c: Object) -> Node:
+## Walks up from a collider to the body that owns it, without relying on node
+## names - a name lookup is what breaks the moment there are two bodies.
+func _body_of(c: Object) -> Node3D:
 	var n := c as Node
 	while n != null:
-		if n is Node3D and _drops.has(n):
-			return n
+		if n is Node3D and _bodies.has(n):
+			return n as Node3D
 		n = n.get_parent()
 	return null
+
+
+# ----------------------------------------------------------------- bag transfer
+## Moves ONE item from an OPENED body's item list into the bag. The UI calls this
+## per item, so a refusal (full bag) leaves that item in the list and the others
+## untouched rather than dropping the rest on the floor.
+##
+## Returns the item on success, null when it did not fit.
+func take_item(body, item, inventory):
+	if inventory == null or body == null or not _loot.has(body):
+		return null
+	var items: Array = _loot[body]
+	if not items.has(item):
+		return null
+	if not inventory.add(item):
+		# The bag is full: the item STAYS in the body. Never destroy it.
+		bag_full_of.emit(item)
+		return null
+	items.erase(item)
+	item_picked.emit(item)
+	return item

@@ -58,6 +58,17 @@ jobs:
       - name: Generate input map
         run: ./godot --headless --path . --script res://tools/gen_input_map.gd
 
+      # A PARSE ERROR in a script nothing has loaded yet does NOT surface in the
+      # import run (measured: six "Identifier not declared" errors, no import
+      # output at all, and the first symptom was a half-built scene). This loads
+      # every .gd by its real path and takes one second.
+      - name: Every script loads (catches a parse error the import run hides)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_scripts_load.gd 2>&1)
+          echo "$OUT" | tail -20
+          echo "$OUT" | grep -q "SCRIPT_LOAD_ALL_PASS=true"
+
       - name: Headless gameplay test (must pass before we ship a build)
         run: |
           set -e
@@ -120,6 +131,13 @@ jobs:
           OUT=$(./godot --headless --path . --script res://tools/test_inventory.gd 2>&1)
           echo "$OUT"
           echo "$OUT" | grep -q "INVENTORY_ALL_PASS=true"
+
+      - name: Panels + pause + bodies test (the game really stops)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_panels.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "PANELS_ALL_PASS=true"
 
       - name: Export
         run: |

@@ -17,6 +17,10 @@ const MONSTER_KIND := preload("res://scripts/monster_kind.gd")
 const InvModel := preload("res://scripts/inventory_model.gd")
 const HeroStats := preload("res://scripts/hero_stats.gd")
 const ItemGen := preload("res://scripts/item_gen.gd")
+## The ONE pause flag every gameplay script reads. Pushed once per physics frame,
+## before anything acts on it - see scripts/input_gate.gd for why a per-script
+## flag could not work.
+const GATE := preload("res://scripts/input_gate.gd")
 
 var _posts: Array[Node] = []
 var _enemies: Array[Node] = []
@@ -31,13 +35,14 @@ var loot: Node3D
 ## its maximum life and its damage, so the item system never leaks into combat.
 var inventory
 var stats
-## The item the player's mouse is over, or null. Only used to make the pickup
-## readable on desktop; a tap works without it.
+## The name of the last thing picked up, only used to make the toast readable.
 var _last_pick_toast: String = ""
-## The drop the camera is currently over, so a click on a NAME can be told apart
-## from a click on the ground. Resolved by the pickup ray, not by a hover test.
-var _pending_pick_ray: Vector2 = Vector2.ZERO
-var _has_pick_ray: bool = false
+## The tap that was consumed by a real UI control this frame. An opened-body panel
+## takes its taps in `_gui_input`, which is delivered BEFORE `_unhandled_input`, so
+## a tap on the panel can never also reach the world. Nothing else should see the
+## same tap - the flag is what keeps a tap that closed a panel from immediately
+## opening a body behind it.
+var _ui_consumed: bool = false
 ## The monster the enemy health bar is currently showing: the last one the player
 ## actually hit, or the nearest engaged one. A single bar for a pack of six is
 ## otherwise a lie - it would show whichever spawn happened to be first in the
@@ -80,6 +85,9 @@ func _setup_loot_and_inventory() -> void:
 	loot.name = "Loot"
 	add_child(loot)
 	loot.bag_full_of.connect(_on_bag_full)
+	# A tap (or a button) that lands on a body opens the window for it. The signal
+	# carries the body, so main.gd never has to remember which one was hit.
+	loot.body_opened.connect(_on_body_opened)
 
 	# The two panels live on the HUD (a CanvasLayer), built in code like the rest
 	# of it. They are what the player sees; the MODEL above is what the rules are.
@@ -99,6 +107,20 @@ func _setup_loot_and_inventory() -> void:
 	inv_ui.item_used.connect(_on_loadout_changed)
 	sp.item_used.connect(_on_loadout_changed)
 	inv_ui.notify.connect(_on_notify)
+
+	# The BODY window: what is inside the corpse the player just opened. It is a
+	# HUD panel like the other two (so it pauses the fight through the same
+	# `panel_open()` question) but its CONTENT is world state, which is why it is
+	# wired here rather than built blind inside hud.gd.
+	var lp: Control = load("res://scripts/loot_panel.gd").new()
+	lp.name = "LootPanel"
+	hud.add_child(lp)
+	lp.setup(loot, inventory, stats)
+	lp.item_taken.connect(_on_loot_taken)
+	hud.loot_panel = lp
+	# The HUD's third panel button opens the body within reach - that is a world
+	# question (which body is closest to the player), so main.gd answers it.
+	hud.loot_button.pressed.connect(_on_loot_button)
 	print("[items] starter weapon: %s, life %.0f, damage %.0f-%.0f"
 		% [inventory.main_hand().display_name() if inventory.main_hand() else "unarmed",
 			stats.max_hp(), stats.damage_range().x, stats.damage_range().y])
@@ -124,15 +146,65 @@ func _on_bag_full(item) -> void:
 	hud.toast("Batoh je plný - %s zůstává na zemi." % item.display_name())
 
 
-## A monster died: roll its loot and put it on the ground near the corpse. This is
-## the whole Diablo loop in one line - the rest is already data.
+## A monster died: roll what it carried and leave a BODY holding it. This is the
+## whole Diablo loop in one line - the rest is already data.
 func _on_enemy_died(e: Node) -> void:
 	if loot == null or not is_instance_valid(e):
 		return
 	var ilvl: int = int(e.level) + 3
-	var n: int = loot.spawn_for_death(e.global_position, ilvl)
+	var n: int = loot.spawn_for_death(e.global_position, ilvl, str(e.monster_name))
 	if n > 0:
-		print("[loot] %s dropped %d item(s)" % [e.name, n])
+		print("[loot] %s left a body with %d item(s)" % [e.name, n])
+
+
+## The HUD's "Tělo" button: open the nearest body within reach, if there is one.
+## A button that silently does nothing is a broken button, so a miss says so.
+func _on_loot_button() -> void:
+	if hud == null or hud.loot_panel == null:
+		return
+	if hud.loot_panel.open:
+		hud.loot_panel.set_open(false)
+		return
+	var near: Node = nearest_body()
+	if near == null:
+		hud.toast("Žádné tělo na dosah (%.0f m)." % loot.OPEN_RANGE)
+		return
+	_open_body(near)
+
+
+func nearest_body() -> Node:
+	if loot == null:
+		return null
+	var best: Node = null
+	var best_d: float = loot.OPEN_RANGE
+	for b in loot.bodies():
+		if not is_instance_valid(b):
+			continue
+		var d: float = b.global_position.distance_to(player.global_position)
+		if d <= best_d:
+			best_d = d
+			best = b
+	return best
+
+
+func _on_body_opened(body, _items) -> void:
+	_open_body(body)
+
+
+func _open_body(body) -> void:
+	if hud == null or hud.loot_panel == null or body == null:
+		return
+	# Panels are mutually exclusive and all of them pause the fight, so opening
+	# the body closes whatever was up - through the HUD, so the state stays one
+	# question with one answer.
+	hud.open_loot_for(body)
+
+
+func _on_loot_taken(item) -> void:
+	# A taken item may change the hero's numbers the moment it is equipped, and the
+	# bag window has to repaint - both are already handled by the model's signal.
+	hud.toast("Vzato: %s" % item.display_name())
+	print("[loot] took %s" % item.display_name())
 
 
 func _build_level() -> void:
@@ -256,26 +328,28 @@ func _spawn_posts() -> void:
 
 
 func _spawn_enemies() -> void:
-	## A PACK of six, from data. Two rules decide the positions, and both are
-	## measured rather than eyeballed (see the notes below): every spawn keeps
-	## clearance from the level's props, and none of them sits on a coordinate a
-	## gameplay test teleports the player to.
+	## Jan's brief (Sept 2026): "at the start there are too many enemies. Leave the
+	## starting area completely without enemies and put a few enemies a bit further
+	## on, towards the top, for testing. Right now I do not get to try anything
+	## before they kill me."
 	##
-	## The composition is the point of the exercise: the three GHOULS are weaker
-	## than the hero (55 hp -> 4 hero swings, 4-7 damage per punch against the
-	## hero's 180) and they circle instead of queueing, so killing several of them
-	## is a fight rather than a chore. The Ravagers and the Brute are there so the
-	## difference in behaviour is visible in the same session.
+	## So the pack is now ONE GROUP far down the north lane (+Z is behind the
+	## player, -Z is in front of him: the camera looks down the -Z axis, so
+	## "směrem nahoru" on screen is -Z). The nearest monster stands 13.2 m from the
+	## player's spawn at (0,0,0) - outside every kind's 5-5.5 m aggro radius, so a
+	## session begins in an empty arena and the fight is something the player walks
+	## into. Both numbers are asserted in tools/test_fight.gd, because "far enough
+	## away" is exactly the property that a later layout edit would quietly break.
+	##
+	## Three ghouls and one ravager, all north, spread across the lane: met as a
+	## small wave rather than as a line, and the same composition the balance claim
+	## in monster_kind.gd is written against.
 	var spawns := [
-		# --- the fragile pack: close, so they are the first thing encountered ---
-		{"kind": "ghoul", "pos": Vector3(-4.25, 0.0, -4.0)},
-		{"kind": "ghoul", "pos": Vector3(3.75, 0.0, -4.5)},
-		{"kind": "ghoul", "pos": Vector3(-3.0, 0.0, 1.25)},
-		# --- the baseline bruisers, further out ---
-		{"kind": "ravager", "pos": Vector3(6.25, 0.0, 0.0)},
-		{"kind": "ravager", "pos": Vector3(-6.75, 0.0, -0.25)},
-		# --- the heavy, furthest out, down the west lane ---
-		{"kind": "brute", "pos": Vector3(-9.0, 0.0, -6.75)},
+		# --- the pack, north lane, roughly 13-17 m out ---
+		{"kind": "ghoul", "pos": Vector3(-2.6, 0.0, -13.2)},
+		{"kind": "ghoul", "pos": Vector3(2.4, 0.0, -14.6)},
+		{"kind": "ghoul", "pos": Vector3(-0.2, 0.0, -16.4)},
+		{"kind": "ravager", "pos": Vector3(3.9, 0.0, -14.6)},
 	]
 	for i in spawns.size():
 		var s: Dictionary = spawns[i]
@@ -334,52 +408,71 @@ func _update_focus() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	## The TAP that picks loot up. Jan's brief: "clicking the NAME picks the item
-	## up into the inventory." A tap on the item's name (or on its model - one
-	## Area3D covers both) casts a ray into the world and hands the hit to the
-	## loot manager, which owns the range check and the bag-full rule.
+	## The TAP that OPENS A BODY. Jan's model (Sept 2026): "the player opens the
+	## corpse and picks the items out of it" - so a tap on a body (or on its label;
+	## one Area3D covers both) casts a ray into the world, and the body's contents
+	## come up in the loot window.
 	##
-	## Deliberately `_unhandled_input`: a tap that lands on the HUD, on an open
-	## panel or on the joystick is consumed there and never reaches this, so
-	## opening the inventory cannot also vacuum an item off the ground.
+	## Deliberately `_unhandled_input`: a tap that lands on the HUD or on a real
+	## control is consumed there and never reaches this, so the tap that took an
+	## item out of the window cannot also re-open the body behind it.
+	##
+	## ESC / the phone's back gesture closes a panel. It is handled HERE, before the
+	## early return, because "no way to close the window" was exactly Jan's report -
+	## and ESC is checked at all only now that a panel really can be dismissed with
+	## it.
+	if event is InputEventKey and event.pressed and not event.echo:
+		var k := event as InputEventKey
+		if k.keycode == KEY_ESCAPE:
+			if hud != null and hud.panel_open():
+				hud.close_panels()
+				get_viewport().set_input_as_handled()
+			return
 	if hud != null and hud.panel_open():
 		return
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		# touch index 0 is always the joystick thumb; only an additional finger can
-		# be a deliberate tap on the ground, because the stick owns the first one.
+		# be a deliberate tap on the world, because the stick owns the first one.
 		if t.pressed and t.index > 0:
-			_try_pick(t.position)
+			_try_open(t.position)
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			_try_pick(mb.position)
+			_try_open(mb.position)
 
 
-func _try_pick(screen_pos: Vector2) -> void:
+## The tap itself only runs the ray. The window opens off the loot manager's own
+## `body_opened` signal, so there is ONE path into the panel whether the tap or the
+## HUD button found the body.
+func _try_open(screen_pos: Vector2) -> void:
 	if loot == null or inventory == null:
 		return
-	var got: Variant = loot.try_pick_at_screen(screen_pos, inventory, player.global_position)
-	if got == null:
-		return
-	_last_pick_toast = got.display_name()
-	hud.toast("Sebráno: %s" % _last_pick_toast)
-	print("[loot] picked up %s" % _last_pick_toast)
+	loot.open_at_screen(screen_pos, player.global_position)
+
+
+## THE PAUSE. Pushed once per PHYSICS frame and before every child gets its own
+## `_physics_process` (Main is the root of the scene, so tree order puts this
+## first), which is what makes the flag true for the whole frame the panel opened
+## in. Read by player.gd and enemy_base.gd.
+func _physics_process(_delta: float) -> void:
+	GATE.set_blocked(hud != null and hud.panel_open())
 
 
 func _process(_delta: float) -> void:
-	# A panel (inventory / hero sheet) PAUSES the fight. Diablo does the same, and
-	# on a phone it is also what makes a drag reliable: a monster walking into the
-	# player would move the world under the finger mid-drag.
+	# A panel (inventory / hero sheet / an opened body) PAUSES the fight. Diablo
+	# does the same, and on a phone it is also what makes a drag reliable: a
+	# monster walking into the player would move the world under the finger mid-drag.
 	if hud != null and hud.panel_open():
-		hud.set_debug("inventář otevřen - hra je pozastavená")
+		hud.set_debug("panel otevřen - hra je pozastavená")
 		hud.set_player_hp(player.hp_fraction(), "HP %.0f / %.0f" % [player.hp, player.max_hp])
 		return
 
-	# RUN: the HUD latch and the key/pad action are OR-ed here and pushed to the
-	# player, so no single control can block the others and the player never has
-	# to ask the HUD about input.
-	var run_now: bool = bool(hud.run_latched) or Input.is_action_pressed("run")
+	# RUN: the HUD latch and the key/pad action are OR-ed HERE - in main.gd, not in
+	# player.gd - and pushed to the player, so no single control can block the
+	# others. The latch survives the pause on purpose: a player who comes back from
+	# his bag still has run latched, which is what he last asked for.
+	var run_now: bool = bool(hud.run_latched) or GATE.held("run")
 	if run_now != _run_action:
 		_run_action = run_now
 		player.set_run(run_now)

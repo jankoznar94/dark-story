@@ -15,9 +15,9 @@ extends SceneTree
 ##   6. the LOCKED hero numbers survive: 180 hp, 16-25 damage, 1.8/3.05 speeds
 ##   7. affixes actually move the numbers
 ##   8. Strength requirements gate equipping
-##   9. loot on the ground: placed clear of geometry, picked up by a click
-##  10. the bag-full rule: the item STAYS on the ground
-##  11. a monster's death really rolls loot (the wiring, not the maths)
+##   9. the BODY a kill leaves: placed clear of geometry, opened by a tap
+##  10. the bag-full rule: the item STAYS in the body
+##  11. a monster's death really leaves a body (the wiring, not the maths)
 ##  12. the inventory window's hit test lands on the right cell and slot
 
 const IB := preload("res://scripts/item_base.gd")
@@ -63,7 +63,7 @@ func _run() -> void:
 	root.add_child(main)
 	await physics_frame
 	await physics_frame
-	_test_ground_loot()
+	_test_body_loot()
 	_test_bag_full()
 	_test_death_wiring()
 	_test_inventory_window()
@@ -164,8 +164,10 @@ func _test_rolling() -> void:
 		"affix count histogram: %s" % str(affix_counts))
 	_ok("the pool respects the item level",
 		_droppable_ok(ilvl), "ilvl %d pool is capped at ilvl" % ilvl)
-	# A drop is not a guaranteed thing: a monster leaves NOTHING more often than it
-	# leaves TWO, which is what keeps a single item an event.
+	# DROP_CHANCE is Jan's setting for the loot-testing pass ("for testing, make the
+	# drop chance 100 %"), so the assertion is written AGAINST THE CONSTANT rather
+	# than against a stored histogram: putting it back to D2's 0.55 must not need a
+	# test edit, and a stored expectation would go stale the moment it is tuned.
 	var none := 0
 	var two := 0
 	var r2 := RandomNumberGenerator.new()
@@ -176,9 +178,15 @@ func _test_rolling() -> void:
 			none += 1
 		if d.size() >= 2:
 			two += 1
-	_ok("about half of the monsters drop nothing, few drop two",
-		none > 700 and none < 1300 and two < 600,
-		"%d/2000 empty, %d/2000 with two" % [none, two])
+	var expected_none := int(round(2000.0 * (1.0 - ItemGen.DROP_CHANCE)))
+	_ok("the empty-drop rate matches ItemGen.DROP_CHANCE",
+		absi(none - expected_none) < 80,
+		"%d/2000 empty against %d expected (DROP_CHANCE %.2f)"
+		% [none, expected_none, ItemGen.DROP_CHANCE])
+	_ok("two items stay rare, whatever the drop chance is", two < 600,
+		"%d/2000 with two" % two)
+	_ok("a monster never leaves more than the declared maximum",
+		int(ItemGen.MAX_DROPS) >= 2, "MAX_DROPS = %d" % ItemGen.MAX_DROPS)
 
 
 func _droppable_ok(ilvl: int) -> bool:
@@ -444,67 +452,84 @@ func _test_strength_requirements() -> void:
 		guard > 0, "%d points spent" % guard)
 
 
-# ------------------------------------------------- 9. loot on the ground
-func _test_ground_loot() -> void:
-	print("== 9. loot lands on the ground, clear of geometry, and a click picks it up ==")
+# ------------------------------------- 9./10./11. the BODY a kill leaves
+## Jan's change of model (Sept 2026): items no longer lie on the ground. A kill
+## leaves a BODY and the player opens it. These three sections are the same three
+## rules as before, re-pointed at the body: the placement, the full-bag refusal,
+## and the death wiring.
+func _test_body_loot() -> void:
+	print("== 9. a kill leaves a BODY, clear of geometry, opened by a tap ==")
 	var player: Node = main.get_node("Player")
-	var loot: Node3D = main.loot
-	_ok("the loot system exists in the scene", loot != null)
+	var loot: Node = main.loot
 	main.clear_loot()
-	_ok("the ground starts empty", loot.drop_count() == 0)
+	_ok("the body system exists in the scene", loot != null)
+	_ok("the ground starts empty", loot.body_count() == 0)
 
 	var r := RandomNumberGenerator.new()
 	r.seed = 777
 	var origin := Vector3(0, 0, 0)
-	var placed := 0
-	for i in 12:
+	for i in 10:
 		var it = ItemGen.roll(6, IB.Slot.NONE, r)
-		if loot.spawn_item(it, origin + Vector3(r.randf_range(-2, 2), 0, r.randf_range(-2, 2)), r):
-			placed += 1
-	_ok("items can be put on the ground", loot.drop_count() >= 10,
-		"%d drops, %d of them clear of geometry" % [loot.drop_count(), placed])
+		loot.spawn_body(origin + Vector3(r.randf_range(-2, 2), 0, r.randf_range(-2, 2)),
+			[it], r, "Ghoul")
+	_ok("bodies can be left in the world", loot.body_count() >= 8,
+		"%d bodies" % loot.body_count())
 	var in_prop := 0
-	for d in loot.drops():
-		if not _spot_clear(d.global_position):
-			in_prop += 1
-	_ok("no drop landed inside a wall or prop", in_prop == 0,
-		"%d of %d inside geometry" % [in_prop, loot.drop_count()])
 	var bad_y := 0
-	for d in loot.drops():
-		if absf(d.global_position.y) > 0.05:
+	for b in loot.bodies():
+		if not _spot_clear(b.global_position):
+			in_prop += 1
+		if absf(b.global_position.y) > 0.05:
 			bad_y += 1
-	_ok("every drop sits on the floor", bad_y == 0, "%d floating" % bad_y)
+	_ok("no body landed inside a wall or prop", in_prop == 0,
+		"%d of %d inside geometry" % [in_prop, loot.body_count()])
+	_ok("every body sits on the floor", bad_y == 0, "%d floating" % bad_y)
+	# two bodies must not be inside one another either: they are placed on a
+	# sphere overlap test, not by an AABB, so this is the check that the test is
+	# the right one.
+	var closest := INF
+	var bodies: Array = loot.bodies()
+	for i in bodies.size():
+		for j in range(i + 1, bodies.size()):
+			closest = minf(closest,
+				(bodies[i] as Node3D).global_position.distance_to(
+					(bodies[j] as Node3D).global_position))
+	_ok("bodies do not stack on one spot", closest > 0.20, "closest pair %.2f m" % closest)
 
-	# The name is what Jan asked to be visible and clickable.
-	var first = loot.drops()[0]
-	_ok("a drop shows its name in the world",
-		first.label != null and first.label.text == first.item.display_name(),
+	var first = bodies[0]
+	_ok("a body names the monster that fell",
+		first.label != null and first.label.text.contains(str(first.monster_name))
+		and first.monster_name != "?",
 		str(first.label.text) if first.label else "no label")
-	_ok("the name is coloured by rarity",
-		first.label.modulate == first.item.rarity_color(),
-		"%s" % str(first.label.modulate))
-	_ok("a drop never blocks movement (it is an Area3D, not a body)",
-		first.get_node("Pick") is Area3D)
+	_ok("a body never blocks movement (it is an Area3D, not a body)",
+		first.get_node("Open") is Area3D)
 
-	# Pickup by click: the ray needs a camera, so drive the same path the click
-	# uses and assert the model changed. The screen-space ray itself is exercised
-	# by the camera being present and the tap test below.
+	# Opening through the model path, which is where the tap and the HUD button
+	# both end. The screen-space ray itself needs a camera and is exercised by
+	# tools/test_panels.gd, which drives the window's taps.
 	var inv = main.inventory
-	var before: int = inv.bag_items().size()
-	var got = loot.try_pick(first, inv, player.global_position)
-	_ok("a click inside range picks the item up", got != null and got == first.item,
-		"picked %s" % (got.display_name() if got else "nothing"))
-	_ok("it went into the bag", inv.bag_items().size() == before + 1)
-	_ok("and it is gone from the ground", loot.drop_count() == 11,
-		"%d drops left" % loot.drop_count())
+	var bag_before: int = inv.bag_items().size()
+	var items: Array = loot.items_in(first)
+	var opened: Variant = loot.open(first, player.global_position)
+	_ok("a body in reach opens", opened != null and (opened as Array).size() == items.size(),
+		"%d items came out" % ((opened as Array).size() if opened != null else 0))
+	# LOOKING IS NOT TAKING: an opened body still holds everything it had.
+	_ok("opening a body does NOT take its items",
+		loot.items_in(first).size() == items.size(),
+		"%d of %d left after opening" % [loot.items_in(first).size(), items.size()])
+	var got: Variant = loot.take_item(first, (opened as Array)[0], inv)
+	_ok("an item from it goes into the bag",
+		got != null and inv.bag_items().size() == bag_before + 1,
+		"bag %d -> %d" % [bag_before, inv.bag_items().size()])
+	_ok("...and it is gone from the body", loot.items_in(first).size() == items.size() - 1)
 
-	# Out of range: the player must walk to it. This is the rule that keeps the
-	# pickup from being a vacuum cleaner.
-	var far = loot.drops()[0]
-	var far_pos: Vector3 = far.global_position + Vector3(40, 0, 0)
-	var got2 = loot.try_pick(far, inv, far_pos)
-	_ok("an item 40 m away cannot be picked up", got2 == null)
-	_ok("it is still on the ground", loot.drop_count() == 11)
+	# Out of range: the player must walk to it. This is the rule that keeps
+	# opening a body from being a vacuum cleaner.
+	var far_pos: Vector3 = first.global_position + Vector3(40, 0, 0)
+	var items_far: Array = loot.items_in(bodies[1])
+	_ok("a body 40 m away cannot be opened",
+		loot.open(bodies[1], far_pos) == null)
+	_ok("...and it still holds its items", loot.items_in(bodies[1]).size() == items_far.size())
 
 
 func _spot_clear(p: Vector3) -> bool:
@@ -526,9 +551,8 @@ func _spot_clear(p: Vector3) -> bool:
 
 # --------------------------------------------------- 10. the bag-full rule
 func _test_bag_full() -> void:
-	print("== 10. a full bag leaves the item ON THE GROUND ==")
+	print("== 10. a full bag leaves the item IN THE BODY ==")
 	var loot: Node3D = main.loot
-	var player: Node = main.get_node("Player")
 	var inv2 = Inv.new()
 	# Fill every cell with 1x1 items, so nothing else can fit.
 	for i in Inv.COLS * Inv.ROWS:
@@ -538,20 +562,20 @@ func _test_bag_full() -> void:
 		inv2.placements.size() == Inv.COLS * Inv.ROWS and inv2.find_free(Vector2i(1, 1)).x < 0,
 		"%d items, %d/%d cells" % [inv2.placements.size(), inv2.used_cells(), inv2.total_cells()])
 	var it = ItemGen.make("long_sword")       # 1x3 - there is no room for it
-	loot.spawn_item(it, Vector3(1, 0, 1))
-	var n_before: int = loot.drop_count()
-	var got = loot.try_pick(loot.drops()[loot.drop_count() - 1], inv2, player.global_position)
-	_ok("the pickup is refused when there is no room", got == null)
-	_ok("the item is STILL on the ground (never destroyed)", loot.drop_count() == n_before,
-		"%d drops" % loot.drop_count())
+	var body = loot.spawn_body(Vector3(1, 0, 1), [it], null, "Ravager")
+	var n_before: int = loot.items_in(body).size()
+	var got: Variant = loot.take_item(body, loot.items_in(body)[0], inv2)
+	_ok("taking is refused when there is no room", got == null)
+	_ok("the item is STILL in the body (never destroyed)",
+		loot.items_in(body).size() == n_before, "%d items" % loot.items_in(body).size())
 
 
 # ------------------------------------------------- 11. the death wiring
 func _test_death_wiring() -> void:
-	print("== 11. killing a monster really rolls loot (the wiring) ==")
+	print("== 11. killing a monster really leaves a body (the wiring) ==")
 	main.clear_loot()
 	var pack: Array = main._enemies
-	_ok("there is a pack to kill", pack.size() >= 5, "%d monsters" % pack.size())
+	_ok("there is a pack to kill", pack.size() >= 4, "%d monsters" % pack.size())
 	var e: Node = pack[0]
 	var fired := [0]
 	e.died.connect(func() -> void: fired[0] += 1)
@@ -563,20 +587,26 @@ func _test_death_wiring() -> void:
 	await physics_frame
 	_ok("hitting the corpse again does not re-announce the death", fired[0] == 1,
 		"%d emissions" % fired[0])
-	# and the pack as a whole must produce loot somewhere: 40 kills is enough that
-	# "nothing at all dropped" is not a plausible outcome (0.45^40).
-	var drops := 0
+	_ok("the corpse left a body", main.loot.body_count() >= 1,
+		"%d bodies" % main.loot.body_count())
+	# and the whole pack must be lootable: with DROP_CHANCE at 1.0 that is one body
+	# per kill, which is the number the open-a-body loop is built on.
+	var kills := 0
 	for m in pack:
 		if not is_instance_valid(m) or m.is_dead():
 			continue
 		m.take_damage(99999.0)
+		kills += 1
 	for i in 3:
 		await physics_frame
-	drops = main.loot.drop_count()
-	_ok("the pack left loot on the ground", drops > 0, "%d drops from %d kills"
-		% [drops, pack.size()])
-	_ok("the drop count is bounded (no carpet of loot)", drops <= pack.size() * 2,
-		"%d drops from %d kills" % [drops, pack.size()])
+	_ok("every kill left a body at this drop chance",
+		main.loot.body_count() == pack.size(),
+		"%d bodies from %d killable monsters" % [main.loot.body_count(), pack.size()])
+	_ok("the bodies hold items", main.loot.drop_count() > 0,
+		"%d items in %d bodies" % [main.loot.drop_count(), main.loot.body_count()])
+	_ok("the item count is bounded (no carpet of loot)",
+		main.loot.drop_count() <= pack.size() * ItemGen.MAX_DROPS,
+		"%d items from %d kills" % [main.loot.drop_count(), pack.size()])
 
 
 # ------------------------------------------------- 12. the window's hit test

@@ -31,6 +31,9 @@ signal died
 ## The balance sheet lives in one place (hp, damage, speeds, tint) so a monster is
 ## a data entry and the "weaker than the hero" claim can be asserted in a test.
 const MK := preload("res://scripts/monster_kind.gd")
+## The shared pause flag. A monster that ignores it is a monster that keeps walking
+## and punching while the player reads his inventory (Jan's report).
+const GATE := preload("res://scripts/input_gate.gd")
 
 const CLIP_IDLE := "Rig|Sword_Idle"      ## combat-ready stance
 const CLIP_WALK := "Rig|Walk"
@@ -283,6 +286,23 @@ func is_engaged() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	if is_dead():
+		return
+	## PAUSED: a full-screen panel (the bag, the hero sheet, an opened body) stops
+	## the world. Jan's report was "the game should pause when the inventory opens,
+	## it does not - the enemies keep attacking and moving, they may not be dealing
+	## damage but they move", and this early return is the fix for the AI half of
+	## it. The INPUT half is scripts/input_gate.gd: a script that merely stops
+	## moving still leaves the virtual buttons and real keys pressed, so the player
+	## kept walking and swinging with the bag open until every read went through
+	## the gate.
+	##
+	## The clip is left WHERE IT IS rather than sent to idle: a walk cycle frozen
+	## mid-stride is what a paused world looks like, and restarting it on resume
+	## would hide that the pause happened.
+	if GATE.blocked():
+		return
+
 	if _flash > 0.0:
 		_flash -= delta
 		if _flash <= 0.0 and _mat:
