@@ -240,18 +240,16 @@ const engine = new Engine(GODOT_CONFIG);
 				});
 			}
 
-			// First tap anywhere also tries fullscreen - browsers require a gesture.
-			window.addEventListener('pointerdown', function once() {
-				window.removeEventListener('pointerdown', once);
-				if (!isIOS && !inFullscreen() && !isStandalone) {
-					try {
-						const el = document.documentElement;
-						if (el.requestFullscreen) { el.requestFullscreen({ navigationUI: 'hide' }); }
-					} catch (e) {}
-				}
-				sync();
-			}, { once: true });
-
+			// A TAP ON THE GAME IS A GAME INPUT, NEVER A BROWSER MODE CHANGE.
+			// This used to listen for the first `pointerdown` ANYWHERE and call
+			// requestFullscreen() from it. Measured consequence: the first tap
+			// (e.g. on the "Hrdina" button) also changed the viewport, the HUD
+			// re-laid out from `size_changed`, every button moved under the
+			// player's thumb, and the panel he had just opened could no longer be
+			// closed with the button he was aiming at - reported as "opening any
+			// window from the top menu freezes the game". Fullscreen is what the
+			// visible ⛶ button above is for, and on iOS it is the home-screen
+			// route; nothing here may fire on the game's own taps.
 			sync();
 		})();
 		</script>

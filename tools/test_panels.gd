@@ -281,6 +281,59 @@ func _test_ways_out() -> void:
 	await physics_frame
 	_ok("all panels closed", not hud.panel_open())
 
+	# --- THE EXIT IS ABOVE THE PANEL, and that is a Z-ORDER question, not a
+	# visibility one. Measured in the real web build (Sept 2026, Jan: "opening any
+	# window from the top menu freezes the game"): the bag opened on the first tap,
+	# the second tap on the SAME button changed nothing - the middle of the screen
+	# stayed 0.946 dark - because the panel is a full-screen Control with
+	# `mouse_filter = STOP` and main.gd adds the panels to this layer AFTER the
+	# buttons were built, so the panel sat over the button that closes it. The
+	# visible=true assertion above passed the whole time, which is exactly why this
+	# section checks the ORDER too.
+	hud.close_panels()
+	await physics_frame
+	hud._toggle_panel(2)
+	await physics_frame
+	var order_ok: bool = (bool(hud.stats_button.get_index() > hud.stat_panel.get_index())
+		and bool(hud.inv_button.get_index() > hud.stat_panel.get_index()))
+	_ok("the exit buttons sit ON TOP of the open panel (a tap can reach them)",
+		order_ok, "stats_button %d, panel %d, inv_button %d"
+		% [hud.stats_button.get_index(), hud.stat_panel.get_index(),
+			hud.inv_button.get_index()])
+	hud.close_panels()
+	await physics_frame
+	hud._toggle_panel(1)          # the bag, whose whole surface is hit-tested
+	await physics_frame
+	_ok("the exit buttons sit on top of the BAG too",
+		hud.inv_button.get_index() > hud.inventory_ui.get_index(),
+		"inv_button %d, bag %d" % [hud.inv_button.get_index(), hud.inventory_ui.get_index()])
+
+	# --- NOT TESTED HERE, and deliberately: whether a tap actually LANDS on the
+	# button. `Viewport.push_input()`, `Input.parse_input_event()` and
+	# `push_unhandled_input()` do NOT route GUI input in a `--headless` run -
+	# measured on a bare full-rect Control with mouse_filter STOP, right size and
+	# correct coordinates, which received nothing from all three. A push_input
+	# assertion here would fail for the instrument, not the game, so the honest
+	# headless check is the Z-ORDER above and the real acceptance is the browser
+	# run (tools/web_live_check.py + a CDP tap on the button).
+
+	# the world tap that opens a body must NOT reach main.gd's ray while a panel is
+	# up, or a tap meant for the window re-opens the body behind it.
+	var tap_y: float = hud.inv_button.position.y + hud.inv_button.size.y * 0.5
+	var before_bodies: int = main.loot.body_count()
+	var far_tap := InputEventScreenTouch.new()
+	far_tap.position = Vector2(4.0, tap_y)
+	far_tap.pressed = true
+	far_tap.index = 1
+	hud._toggle_panel(2)
+	await physics_frame
+	main._unhandled_input(far_tap)
+	await physics_frame
+	_ok("a world tap while a panel is up opens no body", main.loot.body_count() == before_bodies,
+		"%d -> %d" % [before_bodies, main.loot.body_count()])
+	hud.close_panels()
+	await physics_frame
+
 
 # ------------------------------------------------ 4. the body, not a ground item
 ## Async on purpose (it awaits physics frames) - and its caller awaits it, see _run.

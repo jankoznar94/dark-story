@@ -104,6 +104,12 @@ func set_open(on: bool) -> void:
 	_cancel_drag()
 	if not on:
 		_tooltip_item = null
+	# LAY OUT NOW, do not wait for `_draw`. This window is HIT-TESTED (a tap outside
+	# it closes it), and a tap can arrive on the frame it opened - and in a
+	# `--headless` run `_draw` is never called at all, so without this the panel's
+	# own rect was still (0,0,0,0) and every point read as "outside the window".
+	if on:
+		layout_now()
 	queue_redraw()
 
 

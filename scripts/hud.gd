@@ -143,10 +143,17 @@ func _build() -> void:
 	# swing at a monster.
 	inv_button = _square_button(INVENTORY_LABEL)
 	inv_button.name = "Btn_inventory"
-	inv_button.pressed.connect(func() -> void: _toggle_panel(1, false))
+	# A tap on the button is logged, because "the window will not close" and "the
+	# tap never reached the button" are the same report from a phone and they have
+	# completely different fixes. This is the one line that tells them apart.
+	inv_button.pressed.connect(func() -> void:
+		print("[panel] 'Věci' pressed -> open=%s" % str(_is_open(1)))
+		_toggle_panel(1, false))
 	stats_button = _square_button(STATS_LABEL)
 	stats_button.name = "Btn_stats"
-	stats_button.pressed.connect(func() -> void: _toggle_panel(2, false))
+	stats_button.pressed.connect(func() -> void:
+		print("[panel] 'Hrdina' pressed -> open=%s" % str(_is_open(2)))
+		_toggle_panel(2, false))
 	# The loot panel's button is wired by main.gd, because opening it needs to know
 	# which body is within reach - that is a world question, not a HUD one.
 	loot_button = _square_button(LOOT_LABEL)
@@ -380,6 +387,24 @@ func _apply_panel_state() -> void:
 	_bars["e_back"].visible = not p
 	_bars["e_fill"].visible = not p
 	enemy_label.visible = not p
+
+	# THE EXIT BUTTONS MUST BE ABOVE THE PANELS - being VISIBLE is not enough.
+	# A panel is a full-screen Control with `mouse_filter = STOP`, and main.gd
+	# adds all three of them to this layer AFTER these buttons were built, so the
+	# panel sat on top of its own exit and swallowed the tap that was meant to
+	# close it. Measured in the running web build: tapping "Věci" opened the bag,
+	# tapping it again changed nothing (the middle of the screen stayed 0.946 dark)
+	# and the only way out was gone - which reads as "the game froze". Raising them
+	# here keeps them on top whatever order anything is added in, and it self-heals
+	# for a panel added later.
+	var exits: Array[Button] = [inv_button, stats_button, loot_button]
+	for b in exits:
+		if b != null:
+			move_child(b, get_child_count() - 1)
+	# ...and the toast, for the same reason: "Zavři napřed inventář" was being drawn
+	# UNDER the panel, so even the explanation of the refusal was invisible.
+	if toast_label != null:
+		move_child(toast_label, get_child_count() - 1)
 
 
 ## Every panel closed at once. Used by ESC / the back gesture on a phone.
