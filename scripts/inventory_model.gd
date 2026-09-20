@@ -275,10 +275,14 @@ func _deny(reason: String) -> Dictionary:
 ## Equips an item only if the hero actually meets its Strength requirement - the
 ## D2 gate that makes an attribute worth spending points on. `stats` is a
 ## hero_stats.gd. Kept here rather than in the UI so the rule is one function.
-func equip_with_requirement(item, stats) -> Dictionary:
+##
+## `only_slot` is passed through for the "tap the item, then tap the box" path, so
+## that interaction answers with the SAME refusals as a drag rather than a second
+## set of rules.
+func equip_with_requirement(item, stats, only_slot: int = -1) -> Dictionary:
 	if stats != null and not can_carry(int(stats.strength()), item):
 		return _deny("Potřebuješ sílu %d." % int(item.strength_requirement()))
-	return equip(item)
+	return equip(item, only_slot)
 
 
 # ------------------------------------------------------------------ queries

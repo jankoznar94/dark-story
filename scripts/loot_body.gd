@@ -69,14 +69,18 @@ func dress_corpse(enemy: Node3D, p_name: String) -> void:
 	monster_name = p_name
 	model = enemy
 	_discard_stand_in()
-	# --- tip it onto the ground --------------------------------------------------
-	# The rig stands with its feet at y = 0, so a rotation about X lays it out along
-	# Z from where it fell. Rotated in the DEATH POSE rather than reset to the rest
-	# pose: the last frame the player saw is the one that stays.
-	if enemy.has_method("get_model_root") and enemy.get_model_root() != null:
-		var mr: Node3D = enemy.get_model_root()
-		mr.rotation_degrees = Vector3(-82.0, mr.rotation_degrees.y, 8.0)
-		mr.position.y = 0.14
+	# --- DO NOT TIP THE MODEL OVER ------------------------------------------------
+	# This used to set `mr.rotation_degrees = Vector3(-82.0, y, 8.0)` and lift it to
+	# y = 0.14 in ONE step, on the frame the monster died. Jan: *"when an enemy dies
+	# its body does not lie down smoothly, it instantly becomes lying instead of
+	# standing."* Measured: 232 frames of the corpse's tilt, `rot.x = -82.00` in
+	# every one - the corpse was prone on its first frame.
+	#
+	# The fall is already IN the death animation: `Rig|Death01` takes the head from
+	# 1.39 m to 0.13 m and the hips from 0.79 m to 0.045 m over ~1.05 s and then
+	# holds the prone pose, so the clip alone produces a body lying on the ground.
+	# `enemy_base.gd` now lets that clip play to its end before freezing it (it used
+	# to freeze it on the first dead frame, which is why the fall was invisible).
 	_add_label()
 	_add_area()
 	_built = true

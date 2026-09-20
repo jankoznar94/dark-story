@@ -186,20 +186,30 @@ func _gui_input(event: InputEvent) -> void:
 ##
 ## The dismiss paths are GATED by `_arm_ms`: the touch that opened the body is the
 ## same touch this Control receives, so without the gate the window closed in the
-## same frame it appeared. Rows and the take-all button are NOT gated - a tap that
-## lands on an item is unambiguous, whatever frame it arrives in.
+## same frame it appeared.
+##
+## THE ROWS ARE GATED TOO - and that is a fix, not a safety net. Jan: *"when I click
+## a corpse, all the items are selected straight away and the window does not appear
+## at all."* The tap that opens a body arrives while the panel is being built, and
+## its tail lands wherever on screen the finger is: the corpse is at the player's
+## feet and the window is centred, so a tap at the bottom of the screen can land on
+## a ROW. A row is never gated, so the item was taken in the same frame, and a body
+## with one item then closed itself ("the body is empty" path) - which is exactly
+## "everything got selected and the window never showed". Taking an item is
+## unambiguous; taking it from a tap that was aimed at the corpse is not.
 func _handle(p: Vector2) -> void:
 	if _close_rect.has_point(p):
 		if _arm_ms <= 0.0:
 			set_open(false)
 		return
-	for i in _rows.size():
-		if (_rows[i] as Rect2).has_point(p):
-			_take(_items[i])
+	if _arm_ms <= 0.0:
+		for i in _rows.size():
+			if (_rows[i] as Rect2).has_point(p):
+				_take(_items[i])
+				return
+		if _all_rect.has_point(p):
+			take_all()
 			return
-	if _all_rect.has_point(p):
-		take_all()
-		return
 	if not _box.has_point(p) and _arm_ms <= 0.0:
 		set_open(false)
 

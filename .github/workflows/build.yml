@@ -139,6 +139,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "PANELS_ALL_PASS=true"
 
+      # Jan's reports of a corpse becoming prone instantly (the death clip was
+      # frozen on the frame the monster died) and of an item not going into an
+      # equip slot when he taps the item and then the box. Both are asserted as
+      # NUMBERS here (the head's fall curve, the whole tap-then-tap interaction),
+      # so a regression fails the build instead of reaching his phone.
+      - name: Corpse fall + equip-by-tap test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_corpse_fall_and_equip.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "CORPSE_FALL_AND_EQUIP_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

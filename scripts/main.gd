@@ -434,9 +434,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
-		# touch index 0 is always the joystick thumb; only an additional finger can
-		# be a deliberate tap on the world, because the stick owns the first one.
-		if t.pressed and t.index > 0:
+		# THE FIRST FINGER MAY OPEN A BODY. An earlier version demanded `index > 0`
+		# on the theory that the joystick owns the first finger - but the joystick is
+		# a Control and takes its own events, so a world tap never reaches here from
+		# it; meanwhile a browser reports a MOUSE click as a touch with index 0, and
+		# on a phone the plain tap everyone makes for "open that" is index 0 too.
+		# Refusing it meant the loot window often did not open at all.
+		if t.pressed and t.index >= 0:
 			_try_open(t.position)
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton

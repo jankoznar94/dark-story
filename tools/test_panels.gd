@@ -476,9 +476,28 @@ func _test_opening_a_body() -> void:
 	_ok("every row has a rect on screen (a row that cannot be tapped is a broken row)",
 		panel._rows.size() == items.size() and panel._rows[0].size.x > 0.0)
 
-	# --- take ONE item by tapping its row
+	# --- THE TAP THAT OPENED THE BODY MUST NOT TAKE ANYTHING EITHER.
+	# Jan: "when I click a corpse, all the items are selected straight away and the
+	# window does not appear at all." The opening tap's tail lands wherever the
+	# finger is, which can be on a row; taking the item closed a one-item body in
+	# that same frame, so the window never showed. Assert BOTH halves: while the
+	# guard runs, a row tap takes nothing; once it expires, the same tap takes.
 	var inv = main.inventory
+	panel.layout_now()
 	var bag_before: int = inv.bag_items().size()
+	var row_tap := InputEventScreenTouch.new()
+	row_tap.pressed = true
+	row_tap.index = 1
+	row_tap.position = panel._rows[0].position + panel._rows[0].size * 0.5
+	panel._gui_input(row_tap)
+	await physics_frame
+	_ok("a row tap in the frame that OPENED the window takes nothing",
+		inv.bag_items().size() == bag_before and loot.items_in(body).size() == items.size(),
+		"bag %d, body still %d" % [inv.bag_items().size(), loot.items_in(body).size()])
+	panel._arm_ms = 0.0     # the guard is time-based; drive it rather than sleep
+
+	# --- take ONE item by tapping its row
+	bag_before = inv.bag_items().size()
 	var ev := InputEventScreenTouch.new()
 	ev.pressed = true
 	ev.index = 1

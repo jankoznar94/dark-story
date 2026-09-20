@@ -69,8 +69,25 @@ var _hold_t: float = 0.0
 var _tooltip_item = null
 var _tooltip_at: Vector2 = Vector2.ZERO
 
+## The item the player has PICKED UP by tapping a bag cell, waiting for him to tap
+## the box he wants it in. This is the phone-sized equivalent of D2's "pick it up,
+## put it on", and it exists because a drag on a phone is fiddly and the only other
+## paths (a double click, a right click) do not exist on a touchscreen at all.
+## Jan's report: "items from the inventory cannot be equipped into the slots."
+## Measured in the real window: a drag DOES equip, but "tap the item, then tap the
+## box" equipped NOTHING - the tap only opened a tooltip, and a tap on a slot only
+## ever UNEQUIPPED. So the whole interaction the player naturally performs did
+## nothing.
+var _held_item = null
+var _held_from_slot: int = -1
+var _held_t: float = 0.0
+
 const HOLD_FOR_TOOLTIP := 0.45
 const DRAG_SLOP := 12.0
+## How long a picked-up item waits for its box before the selection lapses. Without
+## a timeout a forgotten selection would be installed by whichever slot the player
+## taps next, which is worse than not having the feature.
+const HELD_TIMEOUT := 6.0
 
 
 func _ready() -> void:
@@ -104,6 +121,7 @@ func set_open(on: bool) -> void:
 	_cancel_drag()
 	if not on:
 		_tooltip_item = null
+		_release_held()
 	# LAY OUT NOW, do not wait for `_draw`. This window is HIT-TESTED (a tap outside
 	# it closes it), and a tap can arrive on the frame it opened - and in a
 	# `--headless` run `_draw` is never called at all, so without this the panel's
@@ -258,6 +276,13 @@ func _on_release(p: Vector2) -> void:
 func _process(delta: float) -> void:
 	if not open:
 		return
+	# A picked-up item lapses, so a forgotten selection cannot be installed by the
+	# next box the player taps for an unrelated reason.
+	if _held_item != null:
+		_held_t += delta
+		if _held_t >= HELD_TIMEOUT:
+			_release_held()
+			queue_redraw()
 	# long press -> tooltip
 	if _touch_index >= 0 and not _moved:
 		_hold_t += delta
@@ -302,6 +327,10 @@ func _cancel_drag() -> void:
 	_moved = false
 	_hover_cell = Vector2i(-1, -1)
 	_hover_slot = -1
+	if _drag_item != null:
+		# A drag and a carried item are two halves of the same gesture; starting a
+		# drag clears the carried selection so the two can never both be live.
+		_release_held()
 
 
 ## Where the dragged item's top-left cell would land, and whether it is legal.
@@ -312,7 +341,7 @@ func _update_hover() -> void:
 	if _drag_item == null:
 		return
 	var size: Vector2i = _drag_item.size()
-	var si := slot_at(_pointer - Vector2(0, 0))
+	var si := slot_at(_pointer)
 	if si >= 0:
 		_hover_slot = si
 		_hover_ok = Inv.SLOTS[si] == _drag_item.slot() and not (
@@ -368,6 +397,13 @@ func _finish_drag(p: Vector2) -> void:
 func _tap(p: Vector2) -> void:
 	var si := slot_at(p)
 	if si >= 0:
+		# A tapped BOX: install whatever is being carried from the bag, or take the
+		# worn item off. The pick-up path is what makes equipping possible at all on
+		# a touchscreen - before it, a tap on a box only ever unequipped, and the
+		# only ways to put something ON were a double click and a right click.
+		if _held_item != null:
+			_install_held(si)
+			return
 		var worn: Variant = model.equipped_at(si)
 		if worn != null:
 			if model.unequip(si) != null:
@@ -378,10 +414,40 @@ func _tap(p: Vector2) -> void:
 	var pi := placement_at_cell(cell_at(p))
 	if pi >= 0:
 		var it: Variant = model.placements[pi]["item"]
+		if _held_item == it:
+			# tapping the carried item again puts it back down
+			_release_held()
+			notify.emit("Odloženo.")
+			return
+		_held_item = it
+		_held_from_slot = -1
+		_held_t = 0.0
 		_tooltip_item = it
 		_tooltip_at = p
+		notify.emit("Vybráno: nasaď klepnutím na políčko." if it.slot() != IB.Slot.NONE
+			else "Vybráno: %s nelze nosit." % it.display_name())
 		return
 	_tooltip_item = null
+	_release_held()
+
+
+## Puts the carried item into the box the player tapped, with the model answering -
+## so a box that does not match the item's TYPE is refused with a reason, and the
+## Strength gate and the two-handed rules are the same ones a drag goes through.
+func _install_held(slot_index: int) -> void:
+	var it = _held_item
+	var res: Dictionary = model.equip_with_requirement(it, stats, slot_index)
+	if bool(res.get("ok", false)):
+		_release_held()
+		item_used.emit(it)
+	else:
+		notify.emit(str(res.get("reason", "")))
+
+
+func _release_held() -> void:
+	_held_item = null
+	_held_from_slot = -1
+	_held_t = 0.0
 
 
 ## Double click / double tap is the second path to equipping, because dragging on
@@ -425,6 +491,8 @@ func _draw() -> void:
 	_draw_slots()
 	_draw_bag()
 	_draw_items()
+	if _held_item != null:
+		_draw_held_marker()
 	if _drag_item != null:
 		_draw_drag_ghost()
 	if _tooltip_item != null and _drag_item == null:
@@ -500,6 +568,18 @@ func _draw_item_rect(r: Rect2, item) -> void:
 		item.rarity_color(), true)
 	var icon_rect := inner.grow(-_cell * 0.14)
 	Icon.draw(self, str(item.base().get("shape", "sword")), icon_rect)
+
+
+## The item carried in the bag is marked, so a player who tapped it knows the game
+## is waiting for the box - a selection with no visual state reads as a dead tap.
+func _draw_held_marker() -> void:
+	var pi: int = model.placement_index_of(_held_item) if _held_item != null else -1
+	if pi < 0:
+		return
+	var p: Dictionary = model.placements[pi]
+	var r: Rect2 = _bag_rect(p["pos"], p["size"]).grow(-2.0)
+	draw_rect(r, COL_HIGHLIGHT, true)
+	draw_rect(r, COL_ITEM_EDGE, false, 3.0)
 
 
 func _draw_drag_ghost() -> void:

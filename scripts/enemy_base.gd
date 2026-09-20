@@ -296,10 +296,23 @@ func get_model_root() -> Node3D:
 
 func _physics_process(delta: float) -> void:
 	if is_dead():
-		# FROZEN: stop dead in the death pose. `move_and_slide` here would let a
-		# corpse drift for the frames its decay velocity lasts, and re-playing the
-		# death clip would make it writhe forever.
+		# THE DEATH CLIP LAYS THE BODY DOWN, and nothing else may touch the pose.
+		# `Rig|Death01` collapses the character over its first ~1.05 s - measured on
+		# the delivered enemy.glb: head 1.39 m -> 0.13 m, hips 0.79 m -> 0.045 m -
+		# and then holds the prone pose. So while it is still playing, the corpse is
+		# LEFT ALONE.
+		#
+		# This used to be `anim.speed_scale = 0.0` on the FIRST dead frame, while
+		# `loot_body.dress_corpse()` rotated the model -82 deg about X in one step.
+		# Measured: 232 frames of the corpse's tilt, rot.x = -82.00 in every single
+		# one, i.e. the body never fell - it was already lying on the frame it died,
+		# which is exactly Jan's report ("the body does not lie down smoothly, it
+		# becomes lying instantly"). The fall was in the clip the whole time and was
+		# being skipped. Freeze only once the clip is over, so a corpse cannot
+		# writhe forever and a fall cannot be skipped either.
 		if _freeze_after_death and anim != null:
+			if anim.is_playing():
+				return          # the fall is still running: let it play out
 			anim.speed_scale = 0.0
 		return
 	## PAUSED: a full-screen panel (the bag, the hero sheet, an opened body) stops
