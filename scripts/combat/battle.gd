@@ -19,6 +19,8 @@ class_name Battle
 const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
+const PlayerSpells := preload("res://scripts/combat/player_spells.gd")
+const Talents := preload("res://scripts/items/talents.gd")
 
 ## How many fights a zone takes before it is complete (the PWA's `af >= 10`).
 const FIGHTS_PER_ZONE := 10
@@ -105,8 +107,34 @@ var heroic_strike_queued := false
 var frenzy_queued := false
 var frenzy_stacks := 0
 var frenzy_speed_pct := 0.0
+## Frenzy stacks expire 10 s after the last one, and the SPEED has to be recomputed on
+## the swing interval when they do — a buff that only changes a number in the log is
+## not a buff.
+var frenzy_ms := 0
 
 var battle_shout_dmg_pct := 0.0
+var battle_shout_ms := 0
+var defensive_shout_armor_pct := 0.0
+var defensive_shout_ms := 0
+
+## --- class spell bookkeeping ------------------------------------------------
+## Cooldowns live HERE rather than on the save, because the PWA cleared them on
+## entering town (`resetSessionState`), so they are per-session. Keeping them off the
+## save also means quitting cannot launder an unspent cooldown.
+var spell_cooldowns: Dictionary = {}
+var spell_gcd_ms := 0
+var player_cast_spell := ""
+var player_cast_ms := 0
+var player_cast_elapsed := 0.0
+
+## Enemy control: a stun stops its swings entirely, and a pummel blocks recasting.
+var enemy_stun_ms := 0
+var enemy_cast_blocked_ms := 0
+
+## Accumulator for mana regen: the save stores mana as an int, so a sub-1-per-second
+## regen has to be carried as a fraction or it rounds away and never ticks.
+var mana_regen_frac := 0.0
+
 var rng := RandomNumberGenerator.new()
 
 ## Every damage number, miss and heal this fight produced, in order. The arena
@@ -469,6 +497,7 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 		return false
 
 	_tick_dots(delta_ms)
+	_tick_spell_clocks(delta_ms, state, find_item)
 
 	player_swing_elapsed += delta_ms
 	enemy_swing_elapsed += delta_ms
@@ -490,6 +519,10 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 	var eff_player_ms := float(player_swing_ms)
 	if player_slow_pct > 0.0 and player_slow_ms > 0:
 		eff_player_ms = round(eff_player_ms / (1.0 - player_slow_pct / 100.0))
+	# Frenzy shortens the swing rather than adding damage to it, so the reduction is
+	# applied to the interval the tick compares against.
+	if frenzy_speed_pct > 0.0:
+		eff_player_ms = maxf(450.0, round(eff_player_ms * (1.0 - frenzy_speed_pct / 100.0)))
 
 	if player_swing_elapsed >= eff_player_ms:
 		player_swing_elapsed -= eff_player_ms
@@ -497,7 +530,8 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 		if ended or enemy_hp <= 0.0:
 			return not ended
 
-	if enemy_swing_elapsed >= float(enemy_swing_ms):
+	# A stunned enemy does not swing, and its swing clock does not advance either.
+	if enemy_stun_ms <= 0 and enemy_swing_elapsed >= float(enemy_swing_ms):
 		enemy_swing_elapsed -= float(enemy_swing_ms)
 		enemy_attack(state, find_item)
 
@@ -508,6 +542,70 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 			_resolve_cast(state, find_item)
 
 	return not ended
+
+
+## Everything that runs on a clock the player's spells control: the two cooldowns, the
+## queued buffs' durations, the enemy's stun and cast block, the hero's mana regen and a
+## spell the hero has mid-cast.
+##
+## All of it is in one place because every one of these was a silent failure mode: a
+## buff whose timer is never ticked never expires, and a stun whose timer is never
+## ticked is permanent.
+func _tick_spell_clocks(delta_ms: float, state, find_item: Callable) -> void:
+	var dt := int(delta_ms)
+
+	if spell_gcd_ms > 0:
+		spell_gcd_ms = maxi(0, spell_gcd_ms - dt)
+	for spell_id in spell_cooldowns.keys():
+		var left := int(spell_cooldowns[spell_id]) - dt
+		if left <= 0:
+			spell_cooldowns.erase(spell_id)
+		else:
+			spell_cooldowns[spell_id] = left
+
+	# Shouts and Frenzy. Each recomputes what it changed, so a buff that ends puts the
+	# numbers back rather than leaving the fight permanently faster or stronger.
+	if battle_shout_ms > 0:
+		battle_shout_ms = maxi(0, battle_shout_ms - dt)
+		if battle_shout_ms == 0:
+			battle_shout_dmg_pct = 0.0
+	if defensive_shout_ms > 0:
+		defensive_shout_ms = maxi(0, defensive_shout_ms - dt)
+		if defensive_shout_ms == 0:
+			defensive_shout_armor_pct = 0.0
+	if frenzy_ms > 0:
+		frenzy_ms = maxi(0, frenzy_ms - dt)
+	# Guard on the SPEED rather than the timer: a speed bonus with no timer behind it
+	# would be permanent, and that is the one shape of this bug that is invisible in a
+	# fight that ends quickly. Self-healing rather than trusting the pair to stay in sync.
+	if frenzy_ms <= 0 and frenzy_speed_pct > 0.0:
+		frenzy_stacks = 0
+		frenzy_speed_pct = 0.0
+
+	if enemy_stun_ms > 0:
+		enemy_stun_ms = maxi(0, enemy_stun_ms - dt)
+	if enemy_cast_blocked_ms > 0:
+		enemy_cast_blocked_ms = maxi(0, enemy_cast_blocked_ms - dt)
+
+	# Mana regen, the PWA's 0.3/s plus 0.01 per INT point, both per second. It has to be
+	# accumulated as a FRACTION: the save stores mana as an int, so an int-only regen of
+	# under 1 per second would round to zero and never tick at all.
+	var hero: Dictionary = state.hero()
+	var max_mana := int(hero.get("maxMana", 0))
+	if max_mana > 0 and float(hero.get("mana", 0)) < float(max_mana):
+		var int_total := int(hero.get("attrInt", 0)) + _equip_stat(state.equip(), find_item, "int")
+		var per_second := 0.3 + float(int_total) * 0.01 + float(_equip_stat(state.equip(), find_item, "manaRegen"))
+		mana_regen_frac += per_second * delta_ms / 1000.0
+		if mana_regen_frac >= 1.0:
+			var whole := int(floor(mana_regen_frac))
+			mana_regen_frac -= float(whole)
+			hero["mana"] = mini(max_mana, int(hero.get("mana", 0)) + whole)
+
+	# A spell the hero started casting resolves here, on its own clock.
+	if player_cast_spell != "":
+		player_cast_elapsed += delta_ms
+		if player_cast_elapsed >= float(player_cast_ms):
+			PlayerSpells.resolve_cast(self, state, find_item, _data, rng)
 
 
 ## The effect of a finished cast. The caster's resource is spent here, not when the
@@ -563,6 +661,10 @@ func _resolve_cast(state, find_item: Callable) -> void:
 
 
 ## One hero swing. Dual wield alternates hands and the off hand swings at 0.6x.
+##
+## The queued class spells (Heroic Strike, Frenzy) are consumed HERE rather than in the
+## screen: they modify this swing's damage and attack rating, so the rule has to live
+## where the swing is resolved or no test could reach it.
 func player_attack(state, find_item: Callable) -> Dictionary:
 	var is_offhand := offhand_swing_ms > 0 and offhand_turn
 	offhand_turn = not offhand_turn
@@ -572,31 +674,33 @@ func player_attack(state, find_item: Callable) -> Dictionary:
 		weapon = find_item.call("fists")
 
 	var mult := 0.6 if is_offhand else 1.0
-	if not is_offhand and heroic_strike_queued:
-		var hs_lv := _spell_level(state, "heroicStrike", 1)
-		mult *= float(100 + hs_lv * 100) / 100.0
-		heroic_strike_queued = false
-	if not is_offhand and frenzy_queued:
-		var f_lv := _spell_level(state, "frenzy", 1)
-		mult *= 1.0 + float(20 * f_lv) / 100.0
-		frenzy_queued = false
-		frenzy_stacks = mini(5, frenzy_stacks + 1)
-		frenzy_speed_pct = float(frenzy_stacks * (f_lv + 1))
+	var ar_mult := 1.0
+	var queued_frenzy := false
+	# The queued spells apply to the MAIN hand only — an off-hand swing is not the hit
+	# the player queued.
+	if not is_offhand:
+		var queued: Dictionary = consume_queued(state)
+		mult *= float(queued["dmgMult"])
+		ar_mult = float(queued["arMult"])
+		queued_frenzy = bool(queued["frenzy"])
 	if battle_shout_dmg_pct > 0.0:
 		mult *= 1.0 + battle_shout_dmg_pct / 100.0
 
-	var result := _resolve_player_hit(state, find_item, weapon, mult, is_offhand)
+	var result := _resolve_player_hit(state, find_item, weapon, mult, is_offhand, ar_mult)
+	# A Frenzy stack is earned only by a hit that LANDED, and only by the main hand.
+	if queued_frenzy and bool(result.get("hit", false)):
+		apply_frenzy_stack(state)
 	return result
 
 
 func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: float,
-		is_offhand: bool) -> Dictionary:
+		is_offhand: bool, ar_mult: float = 1.0) -> Dictionary:
 	var hero: Dictionary = state.hero()
 	var cls_id := str(state.data.get("heroClass", ""))
 	var is_staff := str(weapon.get("weaponType", "")) == "staff"
 
 	if not is_staff:
-		var ar := prog.hero_attack_rating(hero, state.equip(), cls_id, find_item)
+		var ar := int(round(float(prog.hero_attack_rating(hero, state.equip(), cls_id, find_item)) * ar_mult))
 		var chance := prog.hit_chance(ar, enemy_defense, int(hero.get("level", 1)), monster_level_value)
 		if rng.randf() * 100.0 >= chance:
 			_note("MISS", 0, false)
@@ -670,7 +774,7 @@ func _tick_dots(delta_ms: float) -> void:
 
 ## One enemy swing. If the monster is a caster with an affordable spell, this swing
 ## is that spell — it starts casting and the effect lands when the cast time is up.
-## Otherwise it is a melee hit, reduced by the hero's damage reduction.
+## Otherwise it is a melee hit, reduced by the hero's armour and damage reduction.
 func enemy_attack(state, find_item: Callable) -> Dictionary:
 	if cast_spell_id != "":
 		return {"hit": false, "reason": "casting"}
@@ -686,8 +790,7 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 			return {"hit": false, "reason": "cast"}
 
 	var raw := rng.randi_range(enemy_dmg_min, maxi(enemy_dmg_max, enemy_dmg_min))
-	var dmg_red := _equip_stat(state.equip(), find_item, "dmgReduction")
-	var dmg := prog.incoming_damage(raw, dmg_red)
+	var dmg := incoming_damage(state, find_item, raw)
 	hero_hp -= float(dmg)
 	_note("ENEMY HIT", dmg, true)
 	if hero_hp <= 0.0:
@@ -695,10 +798,40 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 	return {"hit": true, "damage": dmg}
 
 
+## What an enemy hit actually costs the hero, after armour and flat reduction.
+##
+## This is the PWA's chain in one place (`getTotalPlayerDefense` -> the
+## `totalDefense / (totalDefense + 300)` curve -> flat `dmgReduction`), and it is a
+## rule, not a rendering detail, so it lives on the battle where a test can reach it.
+##
+## The 300 is the D2 armour constant: 300 defence is 50 % reduction, and the curve
+## never reaches 100 %, so armour alone can never make the hero immortal.
+const ARMOR_K := 300.0
+
+func incoming_damage(state, find_item: Callable, raw: int) -> int:
+	var amount := float(raw)
+	var defense := Talents.total_defense(state, find_item)
+	# Defensive Shout multiplies the armour for its 30 s, which is the ONLY thing it
+	# does — a shout that writes a percentage into a field nothing reads is not a buff.
+	if defensive_shout_armor_pct > 0.0:
+		defense = int(round(float(defense) * (1.0 + defensive_shout_armor_pct / 100.0)))
+	if defense > 0:
+		amount = round(amount * (1.0 - float(defense) / (float(defense) + ARMOR_K)))
+	# Flat reduction is applied AFTER the percentage, so the two compose the way the
+	# PWA composed them rather than double-dipping on the same number.
+	return maxi(1, int(round(amount)) - _equip_stat(state.equip(), find_item, "dmgReduction"))
+
+
+
 ## Which spell the caster would cast now, or "" for none affordable. Heal is skipped
 ## at (near) full HP, which the PWA did explicitly.
 func _choose_spell() -> String:
 	if enemy_spells.is_empty():
+		return ""
+	# A pummel blocks recasting outright, so no spell is chosen while the window is up.
+	# Without this the interrupt would cancel one cast and the enemy would simply start
+	# another on its next swing.
+	if enemy_cast_blocked_ms > 0:
 		return ""
 	var spells: Dictionary = _data.enemy_spells()
 	var affordable: Array = []
@@ -838,6 +971,128 @@ func advance_stop(state) -> bool:
 
 # --- helpers -----------------------------------------------------------------
 
+## Public wrappers over the private helpers below, so `player_spells.gd` can reach the
+## battle's own rules without a second copy of them. Anything a spell needs lives here
+## once; a spell module that re-derived the damage formula would be a second source of
+## truth for the balance.
+func note(kind: String, amount: int, on_player: bool) -> void:
+	_note(kind, amount, on_player)
+
+
+func equip_attr(state, find_item: Callable, stat: String) -> int:
+	return _equip_stat(state.equip(), find_item, stat)
+
+
+func mark_enemy_dead(state, find_item: Callable) -> void:
+	_on_enemy_dead(state, find_item)
+
+
+## The hit check for a spell that swings a weapon (Double Swing), with an optional
+## attack-rating multiplier on top. The PWA ran this hit check INSIDE the spell rather
+## than letting the normal swing carry it, which is why it is exposed.
+func roll_player_hit(state, find_item: Callable, ar_mult: float = 1.0) -> bool:
+	var hero: Dictionary = state.hero()
+	var cls_id := str(state.data.get("heroClass", ""))
+	var weapon: Dictionary = find_item.call(state.equip().get("weapon", "fists"))
+	# A staff does not roll to hit at all — the PWA's `is_staff` branch skipped it.
+	if str(weapon.get("weaponType", "")) == "staff":
+		return true
+	var ar := int(round(float(prog.hero_attack_rating(hero, state.equip(), cls_id, find_item)) * ar_mult))
+	var chance := prog.hit_chance(ar, enemy_defense, int(hero.get("level", 1)), monster_level_value)
+	return rng.randf() * 100.0 < chance
+
+
+## Apply a slow to the enemy, preserving how far into its current swing it already was.
+## Recomputing the interval without that correction would either hand the enemy a free
+## swing or swallow one, and the PWA went to the trouble of doing it properly.
+func apply_enemy_slow(slow_pct: float, slow_ms: int) -> void:
+	enemy_slow_pct = slow_pct
+	enemy_slow_ms = slow_ms
+	var old_ms := float(enemy_swing_ms)
+	var progress := 0.0
+	if old_ms > 0.0:
+		progress = clampf(enemy_swing_elapsed / old_ms, 0.0, 1.0)
+	enemy_swing_ms = prog.enemy_swing_time(enemy_attack_speed, enemy_slow_pct, enemy_slow_ms)
+	enemy_swing_elapsed = progress * float(enemy_swing_ms)
+
+
+## Damage a reflected spell throws back: a fraction of what the enemy's own cast would
+## have done to the hero. Built from the enemy's OWN numbers, so a stronger enemy
+## reflects harder.
+func reflect_damage(reflect_pct: float, rng_for_roll: RandomNumberGenerator) -> int:
+	var diffs: Array = _data.difficulties()
+	var diff_mult := float((diffs[difficulty] as Dictionary).get("mult", 1.0)) \
+		if difficulty < diffs.size() else 1.0
+	var raw := float(rng_for_roll.randi_range(enemy_dmg_min, maxi(enemy_dmg_max, enemy_dmg_min)))
+	var zone := 1.0 if is_boss else prog.zone_mult(progress, difficulty)
+	var base := raw * diff_mult * 0.8 * zone
+	return maxi(1, int(round(base * 0.7 * reflect_pct / 100.0)))
+
+
+## Consume the queued Heroic Strike / Frenzy flags and return the damage multiplier and
+## the attack-rating multiplier for the swing that follows. Called by the battle's own
+## attack so the queued spells stay rules, not screen state.
+##
+## Frenzy's stack is applied by `apply_frenzy_stack()` only once the hit LANDS — the
+## PWA did that too, so a missed Frenzy costs the mana and gives no stack.
+func consume_queued(state) -> Dictionary:
+	var dmg_mult := 1.0
+	var ar_mult := 1.0
+	var is_frenzy := false
+	var class_id := str(state.data.get("heroClass", ""))
+	if heroic_strike_queued:
+		var hs_lv := maxi(PlayerSpells.spell_level(state, class_id, "heroicStrike"), 1)
+		dmg_mult *= float(100 + hs_lv * 100) / 100.0
+		heroic_strike_queued = false
+	if frenzy_queued:
+		var f_lv := maxi(PlayerSpells.spell_level(state, class_id, "frenzy"), 1)
+		dmg_mult *= 1.0 + float(20 * f_lv) / 100.0
+		ar_mult = 1.0 + float(100 + 20 * f_lv) / 100.0
+		frenzy_queued = false
+		is_frenzy = true
+	return {"dmgMult": dmg_mult, "arMult": ar_mult, "frenzy": is_frenzy}
+
+
+## One Frenzy stack, and the swing interval recomputed from it. Stacks cap at 5 and each
+## one refreshes the 10 s window; the speed bonus is (talent level + 1) % per stack.
+func apply_frenzy_stack(state) -> void:
+	var class_id := str(state.data.get("heroClass", ""))
+	var f_lv := maxi(PlayerSpells.spell_level(state, class_id, "frenzy"), 1)
+	frenzy_stacks = mini(5, frenzy_stacks + 1)
+	frenzy_ms = 10000
+	frenzy_speed_pct = float(frenzy_stacks * (f_lv + 1))
+	_note("FRENZY %d/5" % frenzy_stacks, 0, false)
+
+
+## The class spells available right now, as [{id, name, def, blocked, cost, cooldown}].
+## The arena renders this and owns no rule about which spells exist — that is the whole
+## reason it is a function on the battle rather than a loop in the screen.
+func spell_bar(state, find_item: Callable) -> Array:
+	var class_id := str(state.data.get("heroClass", ""))
+	var out: Array = []
+	for s in PlayerSpells.spells_for_class(_data, class_id):
+		var def: Dictionary = s
+		var spell_id := str(def.get("id", ""))
+		# A spell with no talent point in it does not exist as a button, exactly as the
+		# PWA filtered its bar.
+		if not PlayerSpells.is_available(state, class_id, spell_id):
+			continue
+		var blocked := PlayerSpells.blocked_reason(state, _data, class_id, spell_id, self,
+			find_item, spell_gcd_ms, int(spell_cooldowns.get(spell_id, 0)))
+		out.append({
+			"id": spell_id,
+			"name": str(def.get("name", spell_id)),
+			"def": def,
+			"blocked": blocked,
+			"can": blocked == "",
+			"cost": PlayerSpells.spell_cost(state, class_id, spell_id, float(def.get("cost", 0))),
+			"cooldown": int(spell_cooldowns.get(spell_id, 0)),
+			"queued": (spell_id == "heroicStrike" and heroic_strike_queued)
+				or (spell_id == "frenzy" and frenzy_queued),
+		})
+	return out
+
+
 func _note(kind: String, amount: int, is_player_taking: bool) -> void:
 	log.append({"kind": kind, "amount": amount, "onPlayer": is_player_taking})
 
@@ -846,12 +1101,6 @@ func _pick(arr: Array) -> Variant:
 	if arr.is_empty():
 		return null
 	return arr[rng.randi_range(0, arr.size() - 1)]
-
-
-func _spell_level(state, spell_id: String, default_lv: int) -> int:
-	var levels: Dictionary = state.data.get("talentLevels", {})
-	var cls_id := str(state.data.get("heroClass", ""))
-	return int(levels.get("%s_%s" % [cls_id, spell_id], default_lv))
 
 
 func _equip_stat(equip: Dictionary, find_item: Callable, stat: String) -> int:

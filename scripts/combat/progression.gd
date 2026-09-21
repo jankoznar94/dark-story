@@ -279,10 +279,13 @@ func total_defense(equip: Dictionary, find_item: Callable) -> int:
 	return total
 
 
-## Damage the hero takes from one enemy hit, after the hero's damage reduction.
-## `dmg_reduction` is a percentage from gear (D2's "Damage Reduced By x%").
-static func incoming_damage(raw: int, dmg_reduction_pct: int) -> int:
-	return maxi(1, int(round(float(raw) * (100.0 - float(mini(dmg_reduction_pct, 90))) / 100.0)))
+## Damage the hero takes from one enemy hit is NOT computed here — the armour curve and
+## the flat reduction are one rule and they live together on the battle
+## (`Battle.incoming_damage`), because Defensive Shout temporarily multiplies the armour
+## and a formula in two places would silently disagree about that. This stub existed
+## with a different shape (a percentage reduction, no armour term) and was reached by
+## nothing after that move; leaving it here would be a second source of truth for the
+## balance.
 
 
 # --- loot rarity -------------------------------------------------------------

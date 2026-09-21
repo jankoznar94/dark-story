@@ -50,6 +50,10 @@ var _mana_track: Control
 var _mana_fill: ColorRect
 var _mana_label: Label
 var _potion_row: HBoxContainer
+## One button per learned class spell, rebuilt whenever the fight state changes.
+var _spell_row: HBoxContainer
+## The bar's current contents, so render() does not rebuild it ten times a second.
+var _spell_signature := ""
 var _location_label: Label
 var _log_box: VBoxContainer
 var _result_label: Label
@@ -129,8 +133,8 @@ func _build() -> void:
 	_hero_hp_label = _label("", 13, Color("#aaaaaa"), HORIZONTAL_ALIGNMENT_CENTER)
 	hero_box.add_child(_hero_hp_label)
 
-	# Mana/rage bar, drawn only for a magical resource. A barbarian's rage has no
-	# pool in this port, so the bar stays hidden rather than showing a fake number.
+	# The mana bar, one bar for every class: the barbarian pays for his warcries and
+	# his strikes out of the same pool the mage does.
 	var mana_bar := _make_bar(Color("#3f5a9a"))
 	_mana_track = mana_bar["track"]
 	_mana_fill = mana_bar["fill"]
@@ -144,6 +148,14 @@ func _build() -> void:
 	_potion_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_potion_row.add_theme_constant_override("separation", 6)
 	hero_box.add_child(_potion_row)
+
+	# The class spell bar. Which spells are offered is NOT decided here: the battle's
+	# `spell_bar()` returns them (gated by the invested talent), and this screen only
+	# draws what it is handed. A rule in the screen could not be tested.
+	_spell_row = HBoxContainer.new()
+	_spell_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_spell_row.add_theme_constant_override("separation", 6)
+	hero_box.add_child(_spell_row)
 
 	_log_box = VBoxContainer.new()
 	_log_box.add_theme_constant_override("separation", 2)
@@ -223,6 +235,8 @@ func start(state, find_item: Callable) -> bool:
 	_loot_button.visible = false
 	_loot_button.disabled = false
 	_button_lock = 0
+	# A new fight gets a fresh bar: the old signature would suppress the rebuild.
+	_spell_signature = ""
 
 
 	var seed_value := int(Time.get_ticks_usec()) & 0x7fffffff
@@ -311,21 +325,89 @@ func render() -> void:
 	_set_bar(_hero_track, _hero_fill, battle.hero_hp, battle.hero_max_hp)
 	_hero_hp_label.text = "%d / %d" % [maxi(0, int(battle.hero_hp)), int(battle.hero_max_hp)]
 
-	# The hero's resource bar. Only shown when the class actually has a pool: the PWA's
-	# barbarian uses rage, which this port does not model, and a bar that never moves
-	# would be a lie.
+	# The hero's resource bar. EVERY class uses mana in this game — the barbarian too
+	# (CLASSES.json: resource 'mana', maxResource 100, baseMana 10, manaPerLevel 1) —
+	# so the bar is never hidden. An earlier note here claimed the barbarian ran on
+	# rage and skipped his bar; that was simply wrong, and it hid the pool his own
+	# spells are paid from.
 	var hero: Dictionary = _state.hero()
 	var hero_class := str(_state.data.get("heroClass", ""))
-	var cls: Dictionary = _data.class_by_id(hero_class)
-	var resource := str(cls.get("resource", "mana"))
-	_mana_track.visible = resource == "mana"
-	_mana_label.visible = resource == "mana"
-	if resource == "mana":
-		var max_mana := int(hero.get("maxMana", 0))
-		if max_mana <= 0:
-			max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
-		_set_bar(_mana_track, _mana_fill, float(hero.get("mana", 0)), float(maxi(max_mana, 1)))
-		_mana_label.text = "Mana %d / %d" % [int(hero.get("mana", 0)), max_mana]
+	var max_mana := int(hero.get("maxMana", 0))
+	if max_mana <= 0:
+		max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
+	_set_bar(_mana_track, _mana_fill, float(hero.get("mana", 0)), float(maxi(max_mana, 1)))
+	_mana_label.text = "Mana %d / %d" % [int(hero.get("mana", 0)), max_mana]
+	_refresh_spells()
+
+
+## Rebuild the spell bar from `battle.spell_bar()`. A spell with no talent point in it
+## is not returned at all — the PWA filtered its bar the same way, and an offered spell
+## the player never bought reads as content that simply does not work.
+##
+## A blocked spell is drawn dim with the REASON it is blocked, rather than being hidden:
+## "Cooldown 12 s" and "Malo many" are information, and a button that simply vanishes
+## mid-fight is indistinguishable from a bug.
+##
+## Rebuilt ONLY when the bar's contents change. render() runs ten times a second, and
+## freeing and recreating the buttons each tick means a tap is delivered to a node that
+## has already been queue_free'd — the spell button would simply never fire.
+func _refresh_spells() -> void:
+	if _spell_row == null:
+		return
+	if battle == null:
+		if _spell_row.get_child_count() > 0:
+			_clear_row(_spell_row)
+		return
+
+	var entries: Array = battle.spell_bar(_state, _find_item)
+	var signature := ""
+	for entry in entries:
+		signature += "%s|%s|%s;" % [str(entry["id"]), bool(entry["can"]),
+			str(entry["blocked"])]
+	if signature == _spell_signature:
+		return
+	_spell_signature = signature
+	_clear_row(_spell_row)
+
+	for entry in entries:
+		var spell_id := str(entry["id"])
+		var label := str(entry["name"])
+		if bool(entry["queued"]):
+			label += " *"
+		var button := _make_button(label)
+		button.custom_minimum_size = Vector2(150, 40)
+		var can := bool(entry["can"])
+		button.disabled = not can
+		if can:
+			button.pressed.connect(func(): cast_spell(spell_id))
+		else:
+			# The reason replaces the name: mid-fight the player needs to know WHY,
+			# not which spell they cannot use.
+			button.text = "%s\n%s" % [label, str(entry["blocked"])]
+			button.add_theme_color_override("font_color", Color("#7a7a7a"))
+		_spell_row.add_child(button)
+
+
+func _clear_row(row: Node) -> void:
+	for child in row.get_children():
+		row.remove_child(child)
+		child.queue_free()
+
+
+## Cast one class spell. The rule lives in `PlayerSpells` — this only forwards the call
+## and reports what came back. A refused cast writes its reason into the log verbatim.
+func cast_spell(spell_id: String) -> Dictionary:
+	if battle == null or battle.ended:
+		return {"ok": false, "message": "Zadny souboj", "damage": 0, "spell": spell_id}
+	var result: Dictionary = PlayerSpells.cast(battle, spell_id, _state, _find_item, _data, battle.rng)
+	if bool(result["ok"]):
+		_append_log(str(result["message"]))
+	else:
+		_append_log("Nelze: %s" % str(result["message"]))
+	_drain_log()
+	_state.save()
+	render()
+	return result
 
 
 ## One button per potion type in the belt, with the count. Tapping drinks one.

@@ -24,8 +24,14 @@ class_name Talents
 ## Skills whose mechanic the port does not model. Investing is still allowed — the
 ## points and the prerequisite gating are real — but the UI says so instead of showing
 ## a bonus that never lands.
-const INERT_SKILLS := ["whirlwind", "frenzy", "battleShout", "defensiveShout",
-	"skillShout", "thornShield", "faerieFire", "slow"]
+##
+## Battle Shout, Defensive Shout and Frenzy came OFF this list when the class spells
+## landed in the arena: the shouts now actually multiply the hero's damage and armour
+## for their 30 s, and Frenzy actually shortens the swing interval. Leaving them here
+## would have the UI deny a bonus the combat reads, which is the same lie in the other
+## direction. Whirlwind stays: its PWA mechanic is a tap-the-button flurry with no
+## equivalent in a portrait auto-combat arena.
+const INERT_SKILLS := ["whirlwind", "skillShout", "thornShield", "faerieFire", "slow"]
 
 
 ## Flattened skill lookup, built once: key -> {key, classId, treeId, tierIdx, name, maxLv, ...}
@@ -278,7 +284,10 @@ func player_block_chance(state, find_item: Callable, gen: ItemGen) -> int:
 
 
 ## getTotalPlayerDefense — the five armour slots.
-func total_defense(state, find_item: Callable) -> int:
+## Total defence from every armour slot. STATIC because it reads nothing but the gear:
+## the battle's incoming-damage rule needs it, and an instance would mean the battle
+## owning a Talents object purely to add up five numbers.
+static func total_defense(state, find_item: Callable) -> int:
 	var total := 0
 	for slot in ["armor", "helmet", "shield", "gloves", "boots"]:
 		var item: Dictionary = find_item.call(state.equip().get(slot))

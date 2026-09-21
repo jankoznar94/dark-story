@@ -58,13 +58,29 @@ combat wants reaction mechanics, they get designed fresh rather than transplante
    Nightmare 5.5/+0.72, Hell 12.0/+0.89 per zone), the D2 XP curve and attack table.
 4. **Itemisation UI** — done. Inventory grid, belt, equip slots, the town and the
    five town services (shop, gamble, chest, craft, talent trees), plus gem and jewel
-   socketing. **Still to do: class spells in the arena.** The spell tables are loaded
-   and the talent levels are read, but only the auto-attack swing is wired up, so all
-   three classes fight the same way.
-5. **Save/load** — done. `user://` JSON. Note the PWA's key is `dungeonRecallV7` with a
+   socketing.
+5. **Class spells** — the barbarian's ten are done and castable from the arena bar:
+   `scripts/combat/player_spells.gd` holds the rules (the talent gate, the mana cost,
+   the cooldowns, each spell's effect) and the arena renders `battle.spell_bar()`.
+   Battle Shout and Defensive Shout really do multiply damage and armour, Frenzy really
+   does shorten the swing interval, Pummel really does block the enemy's recast.
+   **Still to do: the assassin's and the mage's spells.** They need mechanics this port
+   has no home for yet (combo points, an active spell school, enemy DoTs from a player
+   spell, an AoE); they are refused with a reason rather than wired to a damage number.
+   Whirlwind is deliberately absent — see the port notes on the tap-the-button flurry.
+6. **Save/load** — done. `user://` JSON. Note the PWA's key is `dungeonRecallV7` with a
    flat→2D `bossesDefeated` migration; a fresh port starts clean instead.
-6. **Balance pass** — 40 monsters across 5 themes × 3 difficulties is the longest
+7. **Balance pass** — 40 monsters across 5 themes × 3 difficulties is the longest
    tail and cannot be shortened by tooling.
+
+## Two things about mana and rage worth knowing before changing anything
+
+**Every class uses mana, the barbarian included.** `CLASSES.json` says
+`resource: 'mana'` for all three classes, and his warcries are paid out of it. The
+arena used to hide his bar because a note in the port claimed he ran on rage; the bar
+is now unconditional and `tools/test_arena_screen.gd` pins it. (Rage *does* exist in
+the game — as the ENEMY's resource, for the troll and the bear, who gain it on hit.
+That is a different system and lives in `battle.gd`, not on the hero.)
 
 ## Two things about the combat worth knowing before changing it
 

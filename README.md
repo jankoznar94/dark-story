@@ -100,13 +100,20 @@ progression loop, the whole itemisation loop and save/load.
 | Inventory + town | character sheet, belt, equip slots, town hub, save/load |
 | Town services | shop (progress-gated), gamble (level-gated), chest, craft, talent trees |
 | Combat | one fight as pure logic, ticked at 100 ms; arena screen renders it |
+| Class spells | the barbarian's ten, cast from the arena bar: talent-gated, mana-paid, cooldowned |
 | Progression | 5 acts x 10 zones, bosses, 3 difficulties, D2 XP curve, attack table |
-| Tests | 7 headless suites, all gates in CI |
+| Tests | 9 headless suites, all gates in CI |
 
-**Not in this port yet:** class spells in the arena (the tables are loaded and the
-talent levels are read, but only the basic auto-attack swing is wired up — a
-barbarian, an assassin and a mage all fight the same way); the balance pass across
-40 monsters x 3 difficulties; reaction mechanics — deliberately not ported.
+**Not in this port yet:** the assassin's and the mage's class spells (their mechanics
+need combo points, a spell school and enemy DoTs, which this port has no home for yet —
+they are refused with a reason rather than faked); Whirlwind, deliberately not ported
+(its PWA mechanic is a tap-the-shown-button flurry, an interaction model for a DOM page);
+the balance pass across 40 monsters x 3 difficulties; the reaction mechanics.
+
+**Every class runs on mana**, the barbarian included — `CLASSES.json` says
+`resource: 'mana'` for all three, and his warcries are paid out of the same pool the
+mage's firebolts are. A port note once claimed otherwise and hid his mana bar in the
+arena; if you see that claim again, it is wrong.
 
 The combat split is deliberate and worth keeping: `scripts/combat/battle.gd` owns
 every rule and `scripts/ui/arena_screen.gd` owns none. That is what lets

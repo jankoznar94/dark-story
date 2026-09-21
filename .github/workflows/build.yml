@@ -151,6 +151,27 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "DIFFICULTY_ALL_PASS=true"
 
+      # The class spells and the arena screen that casts them. Two separate gates on
+      # purpose: `test_player_spells` asserts the RULES (the talent gate, cooldowns,
+      # buffs that expire, mana regen that actually ticks), while `test_arena_screen`
+      # asserts the WIRING — that the bar really builds a button per learned spell, that
+      # tapping it reaches the rules, that the buttons survive a render tick, and that
+      # the barbarian's mana bar is on screen. A bar built but never clickable passes
+      # every rule test in the file.
+      - name: Class spells test (gate, cooldowns, buffs, mana)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_player_spells.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "PLAYER_SPELLS_ALL_PASS=true"
+
+      - name: Arena screen test (spell bar wiring)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_arena_screen.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ARENA_SCREEN_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
