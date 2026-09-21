@@ -191,9 +191,20 @@ sc.view_settings.look = 'None'
 sc.render.image_settings.file_format = 'PNG'
 sc.render.image_settings.color_mode = 'RGBA'
 
+# ---- assert the sign of the fix, so a regression FAILS instead of shipping ---
+# NB the threshold is a SIGN check, not 0.9: at ELEV=55 the horizontal component
+# is only cos(55)=0.574, so an "almost 1" bound fails on the correct value.
+_dv0, _r0, _u0 = cam_axes(0.0 + 180.0)
+assert _dv0.y > 0.0, "direction S must put the camera on the hero's +Y (front) side, got %r" % (_dv0,)
+print("DIRECTION_ASSERT_OK S camera dv=(%.3f, %.3f, %.3f)" % (_dv0.x, _dv0.y, _dv0.z))
+
 # ---- pass 2: render every (direction, frame) ---------------------------------
 for di, dname in enumerate(DIRS):
-    dv, right, up = cam_axes(di * 45.0)
+    # +180: the hero faces Blender +Y, so for the "S" frame the camera must sit
+    # on the +Y side. Without the offset the rows are labelled 180 deg out --
+    # the row marked S renders the hero's BACK. Caught by reading the render,
+    # not by any assertion, so it is asserted below instead.
+    dv, right, up = cam_axes(di * 45.0 + 180.0)
     aim = tgt + CU * right + CW * up          # shift the aim, not the scale
     loc = aim + D * dv
     cam.location = loc
