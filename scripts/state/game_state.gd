@@ -13,6 +13,8 @@ class_name GameState
 const SAVE_PATH := "user://dungeon_recall_save.json"
 const SAVE_VERSION := 1
 
+const ItemGen := preload("res://scripts/items/item_gen.gd")
+
 ## Slot keys, matching the PWA. Kept in one place so the UI and the stat functions
 ## cannot drift apart.
 const SLOTS := ["weapon", "armor", "helmet", "shield", "ring1", "ring2",
@@ -192,6 +194,141 @@ func register_loot_item(item: Dictionary) -> void:
 
 func loot_item(item_id: String) -> Dictionary:
 	return data["lootItems"].get(item_id, {})
+
+
+# --- inventory / chest rules -------------------------------------------------
+
+## add_item — pushes a plain id for gear, or merges into a stack for gems and
+## consumables. Thin wrapper so screens never reach for the generator's statics.
+func add_item(item_id: String, item: Dictionary, count: int = 1) -> void:
+	ItemGen.add_to_inventory(inventory(), item_id, item, count)
+
+
+func remove_item(item_id: String, count: int = 1) -> void:
+	ItemGen.remove_from_inventory(inventory(), item_id, count)
+
+
+func bag_full() -> bool:
+	return inventory().size() >= INVENTORY_CELLS
+
+
+## Is this item id in ANY equip slot? The PWA's isItemEquipped, which walks every
+## key rather than a set — it stays correct even if an id is somehow in both the bag
+## and a slot. `beltPotionSlots` holds potion ids, not the belt, so it is skipped.
+func is_item_equipped(item_id: String) -> bool:
+	if item_id == "":
+		return false
+	var eq := equip()
+	for key in eq:
+		if key == "beltPotionSlots":
+			continue
+		if str(eq[key]) == item_id:
+			return true
+	return false
+
+
+## put a consumable into the belt. Column-major, exactly like the PWA: heal and mana
+## potions must not share a column. Returns false when there is no room, and the
+## caller then falls back to the bag.
+##
+## `find_item` resolves an id to its item, so this needs no GameData reference.
+func add_potion_to_belt(potion_id: String, find_item: Callable) -> bool:
+	var potion: Dictionary = find_item.call(potion_id)
+	if potion.is_empty() or str(potion.get("type", "")) != "consumable":
+		return false
+	sync_potion_slots(find_item)
+	var total := total_potion_slots(find_item)
+	if total <= 0:
+		return false
+	var slots: Array = equip().get("beltPotionSlots", [])
+	var subtype := str(potion.get("subtype", ""))
+	var rows := int(ceil(float(total) / 4.0))
+	for col in 4:
+		# What is already in this column? A column that is already mixed, or holds the
+		# other potion type, cannot take this potion — that is the D2 belt rule.
+		var column_type := ""
+		var mixed := false
+		for row in rows:
+			var idx := col * rows + row
+			if idx >= total:
+				continue
+			var pid: Variant = slots[idx]
+			if pid == null:
+				continue
+			var p: Dictionary = find_item.call(pid)
+			if p.is_empty():
+				continue
+			var p_sub := str(p.get("subtype", ""))
+			if column_type == "":
+				column_type = p_sub
+			elif column_type != p_sub:
+				mixed = true
+				break
+		if mixed or (column_type != "" and column_type != subtype):
+			continue
+		for row in rows:
+			var idx := col * rows + row
+			if idx < total and slots[idx] == null:
+				slots[idx] = potion_id
+				equip()["beltPotionSlots"] = slots
+				return true
+	return false
+
+
+## Take one copy of `potion_id` out of the belt. Returns the slot index used, or -1.
+func consume_potion(potion_id: String) -> int:
+	var slots: Array = equip().get("beltPotionSlots", [])
+	for i in slots.size():
+		if str(slots[i]) == potion_id:
+			slots[i] = null
+			equip()["beltPotionSlots"] = slots
+			return i
+	return -1
+
+
+## Move one bag entry into the chest. Stackable items merge into an existing stack;
+## gear takes the first free cell. Returns "" on success or the reason it failed.
+func stash_from_bag(bag_index: int, item: Dictionary, is_stackable: bool) -> String:
+	var inv := inventory()
+	if bag_index < 0 or bag_index >= inv.size():
+		return "bad index"
+	var entry: Variant = inv[bag_index]
+	var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+	var count: int = int(entry.get("count", 1)) if entry is Dictionary else 1
+	if item_id == "":
+		return "empty slot"
+
+	var chest: Array = data["chest"]
+	if is_stackable:
+		for i in chest.size():
+			var existing: Variant = chest[i]
+			if existing is Dictionary and str(existing.get("id", "")) == item_id:
+				existing["count"] = int(existing.get("count", 1)) + count
+				inv.remove_at(bag_index)
+				return ""
+	for i in chest.size():
+		if chest[i] == null:
+			chest[i] = {"id": item_id, "count": count}
+			inv.remove_at(bag_index)
+			return ""
+	return "chest is full"
+
+
+## Move one chest cell into the bag. Returns "" on success or the reason.
+func take_from_chest(chest_index: int, item: Dictionary) -> String:
+	var chest: Array = data["chest"]
+	if chest_index < 0 or chest_index >= chest.size():
+		return "bad index"
+	var entry: Variant = chest[chest_index]
+	if entry == null:
+		return "empty slot"
+	var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+	var count: int = int(entry.get("count", 1)) if entry is Dictionary else 1
+	if bag_full() and not ItemGen.is_stackable(item):
+		return "bag is full"
+	add_item(item_id, item, count)
+	chest[chest_index] = null
+	return ""
 
 
 # --- persistence -------------------------------------------------------------

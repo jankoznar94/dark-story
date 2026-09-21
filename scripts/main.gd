@@ -2,9 +2,9 @@ extends Node2D
 ## Main — the game's entry point and the screen router.
 ##
 ## Owns the single instances of GameData / ItemGen / LootSystem / GameState, wires the
-## screens together, and implements the one piece of logic that belongs to no screen:
-## equipping, because it is triggered from the bag and must work while the inventory
-## is open.
+## screens together, and implements the pieces of logic that belong to no screen:
+## equipping (triggered from the bag, must work while the inventory is open) and the
+## town's shop cache (cleared on every town visit).
 ##
 ## The PWA had a `showScreen(name)` that toggled 213 DOM ids. Here a screen is a child
 ## node that is shown or hidden, and the router is the only thing that knows the list.
@@ -17,6 +17,12 @@ const EquipLogic := preload("res://scripts/items/equip_logic.gd")
 const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
 const TownScreen := preload("res://scripts/ui/town_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
+const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
+const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
+const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
+const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
+const HeroScreen := preload("res://scripts/ui/hero_screen.gd")
+const UIKit := preload("res://scripts/ui/ui_kit.gd")
 
 var data: Node
 var gen: ItemGen
@@ -25,6 +31,10 @@ var state
 
 var _screens: Dictionary = {}
 var _current := ""
+## The last message a screen emitted, shown as a one-line status strip. The PWA used a
+## toast; a plain label at the bottom is enough and cannot cover the buttons.
+var _status: Label
+var _status_ticks := 0
 
 
 func _ready() -> void:
@@ -36,45 +46,72 @@ func _ready() -> void:
 	state = GameState.new()
 	state.bind_data(data)
 
-	# Resume if there is a save. A new game starts in town so there is somewhere to
-	# stand while the arena does not exist yet.
+	# Resume if there is a save. A new game needs a class before anything else works —
+	# the skill trees, the weapon restrictions and the mana pool all read it — so a
+	# fresh save is seeded with the first class rather than left empty.
 	var resumed: bool = state.load_from_disk()
+	if not resumed or str(state.data.get("heroClass", "")) == "":
+		var classes: Dictionary = data.classes()
+		var first: String = str((classes.keys() as Array)[0]) if not classes.is_empty() else "barbarian"
+		state.set_class(first)
+		state.save()
 	_build_screens()
-	# Town in both cases: it is the only fully ported screen, and it is where a new
-	# game starts anyway. The `resumed` flag is kept because it is worth knowing in
-	# the log whether a save was picked up.
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
 
 
 func _build_screens() -> void:
 	var inventory := InventoryScreen.new(data, gen, state)
-	inventory.set_anchors_preset(Control.PRESET_FULL_RECT)
 	inventory.visible = false
 	inventory.back_pressed.connect(func(): show_screen("town"))
 	inventory.item_tapped.connect(_on_item_tapped)
 	inventory.equip_slot_tapped.connect(_on_equip_slot_tapped)
 	inventory.potion_slot_tapped.connect(_on_potion_slot_tapped)
-	add_child(inventory)
-	_screens["inventory"] = inventory
+	_add_screen("inventory", inventory)
 
 	var town := TownScreen.new(data, gen, state, _resolve)
-	town.set_anchors_preset(Control.PRESET_FULL_RECT)
 	town.visible = false
 	town.tile_selected.connect(_on_town_tile)
-	add_child(town)
-	_screens["town"] = town
+	_add_screen("town", town)
+
+	var chest := ChestScreen.new(data, gen, state, _resolve)
+	chest.visible = false
+	chest.back_pressed.connect(func(): show_screen("town"))
+	chest.message.connect(_set_status)
+	_add_screen("chest", chest)
+
+	var shop := ShopScreen.new(data, gen, state, _resolve)
+	shop.visible = false
+	shop.back_pressed.connect(func(): show_screen("town"))
+	shop.message.connect(_set_status)
+	_add_screen("shop", shop)
+
+	var gamble := GambleScreen.new(data, gen, state, _resolve)
+	gamble.visible = false
+	gamble.back_pressed.connect(func(): show_screen("town"))
+	gamble.message.connect(_set_status)
+	_add_screen("gamble", gamble)
+
+	var craft := CraftScreen.new(data, gen, state, _resolve)
+	craft.visible = false
+	craft.back_pressed.connect(func(): show_screen("town"))
+	craft.message.connect(_set_status)
+	_add_screen("craft", craft)
+
+	var hero_screen := HeroScreen.new(data, gen, state, _resolve)
+	hero_screen.visible = false
+	hero_screen.back_pressed.connect(func(): show_screen("town"))
+	hero_screen.message.connect(_set_status)
+	_add_screen("hero", hero_screen)
 
 	var arena := ArenaScreen.new(data, gen, loot, state, _resolve)
-	arena.set_anchors_preset(Control.PRESET_FULL_RECT)
 	arena.visible = false
 	arena.leave_requested.connect(func(): show_screen("town"))
 	arena.another_fight_requested.connect(_on_another_fight)
-	add_child(arena)
-	_screens["arena"] = arena
+	_add_screen("arena", arena)
 
 	# The screens are Control nodes on a Node2D main; give them a CanvasLayer so they
-	# sit above any future world rendering.
+	# sit above any future world rendering, and keep the status strip on top of them.
 	var layer := CanvasLayer.new()
 	layer.name = "UI"
 	add_child(layer)
@@ -82,6 +119,22 @@ func _build_screens() -> void:
 		var screen: Control = _screens[key]
 		remove_child(screen)
 		layer.add_child(screen)
+
+	var status_layer := CanvasLayer.new()
+	status_layer.name = "Status"
+	status_layer.layer = 10
+	add_child(status_layer)
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	status_layer.add_child(box)
+	_status = UIKit.label("", 14, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
+	box.add_child(_status)
+
+
+func _add_screen(key: String, screen: Control) -> void:
+	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(screen)
+	_screens[key] = screen
 
 
 func show_screen(name: String) -> void:
@@ -98,23 +151,48 @@ func show_screen(name: String) -> void:
 			_screens["town"].enter(_reset_shop_cache)
 		"inventory":
 			_screens["inventory"].refresh()
+		"chest":
+			_screens["chest"].refresh()
+		"shop":
+			_screens["shop"].refresh()
+		"gamble":
+			_screens["gamble"].reset_stock()
+			_screens["gamble"].refresh()
+		"craft":
+			pass
+		"hero":
+			_screens["hero"].refresh()
 		"arena":
 			# Nothing to set up: _enter_arena already started the fight.
 			pass
 
 
-## The shop's stock is rebuilt on every town visit, so there is nothing to invalidate
-## until the shop exists. The hook is here so the town call site is already correct.
+## The shop's stock is rebuilt on every town visit. The stock itself lives in the shop
+## screen's cache; this is the call site that clears it, which is why it lives here —
+## the PWA reset its cache in renderTown, and re-entering town must produce a new offer.
 func _reset_shop_cache() -> void:
-	pass
+	if _screens.has("shop"):
+		_screens["shop"].reset_stock()
+
+
+func _set_status(text: String) -> void:
+	if _status == null:
+		return
+	_status.text = text
+	_status_ticks = 30
+
+
+func _process(_delta: float) -> void:
+	if _status_ticks > 0:
+		_status_ticks -= 1
+		if _status_ticks == 0:
+			_status.text = ""
 
 
 func _on_town_tile(key: String) -> void:
 	match key:
 		"wilderness":
 			_on_wilderness()
-		"chest", "shop", "craft", "gamble":
-			print("%s: not ported yet" % key.capitalize())
 		"portal":
 			_on_town_portal()
 		_:
@@ -126,6 +204,7 @@ func _on_town_tile(key: String) -> void:
 func _on_wilderness() -> void:
 	var act_id := _first_uncompleted_act()
 	if act_id < 0:
+		_set_status("Vsechny akty dokonceny")
 		return
 	state.data["areaFightProgress"][act_id] = 0
 	_enter_arena(act_id)
@@ -136,7 +215,7 @@ func _enter_arena(act_id: int) -> void:
 	state.data["_currentAct"] = act_id
 	show_screen("arena")
 	if not arena.start(state, _resolve):
-		print("Arena: no fight available for act %d" % act_id)
+		_set_status("Arena: zadny souboj pro akt %d" % act_id)
 
 
 func _on_another_fight() -> void:
@@ -174,7 +253,7 @@ func _on_item_tapped(inventory_index: int) -> void:
 		state.save()
 		_screens["inventory"].refresh()
 	else:
-		print("Equip refused: %s" % result["reason"])
+		_set_status("Nasazeni odmitnuto: %s" % str(result["reason"]))
 
 
 func _on_equip_slot_tapped(slot: String) -> void:
@@ -183,11 +262,42 @@ func _on_equip_slot_tapped(slot: String) -> void:
 		state.save()
 		_screens["inventory"].refresh()
 	else:
-		print("Unequip refused: %s" % result["reason"])
+		_set_status("Sundani odmitnuto: %s" % str(result["reason"]))
 
 
+## A potion slot in the inventory: tapping it moves the potion from the bag into the
+## belt, or takes it back out. Drinking happens in the arena, where the HP it restores
+## has somewhere to land.
 func _on_potion_slot_tapped(index: int) -> void:
-	print("Potion slot %d: drinking is not ported yet" % index)
+	var slots: Array = state.equip().get("beltPotionSlots", [])
+	if index < 0 or index >= slots.size():
+		return
+	if slots[index] != null:
+		var potion_id := str(slots[index])
+		slots[index] = null
+		state.equip()["beltPotionSlots"] = slots
+		var item: Dictionary = _resolve(potion_id)
+		state.add_item(potion_id, item)
+		state.save()
+		_screens["inventory"].refresh()
+		_set_status("Potion zpet do batohu")
+		return
+	# Empty slot: fill it from the first potion in the bag, through the belt rule so a
+	# heal potion never lands in a mana column.
+	for entry in state.inventory():
+		var item_id := str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		var item: Dictionary = _resolve(item_id)
+		if str(item.get("type", "")) != "consumable":
+			continue
+		if str(item.get("subtype", "")) not in ["heal", "mana"]:
+			continue
+		if state.add_potion_to_belt(item_id, _resolve):
+			state.remove_item(item_id)
+			state.save()
+			_screens["inventory"].refresh()
+			_set_status("Potion do opasku")
+		return
+	_set_status("Zadny potion v batohu")
 
 
 ## Resolve any item id: a static base, a generated gem, or loot stored on the save.

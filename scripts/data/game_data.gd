@@ -143,7 +143,12 @@ func items() -> Array:
 	return table("ITEMS", [])
 
 
+## A single item by id. Goes through _ensure_loaded() like every other accessor: this
+## was the one lookup that did NOT, so the FIRST call in a process returned {} (the
+## index was still empty) and only later calls worked. A caller that resolved one item
+## before touching any table saw "no such item".
 func item(id: String) -> Dictionary:
+	_ensure_loaded()
 	return _items_by_id.get(id, {})
 
 
@@ -175,6 +180,7 @@ func monsters_for_theme(theme: int) -> Array:
 
 
 func monster_by_name(name: String) -> Dictionary:
+	_ensure_loaded()
 	return _monsters_by_name.get(name, {})
 
 

@@ -374,6 +374,95 @@ func socket_chance_normal() -> float:
 	return float(_data.table("SOCKET_CHANCE_NORMAL", 0.0))
 
 
+# --- uniques -----------------------------------------------------------------
+
+
+## pickUniqueForBase — a random unique whose base matches. Uniques are per-base in
+## this data (one entry each), but the PWA picked from a list, so this does too.
+func pick_unique_for_base(base_id: String, rng: RandomNumberGenerator) -> Dictionary:
+	var candidates: Array = []
+	for u in _data.unique_items():
+		if u is Dictionary and str(u.get("baseId", "")) == base_id:
+			candidates.append(u)
+	if candidates.is_empty():
+		return {}
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+
+## generateUniqueItem — a unique is its base item plus the unique's own fixed stat
+## block, rolled per stat. Note it does NOT go through the affix pool: a unique's
+## numbers are authored, which is exactly what makes it a unique.
+##
+## Ported from `generateUniqueItem`, including the detail that the unique's `stats`
+## values are either a scalar (exact D2 value) or a [min, max] range.
+func generate_unique(unique_def: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	var base_item: Dictionary = _data.item(str(unique_def.get("baseId", "")))
+	if base_item.is_empty():
+		return {}
+	var item := base_item.duplicate(true)
+	item["id"] = str(unique_def.get("id", "unique_%d" % rng.randi()))
+	item["baseId"] = base_item.get("id", "")
+	item["name"] = str(unique_def.get("name", base_item.get("name", "")))
+	item["affixes"] = []
+	item["quality"] = "unique"
+	item["rarity"] = "unique"
+	item["unique"] = true
+	item["uniqueProp"] = unique_def.get("uniqueProp", null)
+	item["tier"] = int(unique_def.get("tier", 5))
+	item["iconImg"] = str(unique_def.get("iconImg", base_item.get("iconImg", "")))
+	item["lvlReq"] = int(unique_def.get("minLevel", 1))
+	# Sockets: the unique rolls them like any other normal-quality item. `roll_sockets`
+	# returns 0 for a non-normal quality, which is why the call passes "unique" and
+	# then the base's maxSockets: the PWA did exactly this and got 0 sockets every
+	# time. Kept as-is rather than "fixed" — uniques have no sockets in this game.
+	item["sockets"] = roll_sockets(rng, "unique", base_item, socket_chance_normal())
+	item["socketedGems"] = []
+	item["baseDmg"] = int(round((int(base_item.get("baseDmgMin", 0)) + int(base_item.get("baseDmgMax", 0))) / 2.0)) \
+		if base_item.get("type", "") == "weapon" else int(base_item.get("baseDmg", 0))
+	item["bonusHp"] = int(base_item.get("bonusHp", 0))
+	item["bonusMana"] = int(base_item.get("bonusMana", 0))
+	if base_item.has("defenseMin"):
+		item["defense"] = int(base_item["defenseMin"]) + rng.randi_range(0, int(base_item["defenseMax"]) - int(base_item["defenseMin"]))
+	else:
+		item["defense"] = int(base_item.get("defense", 0))
+	item["critChance"] = int(base_item.get("critChance", 0))
+	item["attackRating"] = int(base_item.get("attackRating", 0))
+	item["swingMs"] = int(base_item.get("swingMs", 0))
+
+	for stat in AFFIX_STATS:
+		item[stat] = 0
+
+	var stats: Dictionary = unique_def.get("stats", {})
+	for stat in stats:
+		item[stat] = int(item.get(stat, 0)) + roll_stat(rng, stats[stat])
+
+	# The percentage bonuses apply after the flat rolls, same as on a generated item.
+	if int(item.get("enhancedDefense", 0)) > 0 and int(item.get("defense", 0)) > 0:
+		item["defense"] = int(round(int(item["defense"]) * (1.0 + int(item["enhancedDefense"]) / 100.0)))
+	if int(item.get("enhancedDmg", 0)) > 0:
+		var mult := 1.0 + int(item["enhancedDmg"]) / 100.0
+		for key in ["baseDmgMin", "baseDmgMax", "baseDmg"]:
+			if int(item.get(key, 0)) > 0:
+				item[key] = int(round(int(item[key]) * mult))
+	return item
+
+
+## The town's treasure class: how deep the shop and the gamble pool go. Driven by the
+## difficulty and how many bosses are down, NOT by the hero's level — `dropFloor` is a
+## global depth, so a level-60 hero in act 1 still sees act-1 stock.
+func town_floor(difficulty: int, boss_kills: int) -> int:
+	return difficulty * 50 + mini(4, boss_kills) * 10
+
+
+## Number of bosses already killed at a difficulty, in act order. The shop's potion
+## tier and the town floor both stop counting at the first act still alive.
+static func sequential_boss_kills(bosses_row: Array) -> int:
+	var kills := 0
+	while kills < 5 and kills < bosses_row.size() and bool(bosses_row[kills]):
+		kills += 1
+	return kills
+
+
 # --- derived hero stats ------------------------------------------------------
 
 ## Sum of a stat across all equipped items. `equip` maps slot -> item id, and

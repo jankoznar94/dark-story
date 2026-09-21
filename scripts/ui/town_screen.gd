@@ -20,11 +20,13 @@ const TILE_SIZE := Vector2(160, 120)
 
 ## tile key -> (icon, label). Order matches the PWA's town grid.
 const TILES := [
-	["chest", "assets/menu-icons/chest.png", "Chest"],
+	["chest", "assets/menu-icons/chest.png", "Truhla"],
 	["gamble", "assets/menu-icons/gamble.png", "Gamble"],
-	["shop", "assets/menu-icons/shop.png", "Shop"],
+	["shop", "assets/menu-icons/shop.png", "Obchod"],
 	["craft", "assets/menu-icons/craft.png", "Craft"],
-	["wilderness", "assets/map.webp", "Wilderness"],
+	["inventory", "assets/menu-icons/inventar.png", "Inventar"],
+	["hero", "assets/menu-icons/talenty.png", "Hrdina"],
+	["wilderness", "assets/map.webp", "Divocina"],
 ]
 
 var _data: Node
@@ -170,7 +172,10 @@ func refresh() -> void:
 	var hero: Dictionary = _state.hero()
 	var cls: Dictionary = _data.class_by_id(str(_state.data.get("heroClass", "")))
 	var class_name_text: String = str(cls.get("name", "Adventurer"))
-	_header_label.text = "Town\n%s   Level %d   Gold %d" % [class_name_text, int(hero["level"]), int(hero.get("gold", 0))]
+	_header_label.text = "Mesto\n%s   Level %d   Zlato %d\nBody talentu: %d   Body atributu: %d   HP %d/%d" % [
+		class_name_text, int(hero["level"]), int(hero.get("gold", 0)),
+		int(_state.data.get("talentPoints", 0)), int(hero.get("attrPoints", 0)),
+		int(hero.get("hp", 0)), int(hero.get("maxHp", 0))]
 
 	# Wilderness is offered only while an act is still uncompleted — otherwise the
 	# button is a dead end.
