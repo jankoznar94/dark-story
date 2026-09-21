@@ -13,6 +13,7 @@ reused for the Dungeon Recall port, on branch `dr-godot`.
 |---|---|
 | **Archived project** | `dark-story-final`, `dark-story-archive-2026-09` (tags, on `main`) |
 | **This port** | branch `dr-godot`, worktree `~/dr-godot` |
+| **Playable (web)** | <https://jankoznar94.github.io/dark-story/> — the same URL Dark Story used |
 | **Original game** | `jankoznar94/jeniczek-pwa-rpg`, branch `test/auto-combat-redesign` — unchanged |
 | **Engine** | Godot 4.7.2, mobile renderer, landscape |
 | **CI** | `.github/workflows/build.yml` — data verify, script load, data test, export Web/Windows/Android, publish to GitHub Pages |
@@ -62,6 +63,18 @@ $GODOT --headless --path . --script res://tools/test_data.gd           # tables 
 Each prints `*_ALL_PASS=true` on success. `test_data.gd` asserts counts rather than
 just absence of errors on purpose: a converter that writes nothing produces a game
 that boots fine and is empty.
+
+### Verifying the DEPLOYED build
+
+CI being green says the pipeline ran, not that the published bytes work. To check what
+a player actually downloads, run the served pack directly — it prints the data report,
+so an empty deploy is obvious:
+
+```bash
+curl -sL -o /tmp/live.pck https://jankoznar94.github.io/dark-story/index.pck
+~/tools/godot/godot4 --headless --main-pack /tmp/live.pck --quit-after 60
+# expect: tables=36 items=205 uniques=199 affixes=186 monsters=40 acts=5 classes=3
+```
 
 ## Layout
 

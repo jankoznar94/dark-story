@@ -63,6 +63,18 @@ combat wants reaction mechanics, they get designed fresh rather than transplante
 6. **Balance pass** — 40 monsters across 5 themes × 3 difficulties is the longest
    tail and cannot be shortened by tooling.
 
+## The public URL
+
+<https://jankoznar94.github.io/dark-story/> — reused as-is, because the web export is
+published from this repository's `gh-pages` branch by the same CI step Dark Story used.
+Nothing had to be reconfigured. Two consequences worth knowing:
+
+- **Dark Story no longer answers on that URL.** Its web build was overwritten by the
+  first successful deploy of this branch. It is still fully recoverable: check out
+  `main` (or the `dark-story-final` tag), rebuild, and the old export comes back.
+- The URL keeps the name `dark-story` because the repository does. Renaming the repo
+  would change the URL to `/dungeon-recall/`; that is Jan's call, not a technical need.
+
 ## What to watch
 
 - **Lazy data loading is load-bearing.** `game_data.gd` loads on first access, not in
