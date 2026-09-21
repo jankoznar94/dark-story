@@ -15,6 +15,7 @@ const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 
 signal tile_selected(screen_key: String)
+signal difficulty_selected(difficulty: int)
 
 const TILE_SIZE := Vector2(160, 120)
 
@@ -38,6 +39,8 @@ var _wilderness_button: Button
 var _portal_row: Control
 var _portal_label: Label
 var _header_label: Label
+var _difficulty_row: HBoxContainer
+var _difficulty_label: Label
 
 
 func _init(game_data: Node, gen: ItemGen, state, find_item: Callable) -> void:
@@ -81,6 +84,18 @@ func _build() -> void:
 	_header_label.position = Vector2(16, 12)
 	_header_label.add_theme_font_size_override("font_size", 26)
 	banner_inner.add_child(_header_label)
+
+	# Difficulty selector. The PWA had this on the map screen; the map is not part of
+	# the port, and this is the only other screen that can show where the player is and
+	# where they could be. One flat row of buttons, no cards, state only on tap.
+	_difficulty_row = HBoxContainer.new()
+	_difficulty_row.add_theme_constant_override("separation", 6)
+	root.add_child(_difficulty_row)
+
+	_difficulty_label = Label.new()
+	_difficulty_label.add_theme_font_size_override("font_size", 13)
+	_difficulty_label.add_theme_color_override("font_color", Color("#888888"))
+	root.add_child(_difficulty_label)
 
 	var grid := GridContainer.new()
 	grid.columns = 3
@@ -177,6 +192,8 @@ func refresh() -> void:
 		int(_state.data.get("talentPoints", 0)), int(hero.get("attrPoints", 0)),
 		int(hero.get("hp", 0)), int(hero.get("maxHp", 0))]
 
+	_refresh_difficulty()
+
 	# Wilderness is offered only while an act is still uncompleted — otherwise the
 	# button is a dead end.
 	_wilderness_button.visible = _first_uncompleted_act() >= 0
@@ -192,13 +209,89 @@ func refresh() -> void:
 		_portal_label.text = "Return to %s, Area %d" % [act_name, int(portal.get("zoneId", 0)) + 1]
 
 
+## One button per difficulty — active, locked, or tappable. The active one carries no
+## handler: tapping it would be a no-op, and a button that looks tappable and does
+## nothing is worse than a button that looks settled.
+##
+## The LOCKED ones stay visible with the reason in their label rather than being hidden,
+## because "what am I working towards" is the whole point of a difficulty selector.
+func _refresh_difficulty() -> void:
+	for child in _difficulty_row.get_children():
+		_difficulty_row.remove_child(child)
+		child.queue_free()
+
+	var diffs: Array = _data.difficulties()
+	var current := int(_state.data.get("difficulty", 0))
+	var unlocked_max: int = _state.max_allowed_difficulty()
+
+	for i in diffs.size():
+		var d: Dictionary = diffs[i]
+		var name := str(d.get("name", "Difficulty %d" % (i + 1)))
+		var is_active := i == current
+		var is_unlocked: bool = _state.is_difficulty_unlocked(i)
+		var label := name
+		if not is_unlocked and i > 0:
+			# Name how much of the PREVIOUS difficulty is still standing, so the lock is
+			# actionable rather than just a wall.
+			var prev_row: Array = (_state.data["bossesDefeated"] as Array)[i - 1]
+			var remaining := 0
+			for defeated in prev_row:
+				if not bool(defeated):
+					remaining += 1
+			label = "%s (zamceno - %d aktu)" % [name, remaining]
+
+		var button := _make_diff_button(label, is_active, is_unlocked)
+		var index := i
+		if is_unlocked and not is_active:
+			button.pressed.connect(func(): difficulty_selected.emit(index))
+		_difficulty_row.add_child(button)
+
+	# Where the player actually is, and what the difficulty they are on does to the
+	# numbers. Without this line the selector is three buttons and a guess.
+	var cur_diff: Dictionary = diffs[current] if current < diffs.size() else {}
+	var act_id: int = _first_uncompleted_act()
+	if act_id < 0:
+		_difficulty_label.text = "Obtiznost %d z %d - vsechny akty dokoncene, prepni vys" % [current + 1, diffs.size()]
+	else:
+		_difficulty_label.text = "Obtiznost %d z %d - akt %d, uroven monster %d-%d, sila monster x%s" % [
+			current + 1, diffs.size(), act_id + 1,
+			int(cur_diff.get("monsterLvMin", 1)), int(cur_diff.get("monsterLvMax", 1)),
+			str(cur_diff.get("mult", 1.0))]
+
+
+func _make_diff_button(text: String, is_active: bool, is_unlocked: bool) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(0, 38)
+	button.focus_mode = Control.FOCUS_NONE
+
+	# Flat, same object for every state (no hover/focus effects — mobile heritage). The
+	# three variants differ only in colour, and read as: settled / available / locked.
+	var style := StyleBoxFlat.new()
+	style.set_border_width_all(1)
+	if is_active:
+		style.bg_color = Color("#2a2418")
+		style.border_color = Color("#c8a24a")
+	elif is_unlocked:
+		style.bg_color = Color("#000000")
+		style.border_color = Color("#666666")
+	else:
+		style.bg_color = Color("#000000")
+		style.border_color = Color("#2a2a2a")
+	for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state_name, style)
+	if is_active:
+		button.add_theme_color_override("font_color", Color("#e8c86a"))
+	elif is_unlocked:
+		button.add_theme_color_override("font_color", Color("#d0d0d0"))
+	else:
+		button.add_theme_color_override("font_color", Color("#5a5a5a"))
+	return button
+
+
 ## The first act whose boss is still alive at the current difficulty, or -1.
 func _first_uncompleted_act() -> int:
-	var acts: Array = _data.acts()
-	for i in acts.size():
-		if not _state.is_boss_defeated(i):
-			return i
-	return -1
+	return _state.first_uncompleted_act()
 
 
 func _load(path: String) -> Texture2D:

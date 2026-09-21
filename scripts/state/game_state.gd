@@ -26,6 +26,14 @@ const DEFAULT_POTION_SLOTS := 4
 const CHEST_SLOTS := 25
 const INVENTORY_CELLS := 20
 
+## How many difficulties there are. The PWA hardcoded 3 (Normal/Nightmare/Hell) in the
+## unlock chain as well, so this is not read from the table.
+const DIFF_COUNT := 3
+
+## How many acts. The PWA's `locationProgress` was a 5-element array and `ACTS` has 5
+## entries; the same constant drives both.
+const ACT_COUNT := 5
+
 var data: Dictionary = {}
 
 ## GameData, bound once at startup — see bind_data().
@@ -181,6 +189,67 @@ func act_unlocked(act_id: int) -> bool:
 	if act_id == 0:
 		return true
 	return is_boss_defeated(act_id - 1)
+
+
+## Every act's boss down at `difficulty`. This is what unlocks the NEXT difficulty.
+func difficulty_cleared(difficulty: int) -> bool:
+	var rows: Array = data["bossesDefeated"]
+	if difficulty < 0 or difficulty >= rows.size():
+		return false
+	var row: Array = rows[difficulty]
+	if row.is_empty():
+		return false
+	for defeated in row:
+		if not bool(defeated):
+			return false
+	return true
+
+
+## The highest difficulty the player may switch to: Normal always, Nightmare once every
+## Normal boss is down, Hell once every Nightmare boss is.
+##
+## Sequential rather than "any previous", because it has to be: a difficulty's act 1 is
+## only enterable once act 5 of the previous one is down, so allowing a jump to Hell
+## with Nightmare half-done would offer a difficulty whose first act is unreachable —
+## a dead-end screen rather than a reward.
+func max_allowed_difficulty() -> int:
+	var highest := 0
+	for d in range(1, DIFF_COUNT):
+		if difficulty_cleared(d - 1):
+			highest = d
+		else:
+			break
+	return highest
+
+
+func is_difficulty_unlocked(difficulty: int) -> bool:
+	return difficulty >= 0 and difficulty < DIFF_COUNT and difficulty <= max_allowed_difficulty()
+
+
+## Switch difficulty. Refused (and nothing written) when it is still locked, so the
+## caller can show the reason instead of moving the player somewhere they cannot play.
+func set_difficulty(difficulty: int) -> Dictionary:
+	if difficulty < 0 or difficulty >= DIFF_COUNT:
+		return {"ok": false, "reason": "unknown_difficulty"}
+	if not is_difficulty_unlocked(difficulty):
+		return {"ok": false, "reason": "difficulty_locked"}
+	data["difficulty"] = difficulty
+	return {"ok": true, "reason": ""}
+
+
+## The first act whose boss is still alive at `difficulty`, or -1 when the difficulty is
+## finished. The PWA read this off the CURRENT difficulty only, which is why the town
+## and the difficulty banner have to be told which one they are describing.
+func first_uncompleted_act(difficulty: int = -1) -> int:
+	var diff: int = int(data.get("difficulty", 0)) if difficulty < 0 else difficulty
+	var rows: Array = data["bossesDefeated"]
+	if diff < 0 or diff >= rows.size():
+		return -1
+	var row: Array = rows[diff]
+	for i in row.size():
+		if not bool(row[i]):
+			return i
+	return -1
 
 
 # --- generated loot items ----------------------------------------------------
@@ -372,6 +441,12 @@ func _repair_after_load() -> void:
 		data["chest"] = []
 		for _i in CHEST_SLOTS:
 			data["chest"].append(null)
+	# A save whose difficulty is out of range, or somehow above what its own boss flags
+	# allow, is clamped rather than trusted: an out-of-range index would read an empty
+	# difficulty row at every gate and quietly show the player nothing.
+	if int(data.get("difficulty", 0)) < 0 or int(data.get("difficulty", 0)) >= DIFF_COUNT:
+		data["difficulty"] = 0
+	data["difficulty"] = mini(int(data["difficulty"]), max_allowed_difficulty())
 	if not data.has("_maxLocationProgress"):
 		var lp: Array = data.get("locationProgress", [0, 0, 0, 0, 0])
 		data["_maxLocationProgress"] = lp.duplicate()

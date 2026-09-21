@@ -84,6 +84,7 @@ func _build_screens() -> void:
 	var town := TownScreen.new(data, gen, state, _resolve)
 	town.visible = false
 	town.tile_selected.connect(_on_town_tile)
+	town.difficulty_selected.connect(_on_difficulty_selected)
 	_add_screen("town", town)
 
 	var chest := ChestScreen.new(data, gen, state, _resolve)
@@ -216,10 +217,28 @@ func _on_town_tile(key: String) -> void:
 func _on_wilderness() -> void:
 	var act_id := _first_uncompleted_act()
 	if act_id < 0:
-		_set_status("Vsechny akty dokonceny")
+		_set_status("Vsechny akty dokonceny - prepni obtiznost")
 		return
 	state.data["areaFightProgress"][act_id] = 0
 	_enter_arena(act_id)
+
+
+## The town's difficulty selector. Switching does NOT touch progress: each difficulty
+## has its own boss row and its own act ladder, and the zone a player was standing in
+## on the previous difficulty stays where they left it.
+func _on_difficulty_selected(difficulty: int) -> void:
+	var result: Dictionary = state.set_difficulty(difficulty)
+	if not result["ok"]:
+		var diffs: Array = data.difficulties()
+		var name := str((diffs[difficulty] as Dictionary).get("name", "")) \
+			if difficulty >= 0 and difficulty < diffs.size() else ""
+		_set_status("Obtiznost %s je jeste zamcena" % name)
+		return
+	state.save()
+	# The town's header, the wilderness button and the shop all read the difficulty, so
+	# re-entering is what keeps them consistent rather than patching each in turn.
+	show_screen("town")
+	_set_status("Obtiznost: %s" % str((data.difficulties()[difficulty] as Dictionary).get("name", "")))
 
 
 func _enter_arena(act_id: int) -> void:
@@ -252,11 +271,7 @@ func _on_town_portal() -> void:
 
 
 func _first_uncompleted_act() -> int:
-	var acts: Array = data.acts()
-	for i in acts.size():
-		if not state.is_boss_defeated(i):
-			return i
-	return -1
+	return state.first_uncompleted_act()
 
 
 func _on_item_tapped(inventory_index: int) -> void:

@@ -300,8 +300,11 @@ func render() -> void:
 	_enemy_name.text = elite_tag + battle.enemy_name
 
 	var act: Dictionary = _data.act_by_id(battle.act_id)
-	_location_label.text = "Act %d - %s - souboj %d/10" % [
-		battle.act_id + 1, str(act.get("name", "")), battle.area_fight + 1]
+	var diffs: Array = _data.difficulties()
+	var diff_name := str((diffs[battle.difficulty] as Dictionary).get("name", "")) \
+		if battle.difficulty < diffs.size() else ""
+	_location_label.text = "%s - Act %d %s - souboj %d/10" % [
+		diff_name, battle.act_id + 1, str(act.get("name", "")), battle.area_fight + 1]
 
 	_set_bar(_enemy_track, _enemy_fill, battle.enemy_hp, battle.enemy_max_hp)
 	_enemy_hp_label.text = "%d / %d" % [maxi(0, int(battle.enemy_hp)), int(battle.enemy_max_hp)]

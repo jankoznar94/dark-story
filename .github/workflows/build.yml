@@ -140,6 +140,17 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SOCKETING_ALL_PASS=true"
 
+      # The difficulty ladder is the one gate whose failure mode is a DEAD END, not a
+      # wrong number: the town hides the Wilderness button when no act is left at the
+      # current difficulty, so a ladder that never advances finishes Normal and stops
+      # the game being playable at all.
+      - name: Difficulty ladder test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_difficulty.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "DIFFICULTY_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
