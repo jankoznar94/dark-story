@@ -56,8 +56,11 @@ combat wants reaction mechanics, they get designed fresh rather than transplante
 3. **Progression loop** — done. `scripts/combat/progression.gd`: 5 acts x 10 zones,
    bosses, 3 difficulties, the `getZoneMult` scaling table (Normal 1.0/+0.50,
    Nightmare 5.5/+0.72, Hell 12.0/+0.89 per zone), the D2 XP curve and attack table.
-4. **Itemisation UI** — inventory grid, belt, equip slots and the town are done.
-   **Still to do: chest, shop, craft, gamble, skills/talents, class spells.**
+4. **Itemisation UI** — done. Inventory grid, belt, equip slots, the town and the
+   five town services (shop, gamble, chest, craft, talent trees), plus gem and jewel
+   socketing. **Still to do: class spells in the arena.** The spell tables are loaded
+   and the talent levels are read, but only the auto-attack swing is wired up, so all
+   three classes fight the same way.
 5. **Save/load** — done. `user://` JSON. Note the PWA's key is `dungeonRecallV7` with a
    flat→2D `bossesDefeated` migration; a fresh port starts clean instead.
 6. **Balance pass** — 40 monsters across 5 themes × 3 difficulties is the longest

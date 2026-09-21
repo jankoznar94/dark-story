@@ -118,6 +118,28 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "COMBAT_ALL_PASS=true"
 
+      # The shop, the gamble, crafting, the chest and the talent trees are all GATED
+      # systems, and a gate that silently stops applying looks exactly like a working
+      # feature: the screen still renders, it just offers the wrong thing. This pins
+      # the gates (progress vs level, magic-only jewellery, recipe quality, tiers).
+      - name: Shop, craft and talent test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_shop_and_craft.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SHOP_CRAFT_ALL_PASS=true"
+
+      # Socketing is invisible when it breaks: a gem that grants the wrong stat
+      # (armour's +HP on a weapon instead of fire damage) still inserts cleanly and
+      # still shows an icon. Same for an occupied socket that quietly takes a second
+      # gem. This pins the host-type table and both refusals.
+      - name: Socketing test (gems, jewels, host-type stats)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_socketing.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SOCKETING_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

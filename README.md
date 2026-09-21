@@ -89,21 +89,23 @@ assets/            portraits, item/spell/gem icons, stops, sfx, music
 
 ## Status
 
-Steps 1-3 of the port are done: the data foundation, the portrait arena and the
-progression loop.
+Steps 1-5 of the port are done: the data foundation, the portrait arena, the
+progression loop, the whole itemisation loop and save/load.
 
 | | |
 |---|---|
 | Data | 36 JSON tables (generated from the PWA), one reader, counts asserted |
-| Itemisation | generator, affixes, Magic Find, loot priority chain, stacking |
+| Itemisation | generator, affixes, Magic Find, loot priority chain, stacking, socketing |
 | Inventory + town | character sheet, belt, equip slots, town hub, save/load |
+| Town services | shop (progress-gated), gamble (level-gated), chest, craft, talent trees |
 | Combat | one fight as pure logic, ticked at 100 ms; arena screen renders it |
 | Progression | 5 acts x 10 zones, bosses, 3 difficulties, D2 XP curve, attack table |
-| Tests | 5 headless suites, all gates in CI |
+| Tests | 7 headless suites, all gates in CI |
 
-**Not in this port yet:** the chest, shop, craft and gamble screens; skills and
-talents (the tables are loaded, no UI spends the points); class spells (only the
-basic auto-attack swing exists); reaction mechanics — deliberately not ported.
+**Not in this port yet:** class spells in the arena (the tables are loaded and the
+talent levels are read, but only the basic auto-attack swing is wired up — a
+barbarian, an assassin and a mage all fight the same way); the balance pass across
+40 monsters x 3 difficulties; reaction mechanics — deliberately not ported.
 
 The combat split is deliberate and worth keeping: `scripts/combat/battle.gd` owns
 every rule and `scripts/ui/arena_screen.gd` owns none. That is what lets

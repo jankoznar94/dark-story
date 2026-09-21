@@ -15,6 +15,7 @@ class_name InventoryScreen
 
 const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
+const UIKit := preload("res://scripts/ui/ui_kit.gd")
 
 const CELL := 64
 const GRID_COLUMNS := 5
@@ -51,6 +52,10 @@ const QUALITY_FALLBACK := {
 signal item_tapped(inventory_index: int)
 signal equip_slot_tapped(slot: String)
 signal potion_slot_tapped(index: int)
+## A socket cell was tapped: arm it (it must be empty) for the next gem tap.
+signal socket_armed(host_id: String, socket_index: int)
+## A gem in the panel was tapped: put it into the armed socket.
+signal gem_tapped(host_id: String, gem_id: String)
 signal back_pressed()
 
 var _data: Node
@@ -62,7 +67,16 @@ var _bag_nodes: Array = []           # Button per bag cell
 var _potion_nodes: Array = []
 var _bag_grid: GridContainer
 var _potion_row: HBoxContainer
+var _socket_row: HBoxContainer
+var _gem_row: HBoxContainer
+var _socket_label: Label
 var _stats_label: Label
+
+## Which item the socket panel is showing. Set by tapping a bag cell, so the panel
+## follows the player's selection rather than needing a dialog per item.
+var _socket_host_id: String = ""
+## Which socket the next gem tap will fill. -1 means none is armed yet.
+var _armed_socket: int = -1
 
 
 func _init(game_data: Node, gen: ItemGen, state) -> void:
@@ -166,9 +180,33 @@ func _make_bag_panel() -> Control:
 
 	for i in BAG_CELLS:
 		var button := _make_slot_button("")
-		button.pressed.connect(func(): item_tapped.emit(i))
+		# A tap equips (the router decides) but ALSO selects the item for the socket
+		# panel — that is the whole reason no gem dialog is needed.
+		button.pressed.connect(func(): _on_bag_tapped(i))
 		_bag_nodes.append(button)
 		_bag_grid.add_child(button)
+
+	# The socket panel: one row of sockets for the item currently selected, plus the
+	# gems in the bag that may go into them. A separate panel rather than a modal
+	# because the PWA's gem picker was a full overlay and Jan wants dialogs gone.
+	var socket_title := Label.new()
+	socket_title.text = "Sockets"
+	socket_title.add_theme_font_size_override("font_size", 14)
+	panel.add_child(socket_title)
+
+	_socket_label = Label.new()
+	_socket_label.add_theme_font_size_override("font_size", 12)
+	_socket_label.add_theme_color_override("font_color", Color(UIKit.DIM))
+	_socket_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	panel.add_child(_socket_label)
+
+	_socket_row = HBoxContainer.new()
+	_socket_row.add_theme_constant_override("separation", 4)
+	panel.add_child(_socket_row)
+
+	_gem_row = HBoxContainer.new()
+	_gem_row.add_theme_constant_override("separation", 4)
+	panel.add_child(_gem_row)
 
 	return panel
 
@@ -207,6 +245,7 @@ func refresh() -> void:
 	_refresh_equipment()
 	_refresh_potions()
 	_refresh_bag()
+	_refresh_sockets()
 	_refresh_stats()
 
 
@@ -257,6 +296,82 @@ func _refresh_bag() -> void:
 		_set_slot_content(button, item, "", false)
 		if count > 1:
 			_add_count_badge(button, count)
+
+
+## One tap = one action, and the selection follows it. The router still gets the tap so
+## equipping works; this only records which item the socket panel should show.
+func _on_bag_tapped(index: int) -> void:
+	var inventory: Array = _state.inventory()
+	if index >= 0 and index < inventory.size():
+		var entry: Variant = inventory[index]
+		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		var item: Dictionary = _resolve(item_id)
+		# Only a socketable item becomes the host; anything else clears the panel.
+		if int(item.get("sockets", 0)) > 0:
+			if _socket_host_id != item_id:
+				_socket_host_id = item_id
+				# A different host invalidates the armed socket index.
+				_armed_socket = -1
+		elif _socket_host_id == item_id:
+			_socket_host_id = ""
+			_armed_socket = -1
+	item_tapped.emit(index)
+
+
+## The socket panel: one cell per socket of the selected item, then the gems and
+## jewels in the bag. Tapping an EMPTY socket arms it; tapping a gem fills the armed
+## socket. That two-tap flow replaces the PWA's full-screen gem modal.
+func _refresh_sockets() -> void:
+	for child in _socket_row.get_children():
+		child.queue_free()
+	for child in _gem_row.get_children():
+		child.queue_free()
+
+	var host: Dictionary = _resolve(_socket_host_id)
+	if host.is_empty():
+		_socket_label.text = "Klepni na predmet v batohu pro vlozeni gemu."
+		return
+	var sockets := int(host.get("sockets", 0))
+	if sockets <= 0:
+		_socket_label.text = "%s nema socket." % str(host.get("name", _socket_host_id))
+		return
+
+	_socket_label.text = "%s - klepni na prazdny socket, pak na gem." % str(host.get("name", ""))
+	var filled: Array = host.get("socketedGems", [])
+	for i in sockets:
+		var button := _make_slot_button("")
+		button.custom_minimum_size = Vector2(44, 44)
+		var record: Variant = filled[i] if i < filled.size() else null
+		if record == null:
+			_set_placeholder_icon(button, "assets/items/jewel_ruby.png", 0.22)
+		else:
+			var entry: Dictionary = record
+			var gem_id := ""
+			if str(entry.get("type", "")) == "jewel":
+				gem_id = str(entry.get("jewelId", ""))
+			_set_slot_content(button, _resolve(gem_id), "", gem_id == "")
+		button.pressed.connect(func(): socket_armed.emit(_socket_host_id, i))
+		_socket_row.add_child(button)
+
+	# Gems and jewels from the bag, so the player can see what fits.
+	var shown := 0
+	for entry in _state.inventory():
+		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		var item: Dictionary = _resolve(item_id)
+		if str(item.get("type", "")) not in ["gem", "jewel"]:
+			continue
+		var gem_button := _make_slot_button("")
+		gem_button.custom_minimum_size = Vector2(40, 40)
+		_set_slot_content(gem_button, item, "", false)
+		gem_button.pressed.connect(func(): gem_tapped.emit(_socket_host_id, item_id))
+		_gem_row.add_child(gem_button)
+		shown += 1
+	if shown == 0:
+		var hint := Label.new()
+		hint.text = "V batohu neni zadny gem."
+		hint.add_theme_font_size_override("font_size", 12)
+		hint.add_theme_color_override("font_color", Color(UIKit.DIM))
+		_gem_row.add_child(hint)
 
 
 func _refresh_stats() -> void:

@@ -23,6 +23,7 @@ const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
 const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
 const HeroScreen := preload("res://scripts/ui/hero_screen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const Socketing := preload("res://scripts/items/socketing.gd")
 
 var data: Node
 var gen: ItemGen
@@ -31,6 +32,7 @@ var state
 
 var _screens: Dictionary = {}
 var _current := ""
+var _socket_rng_source: RandomNumberGenerator = null
 ## The last message a screen emitted, shown as a one-line status strip. The PWA used a
 ## toast; a plain label at the bottom is enough and cannot cover the buttons.
 var _status: Label
@@ -67,6 +69,8 @@ func _build_screens() -> void:
 	inventory.item_tapped.connect(_on_item_tapped)
 	inventory.equip_slot_tapped.connect(_on_equip_slot_tapped)
 	inventory.potion_slot_tapped.connect(_on_potion_slot_tapped)
+	inventory.socket_armed.connect(_on_socket_armed)
+	inventory.gem_tapped.connect(_on_gem_tapped)
 	_add_screen("inventory", inventory)
 
 	var town := TownScreen.new(data, gen, state, _resolve)
@@ -298,6 +302,64 @@ func _on_potion_slot_tapped(index: int) -> void:
 			_set_status("Potion do opasku")
 		return
 	_set_status("Zadny potion v batohu")
+
+
+## A socket cell was tapped. Only an EMPTY one can be armed — an occupied socket is a
+## refusal, not an overwrite, and the message says so rather than silently doing nothing.
+func _on_socket_armed(host_id: String, socket_index: int) -> void:
+	var host: Dictionary = _resolve(host_id)
+	if host.is_empty():
+		return
+	var reason := Socketing.can_socket(host, {"type": "gem"}, socket_index)
+	if reason != "":
+		_set_status(reason)
+		return
+	var inventory = _screens["inventory"]
+	inventory._armed_socket = socket_index
+	_set_status("Socket %d pripraven - klepni na gem" % socket_index)
+
+
+## A gem was tapped: fill the armed socket with it. With no socket armed the gem is
+## simply selected as the host's socket 0, so a single-socket item is one tap shorter.
+func _on_gem_tapped(host_id: String, gem_id: String) -> void:
+	var inventory = _screens["inventory"]
+	var host: Dictionary = _resolve(host_id)
+	var gem: Dictionary = _resolve(gem_id)
+	if host.is_empty() or gem.is_empty():
+		_set_status("Predmet nebo gem se nenasel")
+		return
+	var socket_index: int = int(inventory._armed_socket)
+	if socket_index < 0:
+		# No socket armed: use the first empty one, or say why there is none.
+		var filled: Array = host.get("socketedGems", [])
+		for i in int(host.get("sockets", 0)):
+			if i >= filled.size() or filled[i] == null:
+				socket_index = i
+				break
+		if socket_index < 0:
+			_set_status("Vsechny sockety jsou plne")
+			return
+
+	var result: Dictionary = Socketing.socket(state, host, gem_id, gem, socket_index, data, _socket_rng())
+	if not result["ok"]:
+		_set_status(str(result["message"]))
+		return
+	# A socketed item is a MUTATED item, so it has to be re-registered: the resolver
+	# hands out the live loot entry, but a static base must be stored or the stats are
+	# lost on the next resolve.
+	if not state.loot_item(host_id).is_empty():
+		state.register_loot_item(host)
+	state.save()
+	inventory._armed_socket = -1
+	inventory.refresh()
+	_set_status(str(result["message"]))
+
+
+func _socket_rng() -> RandomNumberGenerator:
+	if _socket_rng_source == null:
+		_socket_rng_source = RandomNumberGenerator.new()
+		_socket_rng_source.randomize()
+	return _socket_rng_source
 
 
 ## Resolve any item id: a static base, a generated gem, or loot stored on the save.
