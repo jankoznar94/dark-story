@@ -14,14 +14,22 @@ config/icon="res://icon.svg"
 
 [display]
 
-window/size/viewport_width=1280
-window/size/viewport_height=720
+; Portrait, like the PWA. The game is a one-handed phone game: the PWA's CSS is written
+; for 390x844 (.container max-width 420px, the arena's 260px ring stack) and laying that
+; out on a 1280x720 landscape canvas is what made the port read as a different game.
+; Landscape is a later, separate job — it needs its own layout, not a stretched portrait.
+window/size/viewport_width=390
+window/size/viewport_height=844
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-window/handheld/orientation=4
+window/handheld/orientation=1
 
 [rendering]
 
+; The PWA's body background is #121212. Godot's default clear colour is a mid grey, and
+; every screen that does not paint its own background (the arena) came out grey because
+; of it — which reads as a different game at a glance.
+environment/defaults/default_clear_color=Color(0.0705882, 0.0705882, 0.0705882, 1)
 textures/canvas_textures/default_texture_filter=1
 ; Required by the Android export preset: without it Godot refuses with
 ; "ETC2/ASTC texture compression is required for Android export".

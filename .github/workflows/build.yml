@@ -172,6 +172,19 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ARENA_SCREEN_ALL_PASS=true"
 
+      # The LAYOUT, which is what "the port looks like a different game" actually was.
+      # The PWA's CSS is written for a 390x844 viewport and every measurement in the port
+      # is relative to it; on a landscape canvas the whole port is a different screen, and
+      # that regression lives in project.godot where no gameplay test would notice it.
+      # The same gate covers the arena's ring stack radii, taken from the PWA's own
+      # `r=` attributes — two rings landing on the same radius silently loses a gauge.
+      - name: Portrait/layout test (canvas, clear colour, ring stack)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_portrait_visual.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "PORTRAIT_VISUAL_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
