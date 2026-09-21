@@ -17,6 +17,7 @@ extends Control
 
 const IB := preload("res://scripts/item_base.gd")
 const Icon := preload("res://scripts/item_icon.gd")
+const TapGuard := preload("res://scripts/tap_guard.gd")
 
 const COL_SCRIM := Color(0.02, 0.02, 0.02, 0.34)
 const COL_PANEL := Color(0.075, 0.065, 0.058, 0.96)
@@ -62,6 +63,13 @@ var _box: Rect2 = Rect2()
 ## Milliseconds left before a tap may dismiss the window. Set on every open; see
 ## CLOSE_ARM_MS for why the tap that opened the body must not close it again.
 var _arm_ms: float = 0.0
+
+## ONE TAP, ONE ACTION. Input hands the GUI a synthesised mouse event AND the real
+## touch for a single finger tap. Without this guard a tap on a row took the item
+## twice over (the second `_handle` found the row rects of the refreshed, shorter
+## list), and a tap on "Vzít vše" ran the whole take twice. Measured with real
+## injected events: one tap produced two handled presses. See scripts/tap_guard.gd.
+var _touch_guard = TapGuard.new()
 
 
 func _ready() -> void:
@@ -130,6 +138,7 @@ func set_open(on: bool) -> void:
 ## frozen at whatever the first frame set it to and the window could never be closed
 ## by a tap outside it at all.
 func _process(delta: float) -> void:
+	_touch_guard.tick()
 	if _arm_ms > 0.0:
 		_arm_ms = maxf(0.0, _arm_ms - delta * 1000.0)
 
@@ -169,13 +178,31 @@ func layout_now() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if not open:
 		return
-	if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
-		_handle((event as InputEventScreenTouch).position)
-		get_viewport().set_input_as_handled()
+	# ONE FINGER TAP, ONE ACTION - see scripts/tap_guard.gd. Only the first of the
+	# pair (synthesised mouse + real touch) is handled; otherwise one tap took the
+	# item twice and "Vzít vše" ran twice.
+	#
+	# THE RELEASE MUST END THE GESTURE even though it carries no action of its own.
+	# An earlier version of this guard only opened it, so after the FIRST tap the
+	# guard stayed live and every later tap was dropped as a duplicate - the panel
+	# went permanently deaf. Measured: `test_panels` reported "0 -> 0 bag items" on
+	# every tap after the first one.
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			if _touch_guard.begin():
+				_handle(t.position)
+			get_viewport().set_input_as_handled()
+		else:
+			_touch_guard.end()
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			_handle(mb.position)
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				if _touch_guard.begin():
+					_handle(mb.position)
+			else:
+				_touch_guard.end()
 			get_viewport().set_input_as_handled()
 	# a drag on a list is nothing to do; the events are swallowed so a swipe
 	# across the panel cannot reach the world behind it

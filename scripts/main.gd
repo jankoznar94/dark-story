@@ -21,6 +21,7 @@ const ItemGen := preload("res://scripts/item_gen.gd")
 ## before anything acts on it - see scripts/input_gate.gd for why a per-script
 ## flag could not work.
 const GATE := preload("res://scripts/input_gate.gd")
+const TapGuard := preload("res://scripts/tap_guard.gd")
 
 var _posts: Array[Node] = []
 var _enemies: Array[Node] = []
@@ -48,6 +49,9 @@ var _ui_consumed: bool = false
 ## otherwise a lie - it would show whichever spawn happened to be first in the
 ## array, which is unrelated to what the player is fighting.
 var _focus: Node = null
+## ONE TAP, ONE ACTION for the world tap that opens a body - the synthesised mouse
+## event and the real touch must not both run the ray. See scripts/tap_guard.gd.
+var _world_tap_guard = TapGuard.new()
 
 
 func _ready() -> void:
@@ -432,6 +436,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	if hud != null and hud.panel_open():
 		return
+	# ONE FINGER TAP, ONE ACTION. Input synthesises an InputEventMouseButton for every
+	# InputEventScreenTouch and `_unhandled_input` receives BOTH, so a tap on a body
+	# ran the ray twice and `body_opened` was emitted twice - the panel was opened,
+	# laid out and re-armed a second time in the same frame. See scripts/tap_guard.gd.
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
 		# THE FIRST FINGER MAY OPEN A BODY. An earlier version demanded `index > 0`
@@ -440,12 +448,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		# it; meanwhile a browser reports a MOUSE click as a touch with index 0, and
 		# on a phone the plain tap everyone makes for "open that" is index 0 too.
 		# Refusing it meant the loot window often did not open at all.
-		if t.pressed and t.index >= 0:
+		if t.pressed and t.index >= 0 and _world_tap_guard.begin():
 			_try_open(t.position)
+		elif not t.pressed:
+			_world_tap_guard.end()
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			_try_open(mb.position)
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				if _world_tap_guard.begin():
+					_try_open(mb.position)
+			else:
+				_world_tap_guard.end()
 
 
 ## The tap itself only runs the ray. The window opens off the loot manager's own
@@ -463,6 +477,7 @@ func _try_open(screen_pos: Vector2) -> void:
 ## in. Read by player.gd and enemy_base.gd.
 func _physics_process(_delta: float) -> void:
 	GATE.set_blocked(hud != null and hud.panel_open())
+	_world_tap_guard.tick()
 
 
 func _process(_delta: float) -> void:
@@ -472,6 +487,9 @@ func _process(_delta: float) -> void:
 	if hud != null and hud.panel_open():
 		hud.set_debug("panel otevřen - hra je pozastavená")
 		hud.set_player_hp(player.hp_fraction(), "HP %.0f / %.0f" % [player.hp, player.max_hp])
+		# A tap that OPENED a panel never delivers its release here (the early return
+		# above swallows it), so the world guard must not stay live behind a panel.
+		_world_tap_guard.reset()
 		return
 
 	# RUN: the HUD latch and the key/pad action are OR-ed HERE - in main.gd, not in

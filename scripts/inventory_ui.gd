@@ -19,6 +19,7 @@ extends Control
 const IB := preload("res://scripts/item_base.gd")
 const Inv := preload("res://scripts/inventory_model.gd")
 const Icon := preload("res://scripts/item_icon.gd")
+const TapGuard := preload("res://scripts/tap_guard.gd")
 
 ## palette
 const COL_PANEL := Color(0.075, 0.065, 0.058, 0.94)
@@ -81,6 +82,11 @@ var _tooltip_at: Vector2 = Vector2.ZERO
 var _held_item = null
 var _held_from_slot: int = -1
 var _held_t: float = 0.0
+
+## ONE TAP, ONE ACTION. Input hands the GUI both a synthesised mouse event and the
+## real touch for every finger tap, so an unguarded `if pressed: act` runs twice and
+## the duplicate undoes the first. See scripts/tap_guard.gd for the measurement.
+var _touch_guard = TapGuard.new()
 
 const HOLD_FOR_TOOLTIP := 0.45
 const DRAG_SLOP := 12.0
@@ -200,11 +206,23 @@ func placement_at_cell(c: Vector2i) -> int:
 func _gui_input(event: InputEvent) -> void:
 	if not open or model == null:
 		return
-	# Touch and mouse go through ONE path, so the phone and the desktop behave
-	# identically - the game is a landscape mobile PWA first.
+	# ONE FINGER TAP MUST BE ONE ACTION. Input synthesises an InputEventMouseButton
+	# from every InputEventScreenTouch and the GUI receives BOTH, so without the
+	# guard every tap was handled twice and the second pass undid the first -
+	# measured: tap a bag item -> picked up, then dropped again; drag onto a box ->
+	# equipped, then unequipped with no message. See scripts/tap_guard.gd.
+	#
+	# Only the event that OPENS or CLOSES the gesture acts; the duplicate is
+	# dropped. Drag events are not gated: a finger drag delivers ScreenDrag and NO
+	# MouseMotion (measured), and a mouse drag delivers only motion, so gating those
+	# would break dragging on whichever device produced the other kind.
 	if event is InputEventScreenTouch:
 		var t := event as InputEventScreenTouch
-		_on_press(t.position, t.index) if t.pressed else _on_release(t.position)
+		if t.pressed:
+			if _touch_guard.begin():
+				_on_press(t.position, t.index)
+		elif _touch_guard.end():
+			_on_release(t.position)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
@@ -213,7 +231,11 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
-			_on_press(mb.position, 0) if mb.pressed else _on_release(mb.position)
+			if mb.pressed:
+				if _touch_guard.begin():
+					_on_press(mb.position, 0)
+			elif _touch_guard.end():
+				_on_release(mb.position)
 			get_viewport().set_input_as_handled()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			# right click = use / equip, the D2 desktop habit
@@ -274,6 +296,8 @@ func _on_release(p: Vector2) -> void:
 
 
 func _process(delta: float) -> void:
+	# a lost release must not wedge the guard: see TapGuard.MAX_LIVE_FRAMES
+	_touch_guard.tick()
 	if not open:
 		return
 	# A picked-up item lapses, so a forgotten selection cannot be installed by the

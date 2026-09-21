@@ -485,11 +485,7 @@ func _test_opening_a_body() -> void:
 	var inv = main.inventory
 	panel.layout_now()
 	var bag_before: int = inv.bag_items().size()
-	var row_tap := InputEventScreenTouch.new()
-	row_tap.pressed = true
-	row_tap.index = 1
-	row_tap.position = panel._rows[0].position + panel._rows[0].size * 0.5
-	panel._gui_input(row_tap)
+	_tap_panel(panel, panel._rows[0].position + panel._rows[0].size * 0.5)
 	await physics_frame
 	_ok("a row tap in the frame that OPENED the window takes nothing",
 		inv.bag_items().size() == bag_before and loot.items_in(body).size() == items.size(),
@@ -498,11 +494,7 @@ func _test_opening_a_body() -> void:
 
 	# --- take ONE item by tapping its row
 	bag_before = inv.bag_items().size()
-	var ev := InputEventScreenTouch.new()
-	ev.pressed = true
-	ev.index = 1
-	ev.position = panel._rows[0].position + panel._rows[0].size * 0.5
-	panel._gui_input(ev)
+	_tap_panel(panel, panel._rows[0].position + panel._rows[0].size * 0.5)
 	await physics_frame
 	_ok("tapping a row puts that item in the bag", inv.bag_items().size() == bag_before + 1,
 		"%d -> %d bag items" % [bag_before, inv.bag_items().size()])
@@ -511,11 +503,7 @@ func _test_opening_a_body() -> void:
 
 	# --- take the rest with the bottom row
 	if not panel._items.is_empty():
-		var ev2 := InputEventScreenTouch.new()
-		ev2.pressed = true
-		ev2.index = 1
-		ev2.position = panel._all_rect.position + panel._all_rect.size * 0.5
-		panel._gui_input(ev2)
+		_tap_panel(panel, panel._all_rect.position + panel._all_rect.size * 0.5)
 		await physics_frame
 	_ok("'take all' empties the body", loot.items_in(body).is_empty())
 	_ok("the window closes itself once the body is empty", not panel.open)
@@ -544,24 +532,44 @@ func _test_opening_a_body() -> void:
 	panel.layout_now()
 	_ok("the window is armed against the tap that opened it",
 		panel._arm_ms > 0.0, "%.0f ms left" % panel._arm_ms)
-	var immediate := InputEventScreenTouch.new()
-	immediate.pressed = true
-	immediate.index = 1
-	immediate.position = Vector2(2.0, 2.0)
-	panel._gui_input(immediate)
+	var immediate := Vector2(2.0, 2.0)
+	_tap_panel(panel, immediate)
 	await physics_frame
 	_ok("the tap that opened the body does NOT close it again", panel.open,
 		"open=%s" % str(panel.open))
 	# Wait the guard out. `_process` runs on real deltas, so drive it directly rather
 	# than sleeping a quarter of a second in a headless suite.
 	panel._arm_ms = 0.0
-	panel._gui_input(immediate)
+	_tap_panel(panel, immediate)
 	await physics_frame
 	_ok("a later tap outside the window closes it", not panel.open,
 		"open=%s" % str(panel.open))
 
 	# --- closing the loot window resumes the world too
 	main.clear_loot()
+
+
+## A whole tap: press AND release, the way a finger produces one, plus the dedup
+## guard reset so the NEXT tap in the test is a new gesture.
+##
+## This helper exists because the older version of this section sent only the PRESS
+## (`panel._gui_input(row_tap)` with no release). That worked while the panel acted
+## on a press alone, but a press is only half a gesture: with the dedup guard in
+## place (scripts/tap_guard.gd) the gesture stays LIVE and every later tap in the
+## section is correctly dropped as a duplicate - so the test would report a wall of
+## failures that describe the probe, not the panel. Same lesson as the shared-bag
+## probe: fix the instrument, not the guard.
+func _tap_panel(panel: Control, at: Vector2) -> void:
+	var down := InputEventScreenTouch.new()
+	down.pressed = true
+	down.index = 1
+	down.position = at
+	panel._gui_input(down)
+	var up := InputEventScreenTouch.new()
+	up.pressed = false
+	up.index = 1
+	up.position = at
+	panel._gui_input(up)
 
 
 func _first_of(pack: Array, name_wanted: String) -> Node:
