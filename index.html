@@ -2,8 +2,8 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
-		<title>Dark Story</title>
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<title>Dungeon Recall</title>
 		<style>
 html, body, #canvas {
 	margin: 0;
@@ -11,61 +11,85 @@ html, body, #canvas {
 	border: 0;
 }
 
-/* 100dvh is what actually removes the mobile URL-bar problem: it tracks the
-   *visible* viewport instead of the largest possible one, so the canvas never
-   ends up taller than the screen on landscape phones. Falls back to 100vh. */
-html, body {
-	width: 100%;
-	height: 100vh;
-	height: 100dvh;
-	overflow: hidden;
-	overscroll-behavior: none;
-}
-
 body {
 	color: white;
-	background-color: #242424;
+	background-color: black;
+	overflow: hidden;
 	touch-action: none;
-	-webkit-user-select: none;
-	user-select: none;
 }
 
 #canvas {
 	display: block;
-	width: 100%;
-	height: 100%;
-	outline: none;
 }
 
 #canvas:focus {
 	outline: none;
 }
 
-/* Fullscreen entry point. Deliberately always visible (top-right, small) and
-   flat: no hover/focus styling, matching the game's UI rules. */
-#fs-btn {
-	position: fixed;
-	top: 6px;
-	right: 6px;
-	z-index: 10;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 6px 10px;
-	margin: 0;
-	border: 2px solid rgba(140, 115, 77, 0.85);
-	border-radius: 999px;
-	background: rgba(41, 33, 26, 0.72);
-	color: #e0d4b4;
-	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
-	font-size: 13px;
-	line-height: 1;
-	cursor: pointer;
-	-webkit-tap-highlight-color: transparent;
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
 }
 
-#fs-btn[hidden] { display: none; }
-</style>
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: #242424;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
 <link rel="manifest" href="index.manifest.json">
@@ -80,15 +104,6 @@ body {
 			Your browser does not support JavaScript.
 		</noscript>
 
-
-		<!-- Fullscreen prompt: only shown when the page is NOT already installed as a
-		     PWA and NOT already fullscreen. On iOS Safari there is no Fullscreen API
-		     for arbitrary elements, so we tell the player to use Add to Home Screen
-		     instead - that is the only route that removes the URL bar there. -->
-		<div id="fs-bar" hidden>
-			<span id="fs-text">Na šířku a celou obrazovku</span>
-			<button id="fs-btn" type="button">⛶ Fullscreen</button>
-		</div>
 		<div id="status">
 			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="index.png" alt="">
 			<progress id="status-progress"></progress>
@@ -97,7 +112,7 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":4671148,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":39101500,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -201,62 +216,6 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 }());
 		</script>
-	
-		<script>
-		(function () {
-			const isStandalone =
-				window.matchMedia('(display-mode: standalone)').matches ||
-				window.navigator.standalone === true;
-			const inFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
-			const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-				(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-			const bar = document.getElementById('fs-bar');
-			const btn = document.getElementById('fs-btn');
-			const text = document.getElementById('fs-text');
-			if (!bar || !btn) { return; }
-
-			function sync() {
-				if (isStandalone || inFullscreen()) { bar.hidden = true; return; }
-				bar.hidden = false;
-			}
-
-			document.addEventListener('fullscreenchange', sync);
-			document.addEventListener('webkitfullscreenchange', sync);
-
-			if (isIOS) {
-				// No element-fullscreen API on iOS; the home-screen app is the only fix.
-				text.textContent = 'Přidej na plochu: Sdílet → Přidat na plochu (odstraní adresní řádek)';
-				btn.hidden = true;
-			} else {
-				btn.addEventListener('click', async function () {
-					const el = document.documentElement;
-					try {
-						if (el.requestFullscreen) { await el.requestFullscreen({ navigationUI: 'hide' }); }
-						else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); }
-						// Belt and braces: some Android browsers honour orientation lock.
-						if (screen.orientation && screen.orientation.lock) {
-							screen.orientation.lock('landscape').catch(function () {});
-						}
-					} catch (e) { /* user can still rotate manually */ }
-					sync();
-				});
-			}
-
-			// First tap anywhere also tries fullscreen - browsers require a gesture.
-			window.addEventListener('pointerdown', function once() {
-				window.removeEventListener('pointerdown', once);
-				if (!isIOS && !inFullscreen() && !isStandalone) {
-					try {
-						const el = document.documentElement;
-						if (el.requestFullscreen) { el.requestFullscreen({ navigationUI: 'hide' }); }
-					} catch (e) {}
-				}
-				sync();
-			}, { once: true });
-
-			sync();
-		})();
-		</script>
 	</body>
 </html>
+
