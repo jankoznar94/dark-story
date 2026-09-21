@@ -89,6 +89,22 @@ assets/            portraits, item/spell/gem icons, stops, sfx, music
 
 ## Status
 
-Step 1 (data foundation) is done: tables ported, JSON committed, reader in place,
-CI green-able. Combat, inventory UI, town and progression screens are **not** in
-this port yet — they are written against these tables next.
+Steps 1-3 of the port are done: the data foundation, the portrait arena and the
+progression loop.
+
+| | |
+|---|---|
+| Data | 36 JSON tables (generated from the PWA), one reader, counts asserted |
+| Itemisation | generator, affixes, Magic Find, loot priority chain, stacking |
+| Inventory + town | character sheet, belt, equip slots, town hub, save/load |
+| Combat | one fight as pure logic, ticked at 100 ms; arena screen renders it |
+| Progression | 5 acts x 10 zones, bosses, 3 difficulties, D2 XP curve, attack table |
+| Tests | 5 headless suites, all gates in CI |
+
+**Not in this port yet:** the chest, shop, craft and gamble screens; skills and
+talents (the tables are loaded, no UI spends the points); class spells (only the
+basic auto-attack swing exists); reaction mechanics — deliberately not ported.
+
+The combat split is deliberate and worth keeping: `scripts/combat/battle.gd` owns
+every rule and `scripts/ui/arena_screen.gd` owns none. That is what lets
+`tools/test_combat.gd` drive 15 real fights headlessly and assert they terminate.

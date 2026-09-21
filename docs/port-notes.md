@@ -51,17 +51,32 @@ combat wants reaction mechanics, they get designed fresh rather than transplante
 
 1. **Data foundation** — done. Tables in `data/`, reader in `scripts/data/game_data.gd`,
    CI gates, headless tests.
-2. **Portrait arena** — two textures, HP/resource bars, swing timers, spell buttons
-   with cooldown rings, floating damage text, projectiles as `AnimatedSprite2D`.
-3. **Progression loop** — acts and zones, 5 acts × 10 zones, bosses, 3 difficulties,
-   the `getZoneMult` scaling table (Normal 1.0/+0.50, Nightmare 5.5/+0.72,
-   Hell 12.0/+0.89 per zone).
-4. **Itemisation UI** — inventory grid, belt, equip slots, tooltips, chest, shop,
-   craft, gamble. The D2 grid and affix rules are all in the JSON already.
-5. **Save/load** — `user://` JSON. Note the PWA's save key is `dungeonRecallV7` with a
+2. **Portrait arena** — done. `scripts/combat/battle.gd` is the fight as pure logic;
+   `scripts/ui/arena_screen.gd` renders it. The screen owns no rules on purpose.
+3. **Progression loop** — done. `scripts/combat/progression.gd`: 5 acts x 10 zones,
+   bosses, 3 difficulties, the `getZoneMult` scaling table (Normal 1.0/+0.50,
+   Nightmare 5.5/+0.72, Hell 12.0/+0.89 per zone), the D2 XP curve and attack table.
+4. **Itemisation UI** — inventory grid, belt, equip slots and the town are done.
+   **Still to do: chest, shop, craft, gamble, skills/talents, class spells.**
+5. **Save/load** — done. `user://` JSON. Note the PWA's key is `dungeonRecallV7` with a
    flat→2D `bossesDefeated` migration; a fresh port starts clean instead.
 6. **Balance pass** — 40 monsters across 5 themes × 3 difficulties is the longest
    tail and cannot be shortened by tooling.
+
+## Two things about the combat worth knowing before changing it
+
+**Rules live in `battle.gd`, never in the screen.** The reason is testability: a
+RefCounted that ticks in fixed 100 ms steps can be driven end to end headlessly, which
+is how `tools/test_combat.gd` asserts 15 real fights terminate. The PWA's equivalent
+was a 900-line `requestAnimationFrame` loop that also wrote DOM, so nothing about it
+could be asserted at all. If a rule only exists inside `_process`, no test can reach it.
+
+**`mb.baseDmg` is set nowhere in the PWA**, so the fallback in `dealPlayerDamage` is
+the live damage path: `2 + level * 0.8 + weapon dmg + STR * 0.3`, with no crit and no
+skill multipliers on a plain swing. Two consequences that surprised this port: a
+level-60 hero with bare fists genuinely loses to the act 1 boss (fists are 1-2 damage),
+and a hero with 0 STR hits like a level-1 one no matter their level, because damage
+scales with attributes. Tests pin both directions so a later change to this is visible.
 
 ## The public URL
 
