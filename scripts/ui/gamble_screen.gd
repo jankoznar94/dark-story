@@ -7,7 +7,11 @@ class_name GambleScreen
 ## is decided by two independent rolls at purchase time (quality and item version),
 ## both of which live in ShopStock and are asserted there.
 ##
-## The sell tab is the same as the shop's, minus the shop's categories.
+## Layout is the PWA's `.page-header` / `.shop-tabs` / `.shop-cat-tabs` / `.shop-item`
+## chain, the same one the shop uses — the gamble vendor is a shop with a different label
+## and a different stock, not a different screen.
+##
+## The sell tab is the shop's sell tab minus the categories.
 
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const ShopStock := preload("res://scripts/items/shop_stock.gd")
@@ -47,43 +51,43 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	add_child(root)
+	var page := UIKit.screen_page(self)
+	var column: VBoxContainer = page["column"]
+	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Gamble")
-	header["back"].pressed.connect(func(): back_pressed.emit())
+	var back := UIKit.back_button()
+	back.pressed.connect(func(): back_pressed.emit())
+	column.add_child(back)
+
+	var header := UIKit.page_header("assets/menu-icons/gamble.png", "Gamble",
+		"Kup neidentifikovane predmety - hod kostkou.", "0 zlata")
 	_gold_label = header["right"]
-	root.add_child(header["root"])
+	column.add_child(header["root"])
 
-	var tabs := UIKit.tab_row(["Koupit", "Prodat"], 0)
+	var tabs := UIKit.tab_row(["Koupit", "Prodat"], 0, UIKit.MOD_BLUE)
 	_tab_buttons = tabs["buttons"]
 	_tab_buttons[0].pressed.connect(func(): _set_tab("buy"))
 	_tab_buttons[1].pressed.connect(func(): _set_tab("sell"))
-	root.add_child(tabs["root"])
+	column.add_child(tabs["root"])
 
 	_category_row = HBoxContainer.new()
 	_category_row.add_theme_constant_override("separation", 4)
-	root.add_child(_category_row)
-
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(scroll)
+	column.add_child(_category_row)
 
 	_list = VBoxContainer.new()
-	_list.add_theme_constant_override("separation", 6)
+	_list.add_theme_constant_override("separation", 8)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_list)
+	column.add_child(_list)
 
-	root.add_child(UIKit.label("Cena je pevna, obsah je kostka. Nikdy to neni normal kvalita.", 12, UIKit.DIM))
+	column.add_child(UIKit.label(
+		"Cena je pevna, obsah je kostka. Nikdy to neni normal kvalita.", 12, UIKit.DIM))
 
 
 ## Fresh offer. The gamble stock is level-gated rather than progress-gated, so it is
 ## rebuilt whenever the screen opens; a level change between visits changes the pool.
 func reset_stock() -> void:
 	_stock = []
+	_tab = "buy"
 	_ensure_stock()
 
 
@@ -104,12 +108,17 @@ func _set_category(category: String) -> void:
 
 func refresh() -> void:
 	_ensure_stock()
-	_gold_label.text = "Zlato %d" % int(_state.hero().get("gold", 0))
+	_gold_label.text = "%d zlata" % int(_state.hero().get("gold", 0))
 	for i in _tab_buttons.size():
 		var active := (_tab == "buy" and i == 0) or (_tab == "sell" and i == 1)
-		var style := UIKit.panel_style(UIKit.GOLD if active else UIKit.BORDER, 2 if active else 1)
-		for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+		var style := UIKit.panel_style(UIKit.MOD_BLUE if active else "#2a2a2a", 1)
+		if active:
+			style.bg_color = Color("#111111")
+		style.set_corner_radius_all(8)
+		for state_name in ["normal", "hover", "focus", "disabled"]:
 			_tab_buttons[i].add_theme_stylebox_override(state_name, style)
+		_tab_buttons[i].add_theme_color_override("font_color",
+			Color("#ffffff") if active else Color("#cccccc"))
 
 	_clear(_category_row)
 	_clear(_list)
@@ -122,12 +131,22 @@ func refresh() -> void:
 		if (section.get("items", []) as Array).is_empty():
 			continue
 		var category := str(section["category"])
-		var button := UIKit.flat_button(category, 0.0, 34.0, 14)
+		var button := Button.new()
+		button.text = category
+		button.custom_minimum_size = Vector2(0, 36)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", 13)
 		var active := category == _category
-		var style := UIKit.panel_style(UIKit.GOLD if active else UIKit.BORDER, 2 if active else 1)
-		for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#111111") if active else Color("#000000")
+		style.border_color = Color(UIKit.GOLD) if active else Color("#2a2a2a")
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(6)
+		for state_name in ["normal", "hover", "focus", "disabled"]:
 			button.add_theme_stylebox_override(state_name, style)
+		button.add_theme_color_override("font_color",
+			Color(UIKit.GOLD) if active else Color("#888888"))
 		button.pressed.connect(func(): _set_category(category))
 		_category_row.add_child(button)
 	_render_buy()
@@ -138,41 +157,45 @@ func _render_buy() -> void:
 	for s in _stock:
 		if str(s["category"]) == _category:
 			section = s
-	if section.is_empty():
+	if section.is_empty() or (section.get("items", []) as Array).is_empty():
 		_list.add_child(UIKit.label("Nic k dispozici", 14, UIKit.DIM))
 		return
-	var items: Array = section.get("items", [])
-	if items.is_empty():
-		_list.add_child(UIKit.label("Nic k dispozici", 14, UIKit.DIM))
-		return
-	for entry in items:
+	for entry in section.get("items", []):
 		_list.add_child(_gamble_row(entry))
 
 
+## `.shop-item` for a gamble offer. The base is shown grey and unidentified ON PURPOSE:
+## showing the rolled stats here would remove the gamble.
 func _gamble_row(entry: Dictionary) -> Control:
 	var base: Dictionary = entry.get("baseItem", {})
 	var price := int(entry.get("price", 0))
 
 	var row := PanelContainer.new()
-	row.add_theme_stylebox_override("panel", UIKit.panel_style())
+	var style := UIKit.panel_style("#2a2a2a")
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	row.add_theme_stylebox_override("panel", style)
 
 	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
+	box.add_theme_constant_override("separation", 10)
 	row.add_child(box)
 
 	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(48, 48)
+	icon.custom_minimum_size = Vector2(56, 56)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture = UIKit.load_texture(ItemStats.icon_path(base))
+	# The unidentified offer is drawn dim; a bright icon reads as a known item.
+	icon.modulate = Color(1, 1, 1, 0.7)
 	box.add_child(icon)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 2)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(column)
-	# The base is shown grey and unidentified on purpose: the player does not get to
-	# see what they are buying. Showing the rolled stats here would remove the gamble.
 	column.add_child(UIKit.label(str(base.get("name", "?")), 15, UIKit.DIM))
 	column.add_child(UIKit.label("??? neidentifikovano", 13, UIKit.DIM))
 	var detail := "%s %s" % ["2H" if base.get("twoHand", false) else "1H", str(base.get("weaponType", ""))] \
@@ -200,9 +223,15 @@ func _render_sell() -> void:
 			continue
 		any = true
 		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", UIKit.panel_style())
+		var style := UIKit.panel_style("#2a2a2a")
+		style.set_corner_radius_all(8)
+		style.content_margin_left = 12
+		style.content_margin_right = 12
+		style.content_margin_top = 12
+		style.content_margin_bottom = 12
+		row.add_theme_stylebox_override("panel", style)
 		var box := HBoxContainer.new()
-		box.add_theme_constant_override("separation", 12)
+		box.add_theme_constant_override("separation", 10)
 		row.add_child(box)
 
 		var icon := TextureRect.new()

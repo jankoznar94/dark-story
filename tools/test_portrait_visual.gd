@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_test_ring_stack_matches_the_pwa()
 	_test_gauge_arc_draws_a_proportional_sweep()
 	_test_arc_geometry_is_bottom_anchored()
+	_test_no_screen_uses_flat_buttons()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -51,6 +52,46 @@ func _initialize() -> void:
 
 func _fail(msg: String) -> void:
 	_failures.append(msg)
+
+
+## `Button.flat = true` makes a Button SKIP drawing its stylebox — so a slot built with
+## a border style and `flat = true` renders as if it had no border at all. That is
+## exactly how every slot in the inventory became invisible while the node tree, the
+## sizes and every gameplay test looked perfect. A source scan is the only gate that
+## catches it: by the time the button exists, the theme override is present and correct.
+func _test_no_screen_uses_flat_buttons() -> void:
+	for path in _ui_scripts():
+		var source := FileAccess.get_file_as_string(path)
+		for line_no in source.split("\n").size():
+			var line: String = source.split("\n")[line_no]
+			var trimmed := line.strip_edges()
+			if trimmed.begins_with("#"):
+				continue
+			if trimmed.ends_with(".flat = true"):
+				_fail("%s:%d sets flat = true, which hides every stylebox border" % [
+					UIKit_short(path), line_no + 1])
+
+
+## Every .gd under scripts/ui, so a new screen cannot slip past the check above.
+func _ui_scripts() -> Array:
+	var out: Array = []
+	var dir := DirAccess.open("res://scripts/ui")
+	if dir == null:
+		_fail("scripts/ui is not readable")
+		return out
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while name != "":
+		if name.ends_with(".gd"):
+			out.append("res://scripts/ui/" + name)
+		name = dir.get_next()
+	dir.list_dir_end()
+	return out
+
+
+func UIKit_short(path: String) -> String:
+	var parts := path.split("/")
+	return str(parts[parts.size() - 1])
 
 
 ## The PWA is a phone game and its CSS assumes it. Landscape is a separate, later job

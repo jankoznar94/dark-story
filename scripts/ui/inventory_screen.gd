@@ -71,6 +71,7 @@ var _socket_row: HBoxContainer
 var _gem_row: HBoxContainer
 var _socket_label: Label
 var _stats_label: Label
+var _gold_label: Label
 
 ## Which item the socket panel is showing. Set by tapping a bag cell, so the panel
 ## follows the player's selection rather than needing a dialog per item.
@@ -94,40 +95,76 @@ func _ready() -> void:
 # --- construction ------------------------------------------------------------
 
 func _build() -> void:
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	add_child(root)
+	# The PWA's inventory is ONE scrolling column, not two side-by-side panels. A
+	# 390px canvas cannot hold the equipment grid (3 x 75px + gaps = 237) beside a bag
+	# grid (5 columns of >=64px = 340) — the old HBox laid out 740px of content on a
+	# 390px screen, so the whole bag half was off-canvas and the screen read as empty.
+	var page := UIKit.screen_page(self)
+	var column: VBoxContainer = page["column"]
+	column.add_theme_constant_override("separation", 6)
 
-	root.add_child(_make_header())
-
-	var columns := HBoxContainer.new()
-	columns.add_theme_constant_override("separation", 16)
-	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root.add_child(columns)
-
-	columns.add_child(_make_equipment_panel())
-	columns.add_child(_make_bag_panel())
+	column.add_child(_make_header())
+	column.add_child(_make_equipment_panel())
+	column.add_child(_make_bag_panel())
 
 
+## The PWA's inventory is a modal with its own tab strip (Inventory / Skills / Stats) and
+## an X close. The port drops the tabs — the hero sheet and the skill trees are their own
+## screens reached from the nav bar — and keeps the PWA's `.btn-secondary` back button at
+## the top, which every sub-screen has.
 func _make_header() -> Control:
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 8)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
 
-	var back := Button.new()
-	back.text = "Back to Town"
-	back.custom_minimum_size = Vector2(160, 44)
-	# Plain "Back to Town", no arrow — a convention Jan set for every full-page screen.
+	var back := UIKit.back_button("Zpet do mesta")
 	back.pressed.connect(func(): back_pressed.emit())
-	header.add_child(back)
+	column.add_child(back)
 
-	var title := Label.new()
-	title.text = "Inventory"
-	title.add_theme_font_size_override("font_size", 22)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	column.add_child(row)
+
+	var title := UIKit.label("Inventar", 22, "#f0f0f0")
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	header.add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title)
 
-	return header
+	var gold := UIKit.label("", 15, UIKit.GOLD, HORIZONTAL_ALIGNMENT_RIGHT)
+	gold.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(gold)
+	_gold_label = gold
+
+	return column
+
+
+## `.inv-equip-panel { display:grid; grid-template-columns:repeat(3, auto); gap:6px;
+##                    justify-content:center }` — a PAPER DOLL, not an ordered list.
+## The CSS pins every slot to a (row, column) pair:
+##
+##   #invSlotHelmet { grid-column:2; grid-row:1 }   #invSlotAmulet { grid-column:3; grid-row:1 }
+##   #invSlotWeapon { grid-column:1; grid-row:2 }   #invSlotArmor  { grid-column:2; grid-row:2 }
+##   #invSlotShield { grid-column:3; grid-row:2 }   #invSlotRing1  { grid-column:1; grid-row:3 }
+##   #invSlotBelt   { grid-column:2; grid-row:3 }   #invSlotRing2  { grid-column:3; grid-row:3 }
+##   #invSlotGloves { grid-column:1; grid-row:4 }   #invSlotBoots  { grid-column:3; grid-row:4 }
+##
+## Godot's GridContainer fills row-major and cannot place a child at a cell, so the grid
+## is walked cell by cell with invisible fillers where the PWA has no slot.
+##
+## [row, column, slot, height] — columns and rows are ZERO-based here, one less than the
+## CSS `grid-column`/`grid-row` values. `.inv-slot-square` is 75x75, `.inv-slot-tall`
+## (the weapon) is 75x110, `.inv-slot-belt` is 75x48.
+const DOLL: Array = [
+	[0, 1, "helmet", 75.0],
+	[0, 2, "amulet", 75.0],
+	[1, 0, "weapon", 110.0],
+	[1, 1, "armor", 75.0],
+	[1, 2, "shield", 75.0],
+	[2, 0, "ring1", 75.0],
+	[2, 1, "belt", 48.0],
+	[2, 2, "ring2", 75.0],
+	[3, 0, "gloves", 75.0],
+	[3, 2, "boots", 75.0],
+]
 
 
 func _make_equipment_panel() -> Control:
@@ -135,16 +172,33 @@ func _make_equipment_panel() -> Control:
 	panel.add_theme_constant_override("separation", 6)
 
 	var grid := GridContainer.new()
-	grid.columns = 2
+	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 6)
+	# A GridContainer has no `alignment` property (only BoxContainer does); the paper
+	# doll is centred by shrinking the grid to its own columns.
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	panel.add_child(grid)
 
-	for slot in ItemGen.EQUIP_SLOTS:
-		var button := _make_slot_button(SLOT_LABELS.get(slot, slot))
-		button.pressed.connect(func(): equip_slot_tapped.emit(slot))
+	# Row-major walk. `_cursor` is the cell the next child lands in, which is the only
+	# way to honour an explicit (row, column) table with a container that has no
+	# placement API.
+	var cursor := 0
+	for entry in DOLL:
+		var cell := int(entry[0]) * 3 + int(entry[1])
+		while cursor < cell:
+			grid.add_child(_filler())
+			cursor += 1
+		var slot := str(entry[2])
+		var button := _make_slot_button(SLOT_LABELS.get(slot, slot), Vector2(75.0, float(entry[3])))
+		# A slot that is shorter than its row (the belt) must not be stretched to the
+		# row height: in the PWA `height:48px` wins over the grid's stretch.
+		button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		var slot_name := slot
+		button.pressed.connect(func(): equip_slot_tapped.emit(slot_name))
 		_slot_nodes[slot] = button
 		grid.add_child(button)
+		cursor += 1
 
 	_stats_label = Label.new()
 	_stats_label.add_theme_font_size_override("font_size", 13)
@@ -156,11 +210,25 @@ func _make_equipment_panel() -> Control:
 	potion_title.add_theme_font_size_override("font_size", 14)
 	panel.add_child(potion_title)
 
+	# `.inv-potion-slots { display:grid; grid-template-columns:repeat(4, 36px); gap:2px;
+	#                      justify-content:center }` — 36px cells, 2px gap.
 	_potion_row = HBoxContainer.new()
-	_potion_row.add_theme_constant_override("separation", 4)
+	_potion_row.add_theme_constant_override("separation", 2)
+	_potion_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_potion_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_child(_potion_row)
 
 	return panel
+
+
+## An empty paper-doll cell: the PWA's grid leaves the cell out entirely, but a
+## GridContainer counts children, so an invisible spacer is what keeps column 3 in
+## column 3.
+func _filler() -> Control:
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(75, 75)
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return spacer
 
 
 func _make_bag_panel() -> Control:
@@ -168,18 +236,38 @@ func _make_bag_panel() -> Control:
 	panel.add_theme_constant_override("separation", 6)
 
 	var title := Label.new()
-	title.text = "Bag"
+	title.text = "Batoh"
 	title.add_theme_font_size_override("font_size", 14)
 	panel.add_child(title)
 
-	_bag_grid = GridContainer.new()
-	_bag_grid.columns = GRID_COLUMNS
-	_bag_grid.add_theme_constant_override("h_separation", 4)
-	_bag_grid.add_theme_constant_override("v_separation", 4)
-	panel.add_child(_bag_grid)
+	# `.inv-grid-wrap { background:#000; border:1px solid #333; border-radius:10px;
+	#                  padding:12px }` — the bag grid lives in its own bordered box.
+	var wrap := PanelContainer.new()
+	var wrap_style := StyleBoxFlat.new()
+	wrap_style.bg_color = Color("#000000")
+	wrap_style.border_color = Color("#333333")
+	wrap_style.set_border_width_all(1)
+	wrap_style.set_corner_radius_all(10)
+	wrap_style.content_margin_left = 12
+	wrap_style.content_margin_right = 12
+	wrap_style.content_margin_top = 12
+	wrap_style.content_margin_bottom = 12
+	wrap.add_theme_stylebox_override("panel", wrap_style)
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_child(wrap)
 
+	_bag_grid = GridContainer.new()
+	# `.inv-grid { grid-template-columns:repeat(5, 1fr); gap:6px }`
+	_bag_grid.columns = GRID_COLUMNS
+	_bag_grid.add_theme_constant_override("h_separation", 6)
+	_bag_grid.add_theme_constant_override("v_separation", 6)
+	_bag_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.add_child(_bag_grid)
+
+	# 5 columns inside 358 - 32 (container) - 24 (wrap padding) - 4*6 (gaps) = 278 / 5.
+	const BAG_CELL := 55.0
 	for i in BAG_CELLS:
-		var button := _make_slot_button("")
+		var button := _make_slot_button("", Vector2(BAG_CELL, BAG_CELL))
 		# A tap equips (the router decides) but ALSO selects the item for the socket
 		# panel — that is the whole reason no gem dialog is needed.
 		button.pressed.connect(func(): _on_bag_tapped(i))
@@ -211,30 +299,54 @@ func _make_bag_panel() -> Control:
 	return panel
 
 
-## A slot is a flat square with a thin border. No rounded corners, no gradient, no
-## hover state — tapping is the only feedback, which is what a mobile game wants and
-## what Jan asked for explicitly.
-func _make_slot_button(label: String) -> Button:
+## `.inv-equip-slot { background:#000; border:1.5px solid #4a4a4a; border-radius:8px }`
+## and `.empty { border-style:dashed; background:#000 }` with the placeholder icon at
+## opacity 0.25. No hover state — Jan's rule for a mobile screen: a tap is the only
+## feedback (the PWA's `:hover` rules are desktop leftovers and are deliberately not
+## ported).
+func _make_slot_button(label: String, size: Vector2 = Vector2(CELL, CELL)) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = Vector2(CELL, CELL)
-	button.flat = true
+	button.custom_minimum_size = size
+	# NOT `flat = true`: `flat` makes a Button skip drawing its stylebox entirely, so
+	# every slot border in the PWA's inventory was invisible — items floated on the
+	# background and empty slots did not exist at all. The border comes from the
+	# stylebox overrides below, and `flat` silently disabled them.
 	button.focus_mode = Control.FOCUS_NONE   # no focus ring on tap
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#111111")
-	style.border_color = Color("#777777")
-	style.set_border_width_all(1)
-	style.corner_radius_top_left = 0
-	style.corner_radius_top_right = 0
-	style.corner_radius_bottom_left = 0
-	style.corner_radius_bottom_right = 0
-	button.add_theme_stylebox_override("normal", style)
-	button.add_theme_stylebox_override("pressed", style)
-	button.add_theme_stylebox_override("hover", style)
-	button.add_theme_stylebox_override("focus", style)
+	style.bg_color = Color("#000000")
+	style.border_color = Color("#4a4a4a")
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(8)
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state_name, style)
+	var pressed := style.duplicate()
+	pressed.bg_color = Color("#111111")
+	pressed.border_color = Color("#aaaaaa")
+	button.add_theme_stylebox_override("pressed", pressed)
 
 	return button
+
+
+## A slot that holds nothing: the dashed border the PWA used for `.empty`. Kept as a
+## separate style swap rather than a rebuild, because an empty slot and a filled one
+## are the same Button with a different box.
+func _set_empty_style(button: Button) -> void:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#000000")
+	style.border_color = Color("#4a4a4a")
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(8)
+	# `border-style:dashed` — Godot has no dashed border for a StyleBox, so the dashed
+	# look comes from the dimmer colour plus the 25%-opacity placeholder icon. Drawing
+	# dashes by hand per slot would be four draw calls per cell for one visual cue.
+	style.border_color = Color("#3a3a3a")
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state_name, style)
+	var pressed := style.duplicate()
+	pressed.bg_color = Color("#111111")
+	button.add_theme_stylebox_override("pressed", pressed)
 
 
 # --- rendering ---------------------------------------------------------------
@@ -268,11 +380,13 @@ func _refresh_potions() -> void:
 
 	var slots: Array = _state.equip().get("beltPotionSlots", [])
 	for i in slots.size():
-		var button := _make_slot_button("")
-		button.custom_minimum_size = Vector2(40, 40)
+		# `.inv-potion-slot { width:36px; height:36px; border:2px solid #4a4a4a;
+		#                     border-radius:4px }`
+		var button := _make_slot_button("", Vector2(36, 36))
 		var item_id: Variant = slots[i]
 		var item: Dictionary = {} if item_id == null else _resolve(item_id)
 		if item.is_empty():
+			_set_empty_style(button)
 			# Empty potion slots show a desaturated potion icon, never an emoji.
 			_set_placeholder_icon(button, "assets/items/potion_healing_light.png", 0.25)
 		else:
@@ -380,14 +494,19 @@ func _refresh_stats() -> void:
 	var max_hp := _gen.hero_max_hp(hero, _state.equip(), find)
 	var max_mana := _gen.hero_max_mana(hero, _state.equip(), _state.data.get("heroClass", ""), find)
 	var attrs := _gen.equip_attr_sum(_state.equip(), find, ["str", "vit", "dex", "int"])
-	_stats_label.text = "Level %d   HP %d   Mana %d   STR %d  VIT %d  DEX %d  INT %d   Gold %d" % [
+	_stats_label.text = "Level %d   HP %d   Mana %d   STR %d  VIT %d  DEX %d  INT %d" % [
 		int(hero["level"]), max_hp, max_mana,
 		int(hero.get("attrStr", 0)) + int(attrs["str"]),
 		int(hero.get("attrVit", 0)) + int(attrs["vit"]),
 		int(hero.get("attrDex", 0)) + int(attrs["dex"]),
 		int(hero.get("attrInt", 0)) + int(attrs["int"]),
-		int(hero.get("gold", 0)),
 	]
+	# The gold readout is the nav/header's job, not a stat line's: at 390px the seven
+	# stats plus gold overflow the right edge and get clipped. The PWA's `.inv-item-stats`
+	# is 13px right-aligned text inside a panel; one line of stats is all that fits.
+	_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if _gold_label != null:
+		_gold_label.text = "%d zlata" % int(hero.get("gold", 0))
 
 
 ## One slot's contents: an icon (or a dimmed placeholder when empty) and a border in
@@ -397,9 +516,9 @@ func _set_slot_content(button: Button, item: Dictionary, placeholder: String, is
 		child.queue_free()
 
 	if item.is_empty():
+		_set_empty_style(button)
 		if placeholder != "":
 			_set_placeholder_icon(button, placeholder, 0.25)
-		_set_border(button, Color("#777777"))
 		return
 
 	var icon := TextureRect.new()

@@ -1,18 +1,29 @@
 extends Control
 class_name ShopScreen
-## ShopScreen — buy and sell. Ported from `renderShop` / `buyItem` / `sellItem`.
+## ShopScreen — buy and sell, laid out from the PWA's `.page-header` / `.shop-tabs` /
+## `.shop-cat-tabs` / `.shop-item` rules.
+##
+## Source: `renderShop` / `buyItem` / `sellItem` plus `index.html`'s `#shopScreen` block.
+## The PWA's shop is:
+##
+##   .shop-back-map      a full-width "Back to Town" button at the very top
+##   .page-header        80px icon, "Shop", "Buy and sell equipment", gold on the right
+##   .shop-tabs          Buy / Sell, the active one bordered #4a7dff
+##   .shop-cat-tabs      Misc / Armor / Weapons / Jewelry, the active one #f1c40f
+##   .shop-item          a black card, 8px radius, 64px icon, name, stat rows, and the
+##                       price at the bottom right
 ##
 ## Two things this screen does NOT do, both deliberate:
 ##
-##   * It owns no prices and no stock rules. `ShopStock` generates the offer and
-##     decides what a purchase does; this file only draws it and reports taps.
-##   * It does not cache the stock itself. The cache lives in `main.gd` and is cleared
-##     on every town visit — the PWA reset its cache in `renderTown`, and re-entering
-##     town must produce a new offer.
+##   * It owns no prices and no stock rules. `ShopStock` generates the offer and decides
+##     what a purchase does; this file only draws it and reports taps.
+##   * It does not cache the stock itself. The cache lives in `main.gd` and is cleared on
+##     every town visit — the PWA reset its cache in `renderTown`, and re-entering town
+##     must produce a new offer.
 ##
-## Buying marks the item as bought and removes it from the list for this visit, except
-## for consumables, crafting materials and gems, which stay buyable — the same rule the
-## PWA had, and the reason a player can buy ten potions in one trip but only one sword.
+## Buying marks the item as bought and removes it from the list for this visit, except for
+## consumables, crafting materials and gems, which stay buyable — the same rule the PWA
+## had, and the reason a player can buy ten potions in one trip but only one sword.
 
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const ShopStock := preload("res://scripts/items/shop_stock.gd")
@@ -54,38 +65,41 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	add_child(root)
+	# `.container` — 16px sides, 70px at the bottom for the nav bar. Every screen is built
+	# on this, which is what makes "scroll works everywhere" one implementation.
+	var page := UIKit.screen_page(self)
+	var column: VBoxContainer = page["column"]
+	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Obchod")
-	header["back"].pressed.connect(func(): back_pressed.emit())
+	# `.shop-back-map` then `.page-header`, exactly the PWA's order.
+	var back := UIKit.back_button()
+	back.pressed.connect(func(): back_pressed.emit())
+	column.add_child(back)
+
+	var header := UIKit.page_header("assets/menu-icons/shop.png", "Obchod",
+		"Nakup a prodej vybaveni", "0 zlata")
 	_gold_label = header["right"]
-	root.add_child(header["root"])
+	column.add_child(header["root"])
 
-	var tabs := UIKit.tab_row(["Koupit", "Prodat"], 0)
+	# `.shop-tabs`
+	var tabs := UIKit.tab_row(["Koupit", "Prodat"], 0, UIKit.MOD_BLUE)
 	_tab_buttons = tabs["buttons"]
 	_tab_buttons[0].pressed.connect(func(): _set_tab("buy"))
 	_tab_buttons[1].pressed.connect(func(): _set_tab("sell"))
-	root.add_child(tabs["root"])
+	column.add_child(tabs["root"])
 
 	_potion_label = UIKit.label("", 13, UIKit.DIM)
-	root.add_child(_potion_label)
+	column.add_child(_potion_label)
 
+	# `.shop-cat-tabs`
 	_category_row = HBoxContainer.new()
 	_category_row.add_theme_constant_override("separation", 4)
-	root.add_child(_category_row)
-
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(scroll)
+	column.add_child(_category_row)
 
 	_list = VBoxContainer.new()
-	_list.add_theme_constant_override("separation", 6)
+	_list.add_theme_constant_override("separation", 8)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_list)
+	column.add_child(_list)
 
 
 ## Called by main on every town visit: a new offer, and nothing marked as bought.
@@ -114,12 +128,17 @@ func _set_category(category: String) -> void:
 
 func refresh() -> void:
 	_ensure_stock()
-	_gold_label.text = "Zlato %d" % int(_state.hero().get("gold", 0))
+	_gold_label.text = "%d zlata" % int(_state.hero().get("gold", 0))
 	for i in _tab_buttons.size():
 		var active := (_tab == "buy" and i == 0) or (_tab == "sell" and i == 1)
-		var style := UIKit.panel_style(UIKit.GOLD if active else UIKit.BORDER, 2 if active else 1)
-		for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+		var style := UIKit.panel_style(UIKit.MOD_BLUE if active else "#2a2a2a", 1)
+		if active:
+			style.bg_color = Color("#111111")
+		style.set_corner_radius_all(8)
+		for state_name in ["normal", "hover", "focus", "disabled"]:
 			_tab_buttons[i].add_theme_stylebox_override(state_name, style)
+		_tab_buttons[i].add_theme_color_override("font_color",
+			Color("#ffffff") if active else Color("#cccccc"))
 
 	_rebuild_categories()
 	_clear(_list)
@@ -140,12 +159,23 @@ func _rebuild_categories() -> void:
 		if visible_items.is_empty():
 			continue
 		var category := str(section["category"])
-		var button := UIKit.flat_button(category, 0.0, 34.0, 14)
+		var button := Button.new()
+		button.text = category
+		button.custom_minimum_size = Vector2(0, 36)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", 13)
 		var active := category == _category
-		var style := UIKit.panel_style(UIKit.GOLD if active else UIKit.BORDER, 2 if active else 1)
-		for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+		# `.shop-cat-tab.active { background:#111; border-color:#f1c40f; color:#f1c40f }`
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#111111") if active else Color("#000000")
+		style.border_color = Color(UIKit.GOLD) if active else Color("#2a2a2a")
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(6)
+		for state_name in ["normal", "hover", "focus", "disabled"]:
 			button.add_theme_stylebox_override(state_name, style)
+		button.add_theme_color_override("font_color",
+			Color(UIKit.GOLD) if active else Color("#888888"))
 		button.pressed.connect(func(): _set_category(category))
 		_category_row.add_child(button)
 
@@ -175,7 +205,7 @@ func _render_buy() -> void:
 				used += 1
 		var free := maxi(0, total - used)
 		_potion_label.text = "Slotu na potiony: %d volnych (%d/%d)" % [free, used, total]
-	elif _category != "Misc":
+	else:
 		_potion_label.text = ""
 
 	var items := _visible_items(section)
@@ -186,37 +216,53 @@ func _render_buy() -> void:
 		_list.add_child(_buy_row(item))
 
 
+## `.shop-item` — a black card, 8px radius and a 1px #2a2a2a border, with the icon, the
+## name in its quality colour, the stat block and the price at the bottom right.
 func _buy_row(item: Dictionary) -> Control:
 	var row := PanelContainer.new()
-	row.add_theme_stylebox_override("panel", UIKit.panel_style())
+	var style := UIKit.panel_style("#2a2a2a")
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	row.add_theme_stylebox_override("panel", style)
 
-	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
 	row.add_child(box)
 
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 10)
+	box.add_child(top)
+
 	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(56, 56)
+	icon.custom_minimum_size = Vector2(64, 64)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture = UIKit.load_texture(ItemStats.icon_path(item))
-	box.add_child(icon)
-
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 2)
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(column)
+	top.add_child(icon)
 
 	var name_label := UIKit.label(ItemStats.socket_name(item), 15,
 		ItemStats.quality_color(item).to_html(false))
-	column.add_child(name_label)
-	column.add_child(UIKit.item_tooltip(item, _data, 300.0))
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	top.add_child(name_label)
+
+	box.add_child(UIKit.item_tooltip(item, _data, 300.0))
+
+	# `.shop-item-actions { border-top: 1px solid #2a2a2a; justify-content: flex-end }`
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_END
+	actions.add_theme_constant_override("separation", 8)
+	box.add_child(actions)
 
 	var cost := int(item.get("cost", 0))
 	var can_afford := int(_state.hero().get("gold", 0)) >= cost
-	var buy := UIKit.flat_button("%d zlata" % cost, 120.0, 40.0, 14)
+	var buy := UIKit.flat_button("%d zlata" % cost, 130.0, 40.0, 14)
 	buy.add_theme_color_override("font_color", Color(UIKit.GOLD if can_afford else UIKit.BAD))
 	buy.pressed.connect(func(): _on_buy(item))
-	box.add_child(buy)
+	actions.add_child(buy)
 	return row
 
 
@@ -239,10 +285,16 @@ func _render_sell() -> void:
 
 func _sell_row(item_id: String, item: Dictionary) -> Control:
 	var row := PanelContainer.new()
-	row.add_theme_stylebox_override("panel", UIKit.panel_style())
+	var style := UIKit.panel_style("#2a2a2a")
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	row.add_theme_stylebox_override("panel", style)
 
 	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 12)
+	box.add_theme_constant_override("separation", 10)
 	row.add_child(box)
 
 	var icon := TextureRect.new()
@@ -258,7 +310,7 @@ func _sell_row(item_id: String, item: Dictionary) -> Control:
 	box.add_child(column)
 	column.add_child(UIKit.label(ItemStats.socket_name(item), 15,
 		ItemStats.quality_color(item).to_html(false)))
-	column.add_child(UIKit.item_tooltip(item, _data, 300.0))
+	column.add_child(UIKit.item_tooltip(item, _data, 240.0))
 
 	var price := int(round(float(int(item.get("cost", 0))) * 0.5))
 	var sell := UIKit.flat_button("Prodat %d" % price, 130.0, 40.0, 14)

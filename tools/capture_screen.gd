@@ -51,8 +51,11 @@ func _process(_delta: float) -> bool:
 	_frames += 1
 	if _frames < _target:
 		return false
+	# _capture() awaits frame_post_draw, so the tree MUST stay alive this frame or the
+	# await never resumes and no PNG is written (the old `return true` here did exactly
+	# that): quit() only inside _capture, after the image is saved.
 	_capture()
-	return true
+	return false
 
 
 func _entry() -> void:

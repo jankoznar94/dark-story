@@ -39,6 +39,9 @@ var _xp_label: Label
 var _xp_fill: ColorRect
 var _stats_box: VBoxContainer
 var _attr_box: VBoxContainer
+var _stats_card: PanelContainer
+var _attr_card: PanelContainer
+var _gold_label: Label
 var _talent_points_label: Label
 var _tree_row: HBoxContainer
 var _talent_grid: VBoxContainer
@@ -61,34 +64,50 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	add_child(root)
+	var page := UIKit.screen_page(self)
+	var column: VBoxContainer = page["column"]
+	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Hrdina")
-	header["back"].pressed.connect(func(): back_pressed.emit())
-	root.add_child(header["root"])
+	var back := UIKit.back_button()
+	back.pressed.connect(func(): back_pressed.emit())
+	column.add_child(back)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(scroll)
+	var header := UIKit.page_header("assets/monsters/hero.png", "Hrdina",
+		"Atributy, vybava a talenty.", "")
+	_gold_label = header["right"]
+	column.add_child(header["root"])
 
-	var page := VBoxContainer.new()
-	page.add_theme_constant_override("separation", 10)
-	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(page)
+	var page_box := VBoxContainer.new()
+	page_box.add_theme_constant_override("separation", 10)
+	page_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(page_box)
 
-	page.add_child(_build_identity())
-	_stats_box = VBoxContainer.new()
-	_stats_box.add_theme_constant_override("separation", 2)
-	page.add_child(_stats_box)
-	_attr_box = VBoxContainer.new()
-	_attr_box.add_theme_constant_override("separation", 2)
-	page.add_child(_attr_box)
+	page_box.add_child(_card(_build_identity()))
+	_stats_card = _card(_build_stats())
+	page_box.add_child(_stats_card)
+	_attr_card = _card(_build_attrs())
+	page_box.add_child(_attr_card)
+	page_box.add_child(_card(_build_talents()))
 
-	page.add_child(_build_talents())
+
+## `.card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:10px;
+##          padding:14px; margin:8px 0 }` — the PWA's own block. Jan's rule about "no
+## cards" is about FORM elements in CFSB (flat, machine design); this game's hero sheet
+## has been cards since the PWA, and the CSS is the specification here.
+func _card(content: Control) -> PanelContainer:
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#1a1a1a")
+	style.border_color = Color("#2a2a2a")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	panel.add_theme_stylebox_override("panel", style)
+	panel.add_child(content)
+	return panel
 
 
 func _build_identity() -> Control:
@@ -124,6 +143,30 @@ func _build_identity() -> Control:
 	column.add_child(_xp_label)
 
 	return row
+
+
+## The stat block inside its `.card`: a heading and the lines `_refresh_stats()` writes.
+## The box is rebuilt on every refresh (the numbers all change), so the builder only has
+## to make it exist and give it a heading.
+func _build_stats() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	box.add_child(UIKit.section_label("Vlastnosti"))
+	_stats_box = VBoxContainer.new()
+	_stats_box.add_theme_constant_override("separation", 2)
+	box.add_child(_stats_box)
+	return box
+
+
+## The attribute block: heading, then the four attribute columns with their `+1` buttons,
+## written by `_refresh_attrs()`.
+func _build_attrs() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	_attr_box = VBoxContainer.new()
+	_attr_box.add_theme_constant_override("separation", 2)
+	box.add_child(_attr_box)
+	return box
 
 
 func _build_talents() -> Control:

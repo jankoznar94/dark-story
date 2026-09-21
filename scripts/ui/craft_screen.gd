@@ -37,6 +37,10 @@ var _slots: Dictionary = {}
 var _result: Dictionary = {}
 
 var _recipe_list: VBoxContainer
+var _gear_list: VBoxContainer
+var _tabs: Dictionary = {}
+var _active_tab := "recipes"
+var _gold_label: Label
 var _workbench: VBoxContainer
 var _workbench_title: Label
 var _slot_row: HBoxContainer
@@ -59,31 +63,52 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("separation", 8)
-	add_child(root)
+	var page := UIKit.screen_page(self)
+	var column: VBoxContainer = page["column"]
+	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Craft")
-	header["back"].pressed.connect(func(): back_pressed.emit())
-	root.add_child(header["root"])
+	var back := UIKit.back_button()
+	back.pressed.connect(func(): back_pressed.emit())
+	column.add_child(back)
+
+	var header := UIKit.page_header("assets/menu-icons/craft.png", "Craft",
+		"Spoj gemy, predmety a runy ve vybaveni.", "0 zlata")
+	_gold_label = header["right"]
+	column.add_child(header["root"])
+
+	column.add_child(UIKit.label(
+		"Recepty: gem + predmet + runa + jewel. Gem musi odpovidat verzi predmetu.",
+		12, UIKit.DIM))
+
+	# `.craft-tab` — this screen's own tab colour is the purple #9b59b6, not the shop's
+	# blue: the PWA gave each vendor family its own accent, and using the wrong one is
+	# exactly the kind of drift the CSS is here to prevent.
+	_tabs = UIKit.tab_row(["Recepty", "Vybava"], 0, "#9b59b6")
+	_tabs["buttons"][0].pressed.connect(func(): _set_tab("recipes"))
+	_tabs["buttons"][1].pressed.connect(func(): _set_tab("gear"))
+	column.add_child(_tabs["root"])
 
 	_recipe_list = VBoxContainer.new()
-	_recipe_list.add_theme_constant_override("separation", 6)
-	root.add_child(_recipe_list)
+	_recipe_list.add_theme_constant_override("separation", 8)
+	_recipe_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(_recipe_list)
 
-	for recipe in CraftSystem.RECIPES:
-		_recipe_list.add_child(_recipe_row(recipe))
+	_gear_list = VBoxContainer.new()
+	_gear_list.add_theme_constant_override("separation", 8)
+	_gear_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gear_list.visible = false
+	column.add_child(_gear_list)
 
 	_workbench = VBoxContainer.new()
 	_workbench.add_theme_constant_override("separation", 8)
 	_workbench.visible = false
-	root.add_child(_workbench)
+	column.add_child(_workbench)
 
 	_workbench_title = UIKit.label("", 18)
 	_workbench.add_child(_workbench_title)
 
 	_slot_row = HBoxContainer.new()
+	_slot_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_slot_row.add_theme_constant_override("separation", 8)
 	_workbench.add_child(_slot_row)
 
@@ -107,9 +132,69 @@ func _build() -> void:
 	_picker = VBoxContainer.new()
 	_picker.add_theme_constant_override("separation", 6)
 	_picker.visible = false
-	root.add_child(_picker)
+	column.add_child(_picker)
 
-	root.add_child(UIKit.label("Recepty: gem + predmet + runa + jewel. Gem musi odpovidat verzi predmetu.", 12, UIKit.DIM))
+	# The recipe cards are built last so opening one can hide the list without racing the
+	# build: `_open_recipe` flips `_recipe_list.visible`.
+	for recipe in CraftSystem.RECIPES:
+		_recipe_list.add_child(_recipe_row(recipe))
+
+
+func _set_tab(tab: String) -> void:
+	_active_tab = tab
+	_recipe_list.visible = tab == "recipes"
+	_gear_list.visible = tab == "gear"
+	if tab == "gear":
+		_render_gear()
+	for i in (_tabs["buttons"] as Array).size():
+		var active := (tab == "recipes" and i == 0) or (tab == "gear" and i == 1)
+		var button: Button = _tabs["buttons"][i]
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color("#111111") if active else Color("#000000")
+		style.border_color = Color("#9b59b6") if active else Color("#2a2a2a")
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(8)
+		for state_name in ["normal", "hover", "focus", "disabled"]:
+			button.add_theme_stylebox_override(state_name, style)
+		button.add_theme_color_override("font_color",
+			Color("#ffffff") if active else Color("#cccccc"))
+
+
+## A list of the candidate items at the top of the gear tab: the items a recipe's item
+## slot will accept. The PWA picked the item from the bag inside the workbench; showing
+## them up front makes "what can I even craft with" answerable before opening a recipe.
+func _render_gear() -> void:
+	_clear(_gear_list)
+	var shown := 0
+	var bag: Array = _state.inventory()
+	for i in bag.size():
+		var entry: Variant = bag[i]
+		var item_id := str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		if item_id == "":
+			continue
+		var item: Dictionary = _find_item.call(item_id)
+		if item.is_empty():
+			continue
+		var item_type := str(item.get("type", ""))
+		if not (item_type in ["weapon", "armor", "helmet", "shield", "ring", "amulet",
+				"gloves", "boots", "belt", "gem", "jewel", "crafting"]):
+			continue
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		var cell := UIKit.item_cell(item, 48)
+		row.add_child(cell)
+		var column := VBoxContainer.new()
+		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(column)
+		column.add_child(UIKit.label(ItemStats.socket_name(item), 14,
+			ItemStats.quality_color(item).to_html(false)))
+		column.add_child(UIKit.label("%s   %d zlata" % [
+			ItemStats.item_version(item) if item.has("version") else item_type,
+			int(item.get("cost", 0))], 12, UIKit.DIM))
+		_gear_list.add_child(row)
+		shown += 1
+	if shown == 0:
+		_gear_list.add_child(UIKit.label("Batoh je prazdny.", 14, UIKit.DIM))
 
 
 func _recipe_row(recipe: Dictionary) -> Control:
@@ -123,7 +208,9 @@ func _recipe_row(recipe: Dictionary) -> Control:
 	box.add_child(UIKit.label(str(recipe["desc"]), 12, UIKit.DIM))
 
 	var pick := Button.new()
-	pick.flat = true
+	# No `flat = true`: `flat` stops the Button drawing its stylebox at all, which is
+	# the same visual result as the transparent style below but hides every FUTURE
+	# border this button might get. One rule instead of an exception.
 	pick.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pick.focus_mode = Control.FOCUS_NONE
 	var style := UIKit.panel_style()

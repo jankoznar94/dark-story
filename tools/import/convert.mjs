@@ -35,6 +35,14 @@ const FILE_ORDER = [
 	'acts',       // ACTS — reads monsters
 ];
 
+/** Tables that live outside src/data/, in game.ts.
+ *  Each is [name, file, marker-before-literal, opening-bracket-char]. STOP_NAMES_EN is a
+ *  plain OBJECT keyed by act id, so it opens with `{` — matching the first `[` instead
+ *  silently returns act 0's array and drops the other four acts. */
+const EXTRA_TABLES = [
+	['STOP_NAMES_EN', 'game.ts', 'const STOP_NAMES_EN', '{'],
+];
+
 /** Tables the Godot side is allowed to ask for. Everything else is dropped so a
  *  stray helper constant does not silently become part of the data contract. */
 const WANTED = [
@@ -50,6 +58,10 @@ const WANTED = [
 	'SIMON_SYMBOLS', 'SIMON_COLORS', 'SIMON_FREQS',
 	'ITEMS', 'UNIQUE_ITEMS', 'RARE_FIRST_WORDS', 'RARE_SECOND_WORDS',
 	'ACTS',
+	// `STOP_NAMES_EN` lives in game.ts, not src/data/, so it arrives via
+	// EXTRA_TABLES below. The map screen labels every stop and the port had no names
+	// for them at all — reading them from the PWA beats typing 50 strings by hand.
+	'STOP_NAMES_EN',
 ];
 
 function parseArgs(argv) {
@@ -82,6 +94,37 @@ function loadTables(srcDir, log) {
 		// top-level ones both count.
 		declared.push(...[...source.matchAll(/^\s*const ([A-Za-z0-9_]+)/gm)].map(m => m[1]));
 		scope += source + '\n';
+	}
+
+	// Tables that live OUTSIDE src/data/, in game.ts itself. game.ts is 15 000 lines of
+	// application code and cannot be evaluated as a script, so each one is lifted out by
+	// name with a brace-matched slice. A regex that stopped at the last `]` of a nested
+	// array would silently truncate, so the slice counts brackets.
+	for (const [name, file, from, open_char] of EXTRA_TABLES) {
+		const full = path.join(srcDir, '..', file);
+		if (!fs.existsSync(full)) throw new Error(`missing source file: ${full}`);
+		const text = fs.readFileSync(full, 'utf8');
+		const at = text.indexOf(from);
+		if (at < 0) throw new Error(`${name}: ${from} not found in ${file}`);
+		const open = text.indexOf(open_char, at);
+		if (open < 0) throw new Error(`${name}: no ${open_char} literal after ${from}`);
+		const close_char = open_char === '{' ? '}' : ']';
+		let depth = 0;
+		let end = -1;
+		for (let i = open; i < text.length; i++) {
+			const c = text[i];
+			if (c === open_char) depth++;
+			else if (c === close_char) {
+				depth--;
+				if (depth === 0) { end = i; break; }
+			}
+		}
+		if (end < 0) throw new Error(`${name}: unbalanced brackets in ${file}`);
+		const literal = text.slice(open, end + 1);
+		// eslint-disable-next-line no-new-func
+		const value = new Function(`return ${literal};`)();
+		scope += `const ${name} = ${JSON.stringify(value)};\n`;
+		declared.push(name);
 	}
 
 	const run = new Function(

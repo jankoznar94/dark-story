@@ -6,8 +6,15 @@ extends Node2D
 ## equipping (triggered from the bag, must work while the inventory is open) and the
 ## town's shop cache (cleared on every town visit).
 ##
-## The PWA had a `showScreen(name)` that toggled 213 DOM ids. Here a screen is a child
-## node that is shown or hidden, and the router is the only thing that knows the list.
+## The PWA had a `showScreen(name)` that toggled 213 DOM ids and a `_currentScreen` it
+## read back for the modal. Here a screen is a child node that is shown or hidden, the
+## router is the only thing that knows the list, and the fixed bottom nav bar is built
+## once and reused — the PWA rebuilt nothing on a screen change except the active class.
+##
+## The nav bar is the PWA's own idea of where a player can go: it listed town, hero,
+## bestiary and the spellbook, and the two screens with no other door (inventory, hero)
+## were modal behind it. The port keeps that: the nav is the only global navigation, and
+## the town has exactly the tiles the PWA's town had.
 
 const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
@@ -16,12 +23,15 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const EquipLogic := preload("res://scripts/items/equip_logic.gd")
 const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
 const TownScreen := preload("res://scripts/ui/town_screen.gd")
+const MapScreen := preload("res://scripts/ui/map_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
 const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
 const HeroScreen := preload("res://scripts/ui/hero_screen.gd")
+const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
+const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Socketing := preload("res://scripts/items/socketing.gd")
 
@@ -34,9 +44,10 @@ var _screens: Dictionary = {}
 var _current := ""
 var _socket_rng_source: RandomNumberGenerator = null
 ## The last message a screen emitted, shown as a one-line status strip. The PWA used a
-## toast; a plain label at the bottom is enough and cannot cover the buttons.
+## toast; a plain label above the nav bar is enough and cannot cover the buttons.
 var _status: Label
 var _status_ticks := 0
+var _nav_bar      # UIKit.NavBar
 
 
 func _ready() -> void:
@@ -58,10 +69,11 @@ func _ready() -> void:
 		state.set_class(first)
 		state.save()
 	_build_screens()
+	_build_nav()
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
 	# The data report on boot is what makes a DEPLOYED build checkable from outside:
-	# CI going green says the pipeline ran, not that the published pack has content.
+	# # CI going green says the pipeline ran, not that the published pack has content.
 	# An empty or truncated convert boots perfectly and is otherwise invisible.
 	var report: Dictionary = data.integrity_report()
 	var parts := PackedStringArray()
@@ -84,8 +96,17 @@ func _build_screens() -> void:
 	var town := TownScreen.new(data, gen, state, _resolve)
 	town.visible = false
 	town.tile_selected.connect(_on_town_tile)
-	town.difficulty_selected.connect(_on_difficulty_selected)
+	# The wilderness tile opens the MAP, as the PWA's `enterCurrentAct()` did — not a
+	# fight. Which stop to fight is the player's choice on the map.
+	town.stop_requested.connect(func(_act, _stop): show_screen("map"))
 	_add_screen("town", town)
+
+	var map_screen := MapScreen.new(data, state, _resolve)
+	map_screen.visible = false
+	map_screen.back_pressed.connect(func(): show_screen("town"))
+	map_screen.difficulty_selected.connect(_on_difficulty_selected)
+	map_screen.enter_stop.connect(_on_stop_selected)
+	_add_screen("map", map_screen)
 
 	var chest := ChestScreen.new(data, gen, state, _resolve)
 	chest.visible = false
@@ -117,6 +138,16 @@ func _build_screens() -> void:
 	hero_screen.message.connect(_set_status)
 	_add_screen("hero", hero_screen)
 
+	var bestiary := BestiaryScreen.new(data, state)
+	bestiary.visible = false
+	bestiary.back_pressed.connect(func(): show_screen("town"))
+	_add_screen("bestiary", bestiary)
+
+	var spellbook := SpellbookScreen.new(data, state)
+	spellbook.visible = false
+	spellbook.back_pressed.connect(func(): show_screen("town"))
+	_add_screen("spellbook", spellbook)
+
 	var arena := ArenaScreen.new(data, gen, loot, state, _resolve)
 	arena.visible = false
 	arena.leave_requested.connect(func(): show_screen("town"))
@@ -133,14 +164,37 @@ func _build_screens() -> void:
 		remove_child(screen)
 		layer.add_child(screen)
 
+
+## The PWA's fixed bottom `.nav-bar`. Built once: it never changes except for which entry
+## is highlighted, so rebuilding it per screen would only add a place for taps to be lost.
+##
+## It lives on its own CanvasLayer ABOVE the screens' layer. That is not decoration: the
+## screens are re-parented into a `CanvasLayer` (layer 1) while the bar was a plain child
+## of the Node2D main (layer 0), and a CanvasLayer always paints over layer 0 no matter
+## what the node order says. The bar was correct, visible and completely hidden — the
+## town showed an empty box where its chrome should have been.
+func _build_nav() -> void:
+	var nav_layer := CanvasLayer.new()
+	nav_layer.name = "Nav"
+	nav_layer.layer = 5
+	add_child(nav_layer)
+
+	_nav_bar = UIKit.NavBar.build("town")
+	_nav_bar.nav_selected.connect(_on_nav_selected)
+	nav_layer.add_child(_nav_bar)
+
 	var status_layer := CanvasLayer.new()
 	status_layer.name = "Status"
 	status_layer.layer = 10
 	add_child(status_layer)
 	var box := VBoxContainer.new()
+	# The status strip sits just ABOVE the 56px nav bar, so it never covers it.
 	box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	box.offset_top = -84
+	box.offset_bottom = -56
 	status_layer.add_child(box)
 	_status = UIKit.label("", 14, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
+	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	box.add_child(_status)
 
 
@@ -148,6 +202,18 @@ func _add_screen(key: String, screen: Control) -> void:
 	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(screen)
 	_screens[key] = screen
+	# The nav bar is added BEFORE the screens (it is not one of them), so without this
+	# the bar's first paint is UNDER the screens' own full-rect background ColorRect —
+	# the bar's controls exist, report visible=true, and are never seen. The bar has to
+	# be re-raised, not merely "not hidden".
+	if _nav_bar != null:
+		_nav_bar.move_to_front()
+
+
+## The nav bar is hidden on the screens the PWA hid it on — the arena replaces the whole
+## page (`.battle-active` locked scrolling) and a nav button under a live fight is a way
+## to lose a fight by accident.
+const NAV_HIDDEN := ["arena"]
 
 
 func show_screen(name: String) -> void:
@@ -157,11 +223,16 @@ func show_screen(name: String) -> void:
 	for key in _screens:
 		(_screens[key] as Control).visible = key == name
 	_current = name
+	if _nav_bar != null:
+		_nav_bar.visible = not (name in NAV_HIDDEN)
+		_nav_bar.set_active(name)
 	match name:
 		"town":
 			# Entering town heals and refreshes the shop — the behaviour lives in the
 			# screen's enter(), because re-entering must heal again.
 			_screens["town"].enter(_reset_shop_cache)
+		"map":
+			_screens["map"].refresh()
 		"inventory":
 			_screens["inventory"].refresh()
 		"chest":
@@ -175,9 +246,28 @@ func show_screen(name: String) -> void:
 			pass
 		"hero":
 			_screens["hero"].refresh()
+		"bestiary":
+			_screens["bestiary"].refresh()
+		"spellbook":
+			_screens["spellbook"].refresh()
 		"arena":
 			# Nothing to set up: _enter_arena already started the fight.
 			pass
+
+
+## The nav bar's active entry is moved by the bar itself (`NavBar.set_active`), so the
+## router only has to say which screen is up. The bar is built once and reused; the PWA
+## did the same with a CSS class swap on the anchor.
+func _on_nav_selected(key: String) -> void:
+	if not _screens.has(key):
+		return
+	# Leaving the arena from the nav is a retreat: the fight must be ended rather than
+	# left ticking behind another screen.
+	if _current == "arena" and key != "arena":
+		var arena = _screens["arena"]
+		if arena.battle != null and not arena.battle.ended:
+			arena.battle.ended = true
+	show_screen(key)
 
 
 ## The shop's stock is rebuilt on every town visit. The stock itself lives in the shop
@@ -203,29 +293,25 @@ func _process(_delta: float) -> void:
 
 
 func _on_town_tile(key: String) -> void:
-	match key:
-		"wilderness":
-			_on_wilderness()
-		"portal":
-			_on_town_portal()
-		_:
-			show_screen(key)
-
-
-## Wilderness: the arena. Entering it also resets the zone's fight counter, which is
-## what the PWA did on act entry — a walk out of town always starts a fresh zone.
-func _on_wilderness() -> void:
-	var act_id := _first_uncompleted_act()
-	if act_id < 0:
-		_set_status("Vsechny akty dokonceny - prepni obtiznost")
+	if key == "portal":
+		_on_town_portal()
 		return
+	show_screen(key)
+
+
+## A stop was tapped on the map: wind the act's progress to that stop and start fighting
+## there. This is the PWA's `enterStop(actId, stop)` -> `startLocation(actId, stop, 0)`,
+## including its fight counter reset — walking onto a stop always begins at 0/10.
+func _on_stop_selected(act_id: int, stop: int) -> void:
+	state.set_progress(act_id, stop)
 	state.data["areaFightProgress"][act_id] = 0
+	state.save()
 	_enter_arena(act_id)
 
 
-## The town's difficulty selector. Switching does NOT touch progress: each difficulty
-## has its own boss row and its own act ladder, and the zone a player was standing in
-## on the previous difficulty stays where they left it.
+## The map's difficulty selector. Switching does NOT touch progress: each difficulty has
+## its own boss row and its own act ladder, and the stop a player was standing on the
+## previous difficulty stays where they left it.
 func _on_difficulty_selected(difficulty: int) -> void:
 	var result: Dictionary = state.set_difficulty(difficulty)
 	if not result["ok"]:
@@ -235,9 +321,9 @@ func _on_difficulty_selected(difficulty: int) -> void:
 		_set_status("Obtiznost %s je jeste zamcena" % name)
 		return
 	state.save()
-	# The town's header, the wilderness button and the shop all read the difficulty, so
-	# re-entering is what keeps them consistent rather than patching each in turn.
-	show_screen("town")
+	# The map's header and cards both read the difficulty, so re-entering is what keeps
+	# them consistent rather than patching each in turn.
+	show_screen("map")
 	_set_status("Obtiznost: %s" % str((data.difficulties()[difficulty] as Dictionary).get("name", "")))
 
 
@@ -247,6 +333,7 @@ func _enter_arena(act_id: int) -> void:
 	show_screen("arena")
 	if not arena.start(state, _resolve):
 		_set_status("Arena: zadny souboj pro akt %d" % act_id)
+		show_screen("town")
 
 
 func _on_another_fight() -> void:
@@ -268,10 +355,6 @@ func _on_town_portal() -> void:
 	state.data["townPortalReturn"] = null
 	state.save()
 	_enter_arena(int(p.get("actId", 0)))
-
-
-func _first_uncompleted_act() -> int:
-	return state.first_uncompleted_act()
 
 
 func _on_item_tapped(inventory_index: int) -> void:

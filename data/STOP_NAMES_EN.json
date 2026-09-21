@@ -1,0 +1,62 @@
+{
+ "0": [
+  "Meadow",
+  "Forest",
+  "Ruins",
+  "Swamp",
+  "Wooded Hills",
+  "Valley",
+  "Cannibal Village",
+  "Mystic Well",
+  "Road to the Fortress",
+  "Forest Lord's Fortress"
+ ],
+ "1": [
+  "Sand Dunes",
+  "Sandstone Rocks",
+  "Oasis",
+  "Mysterious Tomb",
+  "Nomad Camp",
+  "Desert Pass",
+  "Worm Hole",
+  "Parched Wasteland",
+  "Magic Stones",
+  "Pharaoh Tomb"
+ ],
+ "2": [
+  "Snowfield",
+  "Snowy Field",
+  "Frozen Lake",
+  "Ice Cave",
+  "Glacier",
+  "Snowy Village",
+  "Avalanche Pass",
+  "Frost Shrine",
+  "Frozen Peak",
+  "Frost Giant's Citadel"
+ ],
+ "3": [
+  "Graveyard",
+  "Cursed Bog",
+  "Tomb",
+  "Rotting Crypt",
+  "Bone Valley",
+  "Cursed Ruins",
+  "Plague Tower",
+  "Necropolis",
+  "Soul Well",
+  "Lich's Sanctum"
+ ],
+ "4": [
+  "Ashen Plains",
+  "Lava Fields",
+  "Cinder Pits",
+  "Lava Ridge",
+  "Demon Gully",
+  "Burning Keep",
+  "Skin Rift",
+  "Inferno Shrine",
+  "Abyssal Gate",
+  "Lava Dragon's Lair"
+ ]
+}
