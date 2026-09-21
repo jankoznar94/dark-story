@@ -1,0 +1,217 @@
+[
+ {
+  "id": 0,
+  "name": "Enchanted Forest",
+  "icon": "🌲",
+  "theme": 0,
+  "zones": 10,
+  "xpReward": 10,
+  "bossXp": 30,
+  "minLevel": 1,
+  "maxLevel": 3,
+  "boss": {
+   "name": "Forest Lord",
+   "face": "assets/monsters/forest_lord.png",
+   "hp": 500,
+   "dmgMin": 12,
+   "dmgMax": 18,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 200,
+   "spells": [
+    "thorn_shield",
+    "faerie_fire",
+    "poison_bolt"
+   ],
+   "types": [
+    "manastealer",
+    "lifestealer"
+   ],
+   "attackType": "caster"
+  },
+  "reward": {
+   "gold": 5
+  },
+  "resists": {
+   "fire": 1,
+   "ice": 1,
+   "nature": 1
+  },
+  "monsterDefense": 10,
+  "locAffixes": [
+   {
+    "poisonResist": 0.5
+   },
+   {
+    "poisonResist": 0.75
+   },
+   {
+    "poisonResist": 1
+   }
+  ]
+ },
+ {
+  "id": 1,
+  "name": "Desert Realm",
+  "icon": "🏜️",
+  "theme": 1,
+  "zones": 10,
+  "xpReward": 16,
+  "bossXp": 50,
+  "minLevel": 4,
+  "maxLevel": 6,
+  "boss": {
+   "name": "Pharaoh",
+   "face": "assets/monsters/desert_pharaoh.png",
+   "hp": 14,
+   "types": [
+    "manastealer"
+   ],
+   "attackType": "caster"
+  },
+  "reward": {
+   "gold": 12
+  },
+  "resists": {
+   "fire": 1.5,
+   "ice": 0.5,
+   "nature": 1
+  },
+  "monsterDefense": 20,
+  "locAffixes": [
+   {
+    "armorMult": 1.5
+   },
+   {
+    "armorMult": 1.75
+   },
+   {
+    "armorMult": 2
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "name": "Frost Peaks",
+  "icon": "❄️",
+  "theme": 4,
+  "zones": 10,
+  "xpReward": 24,
+  "bossXp": 70,
+  "minLevel": 7,
+  "maxLevel": 9,
+  "boss": {
+   "name": "Frost Giant",
+   "face": "assets/monsters/frost_giant.png",
+   "hp": 16,
+   "types": [
+    "critmaster"
+   ],
+   "attackType": "melee"
+  },
+  "reward": {
+   "gold": 15
+  },
+  "resists": {
+   "fire": 1.5,
+   "ice": 0.5,
+   "nature": 1
+  },
+  "monsterDefense": 35,
+  "locAffixes": [
+   {
+    "chillResist": 0.5,
+    "frostResist": 0.25
+   },
+   {
+    "chillResist": 0.75,
+    "frostResist": 0.5
+   },
+   {
+    "chillResist": 1,
+    "frostResist": 0.75
+   }
+  ]
+ },
+ {
+  "id": 3,
+  "name": "Undead Lands",
+  "icon": "🦴",
+  "theme": 2,
+  "zones": 10,
+  "xpReward": 40,
+  "bossXp": 130,
+  "minLevel": 10,
+  "maxLevel": 12,
+  "boss": {
+   "name": "Lich",
+   "face": "assets/monsters/lich.png",
+   "hp": 22,
+   "types": [
+    "manastealer"
+   ],
+   "attackType": "caster"
+  },
+  "reward": {
+   "gold": 25
+  },
+  "resists": {
+   "fire": 0.5,
+   "ice": 1,
+   "nature": 1.5
+  },
+  "monsterDefense": 55,
+  "locAffixes": [
+   {
+    "lifestealReduction": 0.5
+   },
+   {
+    "lifestealReduction": 0.75
+   },
+   {
+    "lifestealReduction": 1
+   }
+  ]
+ },
+ {
+  "id": 4,
+  "name": "Hellish Wastes",
+  "icon": "🔥",
+  "theme": 3,
+  "zones": 10,
+  "xpReward": 50,
+  "bossXp": 180,
+  "minLevel": 13,
+  "maxLevel": 15,
+  "boss": {
+   "name": "Lava Dragon",
+   "face": "assets/monsters/lava_dragon.png",
+   "hp": 26,
+   "types": [
+    "critmaster"
+   ],
+   "attackType": "caster"
+  },
+  "reward": {
+   "gold": 30
+  },
+  "resists": {
+   "fire": 0.5,
+   "ice": 1.5,
+   "nature": 0.75
+  },
+  "monsterDefense": 80,
+  "locAffixes": [
+   {
+    "fireResist": 0.5
+   },
+   {
+    "fireResist": 0.75
+   },
+   {
+    "fireResist": 1
+   }
+  ]
+ }
+]

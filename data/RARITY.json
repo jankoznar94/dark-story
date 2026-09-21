@@ -1,0 +1,22 @@
+{
+ "common": {
+  "name": "Common",
+  "color": "#e8e0e8",
+  "border": "#888"
+ },
+ "magic": {
+  "name": "Magic",
+  "color": "#4a7dff",
+  "border": "#4a7dff"
+ },
+ "rare": {
+  "name": "Rare",
+  "color": "#ffd700",
+  "border": "#ffd700"
+ },
+ "unique": {
+  "name": "Unique",
+  "color": "#b8860b",
+  "border": "#b8860b"
+ }
+}

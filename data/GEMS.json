@@ -1,0 +1,331 @@
+{
+ "ruby": {
+  "name": "Ruby",
+  "icon": "🔴",
+  "qualities": {
+   "chipped": {
+    "name": "Chipped Ruby",
+    "weapon": {
+     "fireDmg": [
+      3,
+      4
+     ]
+    },
+    "armor": {
+     "bonusHp": 10
+    },
+    "shield": {
+     "fireRes": 8
+    }
+   },
+   "flawed": {
+    "name": "Flawed Ruby",
+    "weapon": {
+     "fireDmg": [
+      5,
+      8
+     ]
+    },
+    "armor": {
+     "bonusHp": 17
+    },
+    "shield": {
+     "fireRes": 12
+    }
+   },
+   "normal": {
+    "name": "Ruby",
+    "weapon": {
+     "fireDmg": [
+      8,
+      12
+     ]
+    },
+    "armor": {
+     "bonusHp": 24
+    },
+    "shield": {
+     "fireRes": 16
+    }
+   },
+   "flawless": {
+    "name": "Flawless Ruby",
+    "weapon": {
+     "fireDmg": [
+      10,
+      16
+     ]
+    },
+    "armor": {
+     "bonusHp": 31
+    },
+    "shield": {
+     "fireRes": 20
+    }
+   },
+   "perfect": {
+    "name": "Perfect Ruby",
+    "weapon": {
+     "fireDmg": [
+      15,
+      20
+     ]
+    },
+    "armor": {
+     "bonusHp": 38
+    },
+    "shield": {
+     "fireRes": 25
+    }
+   }
+  }
+ },
+ "sapphire": {
+  "name": "Sapphire",
+  "icon": "🔵",
+  "qualities": {
+   "chipped": {
+    "name": "Chipped Sapphire",
+    "weapon": {
+     "coldDmg": [
+      1,
+      3
+     ]
+    },
+    "armor": {
+     "bonusMana": 10
+    },
+    "shield": {
+     "coldRes": 8
+    }
+   },
+   "flawed": {
+    "name": "Flawed Sapphire",
+    "weapon": {
+     "coldDmg": [
+      3,
+      5
+     ]
+    },
+    "armor": {
+     "bonusMana": 17
+    },
+    "shield": {
+     "coldRes": 12
+    }
+   },
+   "normal": {
+    "name": "Sapphire",
+    "weapon": {
+     "coldDmg": [
+      4,
+      7
+     ]
+    },
+    "armor": {
+     "bonusMana": 24
+    },
+    "shield": {
+     "coldRes": 16
+    }
+   },
+   "flawless": {
+    "name": "Flawless Sapphire",
+    "weapon": {
+     "coldDmg": [
+      6,
+      10
+     ]
+    },
+    "armor": {
+     "bonusMana": 31
+    },
+    "shield": {
+     "coldRes": 20
+    }
+   },
+   "perfect": {
+    "name": "Perfect Sapphire",
+    "weapon": {
+     "coldDmg": [
+      10,
+      14
+     ]
+    },
+    "armor": {
+     "bonusMana": 38
+    },
+    "shield": {
+     "coldRes": 25
+    }
+   }
+  }
+ },
+ "emerald": {
+  "name": "Emerald",
+  "icon": "🟢",
+  "qualities": {
+   "chipped": {
+    "name": "Chipped Emerald",
+    "weapon": {
+     "poisonDmg": [
+      10,
+      10
+     ],
+     "poisonDur": 3
+    },
+    "armor": {
+     "dex": 3
+    },
+    "shield": {
+     "poisonRes": 8
+    }
+   },
+   "flawed": {
+    "name": "Flawed Emerald",
+    "weapon": {
+     "poisonDmg": [
+      20,
+      20
+     ],
+     "poisonDur": 4
+    },
+    "armor": {
+     "dex": 4
+    },
+    "shield": {
+     "poisonRes": 12
+    }
+   },
+   "normal": {
+    "name": "Emerald",
+    "weapon": {
+     "poisonDmg": [
+      40,
+      40
+     ],
+     "poisonDur": 5
+    },
+    "armor": {
+     "dex": 6
+    },
+    "shield": {
+     "poisonRes": 16
+    }
+   },
+   "flawless": {
+    "name": "Flawless Emerald",
+    "weapon": {
+     "poisonDmg": [
+      60,
+      60
+     ],
+     "poisonDur": 6
+    },
+    "armor": {
+     "dex": 8
+    },
+    "shield": {
+     "poisonRes": 20
+    }
+   },
+   "perfect": {
+    "name": "Perfect Emerald",
+    "weapon": {
+     "poisonDmg": [
+      100,
+      100
+     ],
+     "poisonDur": 7
+    },
+    "armor": {
+     "dex": 10
+    },
+    "shield": {
+     "poisonRes": 25
+    }
+   }
+  }
+ },
+ "topaz": {
+  "name": "Topaz",
+  "icon": "🟡",
+  "qualities": {
+   "chipped": {
+    "name": "Chipped Topaz",
+    "weapon": {
+     "lightningDmg": [
+      1,
+      8
+     ]
+    },
+    "armor": {
+     "magicFind": 9
+    },
+    "shield": {
+     "lightningRes": 8
+    }
+   },
+   "flawed": {
+    "name": "Flawed Topaz",
+    "weapon": {
+     "lightningDmg": [
+      1,
+      14
+     ]
+    },
+    "armor": {
+     "magicFind": 13
+    },
+    "shield": {
+     "lightningRes": 12
+    }
+   },
+   "normal": {
+    "name": "Topaz",
+    "weapon": {
+     "lightningDmg": [
+      1,
+      22
+     ]
+    },
+    "armor": {
+     "magicFind": 16
+    },
+    "shield": {
+     "lightningRes": 16
+    }
+   },
+   "flawless": {
+    "name": "Flawless Topaz",
+    "weapon": {
+     "lightningDmg": [
+      1,
+      30
+     ]
+    },
+    "armor": {
+     "magicFind": 20
+    },
+    "shield": {
+     "lightningRes": 20
+    }
+   },
+   "perfect": {
+    "name": "Perfect Topaz",
+    "weapon": {
+     "lightningDmg": [
+      1,
+      40
+     ]
+    },
+    "armor": {
+     "magicFind": 24
+    },
+    "shield": {
+     "lightningRes": 25
+    }
+   }
+  }
+ }
+}

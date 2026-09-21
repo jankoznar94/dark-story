@@ -1,0 +1,4069 @@
+[
+ {
+  "id": "fiery",
+  "name": "Fiery",
+  "type": "prefix",
+  "group": 1,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "smoldering",
+  "name": "Smoldering",
+  "type": "prefix",
+  "group": 1,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "smoking",
+  "name": "Smoking",
+  "type": "prefix",
+  "group": 1,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "flaming",
+  "name": "Flaming",
+  "type": "prefix",
+  "group": 1,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "scorching",
+  "name": "Scorching",
+  "type": "prefix",
+  "group": 1,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "icy",
+  "name": "Icy",
+  "type": "prefix",
+  "group": 2,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "glacial",
+  "name": "Glacial",
+  "type": "prefix",
+  "group": 2,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "freezing",
+  "name": "Freezing",
+  "type": "prefix",
+  "group": 2,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "frigid",
+  "name": "Frigid",
+  "type": "prefix",
+  "group": 2,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "frozen",
+  "name": "Frozen",
+  "type": "prefix",
+  "group": 2,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "shocking",
+  "name": "Shocking",
+  "type": "prefix",
+  "group": 3,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "charged",
+  "name": "Charged",
+  "type": "prefix",
+  "group": 3,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "static",
+  "name": "Static",
+  "type": "prefix",
+  "group": 3,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "glowing",
+  "name": "Glowing",
+  "type": "prefix",
+  "group": 3,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "arcing",
+  "name": "Arcing",
+  "type": "prefix",
+  "group": 3,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "poisoned",
+  "name": "Poisoned",
+  "type": "prefix",
+  "group": 4,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    1,
+    2
+   ],
+   "poisonDur": [
+    1,
+    1
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "toxic",
+  "name": "Toxic",
+  "type": "prefix",
+  "group": 4,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    3,
+    5
+   ],
+   "poisonDur": [
+    2,
+    2
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "pestilent",
+  "name": "Pestilent",
+  "type": "prefix",
+  "group": 4,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    6,
+    11
+   ],
+   "poisonDur": [
+    3,
+    3
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "blight",
+  "name": "Blight",
+  "type": "prefix",
+  "group": 4,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    12,
+    18
+   ],
+   "poisonDur": [
+    4,
+    4
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "venomous",
+  "name": "Venomous",
+  "type": "prefix",
+  "group": 4,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    19,
+    30
+   ],
+   "poisonDur": [
+    5,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "mechanics",
+  "name": "Mechanic's",
+  "type": "prefix",
+  "group": 50,
+  "minIlvl": 5,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "armor",
+   "helmet",
+   "shield"
+  ],
+  "sockets": 1,
+  "tint": "#888"
+ },
+ {
+  "id": "artisans",
+  "name": "Artisan's",
+  "type": "prefix",
+  "group": 50,
+  "minIlvl": 10,
+  "weight": 2,
+  "types": [
+   "weapon",
+   "armor",
+   "helmet",
+   "shield"
+  ],
+  "sockets": 2,
+  "tint": "#888",
+  "magicOnly": true
+ },
+ {
+  "id": "jewelers",
+  "name": "Jeweler's",
+  "type": "prefix",
+  "group": 50,
+  "minIlvl": 18,
+  "weight": 1,
+  "types": [
+   "weapon",
+   "armor",
+   "helmet",
+   "shield"
+  ],
+  "sockets": 3,
+  "tint": "#888",
+  "magicOnly": true
+ },
+ {
+  "id": "ar_keen",
+  "name": "Keen",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    10,
+    20
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_sharp",
+  "name": "Sharp",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 6,
+  "weight": 6,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    21,
+    40
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_fine",
+  "name": "Fine",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 10,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    41,
+    60
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_warriors",
+  "name": "Warrior's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 14,
+  "weight": 4,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    61,
+    80
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_soldiers",
+  "name": "Soldier's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 19,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    81,
+    100
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_knights",
+  "name": "Knight's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 24,
+  "weight": 2,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    101,
+    120
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_lords",
+  "name": "Lord's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 28,
+  "weight": 2,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    121,
+    150
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_kings",
+  "name": "King's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 28,
+  "weight": 1,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    151,
+    300
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ar_masters",
+  "name": "Master's",
+  "type": "prefix",
+  "group": 6,
+  "minIlvl": 35,
+  "weight": 1,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    301,
+    450
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "crit_sharp",
+  "name": "Sharp",
+  "type": "prefix",
+  "group": 7,
+  "minIlvl": 3,
+  "weight": 6,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "critChance": [
+    3,
+    8
+   ]
+  },
+  "tint": "#e67e22"
+ },
+ {
+  "id": "bloody",
+  "name": "Bloody",
+  "type": "prefix",
+  "group": 8,
+  "minIlvl": 5,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    1,
+    2
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "vampire",
+  "name": "Vampire",
+  "type": "prefix",
+  "group": 8,
+  "minIlvl": 10,
+  "weight": 4,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    3,
+    4
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "leech",
+  "name": "Leech",
+  "type": "prefix",
+  "group": 8,
+  "minIlvl": 15,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    5,
+    6
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "manaSteal",
+  "name": "Mana Steal",
+  "type": "prefix",
+  "group": 14,
+  "minIlvl": 4,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    1,
+    2
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "mind",
+  "name": "Mind",
+  "type": "prefix",
+  "group": 14,
+  "minIlvl": 9,
+  "weight": 4,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    3,
+    4
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "soul",
+  "name": "Soul",
+  "type": "prefix",
+  "group": 14,
+  "minIlvl": 14,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    5,
+    6
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "sturdy",
+  "name": "Sturdy",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    10,
+    30
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "strong",
+  "name": "Strong",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 5,
+  "weight": 7,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    31,
+    40
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "glorious",
+  "name": "Glorious",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 10,
+  "weight": 6,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    41,
+    50
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "blessed",
+  "name": "Blessed",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 13,
+  "weight": 5,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    51,
+    65
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "saintly",
+  "name": "Saintly",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 16,
+  "weight": 4,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    66,
+    80
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "holy",
+  "name": "Holy",
+  "type": "prefix",
+  "group": 15,
+  "minIlvl": 18,
+  "weight": 3,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    81,
+    100
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ed_sharp",
+  "name": "Sharp",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 3,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    10,
+    20
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_fine",
+  "name": "Fine",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 6,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    21,
+    30
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_warriors",
+  "name": "Warrior's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 10,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    31,
+    40
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_soldiers",
+  "name": "Soldier's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 14,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    41,
+    50
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_knights",
+  "name": "Knight's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 19,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    51,
+    65
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_lords",
+  "name": "Lord's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 24,
+  "weight": 3,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    66,
+    80
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_kings",
+  "name": "King's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 28,
+  "weight": 2,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    81,
+    100
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_masters",
+  "name": "Master's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 28,
+  "weight": 1,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    101,
+    150
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ed_grandmasters",
+  "name": "Grandmaster's",
+  "type": "prefix",
+  "group": 16,
+  "minIlvl": 35,
+  "weight": 1,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    151,
+    200
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "mystic",
+  "name": "Mystic",
+  "type": "prefix",
+  "group": 9,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "int": [
+    2,
+    6
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "dexterous",
+  "name": "Dexterous",
+  "type": "prefix",
+  "group": 10,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dex": [
+    2,
+    6
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "manaRegen",
+  "name": "Regenerating",
+  "type": "prefix",
+  "group": 12,
+  "minIlvl": 1,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "manaRegen": [
+    1,
+    3
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "skillful",
+  "name": "Skillful",
+  "type": "prefix",
+  "group": 13,
+  "minIlvl": 4,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "skillDmg": [
+    5,
+    15
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "vital",
+  "name": "Vital",
+  "type": "prefix",
+  "group": 20,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    5,
+    15
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofAccuracy",
+  "name": "of Accuracy",
+  "type": "suffix",
+  "group": 105,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    5,
+    10
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofPrecision",
+  "name": "of Precision",
+  "type": "suffix",
+  "group": 105,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    11,
+    20
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofPerfection",
+  "name": "of Perfection",
+  "type": "suffix",
+  "group": 105,
+  "minIlvl": 13,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "attackRating": [
+    21,
+    30
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofCritical",
+  "name": "of Critical",
+  "type": "suffix",
+  "group": 107,
+  "minIlvl": 4,
+  "weight": 6,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "shield"
+  ],
+  "stats": {
+   "critChance": [
+    3,
+    8
+   ]
+  },
+  "tint": "#e67e22"
+ },
+ {
+  "id": "ofWisdom",
+  "name": "of Wisdom",
+  "type": "suffix",
+  "group": 108,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "int": [
+    2,
+    6
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "ofStrength",
+  "name": "of Strength",
+  "type": "suffix",
+  "group": 109,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "str": [
+    2,
+    6
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofEndurance",
+  "name": "of Endurance",
+  "type": "suffix",
+  "group": 110,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "vit": [
+    2,
+    6
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofDexterity",
+  "name": "of Dexterity",
+  "type": "suffix",
+  "group": 111,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "weapon"
+  ],
+  "stats": {
+   "dex": [
+    2,
+    6
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "ofManaRegen",
+  "name": "of Mana Regen",
+  "type": "suffix",
+  "group": 112,
+  "minIlvl": 1,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "manaRegen": [
+    1,
+    3
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofSkill",
+  "name": "of Skill",
+  "type": "suffix",
+  "group": 113,
+  "minIlvl": 5,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "weapon"
+  ],
+  "stats": {
+   "skillDmg": [
+    5,
+    15
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "ofVenom",
+  "name": "of Venom",
+  "type": "suffix",
+  "group": 114,
+  "minIlvl": 5,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    3,
+    8
+   ],
+   "poisonDur": [
+    2,
+    4
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofPestilence",
+  "name": "of Pestilence",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 8,
+  "weight": 3,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    10,
+    22
+   ],
+   "poisonDur": [
+    3,
+    6
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofVampire",
+  "name": "of the Vampire",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 5,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    1,
+    2
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofLeech",
+  "name": "of the Leech",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 10,
+  "weight": 4,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    3,
+    4
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofBat",
+  "name": "of the Bat",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 15,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "lifesteal": [
+    5,
+    6
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofMind",
+  "name": "of the Mind",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 4,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    1,
+    2
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofSoul",
+  "name": "of the Soul",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 9,
+  "weight": 4,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    3,
+    4
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofSpirit",
+  "name": "of the Spirit",
+  "type": "suffix",
+  "group": 115,
+  "minIlvl": 14,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet",
+   "gloves"
+  ],
+  "stats": {
+   "manaSteal": [
+    5,
+    6
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofOx",
+  "name": "of the Ox",
+  "type": "suffix",
+  "group": 121,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    1,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofColossus",
+  "name": "of the Colossus",
+  "type": "suffix",
+  "group": 121,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    6,
+    10
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofTitan",
+  "name": "of the Titan",
+  "type": "suffix",
+  "group": 121,
+  "minIlvl": 12,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    11,
+    15
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofGiant",
+  "name": "of the Giant",
+  "type": "suffix",
+  "group": 121,
+  "minIlvl": 18,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    16,
+    20
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofBurning",
+  "name": "of Burning",
+  "type": "suffix",
+  "group": 122,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofFire",
+  "name": "of Fire",
+  "type": "suffix",
+  "group": 122,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofFlame",
+  "name": "of Flame",
+  "type": "suffix",
+  "group": 122,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofConflagration",
+  "name": "of Conflagration",
+  "type": "suffix",
+  "group": 122,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofIncineration",
+  "name": "of Incineration",
+  "type": "suffix",
+  "group": 122,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "fireDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofFrost",
+  "name": "of Frost",
+  "type": "suffix",
+  "group": 123,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofIce",
+  "name": "of Ice",
+  "type": "suffix",
+  "group": 123,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofWinter",
+  "name": "of Winter",
+  "type": "suffix",
+  "group": 123,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofGlacier",
+  "name": "of the Glacier",
+  "type": "suffix",
+  "group": 123,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofIceberg",
+  "name": "of the Iceberg",
+  "type": "suffix",
+  "group": 123,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "coldDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofStorms",
+  "name": "of Storms",
+  "type": "suffix",
+  "group": 125,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    1,
+    2
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "ofLightning",
+  "name": "of Lightning",
+  "type": "suffix",
+  "group": 125,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    3,
+    5
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "ofThunder",
+  "name": "of Thunder",
+  "type": "suffix",
+  "group": 125,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    6,
+    11
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "ofStormsHigh",
+  "name": "of Storms",
+  "type": "suffix",
+  "group": 125,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    12,
+    18
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "ofLightningHigh",
+  "name": "of Lightning",
+  "type": "suffix",
+  "group": 125,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "lightningDmg": [
+    19,
+    30
+   ]
+  },
+  "tint": "#8b5cf6"
+ },
+ {
+  "id": "ofVenom",
+  "name": "of Venom",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    1,
+    2
+   ],
+   "poisonDur": [
+    1,
+    1
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofPoison",
+  "name": "of Poison",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    3,
+    5
+   ],
+   "poisonDur": [
+    2,
+    2
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofBlight",
+  "name": "of Blight",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    6,
+    11
+   ],
+   "poisonDur": [
+    3,
+    3
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofPlague",
+  "name": "of Plague",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 8,
+  "weight": 5,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    12,
+    18
+   ],
+   "poisonDur": [
+    4,
+    4
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofPestilence",
+  "name": "of Pestilence",
+  "type": "suffix",
+  "group": 124,
+  "minIlvl": 11,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "poisonDmg": [
+    19,
+    30
+   ],
+   "poisonDur": [
+    5,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofFortification",
+  "name": "of Fortification",
+  "type": "suffix",
+  "group": 116,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    5,
+    15
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofProtection",
+  "name": "of Protection",
+  "type": "suffix",
+  "group": 116,
+  "minIlvl": 4,
+  "weight": 7,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    15,
+    30
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofWarding",
+  "name": "of Warding",
+  "type": "suffix",
+  "group": 116,
+  "minIlvl": 7,
+  "weight": 6,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "enhancedDefense": [
+    25,
+    45
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofSlaughter",
+  "name": "of Slaughter",
+  "type": "suffix",
+  "group": 117,
+  "minIlvl": 3,
+  "weight": 8,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "enhancedDmg": [
+    10,
+    30
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "readiness",
+  "name": "Readiness",
+  "type": "prefix",
+  "group": 18,
+  "minIlvl": 3,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "gloves"
+  ],
+  "stats": {
+   "ias": [
+    10,
+    10
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "alacrity",
+  "name": "Alacrity",
+  "type": "prefix",
+  "group": 18,
+  "minIlvl": 13,
+  "weight": 3,
+  "types": [
+   "weapon",
+   "gloves"
+  ],
+  "stats": {
+   "ias": [
+    20,
+    20
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "swiftness",
+  "name": "Swiftness",
+  "type": "prefix",
+  "group": 18,
+  "minIlvl": 17,
+  "weight": 3,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "ias": [
+    30,
+    30
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "quickness",
+  "name": "Quickness",
+  "type": "prefix",
+  "group": 18,
+  "minIlvl": 23,
+  "weight": 2,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "ias": [
+    40,
+    40
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "ofCasting",
+  "name": "of Casting",
+  "type": "suffix",
+  "group": 120,
+  "minIlvl": 5,
+  "weight": 5,
+  "types": [
+   "weapon",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "castSpeed": [
+    10,
+    25
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "crimson",
+  "name": "Crimson",
+  "type": "prefix",
+  "group": 30,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "fireRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "azure",
+  "name": "Azure",
+  "type": "prefix",
+  "group": 31,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "coldRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "tangerine",
+  "name": "Tangerine",
+  "type": "prefix",
+  "group": 32,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lightningRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#f39c12"
+ },
+ {
+  "id": "beryl",
+  "name": "Beryl",
+  "type": "prefix",
+  "group": 33,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "poisonRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "scarlet",
+  "name": "Scarlet",
+  "type": "prefix",
+  "group": 30,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "fireRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "lapis",
+  "name": "Lapis",
+  "type": "prefix",
+  "group": 31,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "coldRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "orange",
+  "name": "Orange",
+  "type": "prefix",
+  "group": 32,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lightningRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#f39c12"
+ },
+ {
+  "id": "jade",
+  "name": "Jade",
+  "type": "prefix",
+  "group": 33,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "poisonRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "scintillating",
+  "name": "Scintillating",
+  "type": "prefix",
+  "group": 34,
+  "minIlvl": 8,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "allRes": [
+    5,
+    12
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "rainbow",
+  "name": "Rainbow",
+  "type": "prefix",
+  "group": 34,
+  "minIlvl": 13,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "allRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "ofWardingFire",
+  "name": "of Warding",
+  "type": "suffix",
+  "group": 130,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "fireRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofWardingCold",
+  "name": "of Frost Warding",
+  "type": "suffix",
+  "group": 131,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "coldRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofWardingLightning",
+  "name": "of Lightning Warding",
+  "type": "suffix",
+  "group": 132,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lightningRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#f39c12"
+ },
+ {
+  "id": "ofWardingPoison",
+  "name": "of Poison Warding",
+  "type": "suffix",
+  "group": 133,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "poisonRes": [
+    5,
+    10
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofBurningWard",
+  "name": "of Burning",
+  "type": "suffix",
+  "group": 130,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "fireRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofFrostWard",
+  "name": "of Frost",
+  "type": "suffix",
+  "group": 131,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "coldRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofStormWard",
+  "name": "of Storms",
+  "type": "suffix",
+  "group": 132,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lightningRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#f39c12"
+ },
+ {
+  "id": "ofVenomWard",
+  "name": "of Venom",
+  "type": "suffix",
+  "group": 133,
+  "minIlvl": 6,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "poisonRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofProtectionAll",
+  "name": "of Protection",
+  "type": "suffix",
+  "group": 134,
+  "minIlvl": 8,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "allRes": [
+    5,
+    12
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "ofImmunity",
+  "name": "of Immunity",
+  "type": "suffix",
+  "group": 134,
+  "minIlvl": 13,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "allRes": [
+    10,
+    20
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "chance",
+  "name": "Chance",
+  "type": "prefix",
+  "group": 35,
+  "minIlvl": 3,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "magicFind": [
+    5,
+    15
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "fortune",
+  "name": "Fortune",
+  "type": "prefix",
+  "group": 35,
+  "minIlvl": 8,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "magicFind": [
+    15,
+    25
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofLuck",
+  "name": "of Luck",
+  "type": "suffix",
+  "group": 135,
+  "minIlvl": 3,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "magicFind": [
+    5,
+    15
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofFortune",
+  "name": "of Fortune",
+  "type": "suffix",
+  "group": 135,
+  "minIlvl": 8,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "magicFind": [
+    15,
+    25
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "greedy",
+  "name": "Greedy",
+  "type": "prefix",
+  "group": 36,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "goldFind": [
+    10,
+    40
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "wealthy",
+  "name": "Wealthy",
+  "type": "prefix",
+  "group": 36,
+  "minIlvl": 6,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "goldFind": [
+    30,
+    80
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofGreed",
+  "name": "of Greed",
+  "type": "suffix",
+  "group": 136,
+  "minIlvl": 1,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "goldFind": [
+    10,
+    40
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofWealth",
+  "name": "of Wealth",
+  "type": "suffix",
+  "group": 136,
+  "minIlvl": 6,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "helmet"
+  ],
+  "stats": {
+   "goldFind": [
+    30,
+    80
+   ]
+  },
+  "tint": "#f1c40f"
+ },
+ {
+  "id": "ofSorcery",
+  "name": "of Sorcery",
+  "type": "suffix",
+  "group": 137,
+  "minIlvl": 15,
+  "weight": 2,
+  "types": [
+   "amulet"
+  ],
+  "stats": {
+   "allSkills": [
+    1,
+    1
+   ]
+  },
+  "tint": "#9b59b6"
+ },
+ {
+  "id": "ofBarbarian",
+  "name": "of the Barbarian",
+  "type": "suffix",
+  "group": 138,
+  "minIlvl": 10,
+  "weight": 3,
+  "types": [
+   "amulet"
+  ],
+  "stats": {
+   "classSkills": [
+    "barbarian",
+    1,
+    1
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofAssassin",
+  "name": "of the Assassin",
+  "type": "suffix",
+  "group": 138,
+  "minIlvl": 10,
+  "weight": 3,
+  "types": [
+   "amulet"
+  ],
+  "stats": {
+   "classSkills": [
+    "assassin",
+    1,
+    1
+   ]
+  },
+  "tint": "#1abc9c"
+ },
+ {
+  "id": "ofMage",
+  "name": "of the Mage",
+  "type": "suffix",
+  "group": 138,
+  "minIlvl": 10,
+  "weight": 3,
+  "types": [
+   "amulet"
+  ],
+  "stats": {
+   "classSkills": [
+    "mage",
+    1,
+    1
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "jackal",
+  "name": "Jackal",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    1,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "fox",
+  "name": "Fox",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 4,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    6,
+    10
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "wolf",
+  "name": "Wolf",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 8,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    11,
+    20
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "tiger",
+  "name": "Tiger",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 10,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    21,
+    30
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "mammoth",
+  "name": "Mammoth",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 13,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    31,
+    40
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "colossus",
+  "name": "Colossus",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 15,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    41,
+    60
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "squid",
+  "name": "Squid",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 20,
+  "weight": 2,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    61,
+    80
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "whale",
+  "name": "Whale",
+  "type": "prefix",
+  "group": 140,
+  "minIlvl": 25,
+  "weight": 1,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusHp": [
+    81,
+    100
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "str_strength",
+  "name": "Strength",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    1,
+    2
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_virility",
+  "name": "Virility",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    1,
+    9
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_might",
+  "name": "Might",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    3,
+    5
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_ox",
+  "name": "Ox",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 13,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    6,
+    9
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_giant",
+  "name": "Giant",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 21,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    10,
+    15
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_titan",
+  "name": "Titan",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 29,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    16,
+    20
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "str_atlas",
+  "name": "Atlas",
+  "type": "prefix",
+  "group": 141,
+  "minIlvl": 36,
+  "weight": 2,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "str": [
+    21,
+    30
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "vit_vitality",
+  "name": "Vitality",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    1,
+    2
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_virility",
+  "name": "Virility",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    1,
+    9
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_might",
+  "name": "Might",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    3,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_ox",
+  "name": "Ox",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 13,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    6,
+    9
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_giant",
+  "name": "Giant",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 21,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    10,
+    15
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_titan",
+  "name": "Titan",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 29,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    16,
+    20
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "vit_atlas",
+  "name": "Atlas",
+  "type": "prefix",
+  "group": 142,
+  "minIlvl": 36,
+  "weight": 2,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots",
+   "weapon"
+  ],
+  "stats": {
+   "vit": [
+    21,
+    30
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "lizards",
+  "name": "Lizard's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 1,
+  "weight": 8,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    1,
+    5
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "snakes",
+  "name": "Snake's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 3,
+  "weight": 7,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    6,
+    10
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "serpents",
+  "name": "Serpent's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 7,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    11,
+    20
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "drakes",
+  "name": "Drake's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 10,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    21,
+    30
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "dragons",
+  "name": "Dragon's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 12,
+  "weight": 4,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    31,
+    40
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "wyrms",
+  "name": "Wyrm's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 15,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    41,
+    60
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "greatWyrms",
+  "name": "Great Wyrm's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 19,
+  "weight": 2,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    61,
+    90
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "bahamuts",
+  "name": "Bahamut's",
+  "type": "prefix",
+  "group": 143,
+  "minIlvl": 23,
+  "weight": 1,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "bonusMana": [
+    91,
+    120
+   ]
+  },
+  "tint": "#4a7dff"
+ },
+ {
+  "id": "ofThorns",
+  "name": "of Thorns",
+  "type": "suffix",
+  "group": 150,
+  "minIlvl": 1,
+  "weight": 7,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "thorns": [
+    1,
+    3
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofSpikes",
+  "name": "of Spikes",
+  "type": "suffix",
+  "group": 150,
+  "minIlvl": 11,
+  "weight": 5,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "thorns": [
+    4,
+    6
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofRazors",
+  "name": "of Razors",
+  "type": "suffix",
+  "group": 150,
+  "minIlvl": 17,
+  "weight": 4,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "thorns": [
+    7,
+    9
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofSwords",
+  "name": "of Swords",
+  "type": "suffix",
+  "group": 150,
+  "minIlvl": 24,
+  "weight": 2,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "thorns": [
+    10,
+    20
+   ]
+  },
+  "tint": "#e94560"
+ },
+ {
+  "id": "ofHealth",
+  "name": "of Health",
+  "type": "suffix",
+  "group": 151,
+  "minIlvl": 4,
+  "weight": 7,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dmgReduction": [
+    1,
+    1
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofProtectionDR",
+  "name": "of Protection",
+  "type": "suffix",
+  "group": 151,
+  "minIlvl": 9,
+  "weight": 6,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dmgReduction": [
+    2,
+    2
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofAbsorption",
+  "name": "of Absorption",
+  "type": "suffix",
+  "group": 151,
+  "minIlvl": 13,
+  "weight": 5,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dmgReduction": [
+    3,
+    3
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofLifeDR",
+  "name": "of Life",
+  "type": "suffix",
+  "group": 151,
+  "minIlvl": 18,
+  "weight": 4,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dmgReduction": [
+    4,
+    7
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofAmicae",
+  "name": "of Amicae",
+  "type": "suffix",
+  "group": 151,
+  "minIlvl": 26,
+  "weight": 2,
+  "types": [
+   "armor",
+   "shield",
+   "helmet",
+   "belt",
+   "gloves",
+   "boots",
+   "ring",
+   "amulet"
+  ],
+  "stats": {
+   "dmgReduction": [
+    8,
+    15
+   ]
+  },
+  "tint": "#888"
+ },
+ {
+  "id": "ofRegeneration",
+  "name": "of Regeneration",
+  "type": "suffix",
+  "group": 152,
+  "minIlvl": 5,
+  "weight": 6,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lifeRegen": [
+    3,
+    5
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofRegrowth",
+  "name": "of Regrowth",
+  "type": "suffix",
+  "group": 152,
+  "minIlvl": 9,
+  "weight": 5,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lifeRegen": [
+    6,
+    10
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofRevivification",
+  "name": "of Revivification",
+  "type": "suffix",
+  "group": 152,
+  "minIlvl": 19,
+  "weight": 3,
+  "types": [
+   "ring",
+   "amulet",
+   "armor",
+   "helmet",
+   "shield",
+   "belt",
+   "gloves",
+   "boots"
+  ],
+  "stats": {
+   "lifeRegen": [
+    11,
+    15
+   ]
+  },
+  "tint": "#2ecc71"
+ },
+ {
+  "id": "ofBear",
+  "name": "of Bear",
+  "type": "suffix",
+  "group": 153,
+  "minIlvl": 4,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "knockback": 1
+  },
+  "tint": "#e67e22"
+ },
+ {
+  "id": "ofVileness",
+  "name": "of Vileness",
+  "type": "suffix",
+  "group": 154,
+  "minIlvl": 5,
+  "weight": 4,
+  "types": [
+   "weapon"
+  ],
+  "stats": {
+   "preventHeal": 1
+  },
+  "tint": "#9b59b6"
+ }
+]

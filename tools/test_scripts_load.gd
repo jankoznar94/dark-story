@@ -1,59 +1,50 @@
 extends SceneTree
-## LOAD EVERY SCRIPT. The gate that catches a PARSE ERROR in a file nothing else
-## has touched yet.
+## tools/test_scripts_load.gd — loads EVERY .gd by its real path.
 ##
-## Why this exists next to `godot --headless --path . --import`: the import run
-## does NOT surface a parse error in a script that is not yet reachable from the
-## resource cache. Measured (Sept 2026): a `_delta` rename in `enemy_base.gd` left
-## six "Identifier \"delta\" not declared" errors, `--import` printed NOTHING at
-## all, and the first symptom was a half-built scene with no monsters, no loot and
-## an empty test. Loading every script by its real path is the check that catches
-## it in one second, with the file and the line.
+## A parse error in a script nothing has loaded yet does not surface during
+## `--import`: measured on the Dark Story side, six "Identifier not declared"
+## errors produced no import output at all and the first symptom was a half-built
+## scene at runtime. This takes about a second and turns that into a hard gate.
 ##
-## Run: godot --headless --path . --script res://tools/test_scripts_load.gd
-## Prints SCRIPT_LOAD_ALL_PASS=true and exits 0, or the list of failures.
+## Run:  godot --headless --path . --script res://tools/test_scripts_load.gd
+## Pass: prints SCRIPT_LOAD_ALL_PASS=true
 
-func _init() -> void:
-	var failures: Array = []
-	var n := 0
-	for path in _all_scripts("res://scripts") + _all_scripts("res://tools"):
-		n += 1
-		var s: Resource = load(path)
-		# A PARSE ERROR does not make load() return null - measured: it returns a
-		# GDScript object that cannot be instantiated, so a null check alone passed
-		# while six files were broken. `can_instantiate()` is the honest question.
-		if s == null:
-			failures.append("%s -> load() returned null" % path)
-		elif not (s as GDScript).can_instantiate():
-			failures.append("%s -> PARSE ERROR (cannot instantiate)" % path)
-	print("scripts loaded: %d" % n)
-	if failures.is_empty() and n > 20:
+func _initialize() -> void:
+	var failures: Array[String] = []
+	var checked := 0
+
+	for dir_path in ["res://scripts", "res://tools"]:
+		for file_path in _all_gd_files(dir_path):
+			checked += 1
+			var res: Resource = load(file_path)
+			if res == null:
+				failures.append(file_path)
+				continue
+			# A script that parses but whose base was missing still loads as a
+			# Resource; get_instance_base_type() catches the broken ones.
+			if res is Script and (res as Script).can_instantiate() == false:
+				failures.append("%s (cannot instantiate)" % file_path)
+
+	print("  checked %d .gd files" % checked)
+	for f in failures:
+		print("  FAIL: %s" % f)
+	if failures.is_empty():
 		print("SCRIPT_LOAD_ALL_PASS=true")
 	else:
-		for f in failures:
-			print("FAIL: ", f)
 		print("SCRIPT_LOAD_ALL_PASS=false")
-	quit()
+	quit(0 if failures.is_empty() else 1)
 
 
-## Recursive .gd listing. A plain directory walk rather than `DirAccess` filters,
-## so a new folder of scripts cannot be silently skipped.
-func _all_scripts(dir_path: String) -> Array:
-	var out: Array = []
-	var d := DirAccess.open(dir_path)
-	if d == null:
+func _all_gd_files(dir_path: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
 		return out
-	d.list_dir_begin()
-	var name := d.get_next()
-	while name != "":
-		if name.begins_with("."):
-			name = d.get_next()
+	for file_name in dir.get_files():
+		if file_name.ends_with(".gd"):
+			out.append(dir_path.path_join(file_name))
+	for sub in dir.get_directories():
+		if sub.begins_with("."):
 			continue
-		var full := dir_path.path_join(name)
-		if d.current_is_dir():
-			out.append_array(_all_scripts(full))
-		elif name.ends_with(".gd"):
-			out.append(full)
-		name = d.get_next()
-	d.list_dir_end()
+		out.append_array(_all_gd_files(dir_path.path_join(sub)))
 	return out

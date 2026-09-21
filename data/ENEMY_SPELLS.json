@@ -1,0 +1,112 @@
+{
+ "poison_bolt": {
+  "name": "Poison Bolt",
+  "icon": "☠️",
+  "iconImg": "poison_bolt.png",
+  "castTime": 1500,
+  "manaCost": 10,
+  "type": "poison",
+  "minManaPct": 0.2,
+  "desc": "DoT on player (3 ticks)"
+ },
+ "drain_life": {
+  "name": "Drain Life",
+  "icon": "🩸",
+  "iconImg": "drain_life.png",
+  "castTime": 1200,
+  "manaCost": 8,
+  "type": "lifestealer",
+  "minManaPct": 0.15,
+  "desc": "Damage + heals enemy"
+ },
+ "mana_drain": {
+  "name": "Mana Drain",
+  "icon": "💧",
+  "iconImg": "mana_drain.png",
+  "castTime": 1000,
+  "manaCost": 5,
+  "type": "manastealer",
+  "minManaPct": 0.1,
+  "desc": "Damage + mana drain"
+ },
+ "shadow_bolt": {
+  "name": "Shadow Bolt",
+  "icon": "🎯",
+  "iconImg": "shadow_bolt.png",
+  "castTime": 1300,
+  "manaCost": 8,
+  "type": "critmaster",
+  "minManaPct": 0.15,
+  "desc": "High crit chance"
+ },
+ "heal": {
+  "name": "Heal",
+  "icon": "💚",
+  "iconImg": "heal.png",
+  "castTime": 2000,
+  "manaCost": 15,
+  "type": "lifestealer",
+  "minManaPct": 0.3,
+  "desc": "Heals enemy for 30% HP"
+ },
+ "defensive_shout": {
+  "name": "Defensive Shout",
+  "icon": "🛡️",
+  "iconImg": "defensiveShout.png",
+  "castTime": 1000,
+  "manaCost": 20,
+  "type": "manastealer",
+  "minManaPct": 0,
+  "desc": "Reduces incoming damage by 30% for 8s"
+ },
+ "battle_shout": {
+  "name": "Battle Shout",
+  "icon": "📯",
+  "iconImg": "battleShout.png",
+  "castTime": 1000,
+  "manaCost": 25,
+  "type": "critmaster",
+  "minManaPct": 0,
+  "desc": "+50% damage for 8s"
+ },
+ "thorn_shield": {
+  "name": "Thorn Shield",
+  "icon": "🌵",
+  "iconImg": "thorn_shield.png",
+  "castTime": 1500,
+  "manaCost": 50,
+  "type": "lifestealer",
+  "minManaPct": 0.5,
+  "desc": "Returns 5-10 dmg to attacker for 10s"
+ },
+ "faerie_fire": {
+  "name": "Faerie Fire",
+  "icon": "✨",
+  "iconImg": "faerie_fire.png",
+  "castTime": 2000,
+  "manaCost": 25,
+  "type": "lifestealer",
+  "minManaPct": 0.3,
+  "desc": "Reduces player resistances by 50% for 10s"
+ },
+ "slow": {
+  "name": "Slow",
+  "icon": "🐌",
+  "iconImg": "slow.png",
+  "castTime": 3000,
+  "manaCost": 20,
+  "type": "poison",
+  "minManaPct": 0.3,
+  "desc": "Slows player attack speed by 50% for 5s"
+ },
+ "evasion": {
+  "name": "Evasion",
+  "icon": "💨",
+  "iconImg": "evasion.png",
+  "castTime": 1000,
+  "manaCost": 15,
+  "type": "critmaster",
+  "minManaPct": 0.2,
+  "desc": "30% dodge chance for 6s"
+ }
+}

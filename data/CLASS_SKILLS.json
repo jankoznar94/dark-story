@@ -1,0 +1,436 @@
+{
+ "barbarian": {
+  "id": "barbarian",
+  "name": "Barbarian",
+  "icon": "🪓",
+  "desc": "Strong physical attacks and battle cries.",
+  "trees": {
+   "combat": {
+    "name": "Combat",
+    "icon": "⚔️",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "pummel",
+        "name": "Pummel",
+        "icon": "👊",
+        "iconImg": "pummel.png",
+        "maxLv": 5
+       },
+       {
+        "k": "oneHandSpec",
+        "name": "One-Hand Specialization",
+        "icon": "🗡️",
+        "iconImg": "oneHandSpec.png",
+        "maxLv": 5
+       },
+       {
+        "k": "twoHandSpec",
+        "name": "Two-Hand Specialization",
+        "icon": "🪓",
+        "iconImg": "twoHandSpec.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "doubleSwing",
+        "name": "Double Swing",
+        "icon": "⚔️",
+        "iconImg": "doubleSwing.png",
+        "maxLv": 5,
+        "requires": "barbarian_oneHandSpec",
+        "requiresLv": 5
+       },
+       {
+        "k": "heroicStrike",
+        "name": "Heroic Strike",
+        "icon": "💢",
+        "iconImg": "heroicStrike.png",
+        "maxLv": 5,
+        "requires": "barbarian_twoHandSpec",
+        "requiresLv": 5
+       },
+       {
+        "k": "whirlwind",
+        "name": "Whirlwind",
+        "icon": "🌀",
+        "iconImg": "whirlwind.png",
+        "maxLv": 4,
+        "requires": "barbarian_oneHandSpec",
+        "requiresLv": 1
+       },
+       {
+        "k": "frenzy",
+        "name": "Frenzy",
+        "icon": "⚔️",
+        "iconImg": "frenzy.png",
+        "maxLv": 5,
+        "requiresAny": [
+         "barbarian_oneHandSpec",
+         "barbarian_twoHandSpec"
+        ],
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   },
+   "shouts": {
+    "name": "Shouts",
+    "icon": "📯",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "battleShout",
+        "name": "Battle Shout",
+        "icon": "📯",
+        "iconImg": "battleShout.png",
+        "maxLv": 5
+       },
+       {
+        "k": "defensiveShout",
+        "name": "Defensive Shout",
+        "icon": "🛡️",
+        "iconImg": "defensiveShout.png",
+        "maxLv": 5
+       }
+      ]
+     }
+    ]
+   },
+   "defense": {
+    "name": "Defense",
+    "icon": "🛡️",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "shieldSpec",
+        "name": "Shield Specialization",
+        "icon": "🛡️",
+        "iconImg": "shield_bash.png",
+        "maxLv": 5
+       },
+       {
+        "k": "thunderClap",
+        "name": "Thunder Clap",
+        "icon": "🌩️",
+        "iconImg": "thunderClap.png",
+        "maxLv": 5
+       },
+       {
+        "k": "thunderBolt",
+        "name": "Thunder Bolt",
+        "icon": "⚡",
+        "iconImg": "thunderBolt.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "shieldSlam",
+        "name": "Shield Slam",
+        "icon": "🛡️",
+        "iconImg": "shield_bash.png",
+        "maxLv": 5,
+        "requires": "barbarian_shieldSpec",
+        "requiresLv": 1
+       },
+       {
+        "k": "spellReflect",
+        "name": "Spell Reflect",
+        "icon": "🪞",
+        "iconImg": "spellReflect.png",
+        "maxLv": 5,
+        "requires": "barbarian_shieldSpec",
+        "requiresLv": 1
+       },
+       {
+        "k": "counterAttack",
+        "name": "Counter Attack",
+        "icon": "⚔️",
+        "iconImg": "counterAttack.png",
+        "maxLv": 5
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "assassin": {
+  "id": "assassin",
+  "name": "Assassin",
+  "icon": "🗡️",
+  "desc": "Fast attacks, critical hits and shadows.",
+  "trees": {
+   "attacks": {
+    "name": "Attacks",
+    "icon": "⚔️",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "shadowStrike",
+        "name": "Shadow Strike",
+        "icon": "💢",
+        "iconImg": "shadowStrike.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "bladeFury",
+        "name": "Blade Fury",
+        "icon": "⚡",
+        "iconImg": "bladeFury.png",
+        "maxLv": 5,
+        "requires": "assassin_shadowStrike",
+        "requiresLv": 1
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "deathMark",
+        "name": "Death Mark",
+        "icon": "🎯",
+        "iconImg": "deathMark.png",
+        "maxLv": 5,
+        "requires": "assassin_bladeFury",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   },
+   "shadows": {
+    "name": "Shadows",
+    "icon": "🌑",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "poisonBlade",
+        "name": "Poison Blade",
+        "icon": "☠️",
+        "iconImg": "poisonBlade.png",
+        "maxLv": 5
+       },
+       {
+        "k": "evasion",
+        "name": "Evasion",
+        "icon": "💨",
+        "iconImg": "evasion.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "smokeScreen",
+        "name": "Smoke Screen",
+        "icon": "🌫️",
+        "iconImg": "smokeScreen.png",
+        "maxLv": 5,
+        "requires": "assassin_poisonBlade",
+        "requiresLv": 1
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "shadowDance",
+        "name": "Shadow Dance",
+        "icon": "🌙",
+        "iconImg": "shadowDance.png",
+        "maxLv": 5,
+        "requires": "assassin_smokeScreen",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   },
+   "poisons": {
+    "name": "Poisons",
+    "icon": "☠️",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "poisonedWeapon",
+        "name": "Poisoned Weapon",
+        "icon": "☠️",
+        "iconImg": "poisonedWeapon.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "poisonExplosion",
+        "name": "Poison Explosion",
+        "icon": "💥",
+        "iconImg": "poisonExplosion.png",
+        "maxLv": 5,
+        "requires": "assassin_poisonedWeapon",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "mage": {
+  "id": "mage",
+  "name": "Mage",
+  "icon": "🔮",
+  "desc": "Powerful spells of fire, ice and lightning.",
+  "trees": {
+   "fire": {
+    "name": "Fire",
+    "icon": "🔥",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "firebolt",
+        "name": "Firebolt",
+        "icon": "🔥",
+        "iconImg": "firebolt.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "fireball",
+        "name": "Fireball",
+        "icon": "💥",
+        "iconImg": "fireball.png",
+        "maxLv": 5,
+        "requires": "mage_firebolt",
+        "requiresLv": 1
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "fireblast",
+        "name": "Fireblast",
+        "icon": "🌋",
+        "iconImg": "fireblast.png",
+        "maxLv": 5,
+        "requires": "mage_fireball",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   },
+   "ice": {
+    "name": "Ice",
+    "icon": "❄️",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "icebolt",
+        "name": "Icebolt",
+        "icon": "❄️",
+        "iconImg": "icebolt.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "frostbolt",
+        "name": "Frostbolt",
+        "icon": "🧊",
+        "iconImg": "frostbolt.png",
+        "maxLv": 5,
+        "requires": "mage_icebolt",
+        "requiresLv": 1
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "blizzard",
+        "name": "Blizzard",
+        "icon": "🌨️",
+        "iconImg": "blizzard.png",
+        "maxLv": 5,
+        "requires": "mage_frostbolt",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   },
+   "lightning": {
+    "name": "Lightning",
+    "icon": "⚡",
+    "tiers": [
+     {
+      "choices": [
+       {
+        "k": "lightningBolt",
+        "name": "Lightning Bolt",
+        "icon": "⚡",
+        "iconImg": "lightningBolt.png",
+        "maxLv": 5
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "chainLightning",
+        "name": "Chain Lightning",
+        "icon": "⚡",
+        "iconImg": "chainLightning.png",
+        "maxLv": 5,
+        "requires": "mage_lightningBolt",
+        "requiresLv": 1
+       }
+      ]
+     },
+     {
+      "choices": [
+       {
+        "k": "thunderStorm",
+        "name": "Thunder Storm",
+        "icon": "🌩️",
+        "iconImg": "thunderStorm.png",
+        "maxLv": 5,
+        "requires": "mage_chainLightning",
+        "requiresLv": 1
+       }
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

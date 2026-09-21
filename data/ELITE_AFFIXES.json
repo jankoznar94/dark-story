@@ -1,0 +1,93 @@
+[
+ {
+  "name": "Fire Enchanted",
+  "icon": "🔥",
+  "desc": "+fire dmg · +fire resist · exploduje",
+  "element": "fire",
+  "resistSelf": "fire",
+  "dmgMult": 1.2,
+  "elementDmgMult": 0.5,
+  "death": "nova-fire"
+ },
+ {
+  "name": "Cold Enchanted",
+  "icon": "❄️",
+  "desc": "+cold dmg · +cold resist · nova",
+  "element": "ice",
+  "resistSelf": "ice",
+  "dmgMult": 1.1,
+  "elementDmgMult": 0.45,
+  "death": "nova-cold"
+ },
+ {
+  "name": "Lightning Enchanted",
+  "icon": "⚡",
+  "desc": "+light dmg · +light resist · burst",
+  "element": "lightning",
+  "resistSelf": "lightning",
+  "dmgMult": 1.1,
+  "elementDmgMult": 0.45,
+  "onHit": "lightning"
+ },
+ {
+  "name": "Poison Enchanted",
+  "icon": "☠️",
+  "desc": "+poison dmg · +poison resist · jed",
+  "element": "nature",
+  "resistSelf": "nature",
+  "dmgMult": 1.1,
+  "elementDmgMult": 0.35,
+  "onHit": "poison"
+ },
+ {
+  "name": "Extra Strong",
+  "icon": "💪",
+  "desc": "+80% dmg",
+  "dmgMult": 1.8
+ },
+ {
+  "name": "Extra Fast",
+  "icon": "💨",
+  "desc": "+50% attack speed",
+  "attackSpeedMult": 0.67
+ },
+ {
+  "name": "Extra Healthy",
+  "icon": "❤️",
+  "desc": "+50% HP",
+  "hpMult": 1.5
+ },
+ {
+  "name": "Magic Resistant",
+  "icon": "🛡️",
+  "desc": "+40% resist ke všem elementům",
+  "resistAll": 0.4
+ },
+ {
+  "name": "Stone Skin",
+  "icon": "🪨",
+  "desc": "-50% fyz dmg + defense",
+  "drMult": 0.5,
+  "defMult": 2
+ },
+ {
+  "name": "Mana Burn",
+  "icon": "💜",
+  "desc": "krade manu · +magic resist",
+  "manaBurn": true,
+  "resistAll": 0.3
+ },
+ {
+  "name": "Cursed",
+  "icon": "💀",
+  "desc": "75% šance amplify damage",
+  "curse": true
+ },
+ {
+  "name": "Aura Enchanted",
+  "icon": "✨",
+  "desc": "aura · +30% dmg minionům",
+  "aura": true,
+  "auraDmgMult": 1.3
+ }
+]

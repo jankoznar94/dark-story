@@ -1,0 +1,27 @@
+[
+ {
+  "bg": "#0d2d0d",
+  "border": "#2ecc71",
+  "borderGlow": "rgba(46,204,113,0.3)"
+ },
+ {
+  "bg": "#2a1a08",
+  "border": "#e67e22",
+  "borderGlow": "rgba(230,126,34,0.3)"
+ },
+ {
+  "bg": "#1a0d2a",
+  "border": "#b07cd8",
+  "borderGlow": "rgba(176,124,216,0.3)"
+ },
+ {
+  "bg": "#2d0d0d",
+  "border": "#e74c3c",
+  "borderGlow": "rgba(231,76,60,0.3)"
+ },
+ {
+  "bg": "#0d122d",
+  "border": "#4a9eff",
+  "borderGlow": "rgba(74,158,255,0.3)"
+ }
+]

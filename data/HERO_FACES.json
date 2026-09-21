@@ -1,0 +1,32 @@
+[
+ {
+  "id": "hero"
+ },
+ {
+  "id": "hero_warrior_f"
+ },
+ {
+  "id": "hero_mage_m"
+ },
+ {
+  "id": "hero_mage_f"
+ },
+ {
+  "id": "hero_barbarian_m"
+ },
+ {
+  "id": "hero_barbarian_f"
+ },
+ {
+  "id": "hero_rogue_m"
+ },
+ {
+  "id": "hero_rogue_f"
+ },
+ {
+  "id": "hero_paladin_m"
+ },
+ {
+  "id": "hero_paladin_f"
+ }
+]

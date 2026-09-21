@@ -1,0 +1,959 @@
+[
+ [
+  {
+   "face": "assets/monsters/lesni_rarach.png",
+   "name": "Forest Imp",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 10,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.9,
+    "lightning": 1
+   },
+   "hp": 60,
+   "dmgMin": 5,
+   "dmgMax": 9,
+   "attackSpeed": 1500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 50,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 0
+  },
+  {
+   "face": "assets/monsters/troll_test_small.png",
+   "name": "Troll",
+   "type": "manastealer",
+   "attackType": "melee",
+   "defense": 12,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.9,
+    "lightning": 1
+   },
+   "hp": 120,
+   "dmgMin": 8,
+   "dmgMax": 12,
+   "attackSpeed": 1400,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "defensive_shout"
+   ],
+   "minArea": 1
+  },
+  {
+   "face": "assets/monsters/moc_alova_prisera.png",
+   "name": "Swamp Horror",
+   "type": "poison",
+   "attackType": "caster",
+   "defense": 8,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.8,
+    "lightning": 1
+   },
+   "hp": 110,
+   "dmgMin": 10,
+   "dmgMax": 14,
+   "attackSpeed": 2200,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 60,
+   "spells": [
+    "slow"
+   ],
+   "minArea": 2
+  },
+  {
+   "face": "assets/monsters/vlk.png",
+   "name": "Wolf",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 8,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 90,
+   "dmgMin": 6,
+   "dmgMax": 10,
+   "attackSpeed": 1200,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "evasion"
+   ],
+   "minArea": 3
+  },
+  {
+   "face": "assets/monsters/medved.png",
+   "name": "Bear",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 20,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.8,
+    "lightning": 1
+   },
+   "hp": 180,
+   "dmgMin": 16,
+   "dmgMax": 22,
+   "attackSpeed": 2500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "battle_shout"
+   ],
+   "minArea": 4
+  },
+  {
+   "face": "assets/monsters/dryada.png",
+   "name": "Dryad",
+   "type": "lifestealer",
+   "attackType": "caster",
+   "defense": 5,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.7,
+    "lightning": 1
+   },
+   "hp": 70,
+   "dmgMin": 7,
+   "dmgMax": 11,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 75,
+   "spells": [
+    "faerie_fire"
+   ],
+   "minArea": 5
+  },
+  {
+   "face": "assets/monsters/satyr.png",
+   "name": "Satyr",
+   "type": "poison",
+   "attackType": "melee",
+   "defense": 6,
+   "resists": {
+    "fire": 1,
+    "ice": 1,
+    "nature": 0.9,
+    "lightning": 1
+   },
+   "hp": 100,
+   "dmgMin": 10,
+   "dmgMax": 15,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [],
+   "passivePoisonWeapon": true,
+   "minArea": 6
+  },
+  {
+   "face": "assets/monsters/ent.png",
+   "name": "Ent",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 18,
+   "resists": {
+    "fire": 1.2,
+    "ice": 1,
+    "nature": 0.8,
+    "lightning": 1
+   },
+   "hp": 200,
+   "dmgMin": 18,
+   "dmgMax": 25,
+   "attackSpeed": 3000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 50,
+   "spells": [
+    "thorn_shield"
+   ],
+   "minArea": 7
+  }
+ ],
+ [
+  {
+   "face": "assets/monsters/desert_scorpion.png",
+   "name": "Scorpion",
+   "type": "poison",
+   "attackType": "melee",
+   "defense": 16,
+   "resists": {
+    "fire": 0.8,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 130,
+   "dmgMin": 13,
+   "dmgMax": 22,
+   "attackSpeed": 1500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 60,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 0
+  },
+  {
+   "face": "assets/monsters/desert_worm.png",
+   "name": "Sand Worm",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 14,
+   "resists": {
+    "fire": 0.8,
+    "ice": 1.2,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 190,
+   "dmgMin": 16,
+   "dmgMax": 26,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 1
+  },
+  {
+   "face": "assets/monsters/desert_centaur.png",
+   "name": "Centaur",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 15,
+   "resists": {
+    "fire": 0.9,
+    "ice": 1.2,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 170,
+   "dmgMin": 18,
+   "dmgMax": 29,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [],
+   "minArea": 2
+  },
+  {
+   "face": "assets/monsters/desert_nomad.png",
+   "name": "Nomad",
+   "type": "manastealer",
+   "attackType": "caster",
+   "defense": 8,
+   "resists": {
+    "fire": 0.8,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 120,
+   "dmgMin": 14,
+   "dmgMax": 23,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 3
+  },
+  {
+   "face": "assets/monsters/desert_djinn.png",
+   "name": "Djinn",
+   "type": "manastealer",
+   "attackType": "caster",
+   "defense": 6,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1.4,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 110,
+   "dmgMin": 17,
+   "dmgMax": 27,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 4
+  },
+  {
+   "face": "assets/monsters/desert_mummy.png",
+   "name": "Mummy",
+   "type": "poison",
+   "attackType": "caster",
+   "defense": 10,
+   "resists": {
+    "fire": 0.9,
+    "ice": 1.2,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 160,
+   "dmgMin": 16,
+   "dmgMax": 25,
+   "attackSpeed": 2200,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 5
+  },
+  {
+   "face": "assets/monsters/desert_beetle.png",
+   "name": "Scarab",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 22,
+   "resists": {
+    "fire": 0.8,
+    "ice": 1.2,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 210,
+   "dmgMin": 20,
+   "dmgMax": 32,
+   "attackSpeed": 1400,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "evasion"
+   ],
+   "minArea": 6
+  },
+  {
+   "face": "assets/monsters/desert_cobra.png",
+   "name": "Cobra",
+   "type": "poison",
+   "attackType": "caster",
+   "defense": 7,
+   "resists": {
+    "fire": 0.9,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 140,
+   "dmgMin": 18,
+   "dmgMax": 29,
+   "attackSpeed": 1600,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 7
+  }
+ ],
+ [
+  {
+   "face": "assets/monsters/skeleton.png",
+   "name": "Skeleton",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 14,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1,
+    "nature": 1.3,
+    "lightning": 1
+   },
+   "hp": 180,
+   "dmgMin": 20,
+   "dmgMax": 32,
+   "attackSpeed": 1500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "evasion"
+   ],
+   "minArea": 0
+  },
+  {
+   "face": "assets/monsters/zombie.png",
+   "name": "Zombie",
+   "type": "poison",
+   "attackType": "melee",
+   "defense": 12,
+   "resists": {
+    "fire": 0.6,
+    "ice": 1,
+    "nature": 1.4,
+    "lightning": 1
+   },
+   "hp": 260,
+   "dmgMin": 24,
+   "dmgMax": 38,
+   "attackSpeed": 2200,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [],
+   "minArea": 1
+  },
+  {
+   "face": "assets/monsters/lich.png",
+   "name": "Lich",
+   "type": "manastealer",
+   "attackType": "caster",
+   "defense": 5,
+   "resists": {
+    "fire": 0.5,
+    "ice": 1,
+    "nature": 1.5,
+    "lightning": 1
+   },
+   "hp": 150,
+   "dmgMin": 26,
+   "dmgMax": 40,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 2
+  },
+  {
+   "face": "assets/monsters/bone_dragon.png",
+   "name": "Bone Dragon",
+   "type": "critmaster",
+   "attackType": "caster",
+   "defense": 10,
+   "resists": {
+    "fire": 0.6,
+    "ice": 1,
+    "nature": 1.4,
+    "lightning": 1
+   },
+   "hp": 300,
+   "dmgMin": 30,
+   "dmgMax": 46,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "shadow_bolt"
+   ],
+   "minArea": 3
+  },
+  {
+   "face": "assets/monsters/death_knight.png",
+   "name": "Death Knight",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 20,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1,
+    "nature": 1.3,
+    "lightning": 1
+   },
+   "hp": 250,
+   "dmgMin": 28,
+   "dmgMax": 42,
+   "attackSpeed": 1600,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 4
+  },
+  {
+   "face": "assets/monsters/raven.png",
+   "name": "Raven",
+   "type": "poison",
+   "attackType": "caster",
+   "defense": 4,
+   "resists": {
+    "fire": 0.8,
+    "ice": 1,
+    "nature": 1.2,
+    "lightning": 1
+   },
+   "hp": 140,
+   "dmgMin": 22,
+   "dmgMax": 34,
+   "attackSpeed": 1400,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 80,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 5
+  },
+  {
+   "face": "assets/monsters/ghost.png",
+   "name": "Wraith",
+   "type": "lifestealer",
+   "attackType": "caster",
+   "defense": 3,
+   "resists": {
+    "fire": 0.5,
+    "ice": 1,
+    "nature": 1.5,
+    "lightning": 1
+   },
+   "hp": 170,
+   "dmgMin": 27,
+   "dmgMax": 41,
+   "attackSpeed": 1700,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 6
+  },
+  {
+   "face": "assets/monsters/lucifer.png",
+   "name": "Vampire",
+   "type": "manastealer",
+   "attackType": "caster",
+   "defense": 8,
+   "resists": {
+    "fire": 0.6,
+    "ice": 1,
+    "nature": 1.4,
+    "lightning": 1
+   },
+   "hp": 210,
+   "dmgMin": 30,
+   "dmgMax": 46,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 7
+  }
+ ],
+ [
+  {
+   "face": "assets/monsters/kerberos.png",
+   "name": "Cerberus",
+   "type": "manastealer",
+   "attackType": "melee",
+   "defense": 18,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 240,
+   "dmgMin": 28,
+   "dmgMax": 44,
+   "attackSpeed": 1500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 0
+  },
+  {
+   "face": "assets/monsters/hellhound.png",
+   "name": "Hell Hound",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 14,
+   "resists": {
+    "fire": 0.6,
+    "ice": 1.4,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 210,
+   "dmgMin": 32,
+   "dmgMax": 50,
+   "attackSpeed": 1400,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [
+    "evasion"
+   ],
+   "minArea": 1
+  },
+  {
+   "face": "assets/monsters/imp.png",
+   "name": "Imp",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 10,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 180,
+   "dmgMin": 26,
+   "dmgMax": 42,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [],
+   "minArea": 2
+  },
+  {
+   "face": "assets/monsters/fire_ghost.png",
+   "name": "Fire Wraith",
+   "type": "lifestealer",
+   "attackType": "caster",
+   "defense": 4,
+   "resists": {
+    "fire": 0.4,
+    "ice": 1.5,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 200,
+   "dmgMin": 34,
+   "dmgMax": 52,
+   "attackSpeed": 1700,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 3
+  },
+  {
+   "face": "assets/monsters/succubus.png",
+   "name": "Succubus",
+   "type": "manastealer",
+   "attackType": "caster",
+   "defense": 6,
+   "resists": {
+    "fire": 0.6,
+    "ice": 1.4,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 170,
+   "dmgMin": 30,
+   "dmgMax": 48,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 4
+  },
+  {
+   "face": "assets/monsters/lava_dragon.png",
+   "name": "Lava Drake",
+   "type": "critmaster",
+   "attackType": "caster",
+   "defense": 12,
+   "resists": {
+    "fire": 0.5,
+    "ice": 1.5,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 360,
+   "dmgMin": 38,
+   "dmgMax": 58,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "shadow_bolt"
+   ],
+   "minArea": 5
+  },
+  {
+   "face": "assets/monsters/hell_smith.png",
+   "name": "Hell Smith",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 25,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 310,
+   "dmgMin": 36,
+   "dmgMax": 54,
+   "attackSpeed": 2000,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 100,
+   "spells": [],
+   "minArea": 6
+  },
+  {
+   "face": "assets/monsters/hell_knight.png",
+   "name": "Hell Knight",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 22,
+   "resists": {
+    "fire": 0.7,
+    "ice": 1.3,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 340,
+   "dmgMin": 40,
+   "dmgMax": 60,
+   "attackSpeed": 1600,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 7
+  }
+ ],
+ [
+  {
+   "face": "assets/monsters/ice_troll.png",
+   "name": "Frost Troll",
+   "type": "manastealer",
+   "attackType": "melee",
+   "defense": 16,
+   "resists": {
+    "fire": 1.3,
+    "ice": 0.7,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 150,
+   "dmgMin": 15,
+   "dmgMax": 24,
+   "attackSpeed": 1600,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "mana_drain"
+   ],
+   "minArea": 0
+  },
+  {
+   "face": "assets/monsters/frost_giant.png",
+   "name": "Frost Giant",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 24,
+   "resists": {
+    "fire": 1.4,
+    "ice": 0.6,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 220,
+   "dmgMin": 19,
+   "dmgMax": 30,
+   "attackSpeed": 2200,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [],
+   "minArea": 1
+  },
+  {
+   "face": "assets/monsters/polar_bear.png",
+   "name": "Polar Bear",
+   "type": "critmaster",
+   "attackType": "melee",
+   "defense": 20,
+   "resists": {
+    "fire": 1.3,
+    "ice": 0.7,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 180,
+   "dmgMin": 18,
+   "dmgMax": 28,
+   "attackSpeed": 1800,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "evasion"
+   ],
+   "minArea": 2
+  },
+  {
+   "face": "assets/monsters/snow_wolf.png",
+   "name": "Snow Wolf",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 10,
+   "resists": {
+    "fire": 1.2,
+    "ice": 0.8,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 130,
+   "dmgMin": 15,
+   "dmgMax": 24,
+   "attackSpeed": 1400,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 3
+  },
+  {
+   "face": "assets/monsters/ice_dragon.png",
+   "name": "Ice Drake",
+   "type": "critmaster",
+   "attackType": "caster",
+   "defense": 14,
+   "resists": {
+    "fire": 1.5,
+    "ice": 0.5,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 210,
+   "dmgMin": 21,
+   "dmgMax": 32,
+   "attackSpeed": 2000,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 140,
+   "spells": [
+    "shadow_bolt"
+   ],
+   "minArea": 4
+  },
+  {
+   "face": "assets/monsters/snow_golem.png",
+   "name": "Snow Golem",
+   "type": "poison",
+   "attackType": "melee",
+   "defense": 28,
+   "resists": {
+    "fire": 1.4,
+    "ice": 0.6,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 240,
+   "dmgMin": 20,
+   "dmgMax": 31,
+   "attackSpeed": 2400,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [],
+   "minArea": 5
+  },
+  {
+   "face": "assets/monsters/frozen_knight.png",
+   "name": "Frozen Knight",
+   "type": "lifestealer",
+   "attackType": "melee",
+   "defense": 18,
+   "resists": {
+    "fire": 1.3,
+    "ice": 0.7,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 200,
+   "dmgMin": 22,
+   "dmgMax": 34,
+   "attackSpeed": 1700,
+   "blockChance": 10,
+   "resource": "mana",
+   "maxResource": 140,
+   "spells": [
+    "drain_life"
+   ],
+   "minArea": 6
+  },
+  {
+   "face": "assets/monsters/ice_lizard.png",
+   "name": "Ice Lizard",
+   "type": "poison",
+   "attackType": "melee",
+   "defense": 12,
+   "resists": {
+    "fire": 1.2,
+    "ice": 0.8,
+    "nature": 1,
+    "lightning": 1
+   },
+   "hp": 150,
+   "dmgMin": 17,
+   "dmgMax": 27,
+   "attackSpeed": 1500,
+   "blockChance": 0,
+   "resource": "mana",
+   "maxResource": 120,
+   "spells": [
+    "poison_bolt"
+   ],
+   "minArea": 7
+  }
+ ]
+]

@@ -1,48 +1,6 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=2 format=3 uid="uid://dqrecmain0001"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
-[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="3_cam"]
-[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
-[ext_resource type="Texture2D" path="res://assets/textures/ground_grass.png" id="5_ground"]
 
-[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
-size = Vector2(34, 34)
-subdivide_width = 8
-subdivide_depth = 8
-
-[sub_resource type="StandardMaterial3D" id="StdMat_floor"]
-albedo_texture = ExtResource("5_ground")
-uv1_scale = Vector3(8.5, 8.5, 1)
-uv1_triplanar = true
-roughness = 0.95
-metallic = 0.0
-albedo_color = Color(0.92, 0.98, 0.90, 1)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
-size = Vector3(34, 0.4, 34)
-
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node2D"]
 script = ExtResource("1_main")
-
-[node name="Floor" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 0)
-mesh = SubResource("PlaneMesh_floor")
-surface_material_override/0 = SubResource("StdMat_floor")
-
-[node name="FloorBody" type="StaticBody3D" parent="."]
-
-[node name="FloorShape" type="CollisionShape3D" parent="FloorBody"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.2, 0)
-shape = SubResource("BoxShape3D_floor")
-
-[node name="Player" parent="." instance=ExtResource("2_player")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
-
-[node name="Camera" type="Camera3D" parent="."]
-script = ExtResource("3_cam")
-target_path = NodePath("../Player")
-offset = Vector3(0, 12.5, 9)
-
-[node name="HUD" type="CanvasLayer" parent="."]
-script = ExtResource("4_hud")

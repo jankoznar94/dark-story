@@ -30,6 +30,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Fetch Godot editor + export templates
         run: |
           set -e
@@ -47,109 +51,40 @@ jobs:
           ls "$DEST" | head
           ./godot --headless --version
 
+      # The PWA checkout is a separate repository, so the converter cannot run
+      # here. What CI checks is the COMMITTED data/: the exact JSON that ships,
+      # asserted for counts and spot-checked content. A truncated or empty
+      # convert is the realistic failure and this is what catches it.
+      - name: Verify committed data tables
+        run: |
+          set -e
+          OUT=$(node tools/import/verify.mjs --data data 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "DATA_VERIFY_ALL_PASS=true"
+
       # On a CLEAN checkout Godot has no imported resources yet, so anything that
-      # does load("res://models/hero.glb") fails with
-      #   "Cannot open file 'res://.godot/imported/hero.glb-....scn'"
-      # Locally this is invisible because .godot/ already holds the cache. Import
-      # assets explicitly before any test runs.
+      # does load("res://assets/...png") fails.
       - name: Import assets
         run: ./godot --headless --path . --import
 
-      - name: Generate input map
-        run: ./godot --headless --path . --script res://tools/gen_input_map.gd
-
       # A PARSE ERROR in a script nothing has loaded yet does NOT surface in the
-      # import run (measured: six "Identifier not declared" errors, no import
-      # output at all, and the first symptom was a half-built scene). This loads
-      # every .gd by its real path and takes one second.
-      - name: Every script loads (catches a parse error the import run hides)
+      # import run. This loads every .gd by its real path and takes one second.
+      - name: Every script loads
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_scripts_load.gd 2>&1)
           echo "$OUT" | tail -20
           echo "$OUT" | grep -q "SCRIPT_LOAD_ALL_PASS=true"
 
-      - name: Headless gameplay test (must pass before we ship a build)
+      # The whole port rests on the JSON tables being correct, so this is the
+      # first gameplay test. It asserts COUNTS, not just "no error": a converter
+      # that silently drops a table is the realistic failure here.
+      - name: Data tables test (items, monsters, acts, classes)
         run: |
           set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_attack.gd 2>&1)
+          OUT=$(./godot --headless --path . --script res://tools/test_data.gd 2>&1)
           echo "$OUT"
-          echo "$OUT" | grep -q "ALL_PASS=true"
-
-      - name: Controls + layout test (must pass before we ship a build)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_controls.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "CONTROLS_ALL_PASS=true"
-
-      - name: Weapon-in-hand test (must pass before we ship a build)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_weapon.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "WEAPON_ALL_PASS=true"
-
-      - name: Locomotion retime test (walk/run feet do not slide)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_walk_retime.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "LOCOMOTION_RETIME_ALL_PASS=true"
-
-      - name: Fight test (must pass before we ship a build)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_fight.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "FIGHT_ALL_PASS=true"
-
-      - name: Wall-escape test (the hero must not stick to props)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_wall_escape.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "WALL_ESCAPE_ALL_PASS=true"
-
-      - name: Auto-target test (the held attack must walk the player in)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_autotarget.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "AUTOTARGET_ALL_PASS=true"
-
-      - name: Locomotion gait test (cadence and retime of the run and walk)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_locomotion_slide.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "LOCOMOTION_GAIT_ALL_PASS=true"
-
-      - name: Loot + inventory test (D2 grid, slots, affixes, pickups)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_inventory.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "INVENTORY_ALL_PASS=true"
-
-      - name: Panels + pause + bodies test (the game really stops)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_panels.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "PANELS_ALL_PASS=true"
-
-      # Jan's reports of a corpse becoming prone instantly (the death clip was
-      # frozen on the frame the monster died) and of an item not going into an
-      # equip slot when he taps the item and then the box. Both are asserted as
-      # NUMBERS here (the head's fall curve, the whole tap-then-tap interaction),
-      # so a regression fails the build instead of reaching his phone.
-      - name: Corpse fall + equip-by-tap test
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_corpse_fall_and_equip.gd 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "CORPSE_FALL_AND_EQUIP_ALL_PASS=true"
+          echo "$OUT" | grep -q "DATA_ALL_PASS=true"
 
       - name: Export
         run: |
@@ -160,19 +95,12 @@ jobs:
           ./godot --headless --path . --export-release "Android" || true
           ls -la build/web build/windows build/android
 
-      - name: Patch web service worker (split cache, saves ~38 MB per deploy)
-        run: |
-          set -e
-          python3 tools/patch_web_sw.py build/web
-          python3 tools/test_web_cache.py | tail -10
-          python3 tools/test_web_cache.py | grep -q "WEB_CACHE_ALL_PASS=true"
-
       - name: Report what actually got built
         id: built
         run: |
           {
             echo "report<<EOF"
-            for f in build/web/index.html build/web/index.wasm build/windows/arpg.exe build/android/arpg.apk; do
+            for f in build/web/index.html build/web/index.wasm build/windows/dungeon-recall.exe build/android/dungeon-recall.apk; do
               if [ -f "$f" ]; then echo "OK   $(du -h "$f" | cut -f1)  $f"; else echo "MISS ---  $f"; fi
             done
             echo "EOF"
@@ -195,5 +123,5 @@ jobs:
           name: Build ${{ github.run_number }}
           body: ${{ steps.built.outputs.report }}
           files: |
-            build/windows/arpg.exe
-            build/android/arpg.apk
+            build/windows/dungeon-recall.exe
+            build/android/dungeon-recall.apk

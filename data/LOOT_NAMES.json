@@ -1,0 +1,98 @@
+{
+ "weapon": {
+  "staff": [
+   "Dřevěná hůlka",
+   "Ohnivá hůlka",
+   "Ledová hůl",
+   "Blesková hůl",
+   "Hvězdná hůl",
+   "Plamená hůl",
+   "Měsíční hůl",
+   "Arcimágova hůl"
+  ],
+  "blade": [
+   "Železný meč",
+   "Široký meč",
+   "Bojová sekera",
+   "Obouruční meč",
+   "Temný meč",
+   "Dračí sekera",
+   "Arcimágův meč"
+  ]
+ },
+ "armor": [
+  "Lněný hábit",
+  "Kožený hábit",
+  "Šupinový hábit",
+  "Vyšívaný hábit",
+  "Kroužkový hábit",
+  "Dračí hábit",
+  "Arcimágův hábit"
+ ],
+ "helmet": [
+  "Lněná kápě",
+  "Kožená čapka",
+  "Železná helma",
+  "Ocelová helma",
+  "Stříbrná přilba",
+  "Arcimágova koruna"
+ ],
+ "shield": [
+  "Dřevěný štít",
+  "Kožený štít",
+  "Železný štít",
+  "Ocelový štít",
+  "Stříbrný štít",
+  "Paladinův štít"
+ ],
+ "ring": [
+  "Měděný prsten",
+  "Cínový prsten",
+  "Stříbrný prsten",
+  "Zlatý prsten",
+  "Platinový prsten",
+  "Drahokamový prsten"
+ ],
+ "amulet": [
+  "Kostěný amulet",
+  "Měděný amulet",
+  "Stříbrný amulet",
+  "Zlatý amulet",
+  "Rubínový amulet",
+  "Arcánní amulet"
+ ],
+ "gloves": [
+  "Kožené rukavice",
+  "Těžké rukavice",
+  "Řetězové rukavice",
+  "Lehké pláty",
+  "Plátové rukavice",
+  "Démonické rukavice",
+  "Žraločí rukavice",
+  "Těžké nápažníky",
+  "Bojové pláty",
+  "Válečné pláty",
+  "Bramble rukavice",
+  "Upíří rukavice",
+  "Vambrace",
+  "Kruté pláty",
+  "Hydraskin rukavice"
+ ],
+ "boots": [
+  "Boty",
+  "Těžké boty",
+  "Řetězové boty",
+  "Lehké plátované boty",
+  "Nákoleníky",
+  "Démonické boty",
+  "Žraločí boty",
+  "Síťované boty",
+  "Bojové boty",
+  "Válečné boty",
+  "Wyrmhide boty",
+  "Scarabshell boty",
+  "Kostěné boty",
+  "Zrcadlové boty",
+  "Myrmidon nákoleníky"
+ ]
+}

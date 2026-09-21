@@ -1,0 +1,32 @@
+[
+ {
+  "name": "Fiery",
+  "icon": "🔥",
+  "desc": "+100% fire dmg"
+ },
+ {
+  "name": "Icy",
+  "icon": "❄️",
+  "desc": "+100% ice dmg"
+ },
+ {
+  "name": "Swift",
+  "icon": "💨",
+  "desc": "+50% attack speed"
+ },
+ {
+  "name": "Bloody",
+  "icon": "🩸",
+  "desc": "lifesteal 10%"
+ },
+ {
+  "name": "Indestructible",
+  "icon": "🛡️",
+  "desc": "+50% HP"
+ },
+ {
+  "name": "Mana Burn",
+  "icon": "💜",
+  "desc": "burns mana"
+ }
+]
