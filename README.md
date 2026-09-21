@@ -72,8 +72,9 @@ so an empty deploy is obvious:
 
 ```bash
 curl -sL -o /tmp/live.pck https://jankoznar94.github.io/dark-story/index.pck
-~/tools/godot/godot4 --headless --main-pack /tmp/live.pck --quit-after 60
-# expect: tables=36 items=205 uniques=199 affixes=186 monsters=40 acts=5 classes=3
+~/tools/godot/godot4 --headless --main-pack /tmp/live.pck --quit-after 120
+# expect: tables=36 items=205 unique_items=199 affixes=186 classes=3 monsters=40
+#         acts=5 enemy_spells=11 gems=4
 ```
 
 ## Layout

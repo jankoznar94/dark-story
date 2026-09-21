@@ -60,6 +60,14 @@ func _ready() -> void:
 	_build_screens()
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
+	# The data report on boot is what makes a DEPLOYED build checkable from outside:
+	# CI going green says the pipeline ran, not that the published pack has content.
+	# An empty or truncated convert boots perfectly and is otherwise invisible.
+	var report: Dictionary = data.integrity_report()
+	var parts := PackedStringArray()
+	for key in report:
+		parts.append("%s=%s" % [key, report[key]])
+	print("Dungeon Recall — " + " ".join(parts))
 
 
 func _build_screens() -> void:
