@@ -23,4 +23,7 @@ window/handheld/orientation=4
 [rendering]
 
 textures/canvas_textures/default_texture_filter=1
+; Required by the Android export preset: without it Godot refuses with
+; "ETC2/ASTC texture compression is required for Android export".
+textures/vram_compression/import_etc2_astc=true
 renderer/rendering_method="mobile"

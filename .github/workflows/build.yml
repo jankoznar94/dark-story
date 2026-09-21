@@ -90,10 +90,37 @@ jobs:
         run: |
           set -e
           mkdir -p build/web build/windows build/android
+          # Each export is allowed to return non-zero: Godot reports a FAILURE
+          # when the Android signing step cannot find a release keystore and
+          # still writes the unsigned APK. What must not pass silently is a
+          # MISSING artifact, so the step below is the actual gate.
           ./godot --headless --path . --export-release "Web"     || true
           ./godot --headless --path . --export-release "Windows" || true
           ./godot --headless --path . --export-release "Android" || true
           ls -la build/web build/windows build/android
+
+      # The gate for the step above. `|| true` on an export is only acceptable
+      # when something later asserts the file exists — otherwise a build that
+      # produced nothing at all still goes green and ships nothing.
+      - name: Assert the expected artifacts exist
+        run: |
+          set -e
+          MISSING=0
+          for f in build/web/index.html build/web/index.wasm build/web/index.pck \
+                   build/windows/dungeon-recall.exe build/windows/dungeon-recall.pck \
+                   build/android/dungeon-recall.apk; do
+            if [ -f "$f" ]; then
+              echo "OK   $(du -h "$f" | cut -f1)  $f"
+            else
+              echo "MISS ---  $f"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" = "1" ]; then
+            echo "ARTIFACTS_ALL_PRESENT=false"
+            exit 1
+          fi
+          echo "ARTIFACTS_ALL_PRESENT=true"
 
       - name: Report what actually got built
         id: built
