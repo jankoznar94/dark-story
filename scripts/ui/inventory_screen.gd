@@ -94,11 +94,43 @@ func _ready() -> void:
 
 # --- construction ------------------------------------------------------------
 
+## True when this screen is embedded as a tab of CharacterModal rather than shown as a
+## page of its own. It changes two things, both of which the PWA does in CSS:
+##
+##  - `.modal-content .card { background:transparent; border:none; padding:0; margin:0 }`
+##    and `.combined-screen.active #inventoryScreen { max-width:none; margin:0;
+##    padding:0 4px }` — inside the dialog there is no page background and no page
+##    padding, because the dialog IS the page.
+##  - the PWA's inventory tab has no title row of its own; the `.combined-tabs` strip
+##    already says which tab is open. The port's "Zpet do mesta" / "Inventar" header is
+##    standalone-screen chrome and is dropped when embedded.
+var _embedded := false
+
+
+## Called by CharacterModal BEFORE the screen is added to the tree, because `_build()`
+## runs from `_ready()` and has to branch on this.
+func hide_chrome() -> void:
+	_embedded = true
+
+
 func _build() -> void:
 	# The PWA's inventory is ONE scrolling column, not two side-by-side panels. A
 	# 390px canvas cannot hold the equipment grid (3 x 75px + gaps = 237) beside a bag
 	# grid (5 columns of >=64px = 340) — the old HBox laid out 740px of content on a
 	# 390px screen, so the whole bag half was off-canvas and the screen read as empty.
+	#
+	# Embedded, there is no `screen_page`: that helper adds its own full-rect background
+	# and its own ScrollContainer, and inside the modal the body already scrolls and the
+	# dialog already paints black. A nested scroll container swallows drags.
+	if _embedded:
+		var inline := VBoxContainer.new()
+		inline.set_anchors_preset(Control.PRESET_FULL_RECT)
+		inline.add_theme_constant_override("separation", 8)
+		add_child(inline)
+		inline.add_child(_make_equipment_panel())
+		inline.add_child(_make_bag_panel())
+		return
+
 	var page := UIKit.screen_page(self)
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 6)
@@ -108,10 +140,8 @@ func _build() -> void:
 	column.add_child(_make_bag_panel())
 
 
-## The PWA's inventory is a modal with its own tab strip (Inventory / Skills / Stats) and
-## an X close. The port drops the tabs — the hero sheet and the skill trees are their own
-## screens reached from the nav bar — and keeps the PWA's `.btn-secondary` back button at
-## the top, which every sub-screen has.
+## Standalone chrome only — the "Zpet do mesta" button and the "Inventar" title. An
+## embedded inventory drops this; `hide_chrome()` is what decides.
 func _make_header() -> Control:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 8)

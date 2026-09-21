@@ -433,16 +433,27 @@ class NavBar:
 	var _buttons: Dictionary = {}
 	var _active_key := ""
 
-	## key -> (icon, tooltip). `mesto.png` is the town, `inventar.png` the bag,
-	## `mapa.png` the map (the PWA used it for `data-screen="map"`),
-	## `bestiar.png` the bestiary, `navod.png` the spellbook (the book icon).
+	## key -> [icon path, tooltip, emoji, font size, colour]. Mirrors the PWA's
+	## `<nav class="nav-bar">` EXACTLY, entry for entry and in the same order — 8 items,
+	## not a curated subset.
+	##
+	## The PWA's bar is: town, hero, bestiary, musicToggle, testToggle, clearSave,
+	## spellbook, items. Three are toggles rather than screens, and dropping them silently
+	## changes the bar's rhythm: the icons after them slide left and no longer sit under
+	## the PWA's. `map`, `inventory` and `shop` were entries the PWA does NOT have — the
+	## map is entered from the town tile, the bag from the character modal.
+	##
+	## An empty icon path means the PWA draws an emoji there, and its colour and size are
+	## its own (`style="color:#e94560;font-size:16px"`).
 	const ENTRIES := [
-		["town", "assets/menu-icons/mesto.png", "Mesto"],
-		["map", "assets/menu-icons/mapa.png", "Mapa"],
-		["inventory", "assets/menu-icons/inventar.png", "Inventar"],
-		["hero", "assets/menu-icons/talenty.png", "Hrdina"],
-		["bestiary", "assets/menu-icons/bestiar.png", "Bestiar"],
-		["spellbook", "assets/menu-icons/navod.png", "Kouzla"],
+		["town", "assets/menu-icons/mesto.png", "Mesto", "", 0, ""],
+		["hero", "assets/monsters/hero_barbarian_m.png", "Hrdina", "", 0, ""],
+		["bestiary", "assets/menu-icons/bestiar.png", "Bestiar", "", 0, ""],
+		["music", "assets/menu-icons/music.png", "Hudba", "", 0, ""],
+		["testmode", "assets/menu-icons/testmode.png", "Testovaci rezim", "", 0, ""],
+		["clearsave", "", "Smazat ulozenou hru", "\U0001F5D1\uFE0F", 16, "#e94560"],
+		["spellbook", "", "Kouzla", "\U0001F4D6", 18, "#f1c40f"],
+		["items", "", "Predmety", "\U0001F4E6", 18, "#888888"],
 	]
 
 	static func build(active_key: String = "") -> NavBar:
@@ -450,9 +461,13 @@ class NavBar:
 		bar.name = "NavBar"
 		bar._active_key = active_key
 		bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-		bar.offset_top = -56
+		# `.nav-bar { padding:8px 10px }` + a 44px item + `border-top:1px` = 61px, and the
+		# live PWA bar measures y=783..844. 56 left the bar 5px short, which pushed every
+		# icon down and put the top border 5px too low.
+		var bar_h := 61
+		bar.offset_top = -bar_h
 		bar.offset_bottom = 0
-		bar.custom_minimum_size = Vector2(0, 56)
+		bar.custom_minimum_size = Vector2(0, bar_h)
 		# `.nav-bar { background:#000; border-top:1px solid #222; padding:8px 10px }`
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color("#000000")
@@ -462,8 +477,8 @@ class NavBar:
 		style.set_corner_radius_all(0)
 		style.content_margin_left = 10
 		style.content_margin_right = 10
-		style.content_margin_top = 6
-		style.content_margin_bottom = 6
+		style.content_margin_top = 8
+		style.content_margin_bottom = 8
 		bar.add_theme_stylebox_override("panel", style)
 
 		var row := HBoxContainer.new()
@@ -472,23 +487,44 @@ class NavBar:
 
 		for entry in ENTRIES:
 			var key := str(entry[0])
+			var icon_path := str(entry[1])
 			var button := Button.new()
 			# `.nav-bar a { width:44px; height:44px; border-radius:6px }`
 			button.custom_minimum_size = Vector2(44, 44)
 			button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 			button.focus_mode = Control.FOCUS_NONE
 			button.tooltip_text = str(entry[2])
-			var icon := TextureRect.new()
-			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-			icon.offset_left = 4
-			icon.offset_top = 4
-			icon.offset_right = -4
-			icon.offset_bottom = -4
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			icon.texture = UIKit.load_texture(str(entry[1]))
-			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			button.add_child(icon)
+			if icon_path == "":
+				# Three PWA entries are emoji, not images: 🗑️ #e94560, 📖 #f1c40f, 📦 #888888.
+				# Jan's no-emoji rule is about the game's own art; these ARE the PWA's nav bar,
+				# and drawing a different glyph would be a deviation from the spec we are
+				# matching. They are the only emoji in the port and they are deliberately here.
+				button.text = str(entry[3])
+				button.add_theme_font_size_override("font_size", int(entry[4]))
+				button.add_theme_color_override("font_color", Color(str(entry[5])))
+				button.add_theme_color_override("font_color_pressed", Color(str(entry[5])))
+			else:
+				# `.nav-icon { width:100%; height:100%; object-fit:contain; border-radius:4px }`
+				# — the image fills the 44px box, and it is the ICON that carries the
+				# background, so only the three image entries that the PWA draws with
+				# their own square get one.
+				if bool(entry[6]) if entry.size() > 6 else false:
+					var plate := ColorRect.new()
+					plate.color = Color("#1a1a1a")
+					plate.set_anchors_preset(Control.PRESET_FULL_RECT)
+					plate.offset_left = 4
+					plate.offset_top = 4
+					plate.offset_right = -4
+					plate.offset_bottom = -4
+					plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					button.add_child(plate)
+				var icon := TextureRect.new()
+				icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+				icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				icon.texture = UIKit.load_texture(icon_path)
+				icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				button.add_child(icon)
 			button.pressed.connect(func(): bar.nav_selected.emit(key))
 			row.add_child(button)
 			bar._buttons[key] = button

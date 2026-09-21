@@ -185,6 +185,21 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "PORTRAIT_VISUAL_ALL_PASS=true"
 
+      # The STRUCTURE, which is the other half of "the port looks like a different game".
+      # The PWA has `inventory`/`talents`/`hero` as three TABS of one modal; the port had
+      # them as three separate screens, so "the hero screen" carried the stat sheet and the
+      # whole skill trees in one column — a shape the PWA never had. This asserts the modal
+      # exists, that opening it hides every other screen (a dialog that opens and is painted
+      # over), that the three nav keys land on three distinct panes (a strip that highlights
+      # the tab you tapped while showing one pane for all of them), and that the nav bar
+      # does not stay up over the dialog.
+      - name: Character modal test (tabs, overlay, nav-bar suppression)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_character_modal.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "CHARACTER_MODAL_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

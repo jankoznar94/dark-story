@@ -29,7 +29,7 @@ const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
 const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
-const HeroScreen := preload("res://scripts/ui/hero_screen.gd")
+const CharacterModal := preload("res://scripts/ui/character_modal.gd")
 const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
 const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
@@ -42,6 +42,9 @@ var state
 
 var _screens: Dictionary = {}
 var _current := ""
+## The PWA's `musicToggle`. The port muted the Master bus rather than stopping the
+## stream, so the toggle works whether or not anything is playing yet.
+var _music_off := false
 var _socket_rng_source: RandomNumberGenerator = null
 ## The last message a screen emitted, shown as a one-line status strip. The PWA used a
 ## toast; a plain label above the nav bar is enough and cannot cover the buttons.
@@ -83,15 +86,21 @@ func _ready() -> void:
 
 
 func _build_screens() -> void:
-	var inventory := InventoryScreen.new(data, gen, state)
-	inventory.visible = false
-	inventory.back_pressed.connect(func(): show_screen("town"))
-	inventory.item_tapped.connect(_on_item_tapped)
-	inventory.equip_slot_tapped.connect(_on_equip_slot_tapped)
-	inventory.potion_slot_tapped.connect(_on_potion_slot_tapped)
-	inventory.socket_armed.connect(_on_socket_armed)
-	inventory.gem_tapped.connect(_on_gem_tapped)
-	_add_screen("inventory", inventory)
+	# `inventory`, `talents` and `hero` are ONE modal in the PWA — `showScreen()` routes
+	# all three into `openModal()` and the dialog carries an Inventory/Skills/Stats tab
+	# strip. They are not three screens here either: CharacterModal owns all three panes,
+	# and the old separate `inventory` / `hero` screens produced a character sheet with no
+	# stat sheet and a stat sheet with no tabs, which is why the port read as a different
+	# game from the PWA.
+	var modal := CharacterModal.new(data, gen, state, _resolve)
+	modal.back_pressed.connect(_close_modal)
+	modal.message.connect(_set_status)
+	modal.item_tapped.connect(_on_item_tapped)
+	modal.equip_slot_tapped.connect(_on_equip_slot_tapped)
+	modal.potion_slot_tapped.connect(_on_potion_slot_tapped)
+	modal.socket_armed.connect(_on_socket_armed)
+	modal.gem_tapped.connect(_on_gem_tapped)
+	_add_screen("character", modal)
 
 	var town := TownScreen.new(data, gen, state, _resolve)
 	town.visible = false
@@ -131,12 +140,6 @@ func _build_screens() -> void:
 	craft.back_pressed.connect(func(): show_screen("town"))
 	craft.message.connect(_set_status)
 	_add_screen("craft", craft)
-
-	var hero_screen := HeroScreen.new(data, gen, state, _resolve)
-	hero_screen.visible = false
-	hero_screen.back_pressed.connect(func(): show_screen("town"))
-	hero_screen.message.connect(_set_status)
-	_add_screen("hero", hero_screen)
 
 	var bestiary := BestiaryScreen.new(data, state)
 	bestiary.visible = false
@@ -233,8 +236,6 @@ func show_screen(name: String) -> void:
 			_screens["town"].enter(_reset_shop_cache)
 		"map":
 			_screens["map"].refresh()
-		"inventory":
-			_screens["inventory"].refresh()
 		"chest":
 			_screens["chest"].refresh()
 		"shop":
@@ -244,8 +245,6 @@ func show_screen(name: String) -> void:
 			_screens["gamble"].refresh()
 		"craft":
 			pass
-		"hero":
-			_screens["hero"].refresh()
 		"bestiary":
 			_screens["bestiary"].refresh()
 		"spellbook":
@@ -258,16 +257,94 @@ func show_screen(name: String) -> void:
 ## The nav bar's active entry is moved by the bar itself (`NavBar.set_active`), so the
 ## router only has to say which screen is up. The bar is built once and reused; the PWA
 ## did the same with a CSS class swap on the anchor.
+## The PWA's tab keys are not the port's screen keys: `inventory`, `talents` and `hero`
+## all open the SAME modal, on a different tab.
+const MODAL_TABS := {
+	"inventory": "inventory",
+	"talents": "skills",
+	"hero": "stats",
+}
+
+
 func _on_nav_selected(key: String) -> void:
-	if not _screens.has(key):
-		return
 	# Leaving the arena from the nav is a retreat: the fight must be ended rather than
 	# left ticking behind another screen.
 	if _current == "arena" and key != "arena":
 		var arena = _screens["arena"]
 		if arena.battle != null and not arena.battle.ended:
 			arena.battle.ended = true
+
+	if MODAL_TABS.has(key):
+		open_modal(str(MODAL_TABS[key]))
+		return
+
+	# The three PWA nav entries that are toggles rather than screens. They exist in the bar
+	# because the PWA's bar has them; a tap has to do something real or the entry is a lie.
+	match key:
+		"music":
+			_toggle_music()
+			return
+		"testmode":
+			_set_status("Testovaci rezim neni v portu preneseny.")
+			return
+		"clearsave":
+			_clear_save()
+			return
+		"items":
+			open_modal("inventory")
+			return
+
+	if not _screens.has(key):
+		return
 	show_screen(key)
+
+
+## The PWA's `openModal()` — one dialog, three tabs, always entered on a named tab.
+##
+## Every other screen is hidden explicitly: the modal is a sibling in the same CanvasLayer,
+## so leaving the town visible paints it OVER the dialog (screens are added in order and the
+## town comes after the modal). A modal that is visible, correct and completely covered is
+## exactly the failure the nav bar had — `show_screen()` does this hiding for the ordinary
+## screens, and opening the modal is a second way in, so it has to do it too.
+func open_modal(tab: String) -> void:
+	if not _screens.has("character"):
+		return
+	for key in _screens:
+		(_screens[key] as Control).visible = str(key) == "character"
+	var modal = _screens["character"]
+	_current = "character"
+	if _nav_bar != null:
+		# The PWA's modal is a full-screen dialog; its fixed nav bar sits UNDER the
+		# overlay and is unreachable while it is open.
+		_nav_bar.visible = false
+	modal.set_tab(tab)
+
+
+## The character modal, which now owns the inventory tab. The equip, potion and socket
+## handlers used to reach `_screens["inventory"]`; that screen no longer exists, so they
+## come through here instead.
+func _modal():
+	return _screens["character"]
+
+
+func _close_modal() -> void:
+	# The PWA closes the modal back onto whatever screen was showing; the town is the only
+	# place the modal is reachable from, so that is where it returns.
+	show_screen("town")
+
+
+func _toggle_music() -> void:
+	_music_off = not _music_off
+	var bus := AudioServer.get_bus_index("Master")
+	AudioServer.set_bus_mute(bus, _music_off)
+	_set_status("Hudba vypnuta." if _music_off else "Hudba zapnuta.")
+
+
+func _clear_save() -> void:
+	state.reset()
+	state.save()
+	_set_status("Ulozena hra smazana.")
+	show_screen("town")
 
 
 ## The shop's stock is rebuilt on every town visit. The stock itself lives in the shop
@@ -361,7 +438,7 @@ func _on_item_tapped(inventory_index: int) -> void:
 	var result := EquipLogic.equip_from_bag(state, inventory_index, _resolve)
 	if result["ok"]:
 		state.save()
-		_screens["inventory"].refresh()
+		_modal().inventory().refresh()
 	else:
 		_set_status("Nasazeni odmitnuto: %s" % str(result["reason"]))
 
@@ -370,7 +447,7 @@ func _on_equip_slot_tapped(slot: String) -> void:
 	var result := EquipLogic.unequip(state, slot, _resolve)
 	if result["ok"]:
 		state.save()
-		_screens["inventory"].refresh()
+		_modal().inventory().refresh()
 	else:
 		_set_status("Sundani odmitnuto: %s" % str(result["reason"]))
 
@@ -389,7 +466,7 @@ func _on_potion_slot_tapped(index: int) -> void:
 		var item: Dictionary = _resolve(potion_id)
 		state.add_item(potion_id, item)
 		state.save()
-		_screens["inventory"].refresh()
+		_modal().inventory().refresh()
 		_set_status("Potion zpet do batohu")
 		return
 	# Empty slot: fill it from the first potion in the bag, through the belt rule so a
@@ -404,7 +481,7 @@ func _on_potion_slot_tapped(index: int) -> void:
 		if state.add_potion_to_belt(item_id, _resolve):
 			state.remove_item(item_id)
 			state.save()
-			_screens["inventory"].refresh()
+			_modal().inventory().refresh()
 			_set_status("Potion do opasku")
 		return
 	_set_status("Zadny potion v batohu")
@@ -420,7 +497,7 @@ func _on_socket_armed(host_id: String, socket_index: int) -> void:
 	if reason != "":
 		_set_status(reason)
 		return
-	var inventory = _screens["inventory"]
+	var inventory = _modal().inventory()
 	inventory._armed_socket = socket_index
 	_set_status("Socket %d pripraven - klepni na gem" % socket_index)
 
@@ -428,7 +505,7 @@ func _on_socket_armed(host_id: String, socket_index: int) -> void:
 ## A gem was tapped: fill the armed socket with it. With no socket armed the gem is
 ## simply selected as the host's socket 0, so a single-socket item is one tap shorter.
 func _on_gem_tapped(host_id: String, gem_id: String) -> void:
-	var inventory = _screens["inventory"]
+	var inventory = _modal().inventory()
 	var host: Dictionary = _resolve(host_id)
 	var gem: Dictionary = _resolve(gem_id)
 	if host.is_empty() or gem.is_empty():

@@ -1,0 +1,294 @@
+extends Control
+class_name CharacterModal
+## CharacterModal — the PWA's single modal with the Inventory / Skills / Stats tabs.
+##
+## This is the structure the port got wrong. In the PWA, `inventory`, `talents` and
+## `hero` are NOT screens: `showScreen()` routes all three into `openModal()`, which
+## builds ONE `.modal-content` holding a `.combined-tabs` strip and a `.modal-body`
+## with three `.combined-screen` wrappers. Only the active wrapper is laid out
+## (`.combined-screen { display:none }`, `.active { display:flex }`).
+##
+## The port had them as three separate screens behind the nav bar, so "the hero screen"
+## showed the portrait, the attributes, the stat sheet AND the whole skill trees in one
+## column — a shape the PWA never had, and the main reason the two read as different games.
+##
+## The overlay is `rgba(0,0,0,0.7)` with `backdrop-filter: blur(4px)`. Godot has no
+## backdrop blur on a 2D canvas under the Compatibility renderer, so the dim is drawn and
+## the blur is not — a deliberate deviation, and the reason the PWA's blurred game world
+## behind the modal becomes a flat dark field here.
+
+const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
+const SkillsPanel := preload("res://scripts/ui/skills_panel.gd")
+const StatsPanel := preload("res://scripts/ui/stats_panel.gd")
+
+signal back_pressed()
+signal message(text: String)
+signal item_tapped(inventory_index: int)
+signal equip_slot_tapped(slot: String)
+signal potion_slot_tapped(index: int)
+signal socket_armed(host_id: String, socket_index: int)
+signal gem_tapped(host_id: String, gem_id: String)
+
+## The PWA's tab strip, in order: `{id:'inventory',label:'Inventory'}`,
+## `{id:'talents',label:'Skills'}`, `{id:'hero',label:'Stats'}`.
+const TABS := [
+	["inventory", "Inventar"],
+	["skills", "Dovednosti"],
+	["stats", "Staty"],
+]
+
+## `.modal-content { width:98%; max-width:800px; min-height:85vh; max-height:90vh;
+##   border-radius:14px; border:1px solid #333; background:#000 }` on a 390px canvas:
+## 98% of 390 is 382, so the max-width never binds and the dialog is 382 wide and 85vh
+## tall, vertically centred by `.modal-overlay { align-items:center }`.
+const WIDTH_RATIO := 0.98
+const MIN_HEIGHT_RATIO := 0.85
+const MAX_HEIGHT_RATIO := 0.90
+const RADIUS := 14
+
+var _data: Node
+var _gen
+var _state
+var _find_item: Callable
+
+var _panel: PanelContainer
+var _tab_buttons: Dictionary = {}
+var _panes: Dictionary = {}
+var _inventory
+var _skills
+var _stats
+var _active := "inventory"
+
+
+func _init(game_data: Node, gen, state, find_item: Callable) -> void:
+	_data = game_data
+	_gen = gen
+	_state = state
+	_find_item = find_item
+
+
+func _ready() -> void:
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_build()
+
+
+func _build() -> void:
+	# `.modal-overlay { background:rgba(0,0,0,0.7); align-items:center; justify-content:center }`
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.7)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# A tap on the overlay itself closes the modal, as the PWA's
+	# `onclick="game.closeModal()"` does.
+	dim.gui_input.connect(_on_overlay_input)
+	add_child(dim)
+
+	var centre := Control.new()
+	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# IGNORE means this node is itself transparent to input but its CHILDREN are still
+	# hit-tested — which is exactly what is needed: a tap on the panel is the panel's, a
+	# tap on the dim margin falls through to `dim` and closes the modal, as the PWA's
+	# `onclick="game.closeModal()"` on the overlay does.
+	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(centre)
+
+	_panel = PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#000000")
+	style.border_color = Color("#333333")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(RADIUS)
+	style.set_content_margin_all(0)
+	_panel.add_theme_stylebox_override("panel", style)
+	# `.modal-content { width:98%; min-height:85vh; max-height:90vh }` centred by
+	# `.modal-overlay { align-items:center }`. Expressed as anchors rather than a measured
+	# height: setting a pixel height at build time reads a viewport that has not been laid
+	# out yet, so the dialog would size itself from a stale (often zero) value.
+	_panel.anchor_left = 0.01
+	_panel.anchor_right = 0.99
+	_panel.anchor_top = 0.05
+	_panel.anchor_bottom = 0.95
+	centre.add_child(_panel)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	_panel.add_child(box)
+
+	box.add_child(_build_tabs())
+
+	# `.modal-body { flex:1; overflow-y:auto; padding:0 4px }` — the scroll belongs to the
+	# body, not to the dialog, so the tab strip stays put while a long pane scrolls.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.scroll_deadzone = 8
+	box.add_child(scroll)
+
+	var body := MarginContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("margin_left", 4)
+	body.add_theme_constant_override("margin_right", 4)
+	body.add_theme_constant_override("margin_bottom", 12)
+	scroll.add_child(body)
+
+	var stack := VBoxContainer.new()
+	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(stack)
+
+	_inventory = InventoryScreen.new(_data, _gen, _state)
+	_inventory.back_pressed.connect(_on_inner_back)
+	_inventory.item_tapped.connect(func(i): item_tapped.emit(i))
+	_inventory.equip_slot_tapped.connect(func(s): equip_slot_tapped.emit(s))
+	_inventory.potion_slot_tapped.connect(func(i): potion_slot_tapped.emit(i))
+	_inventory.socket_armed.connect(func(h, i): socket_armed.emit(h, i))
+	_inventory.gem_tapped.connect(func(h, g): gem_tapped.emit(h, g))
+	_skills = SkillsPanel.new(_data, _state, _find_item)
+	_skills.message.connect(func(t): message.emit(t))
+	_stats = StatsPanel.new(_data, _gen, _state, _find_item)
+	_stats.message.connect(func(t): message.emit(t))
+
+	for entry in TABS:
+		var key := str(entry[0])
+		var pane := VBoxContainer.new()
+		pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pane.visible = false
+		stack.add_child(pane)
+		_panes[key] = pane
+
+	# The inventory screen is built as a full page (its own back button and title) because
+	# it predates the modal. Inside the modal the PWA's tab strip replaces that chrome, so
+	# the page is embedded and its own header is dropped — the panel's `hide_chrome()`
+	# removes the "Zpet do mesta"/"Inventar" row rather than leaving a second title under
+	# the tab that already says which tab this is.
+	_inventory.hide_chrome()
+	(_panes["inventory"] as VBoxContainer).add_child(_inventory)
+	(_panes["skills"] as VBoxContainer).add_child(_skills)
+	(_panes["stats"] as VBoxContainer).add_child(_stats)
+
+	set_tab(_active)
+
+
+## `.combined-tabs { display:flex; gap:4px; padding:12px 16px 8px;
+##                    border-bottom:1px solid #2a2a2a; align-items:center }` plus the
+## `.modal-close` circle at the end of the row.
+func _build_tabs() -> Control:
+	var wrap := PanelContainer.new()
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0, 0, 0, 0)
+	st.border_color = Color("#2a2a2a")
+	st.set_border_width_all(0)
+	st.border_width_bottom = 1
+	st.content_margin_left = 16
+	st.content_margin_right = 16
+	st.content_margin_top = 12
+	st.content_margin_bottom = 8
+	wrap.add_theme_stylebox_override("panel", st)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	wrap.add_child(row)
+
+	for entry in TABS:
+		var key := str(entry[0])
+		# `.combined-tab { flex:1; padding:8px 6px; border-radius:8px; font-size:12px }`
+		var button := Button.new()
+		button.text = str(entry[1])
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.custom_minimum_size = Vector2(0, 34)
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", 12)
+		button.pressed.connect(func(): set_tab(key))
+		row.add_child(button)
+		_tab_buttons[key] = button
+
+	# `.modal-close { width:32px; height:32px; border-radius:50%; font-size:16px;
+	#   color:#888; background:#000; border:1px solid #333 }`
+	var close := Button.new()
+	close.text = "X"
+	close.custom_minimum_size = Vector2(32, 32)
+	close.focus_mode = Control.FOCUS_NONE
+	close.add_theme_font_size_override("font_size", 13)
+	close.add_theme_color_override("font_color", Color("#888888"))
+	close.add_theme_color_override("font_color_pressed", Color("#ffffff"))
+	var cs := StyleBoxFlat.new()
+	cs.bg_color = Color("#000000")
+	cs.border_color = Color("#333333")
+	cs.set_border_width_all(1)
+	cs.set_corner_radius_all(16)
+	cs.set_content_margin_all(0)
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		close.add_theme_stylebox_override(state_name, cs)
+	close.add_theme_stylebox_override("pressed", cs)
+	close.pressed.connect(func(): back_pressed.emit())
+	row.add_child(close)
+
+	_style_tabs()
+	return wrap
+
+
+## `.combined-tab { background:#1a1a1a; color:#888; border:1px solid #2a2a2a }`
+## `.combined-tab.active { background:#2a2a2a; border-color:#4a7dff; color:#fff }`
+func _style_tabs() -> void:
+	for key in _tab_buttons:
+		var button: Button = _tab_buttons[key]
+		var active := str(key) == _active
+		var st := StyleBoxFlat.new()
+		st.bg_color = Color("#2a2a2a") if active else Color("#1a1a1a")
+		st.border_color = Color(UIKit.MOD_BLUE) if active else Color("#2a2a2a")
+		st.set_border_width_all(1)
+		st.set_corner_radius_all(8)
+		st.content_margin_left = 6
+		st.content_margin_right = 6
+		st.content_margin_top = 8
+		st.content_margin_bottom = 8
+		# One style for every state: Jan's rule is no hover/focus styling, so there is no
+		# second style that could drift into a hover look.
+		for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
+			button.add_theme_stylebox_override(state_name, st)
+		var colour := "#ffffff" if active else "#888888"
+		button.add_theme_color_override("font_color", Color(colour))
+		button.add_theme_color_override("font_color_pressed", Color(colour))
+
+
+func set_tab(key: String) -> void:
+	if not _panes.has(key):
+		return
+	_active = key
+	for pane_key in _panes:
+		(_panes[pane_key] as Control).visible = str(pane_key) == key
+	_style_tabs()
+	refresh()
+
+
+func refresh() -> void:
+	match _active:
+		"inventory":
+			_inventory.refresh()
+		"skills":
+			_skills.refresh()
+		"stats":
+			_stats.refresh()
+
+
+## The inventory screen is embedded as a tab rather than being a screen of its own, so
+## callers that used to reach `_screens["inventory"]` — the equip/unequip/socket handlers
+## in `main.gd` — reach it through here. Kept as a getter rather than a public field so
+## there is one name for "the inventory" in both the modal and the router.
+func inventory() -> Control:
+	return _inventory
+
+
+func _on_inner_back() -> void:
+	# The inventory screen's own back button asks to leave the town-ward; inside the modal
+	# the only sensible reading of that is "close the dialog".
+	back_pressed.emit()
+
+
+## A tap on the dim area outside the panel closes the modal, as the PWA's overlay
+## `onclick` does. `_panel` swallows its own input, so this only fires on the margin.
+func _on_overlay_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		back_pressed.emit()
+	elif event is InputEventScreenTouch and event.pressed:
+		back_pressed.emit()

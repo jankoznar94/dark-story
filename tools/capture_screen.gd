@@ -41,9 +41,20 @@ func _initialize() -> void:
 
 
 func _process(_delta: float) -> bool:
-	# _ready() on a node added in _initialize() may not have run yet; wait one frame
-	# before touching the router, or the screens are not built and every key is missing.
+	# _ready() on a node added in _initialize() has NOT run yet — the SceneTree calls it
+	# when the main loop starts, i.e. after this first _process. Waiting only "one frame"
+	# was not enough: `show_screen("town")` in main's _ready() runs AFTER _entry() and
+	# overwrites whatever the capture asked for, which is why every `--screen` other than
+	# town came back as the town. Wait until the screens actually exist, then enter.
 	if not _started:
+		# Wait for main to be FULLY built, not merely started. `_screens["town"]` exists as
+		# soon as its `_add_screen` runs, but `_build_screens()` continues and `_ready()`
+		# then calls `show_screen("town")` — which resets every screen's visibility. Entering
+		# between those two points let town overwrite whatever was asked for, so every
+		# `--screen` came back as the town. `_nav_bar` is built after the screens and before
+		# that call, so it is the last cheap marker of "main is done".
+		if not _main._screens.has("town") or _main._nav_bar == null:
+			return false
 		_started = true
 		_entry()
 		return false
@@ -60,6 +71,15 @@ func _process(_delta: float) -> bool:
 
 func _entry() -> void:
 	if _screen == "":
+		return
+	# `inventory`, `talents` and `hero` are the PWA's three tabs of ONE modal — in the port
+	# they are `character` plus a tab name, so both the old keys (which the reference set
+	# is named after) and explicit `<screen>@<tab>` forms resolve here.
+	if _screen.begins_with("character"):
+		var tab := "inventory"
+		if _screen.contains("@"):
+			tab = _screen.split("@")[1]
+		_main.open_modal(tab)
 		return
 	if _screen == "arena":
 		_main._on_wilderness()
