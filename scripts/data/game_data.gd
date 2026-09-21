@@ -80,6 +80,40 @@ func _build_indexes() -> void:
 	for item in table("ITEMS", []):
 		if item is Dictionary and item.has("id"):
 			_items_by_id[item["id"]] = item
+	_build_gem_items()
+
+
+## Gems are NOT in ITEMS: the PWA builds them at runtime in initGemItems() from the
+## GEMS table (4 types x 5 qualities), and the loot system then refers to them by id
+## ("ruby", "ruby_perfect", ...). The same construction happens here so a gem id
+## resolves wherever an item id is expected. Without this, gem drops resolved to
+## nothing and the 5% gem branch of rollLoot silently produced no item.
+func _build_gem_items() -> void:
+	var qualities: Array = table("GEM_QUALITIES", [])
+	var costs := {"chipped": 10, "flawed": 15, "normal": 20, "flawless": 50, "perfect": 100}
+	var tiers := {"chipped": 1, "flawed": 2, "normal": 3, "flawless": 4, "perfect": 5}
+	for gem_type in table("GEMS", {}):
+		var gem: Dictionary = table("GEMS", {})[gem_type]
+		var idx := 0
+		for q in qualities:
+			var q_data: Dictionary = gem.get("qualities", {}).get(q, {})
+			if q_data.is_empty():
+				idx += 1
+				continue
+			var id: String = gem_type if q == "normal" else "%s_%s" % [gem_type, q]
+			_items_by_id[id] = {
+				"id": id,
+				"name": q_data.get("name", id),
+				"type": "gem",
+				"gemType": gem_type,
+				"gemQuality": q,
+				# iconImg uses the 0-based quality INDEX, matching the asset names.
+				"iconImg": "assets/gems/%s%d.png" % [gem_type, idx],
+				"cost": costs.get(q, 20),
+				"tier": tiers.get(q, 1),
+				"quality": "magic",
+			}
+			idx += 1
 	for theme_bucket in table("MONSTER_DB", []):
 		for monster in theme_bucket:
 			if monster is Dictionary and monster.has("name"):

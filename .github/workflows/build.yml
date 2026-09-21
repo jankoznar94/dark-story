@@ -86,6 +86,26 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "DATA_ALL_PASS=true"
 
+      # Itemisation is the half of the port that is pure rules: affix roll ranges,
+      # level requirements, Magic Find diminishing, stacking. The test asserts real
+      # rolled VALUES (1530 affix rolls checked against their ranges), because a
+      # roller that returns the minimum every time passes any "no error" check.
+      - name: Itemisation test (affixes, MF, loot, gems)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_items.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ITEMS_ALL_PASS=true"
+
+      # Equipping and the town are where the save is actually written, so this is
+      # the test that catches a rule change breaking the persisted shape.
+      - name: Equip and town test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_equip_and_town.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "EQUIP_TOWN_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
