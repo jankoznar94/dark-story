@@ -106,6 +106,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "EQUIP_TOWN_ALL_PASS=true"
 
+      # The combat is the part that could not be tested before the port: in the PWA
+      # these numbers lived in a requestAnimationFrame loop that also moved DOM
+      # nodes. This drives 15 real fights (every act x every difficulty) tick by
+      # tick and asserts they END, and in a sane number of ticks - a fight that
+      # never resolves is invisible to any "does it boot" check.
+      - name: Combat test (scaling, pacing, progression)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_combat.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "COMBAT_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

@@ -16,6 +16,7 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const EquipLogic := preload("res://scripts/items/equip_logic.gd")
 const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
 const TownScreen := preload("res://scripts/ui/town_screen.gd")
+const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 
 var data: Node
 var gen: ItemGen
@@ -64,6 +65,14 @@ func _build_screens() -> void:
 	add_child(town)
 	_screens["town"] = town
 
+	var arena := ArenaScreen.new(data, gen, loot, state, _resolve)
+	arena.set_anchors_preset(Control.PRESET_FULL_RECT)
+	arena.visible = false
+	arena.leave_requested.connect(func(): show_screen("town"))
+	arena.another_fight_requested.connect(_on_another_fight)
+	add_child(arena)
+	_screens["arena"] = arena
+
 	# The screens are Control nodes on a Node2D main; give them a CanvasLayer so they
 	# sit above any future world rendering.
 	var layer := CanvasLayer.new()
@@ -89,6 +98,9 @@ func show_screen(name: String) -> void:
 			_screens["town"].enter(_reset_shop_cache)
 		"inventory":
 			_screens["inventory"].refresh()
+		"arena":
+			# Nothing to set up: _enter_arena already started the fight.
+			pass
 
 
 ## The shop's stock is rebuilt on every town visit, so there is nothing to invalidate
@@ -100,14 +112,60 @@ func _reset_shop_cache() -> void:
 func _on_town_tile(key: String) -> void:
 	match key:
 		"wilderness":
-			# The arena is the next port step; until then this is the honest answer.
-			print("Wilderness: the arena is not ported yet")
+			_on_wilderness()
 		"chest", "shop", "craft", "gamble":
 			print("%s: not ported yet" % key.capitalize())
 		"portal":
-			print("Town portal: not ported yet")
+			_on_town_portal()
 		_:
 			show_screen(key)
+
+
+## Wilderness: the arena. Entering it also resets the zone's fight counter, which is
+## what the PWA did on act entry — a walk out of town always starts a fresh zone.
+func _on_wilderness() -> void:
+	var act_id := _first_uncompleted_act()
+	if act_id < 0:
+		return
+	state.data["areaFightProgress"][act_id] = 0
+	_enter_arena(act_id)
+
+
+func _enter_arena(act_id: int) -> void:
+	var arena = _screens["arena"]
+	state.data["_currentAct"] = act_id
+	show_screen("arena")
+	if not arena.start(state, _resolve):
+		print("Arena: no fight available for act %d" % act_id)
+
+
+func _on_another_fight() -> void:
+	var arena = _screens["arena"]
+	if not arena.another_fight():
+		show_screen("town")
+
+
+## Town portal: only offered while a return position is stored. Returning rewinds to
+## the stored act/zone/fight and consumes nothing — the scroll was spent on the way
+## out, which is how the PWA did it.
+func _on_town_portal() -> void:
+	var portal: Variant = state.data.get("townPortalReturn")
+	if portal == null:
+		return
+	var p: Dictionary = portal
+	state.data["locationProgress"][int(p.get("actId", 0))] = int(p.get("zoneId", 0))
+	state.data["areaFightProgress"][int(p.get("actId", 0))] = int(p.get("areaFight", 0))
+	state.data["townPortalReturn"] = null
+	state.save()
+	_enter_arena(int(p.get("actId", 0)))
+
+
+func _first_uncompleted_act() -> int:
+	var acts: Array = data.acts()
+	for i in acts.size():
+		if not state.is_boss_defeated(i):
+			return i
+	return -1
 
 
 func _on_item_tapped(inventory_index: int) -> void:
