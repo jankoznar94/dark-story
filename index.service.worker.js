@@ -6,10 +6,10 @@
 // cache keyed by the wasm's CONTENT HASH, which does not change unless the
 // engine itself changes.
 //
-// d0dfd12583267864 and fc74679e3b97f768 are filled in at build time by
+// 840b75cdf49ed8ae and fc74679e3b97f768 are filled in at build time by
 // tools/patch_web_sw.py.
 
-const CODE_VERSION = 'd0dfd12583267864';
+const CODE_VERSION = '840b75cdf49ed8ae';
 const ASSET_VERSION = 'fc74679e3b97f768';
 
 const CODE_PREFIX = 'dark-story-code-';
