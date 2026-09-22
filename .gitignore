@@ -6,5 +6,12 @@ export_credentials.cfg
 *.keystore
 *.jks
 
+# Working output of the parity tooling: `band.py` writes cropped comparisons and
+# `shoot_port.sh` writes the port frames the diffs read. Both are regenerated in one
+# command, so committing them only creates a second copy that goes stale silently.
+# (`tools/reference/pwa/` and `port2/` ARE committed — they are the baseline the diff
+# compares against and CI has no browser to re-shoot them.)
+tools/reference/band/
+
 # Godot writes a .uid next to every script; they are how the editor tracks a
 # script across a rename and are meant to be committed. Kept, deliberately.
