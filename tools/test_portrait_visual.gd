@@ -21,6 +21,8 @@ const ItemGen := preload("res://scripts/items/item_gen.gd")
 const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
+const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 
 var _data: Node
 var _gen: ItemGen
@@ -40,6 +42,8 @@ func _initialize() -> void:
 	_test_gauge_arc_draws_a_proportional_sweep()
 	_test_arc_geometry_is_bottom_anchored()
 	_test_no_screen_uses_flat_buttons()
+	_test_grid_cells_are_the_pwa_light_box()
+	_test_the_ui_font_is_dejavu()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -211,3 +215,102 @@ func _arena():
 		_fail("the arena could not start a fight")
 		return null
 	return screen
+
+
+## `.chest-cell { background:#aaa; border:1px solid #777 }` + `.empty { opacity:0.25 }`.
+##
+## This was the single largest visual error in the port (the chest went from 44.7% of
+## pixels differing to 6.7% once it was fixed) and NOTHING else could see it: the chest
+## behaved correctly, it just looked wrong. A cell is a LIGHT tile — at the empty opacity
+## it renders as rgb(43,43,43) inside a #000 box, a filled one as a light grey tile with
+## the quality colour on its border.
+##
+## Two specific ways to get it wrong, both pinned here:
+##   - `flat = true` skips every stylebox the cell carries, turning the tile invisible;
+##   - an empty cell must dim by `modulate` (CSS opacity inherits the whole box), not by
+##     painting a black background.
+func _test_grid_cells_are_the_pwa_light_box() -> void:
+	var empty_cell: Button = UIKit.item_cell({}, 44.0)
+	root.add_child(empty_cell)
+	var empty_style := empty_cell.get_theme_stylebox("normal") as StyleBoxFlat
+	if empty_style == null:
+		_fail("item_cell has no normal stylebox — a grid cell is invisible without one")
+		return
+	if empty_cell.flat:
+		_fail("item_cell sets flat = true, which skips the stylebox and hides the tile")
+	var light_fill := Color(UIKit.CELL_FILL)
+	if not empty_style.bg_color.is_equal_approx(light_fill):
+		_fail("an empty cell's fill is %s, not the PWA's light #aaa" % empty_style.bg_color)
+	if not empty_style.border_color.is_equal_approx(Color(UIKit.CELL_BORDER_EMPTY)):
+		_fail("an empty cell's border is %s, not the PWA's #777" % empty_style.border_color)
+	if not is_equal_approx(empty_cell.modulate.a, 0.25):
+		_fail("an empty cell's alpha is %.2f, not the PWA's `.empty { opacity:0.25 }`"
+			% empty_cell.modulate.a)
+	if empty_cell.modulate.r < 0.99:
+		_fail("the empty cell is tinted (%s); the PWA dims by opacity alone"
+			% empty_cell.modulate)
+
+	# A filled cell is the SAME tile with the quality colour on the border. `unique` is
+	# the one quality `quality_color` derives from a flag rather than the string, so this
+	# also pins that the two agree.
+	var item := {"id": "test_sword", "name": "Test Sword", "rarity": "unique",
+		"iconImg": ""}
+	var filled_cell: Button = UIKit.item_cell(item, 44.0)
+	root.add_child(filled_cell)
+	var filled_style := filled_cell.get_theme_stylebox("normal") as StyleBoxFlat
+	if not filled_style.bg_color.is_equal_approx(light_fill):
+		_fail("a filled cell's fill is %s, not the same light #aaa" % filled_style.bg_color)
+	var want := UIKit.ItemStats.quality_color(item)
+	if not filled_style.border_color.is_equal_approx(want):
+		_fail("a unique cell's border is %s, not the quality colour %s"
+			% [filled_style.border_color, want])
+	if not is_equal_approx(filled_cell.modulate.a, 1.0):
+		_fail("a filled cell is dimmed to alpha %.2f; only empty cells dim"
+			% filled_cell.modulate.a)
+	# `.chest-cell:active { background:#aaa }` is the only state change — no hover.
+	for state in ["hover", "focus"]:
+		var hover_style := filled_cell.get_theme_stylebox(state) as StyleBoxFlat
+		if hover_style == null:
+			continue
+		if not hover_style.bg_color.is_equal_approx(filled_style.bg_color):
+			_fail("the cell's `%s` state repaints the tile (%s); the PWA has no hover"
+				% [state, hover_style.bg_color])
+
+
+## The reference frames are shot in headless Chromium, where the PWA's
+## `font-family: system-ui, sans-serif` resolves to **DejaVu Sans**. Godot's own default
+## is Open Sans SemiBold, which is ~3% wider per glyph and builds an ~1.43em line box
+## against the CSS `line-height: normal` ~1.16em — a 14px Label came out 20px tall where
+## the PWA's is 16, and that excess accumulated into vertical drift on EVERY screen.
+##
+## This is a project-wide setting with no gameplay symptom, so it regresses the moment
+## someone re-imports a theme or trusts `Theme.default_font`. Checked at the theme
+## `main.gd` actually installs, not at `UIFonts` alone.
+func _test_the_ui_font_is_dejavu() -> void:
+	var font := UIFonts.regular()
+	if font == null:
+		_fail("the UI font does not load at all")
+		return
+	if not font.get_font_name().begins_with("DejaVu"):
+		_fail("the UI font is %s, not the DejaVu Sans the reference frames use"
+			% font.get_font_name())
+	# Advances are the measurement the choice was made from: "Truhla" is 303px at 100px
+	# in the reference Chromium. A font swap that keeps the name but changes the file
+	# would still be wrong here.
+	var width: float = font.get_string_size("Truhla", HORIZONTAL_ALIGNMENT_LEFT, -1, 100).x
+	if abs(width - 303.0) > 4.0:
+		_fail("\"Truhla\" is %.1fpx at 100px, the reference measures 303" % width)
+	# Bold must be a real face: CSS `font-weight: bold` in DejaVu is ~13% wider than the
+	# regular, so `variation_embolden` would keep every bold advance wrong.
+	var bold_width: float = UIFonts.bold().get_string_size(
+		"Back to Town", HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+	if bold_width < 105.0:
+		_fail("bold \"Back to Town\" is %.1fpx at 15px, the reference measures 111.4 — "
+			% bold_width + "the bold face is not the real one")
+
+	# The line box, per size, against the CSS values read off the live PWA.
+	for size in UIFonts.CSS_LINE_HEIGHT:
+		var want: int = int(UIFonts.CSS_LINE_HEIGHT[size])
+		var got: int = int(round(UIFonts.get_font(size).get_height(size)))
+		if abs(got - want) > 1:
+			_fail("a %dpx Label is %dpx tall, the PWA's line box is %d" % [size, got, want])
