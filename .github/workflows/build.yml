@@ -79,6 +79,11 @@ jobs:
       # The whole port rests on the JSON tables being correct, so this is the
       # first gameplay test. It asserts COUNTS, not just "no error": a converter
       # that silently drops a table is the realistic failure here.
+      #
+      # It also checks that every image asset's CONTENT matches its EXTENSION. A JPEG named
+      # `.png` is the way a screen silently draws nothing: Godot refuses it, the caller gets
+      # `null`, and the node is still `visible` — which is exactly how the defeat page was
+      # a black screen for a whole session with every test green.
       - name: Data tables test (items, monsters, acts, classes)
         run: |
           set -e
@@ -248,6 +253,13 @@ jobs:
       # fight actually ran at the frame rate, about 6x fast. This also pins the pack fight
       # reaching its LAST member, a defeat settling the save exactly once, and a cleared stop
       # offering the map instead of another fight forever.
+      #
+      # It ALSO pins the result PAGE's GEOMETRY: what "the win and lose screen do not work"
+      # looked like. The port's defeat page was a black screen with two labels in the corner
+      # because `result_defeat.png` shipped as a JPEG under a `.png` name — the texture was
+      # `visible` and null, so no assertion above could see it. The rects are asserted, not the
+      # visibility flags, and the assertion is verified by mutation (restore the JPEG, or make
+      # the loot list a sibling of the expanding block, and it goes red).
       - name: Arena pacing test (real-time clock, pack end, defeat, cleared stop)
         run: |
           set -e

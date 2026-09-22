@@ -47,6 +47,8 @@ func _initialize() -> void:
 	_test_the_ring_s_sweep_is_the_weapon_s_interval()
 	_test_the_walk_in_moves_every_frame()
 	_test_the_damage_ghost_trails_the_fill()
+	_test_a_hit_does_not_land_in_one_frame()
+	_test_the_enemy_timer_never_sweeps_backwards()
 	_test_the_rules_clock_is_still_the_rules_clock()
 
 	for f in _failures:
@@ -87,7 +89,12 @@ func _hero(level: int = 30, str_points: int = 145) -> GameState:
 
 ## A running arena with a fight that cannot end, in contact (this test is about motion, not
 ## about the walk-in or the outcome).
-func _arena(state, fight: int = 0) -> ArenaScreen:
+##
+## The eased readouts are re-anchored here: the standard arena has an unemptyable enemy on
+## 1 000 000 HP, so a hit applied afterwards moves the target from a million and the first
+## frame's change is a rounding error. A test about how a HIT is drawn has to start from a
+## normal-sized pool.
+func _arena(state, fight: int = 0, big: bool = true) -> ArenaScreen:
 	state.data["locationProgress"][0] = 0
 	state.data["areaFightProgress"][0] = fight
 	var screen: ArenaScreen = ArenaScreen.new(_data, _gen, _loot, state, _resolve(state))
@@ -97,11 +104,19 @@ func _arena(state, fight: int = 0) -> ArenaScreen:
 	screen._arena.size = Vector2(390, 693)
 	if not screen.start(state, _resolve(state)):
 		_fail("the arena could not start a fight")
-	screen.battle.enemy_max_hp = 1000000.0
-	screen.battle.enemy_hp = 1000000.0
-	screen.battle.hero_max_hp = 1000000.0
-	screen.battle.hero_hp = 1000000.0
+	if big:
+		screen.battle.enemy_max_hp = 1000000.0
+		screen.battle.enemy_hp = 1000000.0
+		screen.battle.hero_max_hp = 1000000.0
+		screen.battle.hero_hp = 1000000.0
 	screen.battle.gap = 0.0
+	# Re-anchor every eased value on the pools above. `start()` seeded them from the fight's
+	# ORIGINAL pools, so without this the bars would spend their first 0.2 s gliding from the
+	# old maximum to the new one and a test measuring a hit would be measuring that instead.
+	screen._snap_ease("enemy_hp", screen.battle.enemy_hp)
+	screen._snap_ease("enemy_hp_max", screen.battle.enemy_max_hp)
+	screen._snap_ease("hero_hp", screen.battle.hero_hp)
+	screen._snap_ease("hero_hp_max", screen.battle.hero_max_hp)
 	return screen
 
 
@@ -209,44 +224,139 @@ func _test_the_walk_in_moves_every_frame() -> void:
 		print("  the hero moved on %d of %d frames (gap closed to %.2f)" % [moved, frames, screen.battle.gap])
 
 
-## `.enemy-hp-ghost-ring` is the PWA's 0.6 s trail behind a 0.2 s fill. The port snapped the
-## ghost onto the fill in the same statement, so the trail never existed on screen — and every
-## render() wrote the arc's `.value` field directly, which does not queue a redraw at all.
+## `.enemy-hp-fill-ring` transitions in 0.2 s and `.enemy-hp-ghost-ring` in 0.6 s. That pair
+## is the whole point of the ghost: the fill takes the hit and the ghost TRAILS it, so the
+## blow reads as a bite being taken.
 ##
-## Assert the trail itself: right after damage the ghost is AHEAD of the fill, and it converges
-## on the fill within about 0.6 s of real frames.
+## Two bugs have lived here and both are pinned now:
+##   1. the ghost was snapped onto the fill in the same statement, so the trail never existed;
+##   2. every write went to `.value`, which does not queue a redraw, so even the correct
+##      ghost was never repainted.
+##
+## And a third, which this rewrite is about: the FILL was written straight from the battle, so
+## it landed in ONE frame — the "instant damage" the player reported. Both rings are EASED
+## now, and the assertion is about the RATIO between them over real frames.
 func _test_the_damage_ghost_trails_the_fill() -> void:
 	print("== the damage ghost trails the fill ==")
 	var s = _hero()
 	var screen = _arena(s)
-	# A hit, applied through the battle's own state so the fill ring moves with it.
+	# A hit, applied through the battle's own state so the target moves with it.
 	screen.battle.enemy_hp = screen.battle.enemy_max_hp * 0.5
 	screen._smooth_update()
 	var fill: float = screen._arc_enemy_hp.value
 	var ghost: float = screen._arc_enemy_hp_ghost.value
-	if not is_equal_approx(fill, 0.5):
-		_fail("the fill ring reads %.3f after the enemy lost half its HP" % fill)
+	# The FILL must not already be at the target: one frame after the blow, an eased fill has
+	# only started moving. A fill that reads exactly 0.5 here is a hit that landed instantly.
+	if is_equal_approx(fill, 0.5):
+		_fail("the fill ring landed on 0.500 in the first frame - the damage is not eased")
 		return
+	if fill <= 0.5 or fill > 1.0:
+		_fail("the fill ring reads %.3f one frame after a half-HP hit (expected it still falling from 1.0)" % fill)
+		return
+	# Both rings start at full, so the ghost has nothing to trail YET; what must not happen is
+	# the ghost leading the fill (it is the slower of the two, so it can only be above it).
 	if ghost < fill:
 		_fail("the ghost ring (%.3f) is already behind the fill (%.3f) after a hit - there is no trail"
 			% [ghost, fill])
 		return
-	# One frame must NOT close the whole trail: 1/60 s of a 0.6 s transition is ~2.8 %.
-	screen._process(FRAME)
-	var after_one: float = screen._arc_enemy_hp_ghost.value
-	if ghost - after_one > 0.05:
-		_fail("the ghost lost %.3f of a %.3f trail in one frame - it is snapping, not easing"
-			% [ghost - after_one, ghost - fill])
-	# And it has to CONVERGE: 0.6 s of frames must land it on the fill.
-	for _i in 40:
+	# The two clocks, in frames: the fill (0.2 s) must ARRIVE well before the ghost (0.6 s).
+	var fill_frames := 12      # 0.2 s at 60 Hz
+	var ghost_frames := 36     # 0.6 s at 60 Hz
+	for _i in fill_frames:
+		screen._process(FRAME)
+	var fill_at_200: float = screen._arc_enemy_hp.value
+	var ghost_at_200: float = screen._arc_enemy_hp_ghost.value
+	if absf(fill_at_200 - 0.5) > 0.02:
+		_fail("the fill ring read %.3f after 0.2 s - its transition is not the PWA's 0.2 s"
+			% fill_at_200)
+	if ghost_at_200 < fill_at_200 + 0.02:
+		_fail("the ghost (%.3f) had already caught the fill (%.3f) after 0.2 s - the 0.6 s trail is missing"
+			% [ghost_at_200, fill_at_200])
+	for _i in ghost_frames:
 		screen._process(FRAME)
 	var settled: float = screen._arc_enemy_hp_ghost.value
 	if absf(settled - screen._arc_enemy_hp.value) > 0.02:
-		_fail("the ghost ring settled at %.3f against a fill of %.3f after 0.66 s"
+		_fail("the ghost ring settled at %.3f against a fill of %.3f after 0.8 s"
 			% [settled, screen._arc_enemy_hp.value])
 	else:
-		print("  hit -> ghost %.3f, one frame later %.3f, settled %.3f in 0.66 s"
-			% [ghost, after_one, settled])
+		print("  hit -> fill %.3f, ghost trailing at %.3f, both settled by 0.8 s"
+			% [fill, settled])
+
+
+## The report this whole pass is about: "when I take damage it must not be visually instant —
+## behind the scenes it IS instant, it is the aesthetics that have to ease".
+##
+## So: the HERO's bar and the ENEMY's ring must both take real frames to arrive, and the
+## numbers beside them must travel with the bars rather than announcing the final value at once.
+func _test_a_hit_does_not_land_in_one_frame() -> void:
+	print("== a hit does not land in one frame ==")
+	var s = _hero()
+	# A NORMAL-sized pool: at a million HP the 0.2 s transition moves the bar by a rounding
+	# error per frame and this test would be measuring the pool, not the easing.
+	var screen = _arena(s, 0, false)
+	var b = screen.battle
+	# A hit on the hero.
+	var start_hp: float = b.hero_hp
+	b.hero_hp = start_hp * 0.5
+	screen._smooth_update()
+	var shown_after_one: float = screen._hero_hp_shown
+	if shown_after_one <= start_hp * 0.5:
+		_fail("the hero's HP readout dropped to %.0f in the first frame - the damage is instant"
+			% shown_after_one)
+		return
+	if not is_equal_approx(shown_after_one, start_hp):
+		_fail("the hero's HP readout moved to %.1f on the frame the blow landed - the first frame must only START the transition"
+			% shown_after_one)
+	# And the label with it: a bar that eases while its number snaps is half a fix.
+	if screen._hero_hp_bar_label.text == "%d/%d" % [int(b.hero_hp), int(b.hero_max_hp)]:
+		_fail("the hero's HP label shows the FINAL value (%s) on the frame the blow landed"
+			% screen._hero_hp_bar_label.text)
+	# 0.2 s of frames is the PWA's transition; it has to have arrived by then.
+	for _i in 14:
+		screen._process(FRAME)
+	var settled: float = screen._hero_hp_shown
+	if absf(settled - b.hero_hp) > 1.0:
+		_fail("the hero's bar read %.0f after 0.23 s against a target of %.0f"
+			% [settled, b.hero_hp])
+	print("  hero %.0f -> %.0f over the 0.2 s transition, label %s"
+		% [start_hp, settled, screen._hero_hp_bar_label.text])
+
+	# The same for the enemy, whose damage the player causes.
+	b.enemy_hp = b.enemy_max_hp * 0.25
+	screen._smooth_update()
+	if is_equal_approx(screen._enemy_hp_shown, b.enemy_hp):
+		_fail("the enemy's HP readout landed on its target in one frame")
+	for _i in 14:
+		screen._process(FRAME)
+	if absf(screen._enemy_hp_shown - b.enemy_hp) > 1.0:
+		_fail("the enemy's ring read %.0f after 0.23 s against a target of %.0f"
+			% [screen._enemy_hp_shown, b.enemy_hp])
+
+
+## The enemy's timer arc is read off a clock the battle RESTARTS on every swing (the tick
+## subtracts the whole interval), so a value read straight off `enemy_swing_elapsed` jumps
+## backwards by a full interval each time the monster swings. That is a stutter, and it is the
+## same class of bug the gold ring had.
+##
+## A jump back to ~0 IS the restart of a new sweep — the PWA does that too — but it may only
+## happen at the moment the ring is FULL, never halfway up.
+func _test_the_enemy_timer_never_sweeps_backwards() -> void:
+	print("== the enemy timer never sweeps backwards ==")
+	var s = _hero()
+	var screen = _arena(s)
+	screen.battle.gap = 0.0
+	var backwards := 0
+	var prev: float = screen._arc_enemy_timer.value
+	for _i in 240:   # 4 s: several enemy swings
+		screen._process(FRAME)
+		var now: float = screen._arc_enemy_timer.value
+		if now < prev - 0.05 and prev < 0.9:
+			backwards += 1
+		prev = now
+	if backwards > 0:
+		_fail("the enemy timer jumped backwards %d times in 4 s" % backwards)
+	else:
+		print("  the enemy timer advanced monotonically through 4 s of frames")
 
 
 ## The other half of the split, and the reason it is safe: none of this may change what the

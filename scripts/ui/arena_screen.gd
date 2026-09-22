@@ -58,12 +58,20 @@ class_name ArenaScreen
 ## back into the battle.
 
 const ItemGen := preload("res://scripts/items/item_gen.gd")
+const ItemStats := preload("res://scripts/items/item_stats.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
 const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
+const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 
 signal fight_over(won: bool)
 signal leave_requested()
 signal another_fight_requested()
+## The result page's own destinations, which are NOT the in-fight ones: the PWA's victory
+## page offers Map (after a cleared stop), Walk to Town, Town Portal (only while a scroll is
+## carried) and Hero (opens the character modal) — a different set from "leave the arena".
+signal map_requested()
+signal portal_requested()
+signal hero_requested()
 
 ## One rendered frame is one fight tick. A fixed step rather than the frame's real delta
 ## keeps the pace identical on every machine and lets a test drive the same fight.
@@ -134,6 +142,10 @@ const HERO_H_MAX := 118.0
 const RING_BOX := 260.0
 const PORTRAIT_BOX := 180.0
 const HP_RING_BOX := 200.0
+## `.result-tile { flex:1 1 60px; min-width:60px; max-width:90px; aspect-ratio:1 }` inside
+## the PWA's 390px page with 12px padding and two 6px gaps: (390 - 24 - 18) / 4 ≈ 87, so a
+## full row of four sits at 87 and the CSS's own 90px cap is what wins.
+const RESULT_TILE := 84.0
 
 var _data: Node
 var _gen: ItemGen
@@ -183,13 +195,48 @@ var _result_label: Label
 var _cast_icon: TextureRect
 var _confirm_layer: Control
 var _surrender_button: Button
-var _next_button: Button
+
+# The result page (`#resultScreen`). It is a full-page layer of this screen rather than a
+# screen of its own: the PWA's `showScreen('result')` swaps the page, and the fight's own
+# nodes have to stay exactly as they are behind it so the next fight can reuse them.
+var _result_layer: Control
+var _result_bg_button: Button
+## The artwork's own box: `.result-icon-img.stop-result` plus the two overlays drawn ON it.
+## It is a plain Control child of the expanding `.result-top`, so its size is assigned in
+## `_layout_result_page()` — a `PRESET_TOP_WIDE` TextureRect has zero height and the art
+## would be invisible.
+var _art_box: Control
+var _result_art: TextureRect
+## `.result-loot-scroll`'s margin box — kept as a field because `_layout_result_page()` puts
+## it under the artwork rather than leaving it to a container.
+var loot_pad: MarginContainer
+## `.result-bottom`'s padding box, likewise positioned rather than laid out.
+var _tiles_holder: MarginContainer
+var _result_defeat_art: TextureRect
+var _result_overlay: VBoxContainer
+var _result_title: Label
+var _result_sub: Label
+var _result_stats: VBoxContainer
+var _result_hp_line: Label
+var _result_mana_line: Label
+var _result_actions: HBoxContainer
+## The loot the fight just handed over, as `.loot-scroll-item` rows.
+var _loot_list: VBoxContainer
+## The loot that did NOT fit in the bag: a button under the list, not a row in it.
 var _loot_button: Button
-var _leave_button: Button
+## Where the result page's page-tap goes: town after a defeat, the map after a win. The PWA
+## rewired `#resultScreen.onclick` per outcome.
+var _result_tap_goes_to_map := false
+## True once `_finish_fight` has settled this fight, so the page is built once and taps on
+## it are accepted only after `_button_lock` has run out.
+var _result_built := false
 
 var _log_lines: Array = []
 ## Loot that did not fit in the bag. Held here so a full bag never destroys a drop.
 var _pending_loot: Array = []
+## Everything this fight rolled, bagged or not, for the result page's loot list. Kept apart
+## from the bag because the page has to show a drop the bag could not take.
+var _result_loot_rows: Array = []
 ## How many ticks each end-of-fight button must be up before it accepts a tap. A tap
 ## that lands while the last damage frame is still drawing ends up on whichever button
 ## just appeared — the player asked to attack, not to walk away. 3 ticks = 300 ms.
@@ -205,6 +252,46 @@ const GHOST_TRAIL_SECONDS := 0.6
 ## The last frame's length, so the ghost trail is 0.6 s of real time and not 0.6 s worth of
 ## frames (which would halve the trail on a 120 fps display).
 var _frame_delta := 1.0 / 60.0
+
+# --- easing (the PWA's CSS transitions) ----------------------------------------
+#
+# A RULE is instant. What the player SEES eases — `public/style.css` gives every one of
+# these a `transition: … 0.2s ease-out`, and the port wrote the new number the moment the
+# tick settled it. So the enemy's HP dropped by a whole hit in one frame (Jan: "the
+# enemy's and the player's HP are not smooth"), the hero's bar jumped 100 ms after the
+# blow, and the enemy's timer stepped ten times a second instead of sweeping.
+#
+# Nothing here is a rule: the battle's HP already IS the new number, the swing interval
+# already IS the weapon's interval. These are the values the SCREEN draws.
+const EASE_HP_SECONDS := 0.2
+const EASE_MANA_SECONDS := 0.2
+const EASE_ENEMY_TIMER_SECONDS := 0.25
+## `.enemy-hp-ghost-ring { transition: stroke-dashoffset 0.6s ease-out }` — the ghost is
+## the slow one, so a hit bites.
+const EASE_GHOST_SECONDS := 0.6
+## How long a hit's red wash takes to fade off the figure that took it. There is no CSS
+## transition behind this one — it is the readout for "the blow landed HERE", which the
+## PWA got from the figure's shake alone and which is easy to miss at 60 fps.
+const EASE_HIT_SECONDS := 0.9
+const HIT_TINT := Color(1.0, 0.35, 0.3)
+const HIT_TINT_STRENGTH := 0.55
+
+## A hit's wash, 1.0 on the blow and decayed in `_animate`. The monster's shake rides on it.
+var _hero_flash := 0.0
+var _monster_flash := 0.0
+
+## One home for every eased number: id -> {value, src, target, elapsed, duration}. A screen
+## that eases one bar and snaps the next is the bug this exists to prevent.
+var _ease: Dictionary = {}
+
+## What the bars and their labels draw. The battle's numbers are the RULES' (instant); these
+## are the eased readout, seeded once per fight in `start()`.
+var _hero_hp_shown := 0.0
+var _hero_hp_max_shown := 1.0
+var _mana_shown := 0.0
+var _mana_max_shown := 1.0
+var _enemy_hp_shown := 0.0
+var _enemy_hp_max_shown := 1.0
 
 ## Swing animations: the hero lunges, the monster lunges, on their own attack.
 var _hero_lunge := 0.0
@@ -257,41 +344,217 @@ func _build() -> void:
 	root.add_child(_build_spell_row())
 	root.add_child(_build_bottom())
 
-	# The end-of-fight controls sit over the arena's lower half rather than pushing the
-	# layout around: showing a "Dalsi souboj" button must not resize the fight.
-	var overlay := VBoxContainer.new()
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	overlay.alignment = BoxContainer.ALIGNMENT_END
-	overlay.add_theme_constant_override("separation", 4)
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(overlay)
-	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", 12)
-	pad.add_theme_constant_override("margin_right", 12)
-	pad.add_theme_constant_override("margin_bottom", 132)
-	overlay.add_child(pad)
-	var inner := VBoxContainer.new()
-	inner.add_theme_constant_override("separation", 4)
-	pad.add_child(inner)
-	_result_label = _label("", 26, Color(C_NAME), HORIZONTAL_ALIGNMENT_CENTER)
-	inner.add_child(_result_label)
-	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
-	buttons.add_theme_constant_override("separation", 8)
-	inner.add_child(buttons)
-	_next_button = _make_button("Dalsi souboj")
-	_next_button.pressed.connect(func(): _on_next_pressed())
-	_next_button.visible = false
-	buttons.add_child(_next_button)
+	# There is no in-arena end-of-fight badge: the PWA's result page REPLACES the screen
+	# (`#resultScreen { position:fixed; background:#000; height:100vh }`), and the port's
+	# "Vitezstvi" label floating over a live fight was its own invention. Everything the
+	# player sees at the end lives in `_build_result_layer()`, which covers this screen.
+	_build_result_layer()
+	_build_confirm()
+
+
+## The PWA's victory page is a SCREEN, not a badge over the arena: the stop's artwork fills
+## the page with "Victory!" and the location over it, the hero's status sits along its
+## bottom edge, the loot list below that and the action tiles last. `#resultScreen` is
+## `position:fixed` with `background:#000` and `height:100vh`, so it covers everything.
+##
+## It is built here and hidden; `_finish_fight` shows it. Keeping it a layer of this screen
+## rather than a screen of its own is what lets the fight's own nodes (the arena, the bar)
+## stay exactly as they are behind it.
+func _build_result_layer() -> void:
+	_result_layer = Control.new()
+	_result_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_result_layer.visible = false
+	add_child(_result_layer)
+
+	var bg := ColorRect.new()
+	bg.color = Color("#000000")
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	_result_layer.add_child(bg)
+	# `.result-screen { cursor:pointer }` and a `#resultScreen` onclick that walks the hero
+	# to town — so the whole page is the button. Kept as a full-rect Button UNDER the
+	# tiles so a tap anywhere but a tile leaves the fight behind.
+	_result_bg_button = Button.new()
+	# NOT `flat = true`: on a Button that means "draw NO stylebox at all", and
+	# `test_portrait_visual` reads every stylebox in this file to enforce the border contract
+	# (`flat` hides the border silently). A transparent StyleBoxEmpty on every state is the
+	# same invisible result and it keeps the check able to see the button.
+	_result_bg_button.focus_mode = Control.FOCUS_NONE
+	_result_bg_button.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var empty_style := StyleBoxEmpty.new()
+	for state_name in ["normal", "hover", "focus", "pressed", "disabled"]:
+		_result_bg_button.add_theme_stylebox_override(state_name, empty_style)
+	_result_bg_button.pressed.connect(func(): _on_result_clicked())
+	_result_layer.add_child(_result_bg_button)
+
+	# Everything below is positioned in `_layout_result_page()`. NOT a container: a container
+	# OVERWRITES the rects of its children, and the artwork's box has no minimum height of its
+	# own (a `Control` holding only texture children reports 0), so a container collapsed it
+	# and the loot list landed on top of the art. This is the same class of failure as the
+	# `.value` writes that queued no redraw: the screen was correct and simply never drawn.
+	#
+	# `.result-top` is a flex COLUMN that CONTAINS the loot list and `.result-bottom` is
+	# `flex:0 0 auto`. That is why the port's victory page had a black hole in the middle: the
+	# loot list was a sibling of the expanding block, so a `flex:1` top pushed it to the
+	# bottom of the page. Measured on the live PWA, the loot row sits at y=399 — six px under
+	# the artwork's own bottom edge (393) — not above the tiles.
+
+	# The artwork's own box: the image plus the two overlays drawn ON it.
+	_art_box = Control.new()
+	_art_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(_art_box)
+
+	_result_art = TextureRect.new()
+	_result_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_result_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_result_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art_box.add_child(_result_art)
+	# A defeat has no artwork of its own: the PWA swaps in `result_defeat.png`
+	# (`.result-icon-img.large { max-width:90vw; max-height:50vh }`), centred.
+	_result_defeat_art = TextureRect.new()
+	_result_defeat_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_result_defeat_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_result_defeat_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_defeat_art.visible = false
+	_art_box.add_child(_result_defeat_art)
+
+	# The overlay ON the art for a win (`.stop-result-overlay { top:10px }`), and UNDER it for
+	# a defeat (the PWA's own page-level `.result-title` / `.result-sub`). Both cases place it
+	# in `_layout_result_page()`, so it lives here rather than in a wrapper per outcome.
+	_result_overlay = VBoxContainer.new()
+	_result_overlay.add_theme_constant_override("separation", 2)
+	_result_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(_result_overlay)
+	_result_title = _label("", 26, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER, true)
+	_result_overlay.add_child(_result_title)
+	_result_sub = _label("", 14, Color("#dddddd"), HORIZONTAL_ALIGNMENT_CENTER, true)
+	_result_overlay.add_child(_result_sub)
+
+	# `.stop-result-stats` — the hero's status pinned to the ART's bottom edge.
+	_result_stats = VBoxContainer.new()
+	_result_stats.add_theme_constant_override("separation", 4)
+	_result_stats.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(_result_stats)
+	_result_hp_line = _label("", 15, Color(C_ENEMY_HP), HORIZONTAL_ALIGNMENT_CENTER, true)
+	_result_stats.add_child(_result_hp_line)
+	_result_mana_line = _label("", 15, Color(C_MANA_FILL), HORIZONTAL_ALIGNMENT_CENTER, true)
+	_result_stats.add_child(_result_mana_line)
+
+	# `.result-loot-scroll { margin:6px auto; padding:4px 10px; width:100% }` — INSIDE
+	# `.result-top`, directly under the artwork.
+	loot_pad = MarginContainer.new()
+	loot_pad.add_theme_constant_override("margin_left", 10)
+	loot_pad.add_theme_constant_override("margin_right", 10)
+	loot_pad.add_theme_constant_override("margin_top", 6)
+	loot_pad.add_theme_constant_override("margin_bottom", 4)
+	loot_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(loot_pad)
+	_loot_list = VBoxContainer.new()
+	_loot_list.add_theme_constant_override("separation", 0)
+	_loot_list.visible = false
+	loot_pad.add_child(_loot_list)
+	# The overflow drops are offered by a BUTTON, not swallowed: a player who wins a rare
+	# with a full bag has to be able to see that it exists.
 	_loot_button = _make_button("Sebrat loot")
 	_loot_button.pressed.connect(func(): _on_loot_pressed())
 	_loot_button.visible = false
-	buttons.add_child(_loot_button)
-	_leave_button = _make_button("Zpet do mesta")
-	_leave_button.pressed.connect(func(): _on_leave_pressed())
-	buttons.add_child(_leave_button)
+	_result_layer.add_child(_loot_button)
 
-	_build_confirm()
+	# `.result-bottom { position:absolute; bottom:0; padding:10px 12px; gap:6px }`.
+	_tiles_holder = MarginContainer.new()
+	_tiles_holder.add_theme_constant_override("margin_left", 12)
+	_tiles_holder.add_theme_constant_override("margin_right", 12)
+	_tiles_holder.add_theme_constant_override("margin_top", 0)
+	_tiles_holder.add_theme_constant_override("margin_bottom", 10)
+	_tiles_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(_tiles_holder)
+	_result_actions = HBoxContainer.new()
+	_result_actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	_result_actions.add_theme_constant_override("separation", 6)
+	# `.result-bottom:empty { display:none }` — a defeat has NO action tiles at all; the
+	# only way on is the page tap, which the PWA wired to "return to town".
+	_tiles_holder.add_child(_result_actions)
+
+
+## `_result_actions`'s tile size. `.result-tile { flex:1 1 60px; min-width:60px;
+## max-width:90px; aspect-ratio:1 }` inside a 390px page with 12px padding and a 6px gap:
+## (390 - 24 - 3*6) / 4 = 87, so a full row of four sits at 87 and the 90px cap only binds on
+## a wider canvas. Measured on the live PWA as 87 — the 84 this used to be constant was 3px
+## short of every tile, which is exactly the kind of drift that makes a page look "close but
+## wrong". A short row's tiles are wider (flex-grow), so it follows the count.
+func _tile_size() -> float:
+	var count := maxi(_result_actions.get_child_count(), 1)
+	var page_w := 390.0
+	if _result_layer != null and _result_layer.size.x > 0.0:
+		page_w = _result_layer.size.x
+	var usable := page_w - 24.0 - 6.0 * float(count - 1)
+	return clampf(usable / float(count), 60.0, 90.0)
+
+
+## One `.result-tile`: an 87px square (see `_tile_size`), the art filling it, the label over
+## the art's bottom in a 60 % black plate.
+func _make_action_tile(icon_path: String, label_text: String, on_press: Callable) -> Button:
+	var tile := Button.new()
+	tile.custom_minimum_size = Vector2(RESULT_TILE, RESULT_TILE)
+	tile.focus_mode = Control.FOCUS_NONE
+	var style := _flat_style("#000000", "#333333", 10)
+	style.set_border_width_all(2)
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		tile.add_theme_stylebox_override(state_name, style)
+	tile.add_theme_stylebox_override("pressed", _flat_style("#1a1a1a", C_GOLD, 10))
+	tile.pressed.connect(on_press)
+
+	var art := _load(icon_path)
+	if art != null:
+		var icon := TextureRect.new()
+		icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		icon.texture = art
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		tile.add_child(icon)
+
+	var caption := _label(label_text, 13, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER, true)
+	caption.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	caption.offset_top = -24
+	caption.offset_bottom = -4
+	caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var plate := StyleBoxFlat.new()
+	plate.bg_color = Color(0, 0, 0, 0.6)
+	plate.set_corner_radius_all(3)
+	caption.add_theme_stylebox_override("normal", plate)
+	tile.add_child(caption)
+	# The label lives on a CHILD, so `Button.text` is empty. A test that asks what the result
+	# page offers has to be able to read it off the tile itself, and reading the caption's
+	# children would be reaching into the tile's layout — the metadata is the tile's contract.
+	tile.set_meta("label", label_text)
+	return tile
+
+
+## The tile row is REBUILT per fight, because which tiles exist is the fight's outcome: a
+## cleared stop offers the map instead of another fight, a portal tile appears only while a
+## scroll is carried, and a defeat offers none. A row built once would have to hide and show
+## its members one by one, which is how the port ended up with the wrong destinations.
+func _rebuild_result_actions(won: bool, stop_complete: bool, has_portal: bool) -> void:
+	for child in _result_actions.get_children():
+		_result_actions.remove_child(child)
+		child.queue_free()
+	if not won:
+		return
+	var act_id := battle.act_id
+	if stop_complete:
+		_result_actions.add_child(_make_action_tile("assets/map.webp", "Mapa",
+			func(): map_requested.emit()))
+	else:
+		_result_actions.add_child(_make_action_tile("assets/items/weapon_broad_sword.png",
+			"Dalsi souboj", func(): _on_next_pressed()))
+	_result_actions.add_child(_make_action_tile("assets/menu-icons/mesto.png", "Do mesta",
+		func(): _on_leave_pressed()))
+	if has_portal:
+		_result_actions.add_child(_make_action_tile("assets/items/town_portal_scroll.png",
+			"Portal", func(): _on_portal_pressed()))
+	_result_actions.add_child(_make_action_tile(_hero_face_path(), "Hrdina",
+		func(): _on_hero_pressed()))
 
 
 ## `.surrender-modal` — the confirmation the PWA put between the flag and the forfeit.
@@ -626,9 +889,11 @@ func _flat_style(bg: String, border: String, radius: int) -> StyleBoxFlat:
 	return style
 
 
-func _label(text: String, size: int, colour: Color, align: int = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+func _label(text: String, size: int, colour: Color, align: int = HORIZONTAL_ALIGNMENT_LEFT,
+		bold: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
+	l.add_theme_font_override("font", UIFonts.get_font(size, bold))
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", colour)
 	l.horizontal_alignment = align
@@ -685,14 +950,63 @@ func _make_button(text: String) -> Button:
 
 # ============================================================================= fight API
 
+## Seed one eased value: it starts exactly where the RULES are, not at zero and not at the
+## old bar's remainder. `start()` calls this for every eased number, so the first frame of a
+## fight cannot show the previous fight's HP.
+func _snap_ease(id: String, value: float) -> void:
+	_ease[id] = {"value": value, "src": value, "target": value, "elapsed": 0.0, "duration": 0.0}
+
+
+## Point an eased value at a new target. Re-targeting keeps the CURRENT value as the new
+## start (no snap), which is what a CSS transition does when a hit lands mid-transition.
+func _ease_to(id: String, target: float, duration: float) -> void:
+	if not _ease.has(id):
+		_snap_ease(id, target)
+		return
+	var rec: Dictionary = _ease[id]
+	if is_equal_approx(float(rec["target"]), target):
+		return
+	rec["src"] = float(rec["value"])
+	rec["target"] = target
+	rec["elapsed"] = 0.0
+	rec["duration"] = maxf(duration, 0.0001)
+
+
+func _ease_value(id: String) -> float:
+	if not _ease.has(id):
+		return 0.0
+	return float((_ease[id] as Dictionary)["value"])
+
+
+## Advance every eased value by one real frame. Ease-OUT, matching the CSS's `ease-out`:
+## fast off the mark, settling on the target.
+func _advance_ease(delta: float) -> void:
+	for id in _ease:
+		var rec: Dictionary = _ease[id]
+		var duration := float(rec["duration"])
+		if duration <= 0.0:
+			rec["value"] = float(rec["target"])
+			continue
+		rec["elapsed"] = float(rec["elapsed"]) + delta
+		var t := clampf(float(rec["elapsed"]) / duration, 0.0, 1.0)
+		var eased := 1.0 - pow(1.0 - t, 2.0)
+		rec["value"] = float(rec["src"]) + (float(rec["target"]) - float(rec["src"])) * eased
+		if t >= 1.0:
+			rec["value"] = float(rec["target"])
+
+
 func start(state, find_item: Callable) -> bool:
 	_log_lines = []
 	_log_box_clear()
-	_result_label.text = ""
-	_next_button.visible = false
 	_loot_button.visible = false
 	_loot_button.disabled = false
 	_button_lock = 0
+	# The result page belongs to the PREVIOUS fight: left visible it would sit over the new
+	# one, and left built it would accept a tap meant for the arena.
+	_result_built = false
+	_result_loot_rows = []
+	_result_layer.visible = false
+	_result_tap_goes_to_map = false
 	# A new fight starts with a clean real-time clock: a remainder left over from the
 	# previous fight would hand the first swing a free 100 ms.
 	_tick_accumulator = 0.0
@@ -716,6 +1030,8 @@ func start(state, find_item: Callable) -> bool:
 	_hero_lunge = 0.0
 	_monster_lunge = 0.0
 	_hero_flinch = 0.0
+	_hero_flash = 0.0
+	_monster_flash = 0.0
 	_clear_floats()
 
 	var seed_value := int(Time.get_ticks_usec()) & 0x7fffffff
@@ -726,6 +1042,25 @@ func start(state, find_item: Callable) -> bool:
 	if not ok:
 		return false
 	battle.apply_swing_timers(state, find_item)
+
+	# Every eased number starts where the RULES are. Without this the first frame of a fight
+	# would draw the previous fight's bars (or zeros) and then "catch up" over 0.2 s, which
+	# reads as damage the player never took.
+	_snap_ease("enemy_hp", battle.enemy_hp)
+	_snap_ease("hero_hp", battle.hero_hp)
+	var start_hero: Dictionary = state.hero()
+	var start_max_mana := int(start_hero.get("maxMana", 0))
+	if start_max_mana <= 0:
+		start_max_mana = _gen.hero_max_mana(start_hero, state.equip(),
+			str(state.data.get("heroClass", "")), find_item)
+	_snap_ease("mana", float(start_hero.get("mana", 0)))
+	_snap_ease("hero_hp_max", battle.hero_max_hp)
+	_snap_ease("enemy_hp_max", battle.enemy_max_hp)
+	_snap_ease("mana_max", float(maxi(start_max_mana, 1)))
+	_snap_ease("enemy_timer", 0.0)
+	# The ghost starts FULL: a fresh enemy has taken no damage, so there is no trail to
+	# carry over from the previous fight.
+	_snap_ease("enemy_hp_ghost", 1.0)
 
 	# `.player-figure` uses the hero's BODY sprite, per class — not the head portrait.
 	var hero_class := str(state.data.get("heroClass", "barbarian"))
@@ -788,6 +1123,7 @@ func _process(delta: float) -> void:
 	# The FIGURES and the GAUGES move on real time, every frame. Only the RULES wait for a
 	# tick — see the clock note at the top of this file. `step()` has already re-rendered
 	# whatever a rule changed, so this must not repeat that work.
+	_advance_ease(delta)
 	_apply_centring()
 	_animate(delta)
 	_smooth_update()
@@ -810,12 +1146,38 @@ func _drain_log() -> void:
 		# Swing animations, driven by what actually happened rather than by a timer:
 		# the hero lunges on his own landed hit, the monster lunges and the hero
 		# flinches when the hero is the one hit.
+		#
+		# The test is "is this a blow that landed on the hero", not the literal kind
+		# "ENEMY HIT": a monster's melee, bolt, crit, drain and poison all carry their own
+		# kind, and matching only the one name left the monster's spells with no reaction at
+		# all. `_damage_taken` is what the arena's history shows the player already lost.
 		if not on_player and kind.begins_with("HIT"):
 			_hero_lunge = 1.0
-		elif on_player and kind.begins_with("ENEMY HIT"):
+			_monster_flash = 1.0
+		elif is_player_blow(kind, amount, on_player):
 			_monster_lunge = 1.0
 			_hero_flinch = 1.0
+			if amount > 0:
+				_hero_flash = 1.0
 	battle.log.clear()
+
+
+## Is this log entry a blow the MONSTER landed on the hero? The battle writes its own kind
+## per attack (ENEMY HIT, ENEMY BOLT, ENEMY CRIT, ENEMY LIFESTEAL, ENEMY POISON, POISON from
+## the enemy's DoT…), so a screen that only reacted to the literal "ENEMY HIT" ignored most
+## of what the monster does. The exclusions are the enemy's HEAL (it is not damage to the
+## hero) and "ENEMY CAST …" (the cast has STARTED, the effect has not landed yet — the
+## effect's own line is what shakes the hero).
+static func is_player_blow(kind: String, amount: int, on_player: bool) -> bool:
+	if not on_player:
+		return false
+	if kind.begins_with("ENEMY HEAL") or kind.begins_with("ENEMY CAST"):
+		return false
+	if kind.begins_with("ENEMY"):
+		return true
+	# The enemy's DoT on the hero ("POISON") and the hero's own DoT on the enemy
+	# ("HERO POISON") arrive with the damage in `amount`, so they can be told apart.
+	return amount > 0 and kind == "POISON"
 
 
 ## Floating damage text over the arena — the PWA's readout, and the reason a text log
@@ -841,8 +1203,12 @@ func _spawn_float(kind: String, amount: int, on_player: bool) -> void:
 	_float_layer.add_child(label)
 	# A small horizontal drift per float so two numbers landing on the same tick do not
 	# sit exactly on top of each other.
-	_floats.append({"node": label, "life": 1.0, "dy": 0.0,
+	_floats.append({"node": label, "life": 1.0, "dy": 0.0, "age": 0.0,
 		"drift": (float(_floats.size() % 5) - 2.0) * 16.0})
+	# Spawned SMALL — `_animate` grows it over the next 90 ms of real frames, so a number
+	# that appears between two frames still reads as appearing rather than as a cut.
+	label.pivot_offset = label.size * 0.5
+	label.scale = Vector2(0.55, 0.55)
 
 
 func _clear_floats() -> void:
@@ -873,9 +1239,17 @@ func _animate(delta: float) -> void:
 			continue
 		f["life"] = float(f["life"]) - delta / 1.15
 		f["dy"] = float(f["dy"]) - delta * 96.0
+		f["age"] = float(f.get("age", 0.0)) + delta
+		var age := float(f["age"])
 		node.position = Vector2(round(mid.x - node.size.x * 0.5 + float(f["drift"])),
 			round(mid.y - 40.0 + float(f["dy"])))
 		node.modulate = Color(1, 1, 1, clampf(float(f["life"]), 0.0, 1.0))
+		# POP, then shrink: a number that appears at full size is the same "instant" the
+		# HP bars had. It grows past its size over the first 90 ms of real time and settles.
+		var pop_t := clampf(age / 0.09, 0.0, 1.0)
+		var pop := 0.55 + 0.45 * pop_t + 0.18 * sin(pop_t * PI)
+		node.pivot_offset = node.size * 0.5
+		node.scale = Vector2(pop, pop)
 		if float(f["life"]) > 0.0:
 			alive.append(f)
 		else:
@@ -886,9 +1260,16 @@ func _animate(delta: float) -> void:
 	_hero_lunge = maxf(0.0, _hero_lunge - delta * 5.0)
 	_monster_lunge = maxf(0.0, _monster_lunge - delta * 5.0)
 	_hero_flinch = maxf(0.0, _hero_flinch - delta * 5.0)
+	_hero_flash = maxf(0.0, _hero_flash - delta / EASE_HIT_SECONDS)
+	_monster_flash = maxf(0.0, _monster_flash - delta / EASE_HIT_SECONDS)
 	if is_instance_valid(_hero_sprite):
 		var lift := 14.0 * _hero_lunge - 10.0 * _hero_flinch
 		_place_hero(lift)
+		# The blow lands HERE. A number that appears beside a figure which does not react
+		# reads as a readout; a figure that takes a step back and goes red for a moment
+		# reads as being hit. `modulate` multiplies into the TextureRect's own texture, so
+		# this needs no second node.
+		_hero_sprite.modulate = Color.WHITE.lerp(HIT_TINT, _hero_flash * HIT_TINT_STRENGTH)
 	if is_instance_valid(_portrait):
 		# The monster's own lunge (20px) plus the depth tilt the PWA applies as the hero
 		# walks in (`--monster-dy`, `closed * 8` px) — a boss keeps its geometry and
@@ -897,8 +1278,14 @@ func _animate(delta: float) -> void:
 		var tilt := 0.0
 		if battle != null and not battle.is_boss:
 			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_displayed(), 0.0, 1.0))
+		# The monster SHAKES when the hero lands one: a ±2px wobble that decays with the
+		# wash. Without it the portrait was the one thing on screen that never reacted to
+		# its own damage — the ring and the bar moved and the figure did not.
+		var shake: float = round(2.0 * _monster_flash * sin(_monster_flash * 32.0))
 		var drop := 20.0 * _monster_lunge + tilt
 		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + drop)
+		_portrait.position.x = round((_arena.size.x - _portrait.size.x) * 0.5 + shake)
+		_portrait.modulate = Color.WHITE.lerp(HIT_TINT, _monster_flash * HIT_TINT_STRENGTH)
 	if is_instance_valid(_cast_icon):
 		var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() / 90.0)
 		_cast_icon.scale = Vector2(pulse, pulse)
@@ -986,28 +1373,20 @@ func render() -> void:
 		diff_name.to_upper(), battle.act_id + 1, str(act.get("name", "")).to_upper(),
 		battle.area_fight + 1, Battle.FIGHTS_PER_ZONE]
 
-	_enemy_hp_label.text = "%d/%d" % [maxi(0, int(battle.enemy_hp)), int(battle.enemy_max_hp)]
+	# The eased HP / mana readout's TARGETS are read in `_smooth_update()`, every frame —
+	# not here. `render()` runs on ticks only, and a mana potion writes `hero.mana` straight
+	# from its button between ticks; a target set from here would miss it. What belongs here
+	# is only what a tick decides: the arcs' visibility.
 	# The enemy's mana ring appears only where the enemy actually casts: the PWA hid
 	# `.enemy-mana-ring` for melee monsters. The ring's VALUE is in `_smooth_update()`.
 	_arc_enemy_mana.visible = not battle.enemy_spells.is_empty()
 	_arc_offhand.visible = battle.offhand_swing_ms > 0
-
-	_hero_hp_bar_label.text = "%d/%d" % [maxi(0, int(battle.hero_hp)), int(battle.hero_max_hp)]
 
 	# The hero's resource bar. EVERY class uses mana in this game — the barbarian too
 	# (CLASSES.json: resource 'mana', maxResource 100, baseMana 10, manaPerLevel 1) —
 	# so the bar is never hidden. An earlier note claimed the barbarian ran on rage and
 	# skipped his bar; that was wrong, and it hid the pool his own spells are paid from.
 	var hero: Dictionary = _state.hero()
-	var hero_class := str(_state.data.get("heroClass", ""))
-	var max_mana := int(hero.get("maxMana", 0))
-	if max_mana <= 0:
-		max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
-	_set_bar(_mana_track, _mana_fill, float(hero.get("mana", 0)), float(maxi(max_mana, 1)))
-	# The PWA's mana bar is labelled with a water droplet emoji; emoji are banned in the
-	# port, so the word carries the meaning instead.
-	_mana_label.text = "Mana %d / %d" % [int(hero.get("mana", 0)), max_mana]
-
 	_xp_label.text = "LvL %d" % int(hero.get("level", 1))
 	var need := int(hero["level"]) * 40 if int(hero["level"]) <= 2 else int(hero["level"]) * 80
 	var xp_track: Control = _xp_fill.get_parent()
@@ -1036,6 +1415,33 @@ func _smooth_update() -> void:
 	if battle == null:
 		return
 	var ahead := clampf(_tick_accumulator, 0.0, float(TICK_MS))
+	# The targets are read HERE, every frame, from the battle's own numbers — the RULES'
+	# values, which are already the new number the instant a tick settled them. Reading them
+	# in `render()` instead (which runs on ticks) left every OTHER path that moved HP with
+	# no way to reach the bars: a mana potion writes `hero.mana` from the button, and the
+	# battle's `enemy_hp` can be changed by a test or a spell between ticks.
+	#
+	# `_ease_to` returns early when the target is unchanged, so calling it every frame is
+	# free and no transition is ever restarted by a repeat call.
+	var hero: Dictionary = _state.hero()
+	var hero_class := str(_state.data.get("heroClass", ""))
+	var max_mana := int(hero.get("maxMana", 0))
+	if max_mana <= 0:
+		max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
+	_ease_to("enemy_hp", battle.enemy_hp, EASE_HP_SECONDS)
+	_ease_to("enemy_hp_max", battle.enemy_max_hp, EASE_HP_SECONDS)
+	_ease_to("hero_hp", battle.hero_hp, EASE_HP_SECONDS)
+	_ease_to("hero_hp_max", battle.hero_max_hp, EASE_HP_SECONDS)
+	_ease_to("mana", float(hero.get("mana", 0)), EASE_MANA_SECONDS)
+	_ease_to("mana_max", float(maxi(max_mana, 1)), EASE_MANA_SECONDS)
+
+	# The eased readout is what everything below draws.
+	_hero_hp_shown = _ease_value("hero_hp")
+	_hero_hp_max_shown = _ease_value("hero_hp_max")
+	_mana_shown = _ease_value("mana")
+	_mana_max_shown = _ease_value("mana_max")
+	_enemy_hp_shown = _ease_value("enemy_hp")
+	_enemy_hp_max_shown = _ease_value("enemy_hp_max")
 
 	# The player's two gold arcs: a full ring is a swing just landed and the arc fills as
 	# the next one approaches. The off-hand shares the SAME elapsed clock, which is what the
@@ -1045,10 +1451,22 @@ func _smooth_update() -> void:
 	if battle.offhand_swing_ms > 0:
 		_arc_offhand.set_value_ratio(clampf((battle.player_swing_elapsed + ahead)
 			/ float(battle.offhand_swing_ms), 0.0, 1.0))
-	_arc_enemy_timer.set_value_ratio(clampf((battle.enemy_swing_elapsed + ahead)
-		/ maxf(float(battle.enemy_swing_ms), 1.0), 0.0, 1.0))
+	# The enemy's timer is eased rather than interpolated straight off `ahead`: its clock is
+	# RESTARTED on every swing (the tick subtracts the interval), so a value read straight
+	# off `enemy_swing_elapsed` snapped backwards by a whole interval each time the monster
+	# swung — the same stutter the gold ring had before it was eased.
+	var timer_target := clampf((battle.enemy_swing_elapsed + ahead)
+		/ maxf(float(battle.enemy_swing_ms), 1.0), 0.0, 1.0)
+	var timer_now := _ease_value("enemy_timer")
+	# A restart is a real reset of the sweep; easing it over 250 ms would draw the ring
+	# travelling backwards. Snap on the drop, ease everything else.
+	if timer_target < timer_now - 0.5:
+		_snap_ease("enemy_timer", timer_target)
+	else:
+		_ease_to("enemy_timer", timer_target, EASE_ENEMY_TIMER_SECONDS)
+	_arc_enemy_timer.set_value_ratio(_ease_value("enemy_timer"))
 
-	var enemy_ratio := clampf(battle.enemy_hp / maxf(battle.enemy_max_hp, 1.0), 0.0, 1.0)
+	var enemy_ratio := clampf(_enemy_hp_shown / maxf(_enemy_hp_max_shown, 1.0), 0.0, 1.0)
 	_arc_enemy_hp.set_value_ratio(enemy_ratio)
 	if not battle.enemy_spells.is_empty():
 		_arc_enemy_mana.set_value_ratio(clampf(
@@ -1058,23 +1476,20 @@ func _smooth_update() -> void:
 	# `.enemy-hp-ghost-ring` in 0.6 s, so the ghost TRAILS the fill and the hit reads as a
 	# bite being taken. The port snapped the ghost to the fill in the same line, which made
 	# the slower transition invisible and left a second identical red ring on screen.
-	var ghost: float = _arc_enemy_hp_ghost.value
-	if ghost < 0.0 or ghost <= enemy_ratio:
-		# `-1` is the "new fight" sentinel the renderer sets in `start()`.
-		ghost = enemy_ratio
-	else:
-		ghost = maxf(enemy_ratio, ghost - _frame_delta / GHOST_TRAIL_SECONDS)
 	# Through `set_value_ratio`, not `.value`: the setter is what queues the redraw, and
 	# writing the field directly drew nothing at all.
-	_arc_enemy_hp_ghost.set_value_ratio(ghost)
+	_ease_to("enemy_hp_ghost", enemy_ratio, EASE_GHOST_SECONDS)
+	_arc_enemy_hp_ghost.set_value_ratio(_ease_value("enemy_hp_ghost"))
 
-	_set_bar(_hero_hp_track, _hero_hp_fill, battle.hero_hp, battle.hero_max_hp)
-	var hero: Dictionary = _state.hero()
-	var hero_class := str(_state.data.get("heroClass", ""))
-	var max_mana := int(hero.get("maxMana", 0))
-	if max_mana <= 0:
-		max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
-	_set_bar(_mana_track, _mana_fill, float(hero.get("mana", 0)), float(maxi(max_mana, 1)))
+	_set_bar(_hero_hp_track, _hero_hp_fill, _hero_hp_shown, _hero_hp_max_shown)
+	_set_bar(_mana_track, _mana_fill, _mana_shown, _mana_max_shown)
+	# The readouts are part of the same frame as the bars they label, so they can never say
+	# 240/240 above a bar that is still emptying.
+	_enemy_hp_label.text = "%d/%d" % [maxi(0, int(round(_enemy_hp_shown))),
+		int(round(_enemy_hp_max_shown))]
+	_hero_hp_bar_label.text = "%d/%d" % [maxi(0, int(round(_hero_hp_shown))),
+		int(round(_hero_hp_max_shown))]
+	_mana_label.text = "Mana %d / %d" % [int(round(_mana_shown)), int(round(_mana_max_shown))]
 
 
 ## A member that just stepped up is a NEW enemy: the portrait, the name and the walk-in all
@@ -1330,33 +1745,287 @@ func _finish_fight() -> void:
 	var stop_complete := int(_state.data["areaFightProgress"][battle.act_id]) >= Battle.FIGHTS_PER_ZONE
 	if battle.won:
 		_append_log("Vyhrano")
-		_result_label.text = "Vitezstvi"
 		award_loot()
-		# The PWA gave the finished stop a MAP button (and a way to town) instead of
-		# "next fight", because the next stop is chosen on the map. The port always
-		# offered another fight in the same stop, so there was no way to leave the
-		# cleared stop at all.
-		_next_button.visible = not stop_complete
 	else:
 		_append_log("Porazeno")
-		_result_label.text = "Porazka"
 		_state.save()
-	# Only a LIVE victory gets the next fight. A loss, or a cleared stop, has exactly one
-	# way on: the map (the town heals and resets the shop, and every defeat ends there).
-	_next_button.visible = battle.won and not stop_complete
 	# The loot that did NOT fit in the bag is offered as a button rather than dropped
 	# silently: a player who wins a rare with a full bag must be able to see it exists.
 	_loot_button.visible = _pending_loot.size() > 0
-	# A defeat's readout says where the player is being taken, because the tap that
-	# follows it leaves the arena rather than starting another fight.
-	if battle.won and stop_complete:
-		_leave_button.text = "Mapa"
-	else:
-		_leave_button.text = "Zpet do mesta"
+	_show_result_page(stop_complete)
 	fight_over.emit(battle.won)
 	# The next fight's clock starts from the tap, not from the last frame of this fight:
 	# a remainder carried over would hand the new fight's first swing a free tick.
 	_tick_accumulator = 0.0
+
+
+## Show the PWA's result page for the fight that just ended.
+##
+## This is the whole of "the win and the loss do not work": the port settled XP, gold and
+## the fight counters correctly and then announced it with ONE word over a live arena, with
+## no drops shown and no way on that matched the PWA. The page carries the stop's artwork,
+## "Victory!" with the act and the fight count, the hero's HP/mana, the loot rows and the
+## action tiles — and a defeat carries the defeat art and a page tap to town.
+func _show_result_page(stop_complete: bool) -> void:
+	_result_built = true
+	var won := battle.won
+	var hero: Dictionary = _state.hero()
+
+	# `.result-icon-img.large` (defeat, 50vh) against the stop art (a win, 100vw).
+	_result_art.visible = won
+	_result_defeat_art.visible = not won
+	_result_art.texture = _stop_result_art() if won else null
+	_result_defeat_art.texture = _load("assets/result_defeat.png") if not won else null
+
+	var act: Dictionary = _data.act_by_id(battle.act_id)
+	_result_title.visible = won
+	_result_sub.visible = won
+	if won:
+		_result_title.text = "Vitezstvi"
+		_result_sub.text = "%s - %s%s" % [
+			str(act.get("name", "ACT %d" % (battle.act_id + 1))).to_upper(),
+			_stop_name(battle.act_id, battle.progress),
+			" - zastavka dokoncena" if stop_complete else " - souboj %d/%d" % [
+				mini(battle.area_fight + 1, Battle.FIGHTS_PER_ZONE), Battle.FIGHTS_PER_ZONE]]
+		# A WIN: `.stop-result-overlay` draws the title and the sub ON the art, white bold
+		# 26px over a 14px #ddd sub, both with a dark text shadow.
+		_result_title.add_theme_font_size_override("font_size", 26)
+		_result_title.add_theme_color_override("font_color", Color("#ffffff"))
+		_result_sub.add_theme_font_size_override("font_size", 14)
+		_result_sub.add_theme_color_override("font_color", Color("#dddddd"))
+	else:
+		# The PWA's defeat page is NOT the victory page's overlay: it is `.centered` with a
+		# bare `.result-title` and `.result-sub` UNDER the artwork. Measured on the live PWA
+		# (via `confirmSurrender`, the route a player takes): the title is "Forfeit" and it is
+		# `.result-title { font-size:22px; font-weight:bold; margin:8px 0 }` — 22px BOLD —
+		# and the sub is `.result-sub { font-size:16px; color:#888888 }`.
+		_result_title.text = "Forfeit"
+		_result_sub.text = "Návrat do města"
+		_result_title.add_theme_font_size_override("font_size", 22)
+		_result_title.add_theme_color_override("font_color", Color("#ffffff"))
+		_result_sub.add_theme_font_size_override("font_size", 16)
+		_result_sub.add_theme_color_override("font_color", Color("#888888"))
+		_result_title.visible = true
+		_result_sub.visible = true
+
+	# `.stop-result-hpbar` — the hero's own readout as the fight left him, healed or not.
+	_result_hp_line.text = "HP %d/%d" % [int(round(battle.hero_hp)), int(round(battle.hero_max_hp))]
+	var max_mana := int(hero.get("maxMana", 0))
+	if max_mana <= 0:
+		max_mana = _gen.hero_max_mana(hero, _state.equip(),
+			str(_state.data.get("heroClass", "")), _find_item)
+	_result_mana_line.text = "Mana %d/%d" % [int(hero.get("mana", 0)), max_mana]
+
+	_rebuild_result_actions(won, stop_complete,
+		int(_state.data.get("townPortalCount", 0)) > 0)
+	# The PWA clears the loot list on a defeat (`resultLootList.innerHTML = ''` — a defeat
+	# drops nothing), so a defeat page must not show this fight's dead-enemy drops.
+	_refresh_result_loot(won)
+	_result_tap_goes_to_map = won and stop_complete
+	_result_layer.visible = true
+	# The art's rect depends on the tiles' height, so it is settled after the page is up.
+	call_deferred("_layout_result_page")
+
+
+## Place the artwork and the two overlays that sit ON it.
+##
+## `_result_art` is a plain Control child, so nothing lays it out: the rect is computed from
+## the texture's aspect against `.result-icon-img.stop-result { max-width:100vw;
+## max-height:calc(100vh - 160px) }`. A defeat's image is `.large` — 90vw / 50vh — and it is
+## CENTRED, since `.result-screen.centered` puts the whole top block in the middle.
+func _layout_result_page() -> void:
+	if _result_layer == null or not _result_layer.visible:
+		return
+	var page := _result_layer.size
+	if page.x <= 0.0 or page.y <= 0.0:
+		page = Vector2(390.0, 844.0)
+	# `.result-bottom { position:absolute; bottom:0 }` — the tiles own the page's bottom edge
+	# whether or not they have any children (the PWA keeps the padding; only its background
+	# is `#000` so a 20px strip is invisible either way).
+	var tiles_h := _result_actions_h()
+	_place_tiles(page, tiles_h)
+	var top_h := page.y - tiles_h
+	if _result_defeat_art.visible:
+		var tex: Texture2D = _result_defeat_art.texture
+		if tex == null:
+			return
+		# `max-width:90vw; max-height:50vh` NEVER UPSCALES — the image draws at its intrinsic
+		# size and only SHRINKS if it exceeds the cap. Measured on the live PWA, the 256x256
+		# defeat art draws 256 wide (not 351, which is what 90vw would be), which is why the
+		# title lands at y=510 rather than 100px higher.
+		var cap := Vector2(page.x * 0.90, page.y * 0.50)
+		var scale := minf(1.0, minf(cap.x / float(tex.get_width()), cap.y / float(tex.get_height())))
+		var size := Vector2(float(tex.get_width()), float(tex.get_height())) * scale
+		# The PWA's defeat page is `.centered`: the artwork, the title and the sub are ONE
+		# centred block, and the title/sub are page-level siblings UNDER the art rather than an
+		# overlay on it. Measured on the live PWA (a real forfeit): the art at y=246, the title
+		# at y=510 and the sub at y=543.
+		_result_defeat_art.size = size
+		# Local to the box: the BOX carries the centring, so the image sits at its origin.
+		_result_defeat_art.position = Vector2.ZERO
+		var text_h := _result_overlay.get_combined_minimum_size().y
+		_result_overlay.size = Vector2(page.x - 24.0, text_h)
+		# 8px under the art, which is `.result-title { margin:8px 0 }`'s own top margin.
+		_result_overlay.position = Vector2(12.0, round(size.y + 8.0))
+		_result_stats.visible = false
+		loot_pad.visible = false
+		var block := size.y + 8.0 + text_h
+		var lift := maxf(0.0, round((top_h - block) * 0.5))
+		_art_box.position = Vector2(round((page.x - size.x) * 0.5), lift)
+		_art_box.size = size
+		_result_overlay.position += Vector2(0.0, lift)
+		return
+	var tex2: Texture2D = _result_art.texture
+	if tex2 == null:
+		return
+	# `.result-icon-img.stop-result { max-width:100vw; max-height:calc(100vh - 160px) }` keeps
+	# its aspect; a 512x512 stop art on a 390x844 page is therefore 390 wide and 390 tall —
+	# measured on the live PWA as 390x392 at (0, 1).
+	var scale2 := minf(page.x / float(tex2.get_width()), top_h / float(tex2.get_height()))
+	var size2 := Vector2(float(tex2.get_width()), float(tex2.get_height())) * scale2
+	_result_art.size = size2
+	_result_art.position = Vector2.ZERO
+	_art_box.size = size2
+	_art_box.position = Vector2(round((page.x - size2.x) * 0.5), 1.0)
+	# `.stop-result-overlay { top:10px }` over the art's top.
+	_result_overlay.size = Vector2(size2.x - 24.0, 0.0)
+	_result_overlay.position = Vector2(round(_art_box.position.x + 12.0), round(_art_box.position.y + 10.0))
+	# `.stop-result-stats { bottom:10px }` along the art's bottom.
+	_result_stats.visible = true
+	var stats_h := _result_stats.get_combined_minimum_size().y
+	_result_stats.size = Vector2(size2.x, stats_h)
+	_result_stats.position = Vector2(round(_art_box.position.x),
+		round(_art_box.position.y + size2.y - stats_h - 10.0))
+	# `.result-loot-scroll` under the art, inside `.result-top`.
+	loot_pad.visible = true
+	var loot_h := loot_pad.get_combined_minimum_size().y
+	loot_pad.size = Vector2(page.x, loot_h)
+	loot_pad.position = Vector2(0.0, round(_art_box.position.y + size2.y))
+
+
+## Place `.result-bottom` on the page's bottom edge and size its tiles off `_tile_size()`.
+## A tile's `custom_minimum_size` cannot be set at build time — how wide it should be depends
+## on how MANY tiles there are, and the row is rebuilt per outcome — so it is set here.
+func _place_tiles(page: Vector2, tiles_h: float) -> void:
+	var width := maxf(page.x, 1.0)
+	_tiles_holder.size = Vector2(width, tiles_h)
+	_tiles_holder.position = Vector2(0.0, round(page.y - tiles_h))
+	var side := _tile_size()
+	for child in _result_actions.get_children():
+		if child is Control:
+			(child as Control).custom_minimum_size = Vector2(side, side)
+
+
+## The height `.result-bottom` takes off the page's bottom. The PWA's is
+## `flex:0 0 auto` under a `flex:1` top, so the art gets the remainder. The loot list is
+## INSIDE `.result-top` (measured: it sits at y=399, six px under the art) and must NOT be
+## counted here — counting it was what pushed the loot to the bottom of the page.
+##
+## A defeat's `.result-bottom:empty { display:none }` — and the live PWA confirms it: the
+## strip still measures 20px (`padding:10px 12px` with no children still leaves the padding),
+## it is simply invisible because its background is `#000` on a `#000` page.
+func _result_actions_h() -> float:
+	var h := 20.0
+	if _result_actions.get_child_count() > 0:
+		h += _tile_size()
+	if _loot_button.visible:
+		h += 46.0
+	return h
+
+
+## `.result-loot-scroll` — the drops the fight just handed over, one row per item, rarity
+## coloured, with its icon. A fight with no drops says so rather than showing nothing, which
+## is how the PWA's own list reads.
+##
+## The PWA CLEARS this list on a defeat (`$('resultLootList').innerHTML = ''` — a defeat
+## drops nothing at all), so `show` is passed in rather than inferred: a defeat page showing
+## the drops of a monster that never died is worse than showing nothing.
+func _refresh_result_loot(show: bool = true) -> void:
+	for child in _loot_list.get_children():
+		_loot_list.remove_child(child)
+		child.queue_free()
+	if not show:
+		_loot_list.visible = true
+		return
+	# The rows are the items the fight rolled, bagged OR pending: `_pending_loot` is the
+	# overflow, and a list that showed only what fit would hide exactly the drop the player
+	# needs to know about.
+	var rows: Array = _result_loot_rows
+	if rows.is_empty():
+		_loot_list.add_child(_label("Zadne predmety", 12, Color("#555555"),
+			HORIZONTAL_ALIGNMENT_CENTER))
+		_loot_list.visible = true
+		return
+	for item in rows:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(32, 32)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		var icon_path := ItemStats.icon_path(item)
+		icon.texture = _load(icon_path) if icon_path != "" else null
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+		var name_label := _label(str(item.get("name", item.get("id", ""))), 15,
+			ItemStats.quality_color(item), HORIZONTAL_ALIGNMENT_LEFT)
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.clip_text = true
+		row.add_child(name_label)
+		_loot_list.add_child(row)
+	_loot_list.visible = true
+
+
+## The stop's own art, the PWA's `getStopImage`: generated images for the acts that have
+## them, a per-act placeholder otherwise. Shares `map_screen.gd`'s rule rather than
+## inventing a second one.
+func _stop_result_art() -> Texture2D:
+	var stop := clampi(battle.progress, 0, 9)
+	var generated := "assets/stops/stop_act%d_%d.webp" % [battle.act_id, stop]
+	var loaded := _load(generated)
+	if loaded != null:
+		return loaded
+	return _load("assets/stops/placeholder_act%d.png" % battle.act_id)
+
+
+## The hero's own portrait for the result page's Hero tile — the PWA used `state.hero.face`.
+func _hero_face_path() -> String:
+	var face := str(_state.hero().get("face", "hero"))
+	if face == "":
+		face = "hero"
+	return "assets/monsters/%s.png" % face
+
+
+func _stop_name(act_id: int, stop: int) -> String:
+	var raw: Variant = _data.table("STOP_NAMES_EN", {})
+	var names: Dictionary = raw if raw is Dictionary else {}
+	var per_act: Variant = names.get(str(act_id), null)
+	if per_act is Array and stop < (per_act as Array).size():
+		return str(per_act[stop])
+	return "Zastavka %d" % (stop + 1)
+
+
+## The page tap. The PWA rewired `#resultScreen.onclick` per outcome: a defeat goes to town
+## (and the town heals), a cleared stop goes to the MAP so the next stop is chosen there.
+func _on_result_clicked() -> void:
+	if _button_lock > 0 or not _result_built:
+		return
+	if _result_tap_goes_to_map:
+		map_requested.emit()
+	else:
+		leave_requested.emit()
+
+
+func _on_portal_pressed() -> void:
+	if _button_lock > 0:
+		return
+	portal_requested.emit()
+
+
+func _on_hero_pressed() -> void:
+	if _button_lock > 0:
+		return
+	hero_requested.emit()
 
 
 ## The surrender flag. The PWA asked for confirmation first, and the forfeit costs a
@@ -1442,6 +2111,9 @@ func award_loot() -> void:
 	var result: Dictionary = battle.roll_loot(_loot, _state, _find_item, mf, gf)
 	var bagged := 0
 	_pending_loot = []
+	# The result page shows what the fight rolled, so the rows are kept BEFORE the bag has
+	# its say — a drop the bag refused is the one the player most needs to see.
+	_result_loot_rows = result["items"].duplicate()
 	for item in result["items"]:
 		_state.register_loot_item(item)
 		var item_id := str(item.get("id", ""))

@@ -167,6 +167,13 @@ func _build_screens() -> void:
 	arena.visible = false
 	arena.leave_requested.connect(func(): show_screen("town"))
 	arena.another_fight_requested.connect(_on_another_fight)
+	# The result page's own destinations. They are NOT the arena's: the PWA's victory page
+	# offers the MAP (after a cleared stop), the town, a town portal and the hero modal, and
+	# a page tap that went to town after a cleared stop is exactly what left the player with
+	# no way to pick the next stop.
+	arena.map_requested.connect(func(): show_screen("map"))
+	arena.portal_requested.connect(_on_result_portal)
+	arena.hero_requested.connect(func(): open_modal("stats"))
 	_add_screen("arena", arena)
 
 	# The screens are Control nodes on a Node2D main; give them a CanvasLayer so they
@@ -476,6 +483,27 @@ func _on_town_portal() -> void:
 	state.data["townPortalReturn"] = null
 	state.save()
 	_enter_arena(int(p.get("actId", 0)))
+
+
+## The victory page's Town Portal tile. The PWA stored a return position and spent one
+## scroll on the way OUT (`useTownPortalScrollFromResult`), so coming back is free and the
+## tile has to exist only while a scroll is carried — which is what the arena checks before
+## offering it. A scroll spent here is what the stored position is FOR.
+func _on_result_portal() -> void:
+	if int(state.data.get("townPortalCount", 0)) <= 0:
+		return
+	var arena = _screens["arena"]
+	if arena.battle == null:
+		return
+	var act_id := int(arena.battle.act_id)
+	state.data["townPortalReturn"] = {
+		"actId": act_id,
+		"zoneId": int(state.data["locationProgress"][act_id]),
+		"areaFight": int(state.data["areaFightProgress"][act_id]),
+	}
+	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	state.save()
+	show_screen("town")
 
 
 func _on_item_tapped(inventory_index: int) -> void:

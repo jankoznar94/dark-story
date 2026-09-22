@@ -19,6 +19,8 @@ var _target := 60
 var _out := "/tmp/port_shot.png"
 var _screen := ""
 var _fight_ticks := 0
+## `--result lose` captures the DEFEAT page rather than the victory one.
+var _result_lose := false
 var _started := false
 
 
@@ -35,6 +37,8 @@ func _initialize() -> void:
 				_screen = args[i + 1]
 			"--fight-ticks":
 				_fight_ticks = int(args[i + 1])
+			"--result":
+				_result_lose = args[i + 1] == "lose"
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -86,6 +90,23 @@ func _entry() -> void:
 		# starts the fight. `_on_wilderness()` used to exist and was deleted with the
 		# map rebuild, which silently broke every arena capture after that.
 		_main._on_stop_selected(0, 0)
+	elif _screen == "result":
+		# The result PAGE, which only exists at the end of a fight — so the fight has to
+		# actually end. `--result lose` kills the hero instead of the enemy.
+		_main._on_stop_selected(0, 0)
+		var arena = _main._screens["arena"]
+		if arena.battle != null:
+			if _result_lose:
+				arena.battle.hero_max_hp = 1.0
+				arena.battle.hero_hp = 1.0
+				arena.battle.gap = 0.0
+			else:
+				arena.battle.enemy_hp = 0.0
+				arena.battle.gap = 0.0
+			var guard := 0
+			while (not arena.battle.ended or not arena._result_built) and guard < 300:
+				arena.step()
+				guard += 1
 	else:
 		_main.show_screen(_screen)
 	if _fight_ticks > 0 and _screen == "arena":

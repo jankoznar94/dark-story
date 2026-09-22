@@ -43,6 +43,9 @@ func _initialize() -> void:
 	_test_a_pack_is_fought_to_the_last_member()
 	_test_a_defeat_is_settled_on_the_save()
 	_test_a_cleared_stop_offers_the_map_not_another_fight()
+	_test_the_result_page_shows_the_loot_and_the_ways_on()
+	_test_a_defeat_page_has_no_tiles_and_leads_to_town()
+	_test_the_result_page_actually_gets_laid_out()
 	_test_a_pack_hand_over_restarts_the_walk_in()
 	_test_a_swing_lunge_exists_on_a_landed_hit()
 
@@ -268,13 +271,21 @@ func _test_a_defeat_is_settled_on_the_save() -> void:
 	if float(s.hero()["hp"]) < float(s.hero()["maxHp"]):
 		_fail("a defeat left the hero at %.0f/%.0f HP - the death sends him to town"
 			% [float(s.hero()["hp"]), float(s.hero()["maxHp"])])
-	# A loss must NOT offer another fight: the only way on is town.
-	if screen._next_button.visible:
-		_fail("a defeat offered another fight in the same stop")
+	# A loss must NOT offer another fight: the only way on is town. The result page's tiles
+	# are rebuilt per outcome, so the check is on what the row actually CONTAINS.
+	if screen._result_actions.get_child_count() != 0:
+		_fail("a defeat offered action tiles (%d) - the only way on is the town"
+			% screen._result_actions.get_child_count())
 
 
 ## A CLEARED stop (10/10) has no "next fight" left in it — the PWA sent the player to the
 ## map. The port kept offering another fight forever.
+##
+## The result page's tile row is REBUILT per outcome from the PWA's own rule, so this checks
+## the ROW's labels: a cleared stop's first tile is the map, a live one's is the next fight.
+## The labels are read off the tiles rather than off a named field, because a named field
+## ("_next_button") that keeps existing after the page was rebuilt is exactly how the port
+## advertised a fight the stop did not have.
 func _test_a_cleared_stop_offers_the_map_not_another_fight() -> void:
 	var s = _hero()
 	var screen = _arena(s, 9)
@@ -295,10 +306,249 @@ func _test_a_cleared_stop_offers_the_map_not_another_fight() -> void:
 	if int(s.data["areaFightProgress"][0]) < 10:
 		_fail("test setup: the stop should be at 10/10, it is at %d"
 			% int(s.data["areaFightProgress"][0]))
-	if screen._next_button.visible:
-		_fail("a cleared stop still offered another fight")
-	if screen._leave_button.text != "Mapa":
-		_fail("a cleared stop's way on is '%s', expected the map" % screen._leave_button.text)
+	if not screen._result_layer.visible:
+		_fail("a win did not raise the result page")
+	var labels := _action_labels(screen)
+	if labels.has("Dalsi souboj"):
+		_fail("a cleared stop still offered another fight (tiles: %s)" % str(labels))
+	if not labels.has("Mapa"):
+		_fail("a cleared stop's way on is %s, expected the map" % str(labels))
+	# And the page tap goes to the MAP as well: the PWA's `openMapFromResult`.
+	if not screen._result_tap_goes_to_map:
+		_fail("a cleared stop's page tap did not go to the map")
+
+
+## The report: "the win and the lose screen do not work — after a win the player gets no loot
+## and cannot go to town". What the port had was ONE word over a live arena; the PWA has a full
+## result PAGE. So this asserts the page itself: it covers the screen, it names the outcome, it
+## LISTS the drops the fight rolled, and its tiles carry the PWA's destinations.
+func _test_the_result_page_shows_the_loot_and_the_ways_on() -> void:
+	var s = _hero()
+	var screen = _arena(s, 0)
+	var b = screen.battle
+	# Kill the enemy through the rules so the win, the loot roll and the page are all real.
+	b.enemy_hp = 0.0
+	var guard := 0
+	while not b.ended or not screen._result_built:
+		screen.step()
+		guard += 1
+		if guard > 40:
+			_fail("the fight never raised a result page")
+			return
+	if not screen._result_layer.visible:
+		_fail("the result page was built but is not shown")
+		return
+	if screen._result_title.text == "":
+		_fail("the result page has no outcome on it")
+	# A win writes the victory title and the act/stop/fight line; a defeat writes "Porazka".
+	if not screen._result_title.text.contains("Vitezstvi"):
+		_fail("a win's page reads '%s', expected the victory title" % screen._result_title.text)
+	if screen._result_sub.text == "":
+		_fail("the victory line is empty - the act, stop and fight count are missing")
+	# LOOT IS VISIBLE. `award_loot` rolls 2-3 items per pack member, so a win's list must
+	# either carry rows or say so explicitly — never be an empty box.
+	if not screen._loot_list.visible:
+		_fail("the loot list is hidden after a win")
+	else:
+		var rows := _loot_row_texts(screen)
+		if rows.is_empty():
+			_fail("the loot list has no rows at all (not even the 'no items' line)")
+		# Every item the fight rolled is registered as a known drop, so the row list has to
+		# agree with what the bag and the overflow between them hold.
+		var expected: int = screen._result_loot_rows.size()
+		if expected > 0 and rows.size() != expected:
+			_fail("the page lists %d loot rows for %d rolled drops" % [rows.size(), expected])
+	# The tiles: a live win is Next Fight + Town + Hero, as the PWA's own `else` branch.
+	var labels := _action_labels(screen)
+	for needed in ["Dalsi souboj", "Do mesta"]:
+		if not labels.has(needed):
+			_fail("a win's action tiles are %s - '%s' is missing" % [str(labels), needed])
+	print("  result page: '%s' / '%s' / tiles %s / %d loot rows"
+		% [screen._result_title.text, screen._result_sub.text, str(_action_labels(screen)),
+			_loot_row_texts(screen).size()])
+
+
+## A defeat's page: the defeat art, the town as the only destination, NO loot list rows and NO
+## action tiles (`.result-bottom:empty { display:none }`), and a page tap that leaves for town.
+func _test_a_defeat_page_has_no_tiles_and_leads_to_town() -> void:
+	var s = _hero(1, 0)
+	s.equip()["weapon"] = "fists"
+	var screen = _arena(s, 6)
+	var b = screen.battle
+	b.hero_max_hp = 1.0
+	b.hero_hp = 1.0
+	b.gap = 0.0
+	var guard := 0
+	while not b.ended or not screen._result_built:
+		screen.step()
+		guard += 1
+		if guard > 400:
+			_fail("the doomed hero never reached a result page")
+			return
+	if not screen._result_layer.visible:
+		_fail("a defeat did not raise the result page")
+	if not screen._result_title.text.contains("Forfeit"):
+		_fail("a defeat's page reads '%s', expected the defeat title" % screen._result_title.text)
+	if not screen._result_defeat_art.visible:
+		_fail("a defeat drew no defeat artwork")
+	if screen._result_art.visible:
+		_fail("a defeat drew the stop's artwork over its own")
+	if screen._result_actions.get_child_count() != 0:
+		_fail("a defeat offered %d action tiles" % screen._result_actions.get_child_count())
+	if screen._result_tap_goes_to_map:
+		_fail("a defeat's page tap went to the map instead of the town")
+	# The tap must actually emit the town route once the button lock has run out.
+	var left := {"n": 0}
+	screen.leave_requested.connect(func(): left["n"] = int(left["n"]) + 1)
+	# `_button_lock` is 3 ticks, so a tap on the frame the page appeared is ignored on purpose
+	# (the player aimed at the arena). Burn the lock and tap.
+	while screen._button_lock > 0:
+		screen.step()
+	screen._on_result_clicked()
+	if int(left["n"]) != 1:
+		_fail("a defeat's page tap did not ask to leave (emitted %d times)" % int(left["n"]))
+	# A defeat drops NOTHING: the PWA clears the list (`resultLootList.innerHTML = ''`). The
+	# port was showing the drops of the enemy that never died, which reads as a reward.
+	if _loot_row_texts(screen).size() != 0:
+		_fail("a defeat's page listed %s - a defeat drops nothing" % str(_loot_row_texts(screen)))
+
+
+## The result page's GEOMETRY, which is what "the win and lose screen do not work" looked like
+## on screen and what no assertion above can see: the port's defeat page was a BLACK PAGE with
+## two labels jammed into the top-left corner, because `result_defeat.png` was a JPEG under a
+## `.png` name and the loader refused it, so `_layout_result_page()` returned before placing
+## anything.
+##
+## Two failures live here and both are silent:
+##   1. a texture that did not load — the art is `visible` with a NULL texture and a 0x0 rect;
+##   2. a block that was never PLACED — every rect at the origin.
+## So this asserts the rects, not the `visible` flags. `_layout_result_page()` is `call_deferred`
+## in the screen, so it is called directly here.
+func _test_the_result_page_actually_gets_laid_out() -> void:
+	print("== the result page is laid out, not just made visible ==")
+	var s = _hero()
+	var screen = _arena(s, 0)
+	var b = screen.battle
+	b.enemy_hp = 0.0
+	var guard := 0
+	while not b.ended or not screen._result_built:
+		screen.step()
+		guard += 1
+		if guard > 40:
+			_fail("the fight never raised a result page")
+			return
+	# A win: the stop's art, 390 wide and 390 tall at the page's top (measured on the live PWA
+	# as 390x392 at (0, 1)).
+	# The screen is never in the tree in a `SceneTree` test, so its full-rect anchors resolve to
+	# 0x0 — give it the real canvas size before asking where anything landed, the same way the
+	# `_arena()` helper sizes `_arena`.
+	screen._result_layer.size = Vector2(390.0, 844.0)
+	screen._layout_result_page()
+	var page: Vector2 = screen._result_layer.size
+	if page.x <= 0.0 or page.y <= 0.0:
+		_fail("the result page has no size (%s) - nothing can be placed on it" % str(page))
+		return
+	if screen._result_art.texture == null:
+		_fail("the stop's artwork did not load - the page draws an empty box where the art goes")
+	elif screen._result_art.size.x < page.x - 1.0:
+		_fail("the stop's artwork came out %.0f wide on a %.0f page"
+			% [screen._result_art.size.x, page.x])
+	# The LOOT must sit under the art, NOT at the bottom of the page. This is the second bug
+	# this pass fixed: the loot list was a sibling of the expanding block, so a `flex:1` top
+	# pushed it to the page's bottom and left a black hole in the middle. Measured on the live
+	# PWA: the art ends at 393 and the loot row starts at 399.
+	var art_bottom: float = screen._art_box.position.y + screen._art_box.size.y
+	var loot_y: float = screen._loot_list.get_global_rect().position.y
+	if loot_y > art_bottom + 40.0:
+		_fail("the loot list starts at y=%.0f with the art ending at y=%.0f - it was pushed to the bottom of the page"
+			% [loot_y, art_bottom])
+	# The tiles own the page's bottom edge, as `.result-bottom { position:absolute; bottom:0 }`
+	# does. Measured on the live PWA: 87px tiles ending 10px above the page's bottom.
+	#
+	# The assertion reads the values the LAYOUT computes, not the container's arranged rects:
+	# this test is a `SceneTree`, the screen is never in the tree, so `_result_actions` keeps a
+	# 0x0 rect and a container arranges nothing.
+	var tiles_bottom: float = screen._tiles_holder.position.y + screen._tiles_holder.size.y
+	if absf(tiles_bottom - page.y) > 1.0:
+		_fail("the tile strip ends at y=%.0f on a %.0f page - `.result-bottom` is not on the bottom edge"
+			% [tiles_bottom, page.y])
+	# `.result-tile` is `flex:1 1 60px; min-width:60px; max-width:90px` inside a 390px page
+	# with 12px padding and a 6px gap. THREE tiles (a live win, no portal scroll) → (390-24-12)/3
+	# = 118, which the 90px cap binds; FOUR → 87, which is the PWA's measured value.
+	var tile_w: float = screen._tile_size()
+	var expect: float = 90.0 if screen._result_actions.get_child_count() == 3 else 87.0
+	if absf(tile_w - expect) > 1.0:
+		_fail("%d tiles came out %.0f wide, expected %.0f (`.result-tile` flex/max-width)"
+			% [screen._result_actions.get_child_count(), tile_w, expect])
+	print("  art 390x%.0f at y=%.0f, loot at y=%.0f, tiles end y=%.0f (%.0f wide)"
+		% [screen._result_art.size.y, screen._result_art.position.y, loot_y, tiles_bottom, tile_w])
+
+	# And the DEFEAT page: the art at its INTRINSIC size (CSS `max-*` never upscales - measured
+	# as 256 wide, not 90vw = 351), the title under it as the PWA's `.result-title`, and the
+	# whole block CENTRED as `.result-screen.centered` does.
+	var s2 = _hero(1, 0)
+	s2.equip()["weapon"] = "fists"
+	var lose = _arena(s2, 6)
+	var lb = lose.battle
+	lb.hero_max_hp = 1.0
+	lb.hero_hp = 1.0
+	lb.gap = 0.0
+	guard = 0
+	while not lb.ended or not lose._result_built:
+		lose.step()
+		guard += 1
+		if guard > 400:
+			_fail("the doomed hero never reached a result page")
+			return
+	lose._result_layer.size = Vector2(390.0, 844.0)
+	lose._layout_result_page()
+	if lose._result_defeat_art.texture == null:
+		_fail("the defeat artwork did not load - the page is a black screen (a JPEG named .png does this)")
+		return
+	var tex: Texture2D = lose._result_defeat_art.texture
+	if lose._result_defeat_art.size.x > float(tex.get_width()) + 0.5:
+		_fail("the defeat art drew %.0f wide from a %d px image - `max-width` may not UPSCALE"
+			% [lose._result_defeat_art.size.x, tex.get_width()])
+	var lose_page: Vector2 = lose._result_layer.size
+	var art_top: float = lose._art_box.position.y
+	var text_bottom: float = lose._result_overlay.position.y + lose._result_overlay.size.y
+	# `centered`: the block's own centre must be the space above the tiles' centre.
+	var block_mid := (art_top + text_bottom) * 0.5
+	var space_mid := (lose_page.y - lose._result_actions_h()) * 0.5
+	if absf(block_mid - space_mid) > 3.0:
+		_fail("a defeat's block is centred at y=%.0f in a %.0f space - `.centered` is not applied"
+			% [block_mid, space_mid * 2.0])
+	if lose._result_overlay.position.y <= lose._result_defeat_art.size.y + art_top:
+		_fail("a defeat's title is not UNDER its artwork (title y=%.0f, art ends y=%.0f)"
+			% [lose._result_overlay.position.y, art_top + lose._result_defeat_art.size.y])
+	print("  defeat: art %dx%d at y=%.0f, title at y=%.0f, block centred"
+		% [int(lose._result_defeat_art.size.x), int(lose._result_defeat_art.size.y),
+			art_top, lose._result_overlay.position.y])
+
+
+## The loot rows' own text, so a page that lists nothing can be told from one that is hidden.
+func _loot_row_texts(screen) -> Array:
+	var out: Array = []
+	for child in screen._loot_list.get_children():
+		if child is Label:
+			out.append((child as Label).text)
+			continue
+		var text := ""
+		for grand in child.get_children():
+			if grand is Label:
+				text += (grand as Label).text
+		out.append(text)
+	return out
+
+
+## The labels of the result page's action tiles, in order. Read off each tile's own `label`
+## meta (the caption is a child Label, so `Button.text` is empty) — a row that kept a stale
+## tile therefore cannot pass.
+func _action_labels(screen) -> Array:
+	var out: Array = []
+	for child in screen._result_actions.get_children():
+		out.append(str(child.get_meta("label", "<no-label>")))
+	return out
 
 
 ## A pack hand-over is a NEW enemy, and the thing that makes it "new" is that the hero has to
