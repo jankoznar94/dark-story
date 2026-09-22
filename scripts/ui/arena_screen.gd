@@ -23,12 +23,39 @@ class_name ArenaScreen
 ##   .mb-hp-bar           22px, radius 6, track #2a0a0a, border #e74c3c, fill #e74c3c
 ##   .mb-mana-bar         22px, radius 6, track #1a1a2a, border #3a3a6a, fill #4a6ad4
 ##
-## What is deliberately NOT here: the PWA's depth axis (`--hero-x/--hero-y/--hero-size`
-## driven by `_gap`, a walk-in animation), its rapid-tap minigames, and the opportunity
-## dodge/block/counter reaction buttons. Those are interaction models for a page that is
-## watched while tapped — see docs/port-notes.md. The hero therefore stands at a fixed
-## side position and lunges when he swings, rather than closing a distance the port has
-## no rule for.
+## What is deliberately NOT here: the PWA's rapid-tap minigames and its opportunity
+## dodge/block/counter reaction buttons — interaction models for a page that is watched
+## while tapped (see docs/port-notes.md). The depth axis IS here: `_gap` drives the
+## hero's walk-in, his scale and the monster's lean.
+##
+## ============================================================================ the clock
+##
+## There are TWO clocks on this screen and confusing them is what made the fight look like
+## 5 FPS:
+##
+##   * `battle.gd`'s clock — a fixed 100 ms step. Every RULE is settled on it (when a swing
+##     lands, when a DoT ticks, when a pack hands over) and it must stay fixed: a swing
+##     interval is a whole number of ticks.
+##   * the FRAME — real time, ~60 fps on a phone.
+##
+## `render()` used to be the only thing that moved anything on screen, and it is called from
+## `step()` — i.e. TEN TIMES A SECOND. So the swing arc advanced in ten 100 ms jumps, the
+## bars and the walk-in jumped with it, and the screen ran at 10 fps while the engine drew
+## 60: `probe_watch.gd` measured the arc changing in 21 of 120 frames. Nothing was slow —
+## the numbers were computed smoothly and then not drawn.
+##
+## So the split is now:
+##
+##   * `step()` -> the RULES (a fixed 100 ms), plus `render()` for everything that only
+##     changes when a rule does (labels, name, portrait, roster, the bar's contents).
+##   * `_animate(delta)` -> the FIGURES, every frame, from real time (lunges, flinch, the
+##     walk-in, the monster's lean, the floating numbers).
+##   * `_smooth_update()` -> the GAUGES and BARS, every frame, interpolated: the swing arcs
+##     take the battle's elapsed time PLUS the real time this frame has not spent on a tick
+##     yet, so a 1156 ms weapon sweeps its ring over 1156 ms instead of in 11 visible steps.
+##
+## An ANIMATION may interpolate; a RULE must not. Nothing here ever feeds a partial tick
+## back into the battle.
 
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
@@ -172,12 +199,17 @@ var _button_lock := 0
 var _float_layer: Control
 var _floats: Array = []
 var _seen_log_index := 0
+## The ghost ring needs two things a single `render()` could not give it: the last real
+## frame's length and how long the PWA's transition lasted.
+const GHOST_TRAIL_SECONDS := 0.6
+## The last frame's length, so the ghost trail is 0.6 s of real time and not 0.6 s worth of
+## frames (which would halve the trail on a 120 fps display).
+var _frame_delta := 1.0 / 60.0
+
 ## Swing animations: the hero lunges, the monster lunges, on their own attack.
 var _hero_lunge := 0.0
 var _monster_lunge := 0.0
 var _hero_flinch := 0.0
-var _prev_enemy_hp := -1.0
-var _prev_hero_hp := -1.0
 
 ## Everything the screen consumed out of `battle.log`, with the fight's clock at the moment
 ## each entry arrived. The screen is what DRAINS the log, so anything that wants to know
@@ -674,10 +706,13 @@ func start(state, find_item: Callable) -> bool:
 	# left over from a pack fight it would read as a hand-over on the next fight's first
 	# render and fire a spurious monster lunge.
 	_pack_displayed = 0
-	_prev_enemy_hp = -1.0
-	# Set BEFORE the fight can be refused: `battle` is a fresh object here, but on a
-	# second `start()` a refused setup must not leave a stale readout of the old fight.
-	_prev_hero_hp = -1.0
+	# The ghost ring belongs to the FIGHT, not the screen: left over from the previous
+	# enemy it would read as damage the new one never took. A fresh enemy is at full HP, so
+	# the ghost starts full and trails down as hits land (see `_smooth_update`).
+	#
+	# It MUST be here and not in `render()`: `render()` runs on every tick, and a reset
+	# there re-snapped the trail ten times a second — which is a ghost that never trails.
+	_arc_enemy_hp_ghost.set_value_ratio(1.0)
 	_hero_lunge = 0.0
 	_monster_lunge = 0.0
 	_hero_flinch = 0.0
@@ -734,6 +769,7 @@ func step() -> void:
 ## what stops a fast frame from shortening a swing.
 func _process(delta: float) -> void:
 	_cast_this_frame = false
+	_frame_delta = maxf(delta, 0.0001)
 	_tick_accumulator += delta * 1000.0
 	var steps := 0
 	while _tick_accumulator >= float(TICK_MS) and steps < MAX_STEPS_PER_FRAME:
@@ -742,8 +778,19 @@ func _process(delta: float) -> void:
 		step()
 		if battle == null or battle.ended:
 			break
+	if steps > 0 and _tick_accumulator > float(TICK_MS):
+		# A stall longer than MAX_STEPS_PER_FRAME worth of steps (the phone woke up, the
+		# browser tab was backgrounded) leaves time nobody can spend: the cap is what stops
+		# a slow frame handing out free swings, and the remainder has to be DROPPED rather
+		# than carried, or the accumulator would stay ahead of the clock forever and the
+		# gauges would read past the swing they are counting to.
+		_tick_accumulator = fmod(_tick_accumulator, float(TICK_MS))
+	# The FIGURES and the GAUGES move on real time, every frame. Only the RULES wait for a
+	# tick — see the clock note at the top of this file. `step()` has already re-rendered
+	# whatever a rule changed, so this must not repeat that work.
 	_apply_centring()
 	_animate(delta)
+	_smooth_update()
 
 
 func _drain_log() -> void:
@@ -846,9 +893,10 @@ func _animate(delta: float) -> void:
 		# The monster's own lunge (20px) plus the depth tilt the PWA applies as the hero
 		# walks in (`--monster-dy`, `closed * 8` px) — a boss keeps its geometry and
 		# does not tilt, exactly as the PWA's `if (monsterFig && !mb.isBoss)`.
+		# Smoothed with the hero: the lean is part of the same walk-in and stepped with it.
 		var tilt := 0.0
 		if battle != null and not battle.is_boss:
-			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_value(), 0.0, 1.0))
+			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_displayed(), 0.0, 1.0))
 		var drop := 20.0 * _monster_lunge + tilt
 		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + drop)
 	if is_instance_valid(_cast_icon):
@@ -861,9 +909,15 @@ func _animate(delta: float) -> void:
 ## is the only visual that tells the player why the first hit is late.
 ##
 ## The attack lunge and the flinch ride on top of the walk-in position.
-func _place_hero(lift: float) -> void:
+##
+## `_place_hero` takes the distance as an ARGUMENT so that a caller can hand it the smoothed
+## one. It used to read `_gap_value()` itself, which meant the interpolation could never reach
+## it — and `test_duel_distance` drives this function directly with an explicit `battle.gap`,
+## which is the RULES' number and must keep working.
+func _place_hero(lift: float, gap: float = -1.0) -> void:
 	var arena_h := maxf(_arena.size.y, 1.0)
-	var closed := 1.0 - clampf(_gap_value(), 0.0, 1.0)
+	var distance := _gap_displayed() if gap < 0.0 else gap
+	var closed := 1.0 - clampf(distance, 0.0, 1.0)
 	var scale := HERO_SCALE_FAR + (HERO_SCALE_NEAR - HERO_SCALE_FAR) * closed
 	var size := clampf(arena_h * HERO_H_RATIO * scale, HERO_H_MIN, HERO_H_MAX)
 	var fx := HERO_X_START - (HERO_X_START - HERO_X_NEAR) * closed
@@ -874,12 +928,27 @@ func _place_hero(lift: float) -> void:
 		round(arena_h * fy - size * 0.5 + lift))
 
 
-## The battle's distance. With no battle yet the PWA's own default is the rule:
-## `(mb._gap === undefined ? 1 : mb._gap)` — maximum separation. Falling back to contact
-## (which this did) puts the hero at the monster's side before the fight has started, the
-## exact "pasted onto the monster" pose the walk-in exists to avoid.
+## The battle's distance, as the RULES have it. With no battle yet the PWA's own default is
+## the rule: `(mb._gap === undefined ? 1 : mb._gap)` — maximum separation. Falling back to
+## contact (which this did) puts the hero at the monster's side before the fight has started,
+## the exact "pasted onto the monster" pose the walk-in exists to avoid.
 func _gap_value() -> float:
 	return battle.gap if battle != null else 1.0
+
+
+## The distance as the EYE has it: the rule's `gap` projected forward by the real time this
+## frame has not yet spent on a tick, exactly like the swing rings.
+##
+## `gap` only moves inside a tick, so placing the hero straight off it made the walk-in a
+## series of 100 ms teleports (measured: 10 moves in 60 frames) while the engine drew 60 —
+## the same class of bug as the ring, on the figure instead of the gauge. Clamped at 0 so a
+## frame cannot walk him past contact, and never written back: the RULES never see this
+## number, so a dropped frame still cannot hand either side a free hit.
+func _gap_displayed() -> float:
+	if battle == null:
+		return 1.0
+	var ahead := clampf(_tick_accumulator, 0.0, float(TICK_MS)) / 1000.0
+	return maxf(0.0, battle.gap - battle.gap_speed() * ahead)
 
 
 func _append_log(text: String) -> void:
@@ -918,32 +987,11 @@ func render() -> void:
 		battle.area_fight + 1, Battle.FIGHTS_PER_ZONE]
 
 	_enemy_hp_label.text = "%d/%d" % [maxi(0, int(battle.enemy_hp)), int(battle.enemy_max_hp)]
-	_arc_enemy_hp.set_value_ratio(battle.enemy_hp / maxf(battle.enemy_max_hp, 1.0))
-	_arc_enemy_hp_ghost.value = _arc_enemy_hp.value
 	# The enemy's mana ring appears only where the enemy actually casts: the PWA hid
-	# `.enemy-mana-ring` for melee monsters.
-	var casts := not battle.enemy_spells.is_empty()
-	_arc_enemy_mana.visible = casts
-	if casts:
-		_arc_enemy_mana.set_value_ratio(battle.enemy_resource_cur / maxf(battle.enemy_max_resource, 1.0))
+	# `.enemy-mana-ring` for melee monsters. The ring's VALUE is in `_smooth_update()`.
+	_arc_enemy_mana.visible = not battle.enemy_spells.is_empty()
+	_arc_offhand.visible = battle.offhand_swing_ms > 0
 
-	# Swing timers, the PWA's two gold arcs. A full ring is a swing just landed; the arc
-	# fills as the next one approaches.
-	_arc_player.set_value_ratio(clampf(battle.player_swing_elapsed / maxf(battle.player_swing_ms, 1.0), 0.0, 1.0))
-	var offhand := battle.offhand_swing_ms > 0
-	_arc_offhand.visible = offhand
-	if offhand:
-		_arc_offhand.set_value_ratio(clampf(battle.player_swing_elapsed / float(battle.offhand_swing_ms), 0.0, 1.0))
-	_arc_enemy_timer.set_value_ratio(clampf(battle.enemy_swing_elapsed / maxf(battle.enemy_swing_ms, 1.0), 0.0, 1.0))
-
-	# `_arc_enemy_hp_ghost` trails the real ring, which is what the PWA's 0.6 s ease-out
-	# on `.enemy-hp-ghost-ring` produced.
-	var ghost_target: float = _arc_enemy_hp.value
-	if _prev_enemy_hp >= 0.0 and ghost_target > _arc_enemy_hp_ghost.value:
-		_arc_enemy_hp_ghost.value = ghost_target
-	_prev_enemy_hp = battle.enemy_hp
-
-	_set_bar(_hero_hp_track, _hero_hp_fill, battle.hero_hp, battle.hero_max_hp)
 	_hero_hp_bar_label.text = "%d/%d" % [maxi(0, int(battle.hero_hp)), int(battle.hero_max_hp)]
 
 	# The hero's resource bar. EVERY class uses mana in this game — the barbarian too
@@ -969,9 +1017,67 @@ func render() -> void:
 	_refresh_pack()
 	_refresh_cast_icon()
 	_refresh_spells()
+	_smooth_update()
 
 
-## A member that just stepped up is a NEW enemy: the portrait, the name and the HP bar all
+## The GAUGES and the BARS, drawn every FRAME.
+##
+## These used to live in `render()` and were therefore only ten times a second: the gold
+## swing ring advanced in eleven visible jumps per swing (a 1156 ms weapon) and the HP bar
+## stepped with it. `probe_watch.gd` counted the arc changing in 21 of 120 frames — that is
+## what "it looks like 5 FPS" was, and no rule was wrong.
+##
+## Interpolating is safe HERE and nowhere else: `battle.player_swing_elapsed` is the fight's
+## own clock and `_tick_accumulator` is real time that has NOT yet been spent on a tick.
+## Adding it makes the ring sweep continuously and still stop exactly at the tick where the
+## swing lands, because the accumulator never exceeds one step without the next frame
+## consuming it. No partial tick is ever fed back into the battle.
+func _smooth_update() -> void:
+	if battle == null:
+		return
+	var ahead := clampf(_tick_accumulator, 0.0, float(TICK_MS))
+
+	# The player's two gold arcs: a full ring is a swing just landed and the arc fills as
+	# the next one approaches. The off-hand shares the SAME elapsed clock, which is what the
+	# PWA did (`_playerSwingPct` drove both rings); only the interval differs.
+	var player_ms := maxf(float(battle.player_swing_ms), 1.0)
+	_arc_player.set_value_ratio(clampf((battle.player_swing_elapsed + ahead) / player_ms, 0.0, 1.0))
+	if battle.offhand_swing_ms > 0:
+		_arc_offhand.set_value_ratio(clampf((battle.player_swing_elapsed + ahead)
+			/ float(battle.offhand_swing_ms), 0.0, 1.0))
+	_arc_enemy_timer.set_value_ratio(clampf((battle.enemy_swing_elapsed + ahead)
+		/ maxf(float(battle.enemy_swing_ms), 1.0), 0.0, 1.0))
+
+	var enemy_ratio := clampf(battle.enemy_hp / maxf(battle.enemy_max_hp, 1.0), 0.0, 1.0)
+	_arc_enemy_hp.set_value_ratio(enemy_ratio)
+	if not battle.enemy_spells.is_empty():
+		_arc_enemy_mana.set_value_ratio(clampf(
+			battle.enemy_resource_cur / maxf(battle.enemy_max_resource, 1.0), 0.0, 1.0))
+
+	# The PWA's damage ghost: `.enemy-hp-fill-ring` transitions in 0.2 s and
+	# `.enemy-hp-ghost-ring` in 0.6 s, so the ghost TRAILS the fill and the hit reads as a
+	# bite being taken. The port snapped the ghost to the fill in the same line, which made
+	# the slower transition invisible and left a second identical red ring on screen.
+	var ghost: float = _arc_enemy_hp_ghost.value
+	if ghost < 0.0 or ghost <= enemy_ratio:
+		# `-1` is the "new fight" sentinel the renderer sets in `start()`.
+		ghost = enemy_ratio
+	else:
+		ghost = maxf(enemy_ratio, ghost - _frame_delta / GHOST_TRAIL_SECONDS)
+	# Through `set_value_ratio`, not `.value`: the setter is what queues the redraw, and
+	# writing the field directly drew nothing at all.
+	_arc_enemy_hp_ghost.set_value_ratio(ghost)
+
+	_set_bar(_hero_hp_track, _hero_hp_fill, battle.hero_hp, battle.hero_max_hp)
+	var hero: Dictionary = _state.hero()
+	var hero_class := str(_state.data.get("heroClass", ""))
+	var max_mana := int(hero.get("maxMana", 0))
+	if max_mana <= 0:
+		max_mana = _gen.hero_max_mana(hero, _state.equip(), hero_class, _find_item)
+	_set_bar(_mana_track, _mana_fill, float(hero.get("mana", 0)), float(maxi(max_mana, 1)))
+
+
+## A member that just stepped up is a NEW enemy: the portrait, the name and the walk-in all
 ## have to move to it, and the walk-in restarts — the port used to keep the arena in
 ## contact, so pack member two was hit the instant it appeared.
 func _on_pack_member_began() -> void:

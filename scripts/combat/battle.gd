@@ -650,15 +650,23 @@ func reset_gap() -> void:
 	gap = 1.0
 
 
-## Close the distance by `delta_ms`. Returns true if it moved — the arena re-places the
-## hero off this. A caster enemy retreats, which is why the enemy's walk-in is a BONUS to
-## the closing speed rather than a symmetric change.
-func advance_gap(delta_ms: float) -> bool:
+## How fast the gap closes right now, in gap-units per SECOND. Exposed because the renderer
+## has to project the approach between two ticks: `gap` itself only moves inside a tick, so a
+## hero placed straight off it walked in 100 ms hops (measured: 10 moves in 60 frames) while
+## the engine drew 60. A caster enemy retreats, which is why the enemy's walk-in is a BONUS
+## to the closing speed rather than a symmetric change.
+func gap_speed() -> float:
 	var speed := float(CLOSE_SPEED.get(weapon_type, 0.6))
 	# A boss keeps the PWA's old geometry and does not walk in; a caster backs away.
 	if not is_boss and enemy_attack_type != "caster":
 		speed += ENEMY_CLOSE_BONUS
-	var next := maxf(0.0, gap - speed * (delta_ms / 1000.0))
+	return speed
+
+
+## Close the distance by `delta_ms`. Returns true if it moved — the arena re-places the
+## hero off this.
+func advance_gap(delta_ms: float) -> bool:
+	var next := maxf(0.0, gap - gap_speed() * (delta_ms / 1000.0))
 	if is_equal_approx(next, gap):
 		return false
 	gap = next
