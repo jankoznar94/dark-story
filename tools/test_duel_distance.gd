@@ -185,7 +185,12 @@ func _initialize() -> void:
 
 	_test_renderer_walks_the_hero_in(data, state, find_item)
 
-	print("test_duel_distance_ALL_PASS=%s" % str(_ok))
+	# The verdict string is what the CI gate greps for, and it must match EVERY other
+	# test's shape: `SCREAMING_SNAKE_ALL_PASS=true`, derived from the GATE's name, not
+	# from this file's name. It used to print `test_duel_distance_ALL_PASS=...` while CI
+	# grepped `DUEL_DISTANCE_ALL_PASS=true` — the test passed, the grep did not find it,
+	# `set -e` failed the step, and the whole export was skipped.
+	print("DUEL_DISTANCE_ALL_PASS=%s" % str(_ok))
 	quit(0 if _ok else 1)
 
 
