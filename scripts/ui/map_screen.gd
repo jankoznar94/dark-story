@@ -47,11 +47,12 @@ var _find_item: Callable
 
 var _list: VBoxContainer
 var _difficulty_row: HBoxContainer
-var _difficulty_note: Label
 var _actions: HBoxContainer
 var _portal_button: Button
-## Which act's stop path is open. The PWA kept this on the save (`_expandedAct`); here it
-## is screen state, because it is a view setting and a save field per view is noise.
+## Which act's stop path is open. The PWA kept this on the save (`_expandedAct`) and
+## initialised it to -1: on first open the map shows the act CARDS ONLY, collapsed, and
+## the stop path appears when the player taps one. The port used to auto-expand the first
+## unfinished act, which is a different screen from the one the reference frame shows.
 var _expanded_act := -1
 
 
@@ -77,17 +78,36 @@ func _build() -> void:
 	# port used to lead with an invented `back_header("Mapa")`, which pushed every real
 	# element 100px down and made the screen read as a different layout.
 	#
+	# PWA geometry, measured on the live build: `#mapScreen` has 16px padding, so the
+	# column starts at y=16; `#mapScroll` then adds its own `padding-top:20px`, so
+	# `.diff-selector` sits at y=36, is 29px tall, has `margin-bottom:10px`, then the
+	# `.map-scroll` flex gap of 8px puts the first `.map-location` at y=83. Exactly:
+	# 16 + 20 + 29 + 10 + 8 = 83. Every one of those gaps is an explicit spacer, so the
+	# column's own separation is zero — a VBox separation would add itself to each.
+	column.add_theme_constant_override("separation", 0)
+	var scroll_top := Control.new()
+	scroll_top.custom_minimum_size = Vector2(0, 20)
+	scroll_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(scroll_top)
+
 	# `.diff-selector { display:flex; gap:6px; margin-bottom:10px; justify-content:center }`
 	_difficulty_row = HBoxContainer.new()
 	_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_difficulty_row.add_theme_constant_override("separation", 6)
-	_difficulty_row.custom_minimum_size = Vector2(0, 0)
+	_difficulty_row.custom_minimum_size = Vector2(0, 29)
 	column.add_child(_difficulty_row)
-	_difficulty_note = UIKit.label("", 12, UIKit.DIM)
-	_difficulty_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(_difficulty_note)
+
+	var diff_gap := Control.new()
+	diff_gap.custom_minimum_size = Vector2(0, 10)
+	diff_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(diff_gap)
 
 	# `.map-scroll { display:flex; flex-direction:column; gap:8px; padding-top:20px }`
+	var list_top := Control.new()
+	list_top.custom_minimum_size = Vector2(0, 8)
+	list_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(list_top)
+
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 8)
 	_list.custom_minimum_size = Vector2(0, 0)
@@ -99,20 +119,30 @@ func _build() -> void:
 	# the town portal only appears once a scroll is actually in the bag (the PWA toggled
 	# `display:none` on it the same way).
 	#
-	# The PORT's own "Back to Town" signal is kept, because the port has no nav entry
-	# that reaches the town from the map — the PWA left the map through the nav bar.
+	# Measured: `.map-actions` is 358x62 with 8px top and 12px bottom padding, so the
+	# 30px button sits at y=352 with 8px of gap above the row. `.map-action-btn` is
+	# `flex:1` — but `display:none` on the portal leaves the visible button full width
+	# (334px), so equality is the PWA's flex doing its job, not a fixed split.
+	var actions_top := Control.new()
+	actions_top.custom_minimum_size = Vector2(0, 8)
+	actions_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(actions_top)
+
 	_actions = HBoxContainer.new()
 	_actions.add_theme_constant_override("separation", 8)
-	_actions.custom_minimum_size = Vector2(0, 0)
+	_actions.custom_minimum_size = Vector2(0, 62)
+	_actions.add_theme_constant_override("margin_top", 8)
 	column.add_child(_actions)
 
-	var walk := UIKit.secondary_button("Walk to Town", 34)
+	var walk := UIKit.secondary_button("Walk to Town", 30)
 	walk.add_theme_font_size_override("font_size", 12)
+	walk.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	walk.pressed.connect(func(): back_pressed.emit())
 	_actions.add_child(walk)
 
-	_portal_button = UIKit.secondary_button("Town Portal", 34)
+	_portal_button = UIKit.secondary_button("Town Portal", 30)
 	_portal_button.add_theme_font_size_override("font_size", 12)
+	_portal_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_portal_button.visible = false
 	_portal_button.pressed.connect(func(): portal_requested.emit())
 	_actions.add_child(_portal_button)
@@ -121,13 +151,17 @@ func _build() -> void:
 func refresh() -> void:
 	_refresh_difficulty()
 	_clear(_list)
-	var acts: Array = _data.acts()
-	_read_expanded(acts)
 	_build_acts()
 
 
 ## `.diff-selector` — three buttons. A LOCKED one is drawn dim with the lock reason in
 ## its tooltip rather than hidden, because "what am I working towards" is the point.
+##
+## The PWA draws NOTHING under the selector. The port used to put a stat line there
+## ("Obtiznost 1 z 3 - uroven monster 1-15..."), which is invented: measured on the live
+## build the column between the `.diff-selector` (y 36) and the first `.map-location`
+## (y 83) is empty, and those the 47px are just `margin-bottom:10px` plus the scroll's
+## 20px top padding and an 8px gap.
 func _refresh_difficulty() -> void:
 	_clear(_difficulty_row)
 	var diffs: Array = _data.difficulties()
@@ -141,11 +175,24 @@ func _refresh_difficulty() -> void:
 
 		var button := Button.new()
 		button.text = name
-		button.custom_minimum_size = Vector2(0, 34)
+		button.custom_minimum_size = Vector2(0, 29)
 		button.focus_mode = Control.FOCUS_NONE
 		button.add_theme_font_size_override("font_size", 13)
-		# `.diff-btn { padding:6px 14px; border:1px solid #333; border-radius:6px;
-		#             background:#111; color:#888 }`
+		# `.diff-btn { padding:6px 14px; border:1px solid #333; border-radius:6px }` —
+		# 15px of text + 12px of padding + 2px of border = the 29px the live build
+		# measures. The port drew 34px, which pushed the row 5px deep.
+		#
+		# A locked button is `${locked?'🔒 ':''}${d.name}` in the PWA, i.e. a lock glyph
+		# then the name. DejaVu cannot draw the glyph, so it is the generated lock icon.
+		if not unlocked:
+			button.icon = UIKit.load_texture("assets/menu-icons/lock.png")
+			button.expand_icon = true
+			# `Button` has NO `icon_max_width` property — assigning it raises at runtime
+			# ("Invalid assignment of property or key 'icon_max_width'"), and the icon then
+			# draws at its native 256px and blows the 29px row apart. It is a THEME
+			# constant:
+			button.add_theme_constant_override("icon_max_width", 12)
+			button.add_theme_constant_override("h_separation", 8)
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color("#111111")
 		style.border_color = Color("#333333")
@@ -170,19 +217,29 @@ func _refresh_difficulty() -> void:
 			button.add_theme_color_override("font_color", Color(UIKit.GOLD))
 		else:
 			button.add_theme_color_override("font_color", Color("#888888"))
+
+		# EVERY unlocked button is wired — the active one INCLUDED. The PWA's markup is
+		# `onclick="${locked?'':`game.setDifficulty(${di})`}"`, so the active difficulty is
+		# not excluded from the handler: tapping it re-enters the map, which collapses the
+		# stop path. The port only wired the two inactive ones, so tapping the active
+		# difficulty was a dead button.
+		#
+		# The ROUTE matters: `setDifficulty` in the PWA resets `_expandedAct` before
+		# re-rendering, so this goes through `select_difficulty` rather than emitting
+		# straight at the router. Emitting directly left the stop path open across a
+		# difficulty switch and made `select_difficulty` unreachable code.
+		if unlocked:
 			var index := i
-			button.pressed.connect(func(): difficulty_selected.emit(index))
+			button.pressed.connect(func(): select_difficulty(index))
 		_difficulty_row.add_child(button)
 
-	var cur: Dictionary = diffs[current] if current < diffs.size() else {}
-	var act_id: int = _state.first_uncompleted_act()
-	if act_id < 0:
-		_difficulty_note.text = "Obtiznost %d z %d - vsechny akty dokoncene, prepni vys." % [current + 1, diffs.size()]
-	else:
-		_difficulty_note.text = "Obtiznost %d z %d - uroven monster %d-%d, sila monster x%s" % [
-			current + 1, diffs.size(),
-			int(cur.get("monsterLvMin", 1)), int(cur.get("monsterLvMax", 1)),
-			str(cur.get("mult", 1.0))]
+
+## `setDifficulty` in the PWA resets `_expandedAct` to -1 before re-rendering the map, so
+## switching difficulty always collapses the stop path. The button above calls THIS, not
+## `difficulty_selected` — the reset has to happen on the way in.
+func select_difficulty(index: int) -> void:
+	_expanded_act = -1
+	difficulty_selected.emit(index)
 
 
 func _difficulty_lock_reason(index: int) -> String:
@@ -219,7 +276,12 @@ func _build_acts() -> void:
 			continue
 		var theme: Dictionary = themes[int(act.get("theme", 0))] if int(act.get("theme", 0)) < themes.size() else {}
 		_list.add_child(_act_card(act_id, act, theme, unlocked, completed))
-		if unlocked and not completed:
+		# `renderMap` puts the dot scroll inside the SAME `.map-location-wrap` as the
+		# card. The wrap is only emitted for an act that is unlocked and not completed —
+		# and the port must not add an EMPTY box for a collapsed one either, because the
+		# list's 8px separation applies between every child: two extra empty boxes pushed
+		# the next card 16px down (PWA card 2 starts at y=210, the port at y=218).
+		if unlocked and not completed and _expanded_act == act_id:
 			_list.add_child(_stop_path(act_id, act, theme))
 
 
@@ -271,7 +333,10 @@ func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(row)
 
-	# `.map-loc-name` — 20px bold.
+	# `.map-loc-name` — 20px bold, and that is ALL the card carries. The PWA's
+	# `.map-loc-info` holds the name alone; the port added a "N/10 zastavek" line the
+	# reference does not have (measured: `.map-loc-info` is 258x24, exactly one 24px line
+	# inside a 119px card, while the port's is 330px wide with 43px of content).
 	var name_box := VBoxContainer.new()
 	name_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	name_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -283,11 +348,6 @@ func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 	name_label.add_theme_color_override("font_color", Color("#f0f0f0"))
 	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_box.add_child(name_label)
-	var sub := UIKit.UILabel.new()
-	sub.text = "%d/%d zastavek" % [int(_state.max_progress(act_id)), int(act.get("zones", 10))]
-	sub.add_theme_font_size_override("font_size", 12)
-	sub.add_theme_color_override("font_color", Color("#cccccc"))
-	name_box.add_child(sub)
 
 	# `.map-loc-badge` — Play / Done / Locked on the theme's fill colour.
 	row.add_child(_act_badge(theme, unlocked, completed))
@@ -326,40 +386,34 @@ func _act_badge(theme: Dictionary, unlocked: bool, completed: bool) -> Control:
 	return badge
 
 
+## `toggleActExpand` in the PWA — a pure view toggle. It does NOT call `saveGame()`;
+## the only thing that moves `_expandedAct` on disk is `setDifficulty`, which resets it
+## to -1. The port used to write the save here, which is a save write per tap.
 func _toggle_act(act_id: int) -> void:
-	# `state._expandedAct = actId` in the PWA — saved, so returning to the map reopens the
-	# act the player was working on instead of collapsing everything.
-	_state.data["_expandedAct"] = -1 if _expanded_act == act_id else act_id
-	_state.save()
-	_expanded_act = int(_state.data["_expandedAct"])
+	_expanded_act = -1 if _expanded_act == act_id else act_id
 	_clear(_list)
 	_build_acts()
 
 
-## The expanded act, kept on the save the way the PWA's `_expandedAct` was. A new save
-## expands the first act that is not finished, so the map is useful on first open.
-func _read_expanded(acts: Array) -> void:
-	var stored: Variant = _state.data.get("_expandedAct", null)
-	if stored != null:
-		_expanded_act = int(stored)
-		return
-	var difficulty := int(_state.data.get("difficulty", 0))
-	var boss_row: Array = (_state.data["bossesDefeated"] as Array)[difficulty]
-	for act_id in acts.size():
-		if not bool(boss_row[act_id]):
-			_expanded_act = act_id
-			return
+## The expanded act, reset on a difficulty switch.
+##
+## The PWA keeps `_expandedAct` on its save and persists it; the port does not. It used
+## to (`_state.data["_expandedAct"]` plus a `save()` on every tap) and that was removed
+## as not-the-PWA's-behaviour — `toggleActExpand` is a pure view toggle, and the only
+## thing that moves the value on disk is `setDifficulty`, which zeroes it. This is the
+## port's half of that: called from `select_difficulty` on the way in.
+func reset_expanded() -> void:
 	_expanded_act = -1
 
 
 ## `buildDotPath` — one `.stop-card` per zone with an arrow between them, plus the corner
 ## badge: a check when done, the fight counter while current, a lock when locked.
 func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
+	if _expanded_act != act_id:
+		return Control.new()
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	if _expanded_act != act_id:
-		return box
 
 	var total := int(act.get("zones", 10))
 	var current := int(_state.data["locationProgress"][act_id])
@@ -460,13 +514,18 @@ func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
 	# vocabulary and let the pill size itself: a word would not fit the shape at all.
 	var text := "%d/10" % mini(fight, 10)
 	var colour := UIKit.GOLD
+	var lock_icon := false
 	if done:
-		# `.stop-badge-done` — a check mark, drawn as text. It is the PWA's own glyph.
+		# `.stop-badge-done` — a check mark, drawn as text. It is the PWA's own glyph and
+		# DejaVu HAS it; the emoji below it does not.
 		text = "\u2713"
 		colour = "#2ecc71"
 	elif locked:
-		text = "\U0001F512"
+		# The PWA writes 🔒 here. DejaVu has no emoji, so the raw codepoint painted as
+		# garbage; a generated padlock icon carries the same meaning in the port's style.
+		text = ""
 		colour = "#666666"
+		lock_icon = true
 	elif is_current:
 		text = "%d/10" % mini(fight, 10)
 	else:
@@ -498,6 +557,16 @@ func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
 	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color(colour))
 	badge.add_child(label)
+	if lock_icon:
+		# A 22px pill with a real icon in it, centred. The PWA's 🔒 is 12px of glyph; the
+		# generated icon is a 256px square, so it is scaled into a 12px box.
+		var icon := TextureRect.new()
+		icon.texture = UIKit.load_texture("assets/menu-icons/lock.png")
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.custom_minimum_size = Vector2(12, 12)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.add_child(icon)
 	return badge
 
 

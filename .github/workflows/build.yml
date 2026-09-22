@@ -200,6 +200,22 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "CHARACTER_MODAL_ALL_PASS=true"
 
+      # The map's RULES, which no screenshot can pin. Every divergence on this screen was
+      # invented STATE, not a wrong pixel: a stat line the PWA does not have, a "N/10
+      # zastavek" sub-line, and a stop path that unrolled itself on open. Each of those
+      # builds, renders and looks plausible while being wrong. This asserts that the map
+      # starts collapsed, that a collapsed act contributes NO child to the act list (the
+      # list's 8px separation is counted between every child, so an empty box moves the
+      # next card down), that tapping toggles without writing the save, that the
+      # difficulty switch collapses the path through the route its button actually takes,
+      # and that the difficulty selector wires its ACTIVE button too.
+      - name: Map screen test (collapsed start, difficulty reset, list children)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_map_screen.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "MAP_SCREEN_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
