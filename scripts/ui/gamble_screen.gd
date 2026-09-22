@@ -51,7 +51,7 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	var page := UIKit.screen_page(self)
+	var page := UIKit.screen_page(self, UIKit.BACK_BTN_PAD)
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 8)
 

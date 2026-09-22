@@ -46,12 +46,12 @@ func _build() -> void:
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Bestiar")
-	header["back"].pressed.connect(func(): back_pressed.emit())
+	# `.card` + `.card-title` with the PWA's 32px `.page-icon`, and NO "Back to Town"
+	# button: the live bestiary measured `div.card [16,24 358x86]` directly under the
+	# container's padding, with the nav bar as the only way out.
+	var header := UIKit.card_header("Bestiar",
+		"Vsechny monstra, jejich typy a utocne vzorce.", "assets/menu-icons/bestiar.png")
 	column.add_child(header["root"])
-
-	column.add_child(UIKit.label(
-		"Nepratele, ktere jsi potkal. Neznamy monstra jsou zamcena.", 13, UIKit.DIM))
 
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 6)

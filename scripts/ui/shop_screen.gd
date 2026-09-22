@@ -67,7 +67,7 @@ func _ready() -> void:
 func _build() -> void:
 	# `.container` — 16px sides, 70px at the bottom for the nav bar. Every screen is built
 	# on this, which is what makes "scroll works everywhere" one implementation.
-	var page := UIKit.screen_page(self)
+	var page := UIKit.screen_page(self, UIKit.BACK_BTN_PAD)
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 8)
 

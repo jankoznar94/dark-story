@@ -41,12 +41,9 @@ func _build() -> void:
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Kouzla")
-	header["back"].pressed.connect(func(): back_pressed.emit())
+	var header := UIKit.card_header("Kouzla", "")
+	_subtitle = header["subtitle"]
 	column.add_child(header["root"])
-
-	_subtitle = UIKit.label("", 13, UIKit.DIM)
-	column.add_child(_subtitle)
 
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 6)
@@ -78,12 +75,15 @@ func _card(spell: Dictionary, hero_class: String) -> Control:
 	var level: int = _talents.talent_level(_state, key)
 	var learned := level > 0
 
+	# `.spellbook-card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:10px;
+	#                    padding:10px; margin-bottom:8px }` — the PWA's card, NOT a
+	# near-black #0d0d0d panel with a 8px icon and a 16px name.
 	var panel := PanelContainer.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#0d0d0d")
+	style.bg_color = Color("#1a1a1a")
 	style.border_color = Color("#2a2a2a")
 	style.set_border_width_all(1)
-	style.set_corner_radius_all(8)
+	style.set_corner_radius_all(10)
 	style.content_margin_left = 10
 	style.content_margin_right = 10
 	style.content_margin_top = 10
@@ -96,46 +96,61 @@ func _card(spell: Dictionary, hero_class: String) -> Control:
 	row.add_theme_constant_override("separation", 12)
 	panel.add_child(row)
 
+	# `.spellbook-icon { width:64px; height:64px; border-radius:8px; border:2px solid #2a2a2a }`
+	var icon_box := PanelContainer.new()
+	var icon_style := StyleBoxFlat.new()
+	icon_style.bg_color = Color("#000000")
+	icon_style.border_color = Color("#2a2a2a")
+	icon_style.set_border_width_all(2)
+	icon_style.set_corner_radius_all(8)
+	icon_box.add_theme_stylebox_override("panel", icon_style)
+	icon_box.custom_minimum_size = Vector2(64, 64)
+	icon_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(icon_box)
+
 	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(52, 52)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	icon.texture = UIKit.load_texture("assets/spells/%s.png" % spell_id)
-	row.add_child(icon)
+	icon_box.add_child(icon)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 2)
+	column.add_theme_constant_override("separation", 4)
+	column.custom_minimum_size = Vector2(0, 0)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(column)
 
-	var name_row := HBoxContainer.new()
-	name_row.add_theme_constant_override("separation", 8)
-	column.add_child(name_row)
-	var name_label := UIKit.label(str(spell.get("name", spell_id)), 16, "#f0f0f0")
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_row.add_child(name_label)
-	# "learned" is the only state with a colour; everything else is dim, which is how the
-	# PWA showed a locked entry without hiding it.
-	name_row.add_child(UIKit.label(
-		"Nauceno %d/%d" % [level, int(spell.get("maxLv", 1))] if learned else "Nenauceno",
-		12, UIKit.GOLD if learned else UIKit.DIM))
+	# `.spellbook-name { font-size:15px; color:#e8e0e8; font-weight:bold }` — the name
+	# alone. The port used to add a "Nauceno x/y" badge the PWA never had; whether the
+	# spell is LEARNED is shown by the card's own dimming, exactly as in the PWA.
+	var name_label := UIKit.label(str(spell.get("name", spell_id)), 15, "#e8e0e8")
+	name_label.custom_minimum_size = Vector2(0, 0)
+	column.add_child(name_label)
 
-	column.add_child(UIKit.label(str(spell.get("desc", "")), 12, "#aaaaaa"))
+	var desc_label := UIKit.label(str(spell.get("desc", "")), 12, "#aaaaaa")
+	desc_label.custom_minimum_size = Vector2(0, 0)
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(desc_label)
 
-	# The cost line, in the PWA's order: resource, cooldown, GCD, and whether it needs
-	# combo points.
+	# `.spellbook-stats { font-size:11px; color:#888; gap:8px }` — resource, cooldown,
+	# GCD, in the PWA's order.
 	var parts := PackedStringArray()
 	parts.append("Mana: %d" % int(spell.get("cost", 0)))
 	parts.append("CD: %s" % ("%ss" % str(spell.get("cooldown", 0)) if float(spell.get("cooldown", 0)) > 0.0 else "-"))
 	parts.append("GCD: %s" % ("%ss" % str(spell.get("gcd", 0)) if float(spell.get("gcd", 0)) > 0.0 else "-"))
 	if bool(spell.get("needsCombo", false)):
 		parts.append("Combo")
-	column.add_child(UIKit.label("   ".join(parts), 12, UIKit.DIM))
+	var stats := UIKit.label("   ".join(parts), 11, "#888888")
+	stats.custom_minimum_size = Vector2(0, 0)
+	column.add_child(stats)
 
 	if not learned:
 		var reason := _talents.blocked_reason(_state, key)
 		if reason != "":
-			column.add_child(UIKit.label(reason, 12, UIKit.BAD))
+			var reason_label := UIKit.label(reason, 12, UIKit.BAD)
+			reason_label.custom_minimum_size = Vector2(0, 0)
+			reason_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			column.add_child(reason_label)
 	return panel
 
 

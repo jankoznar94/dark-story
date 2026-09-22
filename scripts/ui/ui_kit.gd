@@ -30,6 +30,12 @@ const MOD_BLUE := "#4a7dff"
 ## fixed `.nav-bar` sits. Without it every screen hides its last row behind the nav.
 const CONTAINER_PAD := 16.0
 const NAV_RESERVE := 70.0
+## `.btn { padding:12px; margin:6px 0 }` — a screen that LEADS with a full-width `.btn`
+## (chest, shop, gamble, craft) has that button 6px lower than the container's own 16px
+## padding, i.e. at y=22 in the live PWA. The 6px is the button's margin, so it belongs to
+## the page that starts with one, not to `screen_page` itself (the town leads with a
+## banner and starts at y=16).
+const BACK_BTN_PAD := 22.0
 ## `body { background: #121212 }`
 const PAGE_BG := "#121212"
 ## `.btn-secondary { background:#3a3a5a; color:#e0e0e0 }`, `.btn { padding:12px;
@@ -37,6 +43,13 @@ const PAGE_BG := "#121212"
 const BTN_SECONDARY_BG := "#3a3a5a"
 
 
+## A label that can always shrink. A Godot Label reports its whole UNWRAPPED text as its
+## minimum width and a container honours that minimum, so a single long line was widening
+## whole screens past the 390px canvas (measured: the craft screen built 447px wide and
+## the chest 554px, i.e. 60-160px of every screen sat off the right edge). In a browser a
+## long line wraps inside its parent — this makes `label()` behave the same way, so no
+## screen can be pushed off-canvas by its own copy. Callers that want a wider label give
+## it SIZE_EXPAND_FILL, which still works.
 static func label(text: String, size: int = 14, colour: String = TEXT,
 		align: int = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
 	var l := Label.new()
@@ -44,6 +57,8 @@ static func label(text: String, size: int = 14, colour: String = TEXT,
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", Color(colour))
 	l.horizontal_alignment = align
+	l.custom_minimum_size = Vector2(0, 0)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
 
 
@@ -75,7 +90,10 @@ static func flat_button(text: String, width: float = 160.0, height: float = 44.0
 ## `.btn.btn-secondary` — the full-width "Back to Town" button every PWA sub-screen has
 ## at the very top. Blue-grey fill, 8px radius, 15px bold. It is NOT the flat bordered
 ## button; using the wrong one is why the port's screens read as a different game.
-static func secondary_button(text: String, height: float = 44.0) -> Button:
+##
+## `.btn { padding:12px; font-size:15px; font-weight:700 }` measures 42px tall in the
+## live PWA, not 44 — the port's extra 2px pushed every element below it down.
+static func secondary_button(text: String, height: float = 42.0) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.custom_minimum_size = Vector2(0, height)
@@ -188,7 +206,14 @@ static func back_header(title: String, back_text: String = "Back to Town") -> Di
 
 	var right := label("", 15, GOLD, HORIZONTAL_ALIGNMENT_RIGHT)
 	right.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(right)
+	# A non-wrapping label reports its whole text as its MINIMUM width, and a container
+	# honours that minimum — so one long line silently widened every screen past the
+	# 390px canvas (measured: the chest built 554px wide, 204px of it off-screen). Zero
+	# the minimums and let the text wrap or clip instead of pushing the layout.
+	right.custom_minimum_size = Vector2(0, 0)
+	right.clip_text = true
+	row.custom_minimum_size = Vector2(0, 0)
+	column.custom_minimum_size = Vector2(0, 0)
 
 	return {"root": column, "back": back, "title": title_label, "right": right}
 
@@ -203,9 +228,65 @@ class UILabel:
 		add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.95))
 
 
+## `.card` — the PWA's plain card, used as a PAGE HEADER by the bestiary and the spellbook.
+## It is not the `page-header`: no 80px icon, no border on a #444, no 10px radius on
+## #000. It is `background:#1a1a1a; border:1px solid #2a2a2a; border-radius:10px;
+## padding:14px`, with a 16px bold title (and an optional 32px `.page-icon` inside it)
+## and a #888 12px subtitle. Both screens measured this shape in the live PWA:
+##   div.card [16,24 358x86] bg=#1a1a1a bd=1px #2a2a2a r=10 pad=14
+##   div.card-title: 16px/700, .card-subtitle: 12px #888
+## Neither has a "Back to Town" button — the nav bar is the way out.
+static func card_header(title: String, subtitle: String = "", icon_path: String = "") -> Dictionary:
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#1a1a1a")
+	style.border_color = Color("#2a2a2a")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	panel.add_theme_stylebox_override("panel", style)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	column.custom_minimum_size = Vector2(0, 0)
+	panel.add_child(column)
+
+	# `.card-title` is one row so the `.page-icon` (32px, 4px radius) sits inline with
+	# the text; the bestiary's title row measured 32px tall for exactly that reason.
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 6)
+	title_row.custom_minimum_size = Vector2(0, 0)
+	column.add_child(title_row)
+
+	if icon_path != "":
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(32, 32)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.texture = load_texture(icon_path)
+		title_row.add_child(icon)
+
+	var title_label := label(title, 16, "#d0d0d0")
+	title_label.custom_minimum_size = Vector2(0, 0)
+	title_row.add_child(title_label)
+
+	var sub_label := label(subtitle, 12, "#888888")
+	sub_label.custom_minimum_size = Vector2(0, 0)
+	sub_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(sub_label)
+
+	return {"root": panel, "title": title_label, "subtitle": sub_label}
+
+
 ## `.page-header` — an 80px icon, a 22px bold title, a 13px #999 subtitle, on a black box
 ## with a 1px #444 border and a 10px radius. `right_text` is the gold readout the PWA put
-## at `margin-left:auto` (e.g. "0 gold").
+## at `margin-left:auto` (e.g. "0 gold"/"0 zlata").
+##
+## `.page-header { padding:16px 20px }` content-box, so the box is 114px tall over a 358px
+## content width — the port's 20/20/16/16 plus a 112px-tall row came out 2px short.
 static func page_header(icon_path: String, title: String, subtitle: String = "",
 		right_text: String = "") -> Dictionary:
 	var panel := PanelContainer.new()
@@ -216,8 +297,8 @@ static func page_header(icon_path: String, title: String, subtitle: String = "",
 	style.set_corner_radius_all(10)
 	style.content_margin_left = 20
 	style.content_margin_right = 20
-	style.content_margin_top = 16
-	style.content_margin_bottom = 16
+	style.content_margin_top = 17
+	style.content_margin_bottom = 17
 	panel.add_theme_stylebox_override("panel", style)
 
 	var row := HBoxContainer.new()
@@ -238,15 +319,40 @@ static func page_header(icon_path: String, title: String, subtitle: String = "",
 	row.add_child(column)
 
 	var title_label := label(title, 22, "#f0f0f0")
+	title_label.custom_minimum_size = Vector2(0, 0)
+	title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(title_label)
 	var sub_label := label(subtitle, 13, "#999999")
+	sub_label.custom_minimum_size = Vector2(0, 0)
+	sub_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(sub_label)
 
 	var right := label(right_text, 14, GOLD, HORIZONTAL_ALIGNMENT_RIGHT)
 	right.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(right)
+	# A Label reports its UNWRAPPED text as its minimum width and a container honours it,
+	# so one long subtitle widened the whole screen: the chest built 554px wide inside a
+	# 390px canvas, i.e. a third of every screen sat off the right edge. Every text node
+	# in a horizontal row must be allowed to shrink.
+	right.custom_minimum_size = Vector2(0, 0)
+	right.clip_text = true
+	row.custom_minimum_size = Vector2(0, 0)
+	# `.card { margin:8px 0 }`, `.btn { margin:6px 0 }`, `.map-actions { padding:8px 12px 12px }`.
+	# A VBoxContainer has ONE separation for every child, so a per-element margin cannot be
+	# expressed in the container — each screen adds a `Spacer` of the right height before
+	# the element that needs it. Returns a zero-height container unless a margin is given.
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	return {"root": panel, "right": right, "title": title_label, "subtitle": sub_label}
+
+
+## A vertical gap of exactly `height` pixels. CSS gives every card and button its own
+## margin; a container gives all children the same separation, so the difference is added
+## explicitly at the one place the measurement says it belongs.
+static func gap(height: float) -> Control:
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0, height)
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return spacer
 
 
 ## `.shop-tabs` / `.shop-tab` — equal-width tabs, 10px padding, 8px radius, the active one

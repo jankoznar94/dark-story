@@ -113,6 +113,7 @@ func _build_screens() -> void:
 	var map_screen := MapScreen.new(data, state, _resolve)
 	map_screen.visible = false
 	map_screen.back_pressed.connect(func(): show_screen("town"))
+	map_screen.portal_requested.connect(_on_town_portal)
 	map_screen.difficulty_selected.connect(_on_difficulty_selected)
 	map_screen.enter_stop.connect(_on_stop_selected)
 	_add_screen("map", map_screen)

@@ -33,6 +33,9 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 signal back_pressed()
 signal difficulty_selected(difficulty: int)
 signal enter_stop(act_id: int, stop: int)
+## `.map-actions`' second button — the PWA's "Town Portal", shown only when the hero
+## actually carries a scroll.
+signal portal_requested()
 
 ## 390 - 32 = 358 wide. `.stop-card` is a square, so the art is 358 tall; the label sits
 ## over the bottom of it.
@@ -45,6 +48,8 @@ var _find_item: Callable
 var _list: VBoxContainer
 var _difficulty_row: HBoxContainer
 var _difficulty_note: Label
+var _actions: HBoxContainer
+var _portal_button: Button
 ## Which act's stop path is open. The PWA kept this on the save (`_expandedAct`); here it
 ## is screen state, because it is a view setting and a save field per view is noise.
 var _expanded_act := -1
@@ -66,25 +71,51 @@ func _build() -> void:
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 8)
 
-	var header := UIKit.back_header("Mapa")
-	header["back"].pressed.connect(func(): back_pressed.emit())
-	column.add_child(header["root"])
-
-	# `.diff-selector` — the port's own note line sits under it so a locked difficulty
-	# says what it is waiting for.
+	# The PWA's map has NO header at all — no title, no "Back to Town". It opens on the
+	# difficulty selector (`.map-scroll` starts at y=16 with 20px of top padding) and
+	# leaves the way out to the nav bar and the `.map-actions` row at the bottom. The
+	# port used to lead with an invented `back_header("Mapa")`, which pushed every real
+	# element 100px down and made the screen read as a different layout.
+	#
+	# `.diff-selector { display:flex; gap:6px; margin-bottom:10px; justify-content:center }`
 	_difficulty_row = HBoxContainer.new()
 	_difficulty_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_difficulty_row.add_theme_constant_override("separation", 6)
+	_difficulty_row.custom_minimum_size = Vector2(0, 0)
 	column.add_child(_difficulty_row)
 	_difficulty_note = UIKit.label("", 12, UIKit.DIM)
 	_difficulty_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_difficulty_note)
 
-	# `.map-scroll`
+	# `.map-scroll { display:flex; flex-direction:column; gap:8px; padding-top:20px }`
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 8)
+	_list.custom_minimum_size = Vector2(0, 0)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(_list)
+
+	# `.map-actions { display:flex; gap:8px; padding:8px 12px 12px }` with equal-width
+	# `.map-action-btn` buttons. `.btn` is full width, so "Walk to Town" is always there;
+	# the town portal only appears once a scroll is actually in the bag (the PWA toggled
+	# `display:none` on it the same way).
+	#
+	# The PORT's own "Back to Town" signal is kept, because the port has no nav entry
+	# that reaches the town from the map — the PWA left the map through the nav bar.
+	_actions = HBoxContainer.new()
+	_actions.add_theme_constant_override("separation", 8)
+	_actions.custom_minimum_size = Vector2(0, 0)
+	column.add_child(_actions)
+
+	var walk := UIKit.secondary_button("Walk to Town", 34)
+	walk.add_theme_font_size_override("font_size", 12)
+	walk.pressed.connect(func(): back_pressed.emit())
+	_actions.add_child(walk)
+
+	_portal_button = UIKit.secondary_button("Town Portal", 34)
+	_portal_button.add_theme_font_size_override("font_size", 12)
+	_portal_button.visible = false
+	_portal_button.pressed.connect(func(): portal_requested.emit())
+	_actions.add_child(_portal_button)
 
 
 func refresh() -> void:
@@ -339,7 +370,7 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 	# Unlocking reads the HIGHEST stop ever reached, never `locationProgress` — farming an
 	# earlier stop lowers the latter and must not lock the player out of what they reached.
 	var reached: int = _state.max_progress(act_id)
-	var names: Array = _stop_names()
+	var names: Dictionary = _stop_names()
 
 	for stop in total:
 		var done: bool = boss_defeated or stop < reached
@@ -357,7 +388,8 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		var style := StyleBoxFlat.new()
 		style.bg_color = Color("#0a0a0a")
 		style.border_color = Color("#333333") if locked else (Color(UIKit.GOLD) if is_current else border)
-		style.set_border_width_all(3)
+		# `.stop-card { border:2.5px solid #444 }` — 2.5px, not the 3px the port drew.
+		style.set_border_width_all(2)
 		style.set_corner_radius_all(10)
 		for state_name in ["normal", "hover", "focus", "disabled"]:
 			card.add_theme_stylebox_override(state_name, style)
@@ -421,29 +453,43 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 
 func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
 		boss_defeated: bool, reached: int, stop: int) -> Control:
-	var text := "%d/10" % (mini(fight, 10) if is_current else 10)
+	# `.stop-badge { min-width:26px; height:22px; padding:0 5px; border-radius:11px;
+	#                font-size:12px }` — a SMALL pill that hugs its content. The port used
+	# to write the words "Hotovo"/"Zamceno" into a fixed 74px box; the PWA's badge is
+	# 26px wide because its content is a glyph, a counter, or a lock. Keep the PWA's
+	# vocabulary and let the pill size itself: a word would not fit the shape at all.
+	var text := "%d/10" % mini(fight, 10)
 	var colour := UIKit.GOLD
 	if done:
-		text = "Hotovo"
+		# `.stop-badge-done` — a check mark, drawn as text. It is the PWA's own glyph.
+		text = "\u2713"
 		colour = "#2ecc71"
 	elif locked:
-		text = "Zamceno"
+		text = "\U0001F512"
 		colour = "#666666"
-	if not done and not is_current and not locked:
+	elif is_current:
+		text = "%d/10" % mini(fight, 10)
+	else:
+		# A stop behind the player is complete, so it shows a full counter rather than a
+		# partial one.
 		text = "%d/10" % (10 if stop < reached else mini(fight, 10))
 
 	var badge := PanelContainer.new()
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	badge.offset_left = -80
 	badge.offset_top = 6
 	badge.offset_right = -6
-	badge.offset_bottom = 30
+	badge.offset_bottom = 28
+	badge.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.custom_minimum_size = Vector2(26, 22)
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0, 0, 0, 0.75)
 	style.border_color = Color(colour)
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(11)
+	style.content_margin_left = 5
+	style.content_margin_right = 5
 	badge.add_theme_stylebox_override("panel", style)
 	var label := UIKit.UILabel.new()
 	label.text = text
@@ -455,14 +501,20 @@ func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
 	return badge
 
 
-## `.stop-arrow` — a CSS triangle between two stops. Grey until the next stop is
-## reachable, then in the act's colour. Drawn rather than emoji, per Jan's rule.
+## `.stop-arrow` — a CSS triangle between two stops. `.stop-arrow { width:100%; height:
+## 20px (border-top) ; margin:2px 0; opacity:0.35; filter:grayscale(1) }`, an active one
+## is the act's colour at full opacity. Drawn rather than emoji, per Jan's rule.
+##
+## The triangle's own height is its `border-top` (20px); the 2px top and bottom margins
+## are what a VBoxContainer cannot express, so they are added to the reserve instead.
 func _stop_arrow(theme: Dictionary, active: bool) -> Control:
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(0, 20)
+	holder.custom_minimum_size = Vector2(0, 24)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var arrow := Triangle.new()
 	arrow.set_anchors_preset(Control.PRESET_FULL_RECT)
+	arrow.offset_top = 2
+	arrow.offset_bottom = -2
 	arrow.colour = Color(str(theme.get("border", "#888888"))) if active else Color("#888888")
 	arrow.dim = not active
 	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -527,16 +579,20 @@ func _act_name(act_id: int, act: Dictionary) -> String:
 	return str(act.get("name", "Act %d" % (act_id + 1)))
 
 
-## `STOP_NAMES_EN` from the PWA, one array per act.
-func _stop_names() -> Array:
-	return _data.table("STOP_NAMES_EN", [])
+## `STOP_NAMES_EN` from the PWA — an OBJECT keyed by act id, not an array. Its keys are
+## strings ("0".."4") once they come through JSON, so an `int` index finds nothing and
+## every stop falls back to "Zastavka N". Typing the return as `Array` here was worse
+## than useless: the Dictionary is not an Array, so the call ABORTED and the map built
+## no stop labels at all.
+func _stop_names() -> Dictionary:
+	var raw: Variant = _data.table("STOP_NAMES_EN", {})
+	return raw if raw is Dictionary else {}
 
 
-func _stop_name(names: Array, act_id: int, stop: int) -> String:
-	if act_id < names.size():
-		var per_act = names[act_id]
-		if per_act is Array and stop < (per_act as Array).size():
-			return str(per_act[stop])
+func _stop_name(names: Dictionary, act_id: int, stop: int) -> String:
+	var per_act: Variant = names.get(str(act_id), null)
+	if per_act is Array and stop < (per_act as Array).size():
+		return str(per_act[stop])
 	return "Zastavka %d" % (stop + 1)
 
 
