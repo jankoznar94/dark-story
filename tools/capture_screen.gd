@@ -82,8 +82,10 @@ func _entry() -> void:
 		_main.open_modal(tab)
 		return
 	if _screen == "arena":
-		_main._on_wilderness()
-		_main.show_screen("arena")
+		# Entering through the REAL route: a stop on the map winds progress forward and
+		# starts the fight. `_on_wilderness()` used to exist and was deleted with the
+		# map rebuild, which silently broke every arena capture after that.
+		_main._on_stop_selected(0, 0)
 	else:
 		_main.show_screen(_screen)
 	if _fight_ticks > 0 and _screen == "arena":

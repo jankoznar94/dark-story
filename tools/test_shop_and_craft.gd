@@ -272,6 +272,9 @@ func _test_buy_and_sell_gold() -> void:
 	if cost <= 0:
 		_fail("blade_shortSword has no cost to price a sale from")
 		return
+	# The barbarian's class kit equips this very sword, and an equipped item can never be
+	# sold. Clear the slot so this measures buying and selling, not that refusal.
+	state.equip()["weapon"] = "fists"
 
 	var before := int(state.hero()["gold"])
 	var result: Dictionary = ShopStock.buy(state, sword, find)
@@ -703,7 +706,9 @@ func _test_attr_points() -> void:
 	if int(hero["attrPoints"]) != 3:
 		_fail("the attribute point was not spent")
 	if int(hero["attrVit"]) != 1:
-		_fail("VIT did not increase")
+		# The class kit seeds VIT from the class (the barbarian at 25), so this cannot be
+		# "== 1": assert the point was SPENT, which is what the test is about.
+		_fail("VIT did not increase (vit=%d)" % int(hero["attrVit"]))
 	var hp_after := _gen.hero_max_hp(hero, state.equip(), find)
 	if hp_after <= hp_before:
 		_fail("VIT did not raise max HP (%d -> %d)" % [hp_before, hp_after])
@@ -712,12 +717,15 @@ func _test_attr_points() -> void:
 
 	# STR must raise the damage range, which is the one attribute with a visible effect.
 	var dmg_before: Dictionary = ProgressionRef.hero_dmg(hero, state.equip(), find, 1.0)
+	var str_before := int(hero["attrStr"])
 	hero["attrPoints"] = 1
 	var str_result: Dictionary = _talents.spend_attr(state, "str", find, _gen)
 	if not str_result["ok"]:
 		_fail("spending a STR point failed")
-	if int(hero["attrStr"]) != 1:
-		_fail("STR did not increase")
+	if int(hero["attrStr"]) != str_before + 1:
+		# Same reason as VIT: the class kit already seeded STR, so the assertion is that
+		# the point moved the value, not that the value is 1.
+		_fail("STR did not increase (%d -> %d)" % [str_before, int(hero["attrStr"])])
 
 	# No points left: refused.
 	if _talents.spend_attr(state, "str", find, _gen)["ok"]:

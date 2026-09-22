@@ -129,8 +129,55 @@ func inventory() -> Array:
 	return data["hero"]["inventory"]
 
 
+## Choose a class AND apply its starting kit, exactly as the PWA's `selectClass()` did:
+## the class's `attrBonus` seeds the four attributes, `baseDmg` the hero's damage, the
+## HP/mana pools are recomputed from the new attributes, and the start weapon is equipped.
+##
+## Skipping the kit is not a cosmetic difference. `attrVit` seeds max HP (VIT * 5) and
+## `attrInt` seeds max mana (INT * 2), so a hero with a class but no kit runs on level-1
+## pools for the whole game — the arena showed 130 HP / 29 mana at level 20 where the PWA
+## shows 255 HP / 49 mana (barbarian: vit 25, int 10). That reads as "the hero has the
+## wrong HP and no mana", and it is this function, not the arena.
+##
+## The recompute goes through ItemGen so the pools stay in one place: a second copy of
+## the formula here is exactly how two sources of truth start.
 func set_class(class_id: String) -> void:
+	var cls: Dictionary = _data_ref.class_by_id(class_id) if _data_ref != null else {}
+	_apply_class_kit(class_id, cls)
+
+
+func _apply_class_kit(class_id: String, cls: Dictionary) -> void:
 	data["heroClass"] = class_id
+	if cls.is_empty():
+		return
+	var hero: Dictionary = data["hero"]
+	var bonus: Dictionary = cls.get("attrBonus", {})
+	hero["attrStr"] = int(bonus.get("str", 0))
+	hero["attrVit"] = int(bonus.get("vit", 0))
+	hero["attrDex"] = int(bonus.get("dex", 0))
+	hero["attrInt"] = int(bonus.get("int", 0))
+	hero["baseDmg"] = int(cls.get("baseDmg", hero.get("baseDmg", 12)))
+	# The PWA's own class -> portrait map (`classFaces` in selectClass).
+	var faces := {"barbarian": "hero_barbarian_m", "assassin": "hero_rogue_m", "mage": "hero_mage_m"}
+	if faces.has(class_id):
+		hero["face"] = faces[class_id]
+	# The PWA's start weapons: the barbarian gets a short sword, the assassin a katar,
+	# the mage keeps fists (a staff is a drop, not a gift).
+	var start := {"barbarian": "blade_shortSword", "assassin": "claws_katar"}
+	if start.has(class_id) and not _data_ref.item(str(start[class_id])).is_empty():
+		data["hero"]["equip"]["weapon"] = start[class_id]
+	# Recompute the pools from the new attributes. `ItemGen` needs a find_item callable;
+	# GameData.item is the same lookup the screens pass in as `_resolve`.
+	var gen := ItemGen.new(_data_ref)
+	var find_item := func(id: Variant) -> Dictionary:
+		return _data_ref.item(str(id)) if id != null else {}
+	var max_hp := gen.hero_max_hp(hero, data["hero"]["equip"], find_item)
+	var max_mana := gen.hero_max_mana(hero, data["hero"]["equip"], class_id, find_item)
+	# The PWA filled both pools to full when the class was chosen.
+	hero["maxHp"] = max_hp
+	hero["hp"] = max_hp
+	hero["maxMana"] = max_mana
+	hero["mana"] = max_mana
 
 
 ## Number of potion slots available: 4 per belt row, or the default without a belt.

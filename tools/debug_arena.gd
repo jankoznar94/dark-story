@@ -9,8 +9,7 @@ func _initialize() -> void:
 func _go(main) -> void:
 	await process_frame
 	await process_frame
-	main._on_wilderness()
-	main.show_screen("arena")
+	main._on_stop_selected(0, 0)
 	var arena = main._screens["arena"]
 	for _i in 40:
 		arena.step()

@@ -63,10 +63,23 @@ const C_MANA_BORDER := "#3a3a6a"
 const C_MANA_FILL := "#4a6ad4"
 const C_HERO_RING := "#4a7dff"
 
-## Hero placement in the arena, as fractions — the PWA's HERO_X_NEAR / HERO_Y_NEAR.
-## `_gap`/walk-in is not ported, so the hero stands at contact position permanently.
-const HERO_X := 0.22
-const HERO_Y := 0.84
+## Hero placement in the arena — the PWA's HERO_X_START / HERO_X_NEAR, HERO_Y_FAR /
+## HERO_Y_NEAR and HERO_SCALE_FAR, as fractions. The hero starts at the arena's centre
+## (bottom) at maximum separation and walks in SIDEWAYS to stand beside the monster at
+## contact; he also grows as he arrives, which is the main visual cue for distance.
+##
+## Standing him at the near position permanently (which this did while `_gap` was
+## unported) reads as "the hero is pasted onto the monster", not as a duel.
+const HERO_X_START := 0.50
+const HERO_X_NEAR := 0.20
+const HERO_Y_FAR := 0.93
+const HERO_Y_NEAR := 0.84
+const HERO_SCALE_FAR := 0.75
+const HERO_SCALE_NEAR := 1.0
+## The monster leans forward (down) as the hero arrives — the PWA's `--monster-dy`,
+## `closed * 8` px, capped by the CSS comment's "0..8 px". Two figures standing at
+## contact, not one figure and one portrait.
+const MONSTER_TILT_MAX := 8.0
 const HERO_H_RATIO := 0.19
 const HERO_H_MIN := 72.0
 const HERO_H_MAX := 118.0
@@ -693,22 +706,43 @@ func _animate() -> void:
 		var lift := 14.0 * _hero_lunge - 10.0 * _hero_flinch
 		_place_hero(lift)
 	if is_instance_valid(_portrait):
-		var drop := 20.0 * _monster_lunge
+		# The monster's own lunge (20px) plus the depth tilt the PWA applies as the hero
+		# walks in (`--monster-dy`, `closed * 8` px) — a boss keeps its geometry and
+		# does not tilt, exactly as the PWA's `if (monsterFig && !mb.isBoss)`.
+		var tilt := 0.0
+		if battle != null and not battle.is_boss:
+			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_value(), 0.0, 1.0))
+		var drop := 20.0 * _monster_lunge + tilt
 		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + drop)
 	if is_instance_valid(_cast_icon):
 		var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() / 90.0)
 		_cast_icon.scale = Vector2(pulse, pulse)
 
 
-## The hero stands beside the monster at a fixed spot; `_gap` (the PWA's walk-in depth
-## axis) is not ported, so only the attack lunge moves him.
+## The hero walks in from the arena's centre to the monster's side as `_gap` closes, and
+## grows as he arrives — the PWA's `syncArenaDepth()`. The walk-in is not decoration: it
+## is the only visual that tells the player why the first hit is late.
+##
+## The attack lunge and the flinch ride on top of the walk-in position.
 func _place_hero(lift: float) -> void:
 	var arena_h := maxf(_arena.size.y, 1.0)
-	var size := clampf(arena_h * HERO_H_RATIO, HERO_H_MIN, HERO_H_MAX)
+	var closed := 1.0 - clampf(_gap_value(), 0.0, 1.0)
+	var scale := HERO_SCALE_FAR + (HERO_SCALE_NEAR - HERO_SCALE_FAR) * closed
+	var size := clampf(arena_h * HERO_H_RATIO * scale, HERO_H_MIN, HERO_H_MAX)
+	var fx := HERO_X_START - (HERO_X_START - HERO_X_NEAR) * closed
+	var fy := HERO_Y_FAR - (HERO_Y_FAR - HERO_Y_NEAR) * closed
 	_hero_sprite.size = Vector2(size, size)
 	_hero_sprite.position = Vector2(
-		round(_arena.size.x * HERO_X - size * 0.5),
-		round(arena_h * HERO_Y - size * 0.5 + lift))
+		round(_arena.size.x * fx - size * 0.5),
+		round(arena_h * fy - size * 0.5 + lift))
+
+
+## The battle's distance. With no battle yet the PWA's own default is the rule:
+## `(mb._gap === undefined ? 1 : mb._gap)` — maximum separation. Falling back to contact
+## (which this did) puts the hero at the monster's side before the fight has started, the
+## exact "pasted onto the monster" pose the walk-in exists to avoid.
+func _gap_value() -> float:
+	return battle.gap if battle != null else 1.0
 
 
 func _append_log(text: String) -> void:

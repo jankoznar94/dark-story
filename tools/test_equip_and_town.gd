@@ -92,12 +92,17 @@ func _test_class_weapon_restriction() -> void:
 		return
 
 	var assassin = _fresh_state("assassin")
+	var weapon_before: Variant = assassin.equip().get("weapon")
 	var idx := _add(assassin, axe)
 	var res := EquipLogic.equip_from_bag(assassin, idx, _resolve)
 	if res["ok"]:
 		_fail("an assassin equipped an axe")
-	elif assassin.equip().get("weapon") != "fists":
-		_fail("a refused equip still changed the weapon slot")
+	elif assassin.equip().get("weapon") != weapon_before:
+		# The slot must be UNCHANGED by a refusal — not necessarily "fists": a class now
+		# starts with its own weapon (the assassin with a katar), so comparing against
+		# "fists" asserted the old no-class-kit behaviour instead of the rule.
+		_fail("a refused equip still changed the weapon slot (%s -> %s)"
+			% [str(weapon_before), str(assassin.equip().get("weapon"))])
 	# The item must still be in the bag after a refusal.
 	elif ItemGen.stack_count(assassin.inventory(), axe["id"]) != 1:
 		_fail("a refused equip lost the item")
@@ -224,6 +229,11 @@ func _test_no_duplication() -> void:
 	# Two separate entries: gear is not stackable, so a count > 1 is ignored by
 	# add_to_inventory exactly as it was in the PWA. Adding twice is the honest way
 	# to get two swords.
+	#
+	# The class kit now equips a short sword on the barbarian, so the weapon slot is
+	# already this item. Take it off the slot first: otherwise the first equip_from_bag
+	# is refused as already_equipped and the test measures the refusal, not duplication.
+	state.equip()["weapon"] = "fists"
 	ItemGen.add_to_inventory(state.inventory(), sword["id"], sword)
 	ItemGen.add_to_inventory(state.inventory(), sword["id"], sword)
 	# entry_count, not stack_count: gear is not stackable, so stack_count returns 1
@@ -277,6 +287,10 @@ func _test_unequip() -> void:
 		_fail("no equippable one-handed weapon in the item table")
 		return
 	var state = _fresh_state("barbarian")
+	# The class kit already equips the barbarian's short sword, and equip_from_bag
+	# refuses an item that is already in the slot ("already_equipped"). Clear it so this
+	# measures the unequip, not the refusal.
+	state.equip()["weapon"] = "fists"
 	var idx := _add(state, sword)
 	var equipped := EquipLogic.equip_from_bag(state, idx, _resolve)
 	if not equipped["ok"]:
@@ -305,6 +319,8 @@ func _test_bag_full() -> void:
 		_fail("no equippable one-handed weapon in the item table")
 		return
 	var state = _fresh_state("barbarian")
+	# Same reason as _test_unequip: the class kit already owns the weapon slot.
+	state.equip()["weapon"] = "fists"
 	var idx := _add(state, sword)
 	var equipped := EquipLogic.equip_from_bag(state, idx, _resolve)
 	if not equipped["ok"]:

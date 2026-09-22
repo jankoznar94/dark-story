@@ -282,9 +282,14 @@ func _reset_clocks() -> void:
 
 ## The player's swing interval for this fight, from the equipped weapon(s). Dual
 ## wield runs ONE timer that alternates hands, averaged and given D2's 0.85 bonus.
+##
+## Also stores the main-hand weapon TYPE, because the duel arena's reach and closing
+## speed are keyed off it (`getWeaponReach()` reads the equipped weapon live in the PWA,
+## and the weapon cannot change mid-fight).
 func apply_swing_timers(state, find_item: Callable) -> void:
 	var cls: Dictionary = _data.class_by_id(str(state.data.get("heroClass", "")))
 	var main_weapon: Dictionary = find_item.call(state.equip().get("weapon", "fists"))
+	weapon_type = str(main_weapon.get("weaponType", "fists")) if not main_weapon.is_empty() else "fists"
 	var dex_total := int(state.hero().get("attrDex", 0)) \
 		+ Progression._equip_attr(state.equip(), find_item, "dex")
 	var gloves: Dictionary = find_item.call(state.equip().get("gloves"))
@@ -302,6 +307,7 @@ func apply_swing_timers(state, find_item: Callable) -> void:
 	player_swing_elapsed = 0.0
 	enemy_swing_ms = prog.enemy_swing_time(enemy_attack_speed, enemy_slow_pct, enemy_slow_ms)
 	enemy_swing_elapsed = 0.0
+	reset_gap()
 
 
 # --- monster selection -------------------------------------------------------
@@ -482,6 +488,68 @@ func pack_advance() -> bool:
 	return false
 
 
+# --- the duel arena's distance ------------------------------------------------
+
+## The PWA's Duel Arena: the fight starts at MAXIMUM separation and the hero walks in.
+## While he is out of his weapon's reach the swing clock still runs, but the swing is
+## RESET instead of landing — "no more swinging at thin air". The first hit lands when he
+## arrives, measured in the PWA at 624-1024 ms depending on the weapon.
+##
+## These numbers are the PWA's, verbatim (`CLOSE_SPEED` / `WEAPON_REACH` in its game.ts).
+## Porting the walk-in is not decoration: without it the port's hero hits the instant the
+## fight starts, which is exactly the "the swing timers do not work" symptom.
+const WEAPON_REACH := {"fists": 0.26, "claws": 0.26, "blade": 0.20, "axe": 0.16,
+	"blunt": 0.16, "staff": 0.92}
+const CLOSE_SPEED := {"fists": 0.85, "claws": 0.80, "blade": 0.62, "axe": 0.52,
+	"blunt": 0.48, "staff": 0.70}
+## A melee monster walks in too, so the gap closes faster; a caster backs away and the
+## hero has to close it alone.
+const ENEMY_CLOSE_BONUS := 0.35
+## A melee monster only reaches the hero in contact; a caster casts from anywhere.
+const ENEMY_REACH := 0.24
+
+var gap := 1.0                   # 1 = maximum separation, 0 = contact
+var weapon_type := "fists"
+
+
+func reset_gap() -> void:
+	gap = 1.0
+
+
+## Close the distance by `delta_ms`. Returns true if it moved — the arena re-places the
+## hero off this. A caster enemy retreats, which is why the enemy's walk-in is a BONUS to
+## the closing speed rather than a symmetric change.
+func advance_gap(delta_ms: float) -> bool:
+	var speed := float(CLOSE_SPEED.get(weapon_type, 0.6))
+	# A boss keeps the PWA's old geometry and does not walk in; a caster backs away.
+	if not is_boss and enemy_attack_type != "caster":
+		speed += ENEMY_CLOSE_BONUS
+	var next := maxf(0.0, gap - speed * (delta_ms / 1000.0))
+	if is_equal_approx(next, gap):
+		return false
+	gap = next
+	return true
+
+
+func weapon_reach() -> float:
+	return float(WEAPON_REACH.get(weapon_type, 0.2))
+
+
+## Can the hero land a swing right now? Out of reach the swing is discarded, not held.
+func player_in_reach() -> bool:
+	return gap <= weapon_reach()
+
+
+## Can the enemy reach the hero? A boss keeps the PWA's old geometry (always), and a
+## caster casts from any distance.
+func enemy_in_reach() -> bool:
+	if is_boss:
+		return true
+	if enemy_attack_type == "caster":
+		return true
+	return gap <= ENEMY_REACH
+
+
 # --- the tick ----------------------------------------------------------------
 
 ## Advance the fight by `delta_ms`. The caller pumps this every frame; nothing here
@@ -498,6 +566,7 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 
 	_tick_dots(delta_ms)
 	_tick_spell_clocks(delta_ms, state, find_item)
+	advance_gap(delta_ms)
 
 	player_swing_elapsed += delta_ms
 	enemy_swing_elapsed += delta_ms
@@ -526,14 +595,23 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 
 	if player_swing_elapsed >= eff_player_ms:
 		player_swing_elapsed -= eff_player_ms
-		player_attack(state, find_item)
-		if ended or enemy_hp <= 0.0:
-			return not ended
+		# Out of reach the swing is discarded and the clock restarted, which is what the
+		# PWA did: the hero is still walking in, so the first hit lands when he arrives.
+		if not player_in_reach():
+			player_swing_elapsed = 0.0
+		else:
+			player_attack(state, find_item)
+			if ended or enemy_hp <= 0.0:
+				return not ended
 
 	# A stunned enemy does not swing, and its swing clock does not advance either.
 	if enemy_stun_ms <= 0 and enemy_swing_elapsed >= float(enemy_swing_ms):
 		enemy_swing_elapsed -= float(enemy_swing_ms)
-		enemy_attack(state, find_item)
+		# Melee monsters only reach the hero in contact; a caster casts from anywhere.
+		if not enemy_in_reach():
+			enemy_swing_elapsed = 0.0
+		else:
+			enemy_attack(state, find_item)
 
 	# A started cast resolves on its own clock, so a slow enemy still lands it.
 	if cast_spell_id != "":
