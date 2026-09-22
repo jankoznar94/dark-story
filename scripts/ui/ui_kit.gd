@@ -17,6 +17,7 @@ class_name UIKit
 
 const ItemDetail := preload("res://scripts/items/item_detail.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
+const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 
 const BG := "#000000"
 const BORDER := "#333333"
@@ -25,6 +26,12 @@ const DIM := "#888888"
 const GOLD := "#f1c40f"
 const BAD := "#c0392b"
 const MOD_BLUE := "#4a7dff"
+## `.chest-cell { background:#aaa; border:1px solid #777 }` — the grid cell fill. It is
+## LIGHT: at the PWA's `.empty { opacity:0.25 }` it renders as rgb(43,43,43) inside a
+## #000 box, and a filled cell is a light grey tile. Both grids read as a light lattice
+## in the reference frames, not as black holes.
+const CELL_FILL := "#aaaaaa"
+const CELL_BORDER_EMPTY := "#777777"
 
 ## `.container { padding: 16px 16px 70px 16px }` — the 70px bottom is where the PWA's
 ## fixed `.nav-bar` sits. Without it every screen hides its last row behind the nav.
@@ -50,10 +57,14 @@ const BTN_SECONDARY_BG := "#3a3a5a"
 ## long line wraps inside its parent — this makes `label()` behave the same way, so no
 ## screen can be pushed off-canvas by its own copy. Callers that want a wider label give
 ## it SIZE_EXPAND_FILL, which still works.
+##
+## `bold` is the CSS `font-weight: bold` — a real face (see `UIFonts`), not an embolden
+## pass, because DejaVu's bold is 13% wider and the reference frames are drawn with it.
 static func label(text: String, size: int = 14, colour: String = TEXT,
-		align: int = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+		align: int = HORIZONTAL_ALIGNMENT_LEFT, bold: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
+	l.add_theme_font_override("font", UIFonts.get_font(size, bold))
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", Color(colour))
 	l.horizontal_alignment = align
@@ -431,31 +442,49 @@ static func item_tooltip(item: Dictionary, data: Node, width: float = 380.0) -> 
 	return box
 
 
-## One grid cell holding an item icon. The PWA's `.chest-cell` is an aspect-1 square on a
-## #aaa fill whose EMPTY state is 25% opacity; an item cell is black with the quality
-## colour on the border.
+## One grid cell holding an item icon, matching the PWA's `.chest-cell`.
+##
+## `.chest-cell { aspect-ratio:1; background:#aaa; border:1px solid #777; border-radius:6px }`
+## and `.chest-cell.empty { opacity:0.25 }` — so an EMPTY cell is a LIGHT grey box at 25%
+## opacity (measured in the reference frames: interior rgb(43,43,43), border rgb(14,14,14))
+## and a FILLED one is the same light box at full opacity with the quality colour on the
+## border. The port drew both as a black box, which is why the two grids differed on ~45%
+## of their pixels — the single largest visual difference in the whole port, and invisible
+## to every gameplay test.
+##
+## `dimmed` is the port's own extra: a filled cell the hero CANNOT equip. The PWA wrote
+## `border-color:#e74c3c; opacity:0.35` inline for it.
 static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 		placeholder: String = "") -> Button:
 	var cell := Button.new()
 	cell.custom_minimum_size = Vector2(size, size)
 	cell.focus_mode = Control.FOCUS_NONE
-	var border := Color(BORDER)
-	if not item.is_empty():
+	var is_empty := item.is_empty()
+	var border := Color(CELL_BORDER_EMPTY)
+	if not is_empty:
 		border = ItemStats.quality_color(item)
-	elif dimmed:
-		border = Color("#3a3a3a")
 	var style := panel_style()
+	style.bg_color = Color(CELL_FILL)
 	style.border_color = border
 	style.set_corner_radius_all(6)
 	# `.chest-cell:active { background:#aaa }` — the cell lights up on the press only.
 	var pressed := style.duplicate()
-	pressed.bg_color = Color("#aaaaaa")
+	pressed.bg_color = Color("#cccccc")
 	for state_name in ["normal", "hover", "focus", "disabled"]:
 		cell.add_theme_stylebox_override(state_name, style)
 	cell.add_theme_stylebox_override("pressed", pressed)
 
+	# `.chest-cell.empty { opacity:0.25 }` — a CSS opacity is inherited by the whole box,
+	# not just the icon, so it has to be applied to the cell's own modulate. Godot
+	# multiplies a parent's modulate into its children, so the icon dims with it and does
+	# NOT get a second alpha of its own.
+	if is_empty and not dimmed:
+		cell.modulate = Color(1, 1, 1, 0.25)
+	elif is_empty and dimmed:
+		cell.modulate = Color(1, 1, 1, 0.35)
+
 	var icon_path := ""
-	if not item.is_empty():
+	if not is_empty:
 		icon_path = ItemStats.icon_path(item)
 	elif placeholder != "":
 		icon_path = placeholder
@@ -472,12 +501,9 @@ static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			icon.texture = texture
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if item.is_empty():
-				# `.chest-cell.empty { opacity:0.25 }`
-				icon.modulate = Color(1, 1, 1, 0.25)
 			cell.add_child(icon)
 
-	var count := int(item.get("count", 0)) if not item.is_empty() else 0
+	var count := int(item.get("count", 0)) if not is_empty else 0
 	if count > 1:
 		cell.add_child(count_badge(str(count)))
 	return cell

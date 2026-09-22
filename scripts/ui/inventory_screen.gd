@@ -20,6 +20,10 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const CELL := 64
 const GRID_COLUMNS := 5
 const BAG_CELLS := 20
+## 5 columns inside 358 - 32 (container) - 24 (wrap padding) - 4*6 (gaps) = 278 / 5.
+## Class level rather than local to `_build`, because `_refresh_bag` rebuilds the cells
+## and needs the same number — a local copy is how the two drift apart.
+const BAG_CELL := 55.0
 
 ## Slot order and labels for the equipment panel. The label is what the empty slot
 ## shows; the icon underneath is the "placeholder" PNG the PWA used per slot.
@@ -295,14 +299,14 @@ func _make_bag_panel() -> Control:
 	wrap.add_child(_bag_grid)
 
 	# 5 columns inside 358 - 32 (container) - 24 (wrap padding) - 4*6 (gaps) = 278 / 5.
-	const BAG_CELL := 55.0
+	# `UIKit.item_cell` owns the `.chest-cell` look (light #aaa fill, 25% when empty) —
+	# in the PWA the bag and the chest grid are the SAME widget, and the port had them
+	# diverge. The cells are REBUILT on refresh rather than restyled, the way the chest
+	# screen does it: an empty cell and a filled one differ in fill, border, opacity and
+	# children, and patching four of those into a live Button is how one of them gets
+	# forgotten. That rebuild is `_refresh_bag`'s job; this only reserves the slots.
 	for i in BAG_CELLS:
-		var button := _make_slot_button("", Vector2(BAG_CELL, BAG_CELL))
-		# A tap equips (the router decides) but ALSO selects the item for the socket
-		# panel — that is the whole reason no gem dialog is needed.
-		button.pressed.connect(func(): _on_bag_tapped(i))
-		_bag_nodes.append(button)
-		_bag_grid.add_child(button)
+		_bag_nodes.append(null)
 
 	# The socket panel: one row of sockets for the item currently selected, plus the
 	# gems in the bag that may go into them. A separate panel rather than a modal
@@ -427,19 +431,31 @@ func _refresh_potions() -> void:
 
 
 func _refresh_bag() -> void:
+	# Rebuild, like the chest does. `UIKit.item_cell` is the ONE definition of a
+	# `.chest-cell`, so the bag cannot drift from the chest again.
+	for child in _bag_grid.get_children():
+		_bag_grid.remove_child(child)
+		child.queue_free()
+	_bag_nodes.clear()
 	var inventory: Array = _state.inventory()
 	for i in BAG_CELLS:
-		var button: Button = _bag_nodes[i]
-		if i >= inventory.size():
-			_set_slot_content(button, {}, "", true)
-			continue
-		var entry: Variant = inventory[i]
-		var item_id: String = entry.get("id", "") if entry is Dictionary else str(entry)
-		var count: int = int(entry.get("count", 1)) if entry is Dictionary else 1
-		var item: Dictionary = _resolve(item_id)
-		_set_slot_content(button, item, "", false)
-		if count > 1:
-			_add_count_badge(button, count)
+		var item: Dictionary = {}
+		var count := 0
+		if i < inventory.size():
+			var entry: Variant = inventory[i]
+			var item_id: String = entry.get("id", "") if entry is Dictionary else str(entry)
+			item = _resolve(item_id)
+			count = int(entry.get("count", 1)) if entry is Dictionary else 1
+			if not item.is_empty() and count > 1:
+				item = item.duplicate()
+				item["count"] = count
+		var cell := UIKit.item_cell(item, BAG_CELL, item.is_empty())
+		# A tap equips (the router decides) but ALSO selects the item for the socket
+		# panel — that is the whole reason no gem dialog is needed.
+		var index := i
+		cell.pressed.connect(func(): _on_bag_tapped(index))
+		_bag_nodes.append(cell)
+		_bag_grid.add_child(cell)
 
 
 ## One tap = one action, and the selection follows it. The router still gets the tap so
@@ -571,23 +587,6 @@ func _set_placeholder_icon(button: Button, path: String, alpha: float) -> void:
 
 
 ## Stack size badge, bottom-right, gold border — the PWA's `.cell-count`.
-func _add_count_badge(button: Button, count: int) -> void:
-	var badge := Label.new()
-	badge.text = str(count)
-	badge.add_theme_font_size_override("font_size", 11)
-	badge.add_theme_color_override("font_color", Color("#f1c40f"))
-	badge.position = Vector2(CELL - 24, CELL - 18)
-	badge.custom_minimum_size = Vector2(22, 14)
-	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#111111")
-	style.border_color = Color("#f1c40f")
-	style.set_border_width_all(1)
-	badge.add_theme_stylebox_override("normal", style)
-	button.add_child(badge)
-
-
 func _set_border(button: Button, colour: Color) -> void:
 	var style: StyleBoxFlat = button.get_theme_stylebox("normal").duplicate()
 	style.border_color = colour
