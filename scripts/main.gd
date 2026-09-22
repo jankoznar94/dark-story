@@ -51,6 +51,10 @@ var _socket_rng_source: RandomNumberGenerator = null
 var _status: Label
 var _status_ticks := 0
 var _nav_bar      # UIKit.NavBar
+## The layer the character dialog lives on, above the nav bar. See `_build_screens`.
+var _modal_layer: CanvasLayer = null
+## The screen that stays visible UNDER the open dialog, because the PWA never hid it.
+var _modal_under := ""
 
 
 func _ready() -> void:
@@ -169,11 +173,25 @@ func _build_screens() -> void:
 	# sit above any future world rendering, and keep the status strip on top of them.
 	var layer := CanvasLayer.new()
 	layer.name = "UI"
+	layer.layer = 1
 	add_child(layer)
 	for key in _screens:
 		var screen: Control = _screens[key]
 		remove_child(screen)
-		layer.add_child(screen)
+		if str(key) == "character":
+			# The dialog gets a layer of its OWN, above the nav bar (layer 5) and the
+			# status strip (10). That is the PWA's z-order: `.modal-overlay` is
+			# `z-index:1000` against the nav bar's `z-index:100`, so the overlay paints
+			# over the bar and swallows its taps. Leaving the dialog as a sibling of the
+			# screens cannot express that — node order within one layer is all it has,
+			# and the town is added after the modal.
+			_modal_layer = CanvasLayer.new()
+			_modal_layer.name = "Modal"
+			_modal_layer.layer = 20
+			add_child(_modal_layer)
+			_modal_layer.add_child(screen)
+		else:
+			layer.add_child(screen)
 
 
 ## The PWA's fixed bottom `.nav-bar`. Built once: it never changes except for which entry
@@ -309,22 +327,40 @@ func _on_nav_selected(key: String) -> void:
 
 ## The PWA's `openModal()` — one dialog, three tabs, always entered on a named tab.
 ##
-## Every other screen is hidden explicitly: the modal is a sibling in the same CanvasLayer,
-## so leaving the town visible paints it OVER the dialog (screens are added in order and the
-## town comes after the modal). A modal that is visible, correct and completely covered is
-## exactly the failure the nav bar had — `show_screen()` does this hiding for the ordinary
-## screens, and opening the modal is a second way in, so it has to do it too.
+## What the PWA actually does, measured on the live build (`tools/import/ask_pwa.py hero`):
+## with the dialog open, `townScreen` is STILL laid out (390x902, `display:block`),
+## `.nav-bar` is still there at y=783 with the town entry marked `active`, and NEITHER is
+## hidden. They are only covered — the overlay is `rgba(0,0,0,0.7)` at `z-index:1000`
+## against the nav bar's `z-index:100`, so the game world stays visible through the dim.
+##
+## The port used to hide every other screen and hide the nav bar outright, which made the
+## modal a black full-screen page where the PWA has a half-transparent one over the town.
+## That single difference is most of the 29.8% of pixels the `hero` frame differed by, and
+## the whole of the dark band at the bottom of `inventory`/`talents`.
+##
+## The nav bar is left VISIBLE and is not made untappable by hand: the dialog's own overlay
+## covers it (layer 20 against the bar's 5), which is how `.modal-overlay` swallows those
+## taps in the PWA. A tap outside the panel therefore still closes the dialog instead of
+## firing a nav entry — the same outcome as before, reached by stacking rather than by
+## hiding, and now in the same order as the original.
 func open_modal(tab: String) -> void:
 	if not _screens.has("character"):
 		return
+	# Whichever ordinary screen is up stays up, dimmed, exactly as `townScreen` does in
+	# the PWA. It is painted UNDER the dialog's layer, so it cannot cover it.
+	var under := _current if _current != "character" else _modal_under
+	if under == "" or not _screens.has(under):
+		under = "town"
 	for key in _screens:
-		(_screens[key] as Control).visible = str(key) == "character"
+		if str(key) == "character":
+			(_screens[key] as Control).visible = true
+		elif str(key) == under:
+			(_screens[key] as Control).visible = true
+		else:
+			(_screens[key] as Control).visible = false
+	_modal_under = under
 	var modal = _screens["character"]
 	_current = "character"
-	if _nav_bar != null:
-		# The PWA's modal is a full-screen dialog; its fixed nav bar sits UNDER the
-		# overlay and is unreachable while it is open.
-		_nav_bar.visible = false
 	modal.set_tab(tab)
 
 
@@ -336,9 +372,9 @@ func _modal():
 
 
 func _close_modal() -> void:
-	# The PWA closes the modal back onto whatever screen was showing; the town is the only
-	# place the modal is reachable from, so that is where it returns.
-	show_screen("town")
+	# Back to whatever was showing under the dialog — the PWA leaves that screen up the
+	# whole time, so closing simply uncovers it. `_modal_under` is set by `open_modal`.
+	show_screen(_modal_under if _modal_under != "" else "town")
 
 
 func _toggle_music() -> void:

@@ -40,8 +40,10 @@ const TABS := [
 
 ## `.modal-content { width:98%; max-width:800px; min-height:85vh; max-height:90vh;
 ##   border-radius:14px; border:1px solid #333; background:#000 }` on a 390px canvas:
-## 98% of 390 is 382, so the max-width never binds and the dialog is 382 wide and 85vh
-## tall, vertically centred by `.modal-overlay { align-items:center }`.
+## 98% of 390 is 382, so the max-width never binds. The HEIGHT is 85vh — measured on the
+## live PWA at 390x844 the dialog is y=63..780, which is 717px, exactly `min-height:85vh`;
+## `min-height` wins because the panes fit inside it and `max-height:90vh` (760) never
+## binds. `MAX_HEIGHT_RATIO` is kept as the documented ceiling for panes that overflow.
 const WIDTH_RATIO := 0.98
 const MIN_HEIGHT_RATIO := 0.85
 const MAX_HEIGHT_RATIO := 0.90
@@ -53,6 +55,8 @@ var _state
 var _find_item: Callable
 
 var _panel: PanelContainer
+var _tabs_wrap: Control
+var _scroll: ScrollContainer
 var _tab_buttons: Dictionary = {}
 var _panes: Dictionary = {}
 var _inventory
@@ -71,6 +75,20 @@ func _init(game_data: Node, gen, state, find_item: Callable) -> void:
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
+
+
+## The dialog's height depends on the laid-out size of its panes, which is only known after
+## a layout pass — `set_tab()` cannot clamp correctly on the very first call. Two frames are
+## enough (one to lay out, one to apply), and the guard stops the loop after that.
+var _height_settled := 0
+
+
+func _process(_delta: float) -> void:
+	if _height_settled >= 2:
+		set_process(false)
+		return
+	_height_settled += 1
+	_apply_panel_height()
 
 
 func _build() -> void:
@@ -100,25 +118,30 @@ func _build() -> void:
 	style.set_corner_radius_all(RADIUS)
 	style.set_content_margin_all(0)
 	_panel.add_theme_stylebox_override("panel", style)
-	# `.modal-content { width:98%; min-height:85vh; max-height:90vh }` centred by
-	# `.modal-overlay { align-items:center }`. Expressed as anchors rather than a measured
-	# height: setting a pixel height at build time reads a viewport that has not been laid
-	# out yet, so the dialog would size itself from a stale (often zero) value.
+	# `.modal-content { width:98%; min-height:85vh; max-height:90vh; height:auto }` centred by
+	# `.modal-overlay { align-items:center }`. The height is CONTENT-DRIVEN and bounded at
+	# both ends, which a fixed anchor ratio cannot express — measured on the live PWA the
+	# Stats dialog is 717px (exactly `min-height:85vh`, its content fits) while the Inventory
+	# one is taller, because its content is. A fixed 85vh made the Stats tab right and the
+	# Inventory tab 25px short; a fixed 90vh did the opposite. `_apply_panel_height()` does
+	# the clamp and is called whenever the visible pane changes.
 	_panel.anchor_left = 0.01
 	_panel.anchor_right = 0.99
-	_panel.anchor_top = 0.05
-	_panel.anchor_bottom = 0.95
+	_panel.anchor_top = 0.5
+	_panel.anchor_bottom = 0.5
 	centre.add_child(_panel)
 
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 0)
 	_panel.add_child(box)
 
-	box.add_child(_build_tabs())
+	_tabs_wrap = _build_tabs()
+	box.add_child(_tabs_wrap)
 
 	# `.modal-body { flex:1; overflow-y:auto; padding:0 4px }` — the scroll belongs to the
 	# body, not to the dialog, so the tab strip stays put while a long pane scrolls.
 	var scroll := ScrollContainer.new()
+	_scroll = scroll
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -259,6 +282,47 @@ func set_tab(key: String) -> void:
 		(_panes[pane_key] as Control).visible = str(pane_key) == key
 	_style_tabs()
 	refresh()
+	# The dialog's height follows its content, so switching tab re-clamps it.
+	_apply_panel_height()
+
+
+## `.modal-content { height:auto; min-height:85vh; max-height:90vh }`.
+##
+## A fixed anchor ratio cannot say this. Measured on the live PWA at 390x844: the Stats
+## dialog is 717px tall — exactly `min-height:85vh`, because its content fits inside the
+## minimum — while the Inventory dialog is 742px, because its content is taller than the
+## minimum and the box grew to fit. Pinning the port to either end got one tab right and
+## the other one wrong (85vh: talents 6.9% but inventory 25.9%; 90vh: inventory better,
+## stats 29%).
+##
+## The clamp needs the pane's real laid-out height, which is not known at build time, so
+## this runs from `set_tab()` and from `_process` until the panel has settled once. The
+## panel is positioned by its CENTRE (`anchor_top == anchor_bottom == 0.5`) and offset by
+## half the height — that is `align-items:center` expressed without knowing the height in
+## advance, which is what the PWA's flexbox does.
+func _apply_panel_height() -> void:
+	if _panel == null or _panes.is_empty() or _tabs_wrap == null:
+		return
+	var view := size.y
+	if view <= 0.0:
+		# No layout pass has happened yet; `_process` retries.
+		return
+	var min_h := view * MIN_HEIGHT_RATIO
+	var max_h := view * MAX_HEIGHT_RATIO
+
+	# The content's own height: the tab strip plus the visible pane's minimum. Asking the
+	# pane for `get_combined_minimum_size()` is what the browser does with `height:auto`.
+	var content := _tabs_wrap.get_combined_minimum_size().y
+	for pane_key in _panes:
+		var pane: Control = _panes[pane_key]
+		if pane.visible:
+			content += pane.get_combined_minimum_size().y
+	var want: float = clampf(content, min_h, max_h)
+	if is_equal_approx(want, _panel.size.y):
+		return
+	var half := want * 0.5
+	_panel.offset_top = -half
+	_panel.offset_bottom = half
 
 
 func refresh() -> void:

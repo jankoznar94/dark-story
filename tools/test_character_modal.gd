@@ -57,10 +57,10 @@ func _process(_delta: float) -> bool:
 
 func _run() -> void:
 	_test_the_old_three_screens_are_gone()
-	_test_open_modal_hides_every_other_screen()
+	_test_open_modal_keeps_the_screen_underneath()
 	_test_each_tab_shows_its_own_pane()
 	_test_nav_keys_map_to_distinct_panes()
-	_test_nav_bar_is_hidden_over_the_modal()
+	_test_nav_bar_is_drawn_under_the_modal_not_hidden()
 	_test_closing_returns_to_town()
 
 	for f in _failures:
@@ -86,17 +86,37 @@ func _test_the_old_three_screens_are_gone() -> void:
 		_fail("no 'character' screen — the modal was never built")
 
 
-## Failure #1: a dialog that opens but is painted over.
-func _test_open_modal_hides_every_other_screen() -> void:
+## Failure #1 used to be "a dialog that opens but is painted over" — the port hid every
+## other screen. The PWA does NOT: measured on the live build with the dialog open,
+## `townScreen` is still laid out and `.nav-bar` is still up, both merely covered by the
+## `rgba(0,0,0,0.7)` overlay. Hiding them turned the dialog into a black page where the
+## original is a half-transparent one over the town, which is most of the visual diff.
+##
+## So the assertion is the real one: the screen UNDER the dialog stays visible, every
+## OTHER screen is hidden, and the dialog is on a layer that paints above them.
+func _test_open_modal_keeps_the_screen_underneath() -> void:
 	_main.show_screen("town")
 	_main.open_modal("inventory")
 	for key in _main._screens:
 		var visible: bool = (_main._screens[key] as Control).visible
-		if str(key) == "character":
+		if str(key) == "character" or str(key) == "town":
 			if not visible:
-				_fail("the modal is not visible after open_modal()")
+				_fail("screen '%s' is hidden while the modal is open — the PWA leaves it visible under the overlay" % str(key))
 		elif visible:
-			_fail("screen '%s' is still visible while the modal is open — it paints over the dialog" % str(key))
+			_fail("screen '%s' is visible while the modal is open" % str(key))
+	# And it must be painted UNDER the dialog, not over it: the dialog has its own layer.
+	if _main._modal_layer == null:
+		_fail("the modal has no CanvasLayer of its own — node order cannot put it over the nav bar")
+	else:
+		var ui_layer := _main.get_node_or_null("UI") as CanvasLayer
+		if ui_layer == null:
+			_fail("the screens' CanvasLayer 'UI' is missing")
+		elif _main._modal_layer.layer <= ui_layer.layer:
+			_fail("the modal layer (%d) is not above the screens' layer (%d)"
+				% [_main._modal_layer.layer, ui_layer.layer])
+		if _main._nav_bar != null and _main._modal_layer.layer <= 5:
+			_fail("the modal layer (%d) is not above the nav bar's layer (5)"
+				% _main._modal_layer.layer)
 
 
 ## Failure #2: three tabs, one pane. Assert each tab shows a DIFFERENT pane.
@@ -147,12 +167,21 @@ func _test_nav_keys_map_to_distinct_panes() -> void:
 		_fail("the three nav keys resolve to %d distinct panes, expected 3" % seen.size())
 
 
-## Failure #3: a nav bar that stays up over the dialog.
-func _test_nav_bar_is_hidden_over_the_modal() -> void:
+## The nav bar stays VISIBLE over the dialog, as it does in the PWA (`nav_hidden: false`
+## measured with the modal open). It is not hidden — it is covered: the dialog's overlay
+## sits on a higher layer, which is how `.modal-overlay { z-index:1000 }` swallows the
+## taps that `.nav-bar { z-index:100 }` would otherwise receive. Hiding the bar was the
+## port's own invention and it showed, because the PWA's bar is still drawn behind the dim.
+func _test_nav_bar_is_drawn_under_the_modal_not_hidden() -> void:
 	_main.show_screen("town")
 	_main.open_modal("stats")
-	if _main._nav_bar != null and _main._nav_bar.visible:
-		_fail("the nav bar is still visible over the modal — a tap meant for the dialog hits it")
+	if _main._nav_bar == null:
+		_fail("the nav bar was never built")
+		return
+	if not _main._nav_bar.visible:
+		_fail("the nav bar is hidden over the modal — the PWA keeps it visible under the overlay")
+	if _main._modal_layer == null or _main._modal_layer.layer <= 5:
+		_fail("nothing puts the dialog above the nav bar, so the bar is tappable through it")
 
 
 func _test_closing_returns_to_town() -> void:
