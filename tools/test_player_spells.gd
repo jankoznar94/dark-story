@@ -409,6 +409,10 @@ func _test_pummel_interrupts_and_blocks_recasting() -> void:
 		battle.tick(100.0, s, find)
 	if battle.enemy_cast_blocked_ms > 0:
 		_fail("the pummel recast block never expired")
+	# Clear the hero's poison first: `poison_bolt` is deliberately filtered out while a
+	# poison is already running (the PWA did that), so leaving it on would make this
+	# assertion measure that filter instead of the block expiring.
+	battle.hero_dot_ticks = 0
 	if battle._choose_spell() == "":
 		_fail("the enemy still cannot cast after the pummel block expired")
 

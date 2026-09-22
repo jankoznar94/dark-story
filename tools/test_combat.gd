@@ -338,6 +338,16 @@ func _test_unarmed_hero_loses_to_boss() -> void:
 	if unarmed.weapon_type != "fists":
 		_fail("setup: the hero is not unarmed (weapon type %s)" % unarmed.weapon_type)
 		return
+	# A damage RATE comparison, so the fight must not be allowed to END: a finished
+	# fight stops dealing damage and the two totals become "who killed it" instead of
+	# "who hits harder". The boss is given a pool neither run can empty.
+	unarmed.enemy_max_hp = 1_000_000.0
+	unarmed.enemy_hp = unarmed.enemy_max_hp
+	# And in CONTACT, so the measurement is the weapon and not the walk-in: a blade has
+	# a shorter reach (0.20) and closes more slowly (0.62/s) than fists (0.26 / 0.85) and
+	# against a boss there is no enemy walk-in to help, so an unfixed gap measures the
+	# approach for one run and the damage for the other.
+	unarmed.gap = 0.0
 	var enemy_hp_at_start := unarmed.enemy_hp
 	_run(unarmed, 6000)
 	var unarmed_damage := enemy_hp_at_start - unarmed.enemy_hp
@@ -345,7 +355,13 @@ func _test_unarmed_hero_loses_to_boss() -> void:
 	# The same fight with the class's short sword. The boss is given enough HP that
 	# neither run can finish it, so this measures the hero's output over the same clock
 	# rather than how fast the fight ended.
+	#
+	# A FRESH state for the second run: the battle writes the hero's remaining HP back
+	# to the save when it ends, so reusing one state starts the armed run already
+	# wounded — and a hero who dies after two swings measures nothing.
+	_state = _fresh_state("barbarian", 60, 0)
 	_state.equip()["weapon"] = "blade_shortSword"
+	_state.hero()["attrStr"] = 0
 	_state.data["locationProgress"][0] = 9
 	_state.data["areaFightProgress"][0] = 0
 	var armed := Battle.new(_data, 99)
@@ -353,6 +369,11 @@ func _test_unarmed_hero_loses_to_boss() -> void:
 	if not armed.setup(_state, _resolve):
 		return
 	armed.apply_swing_timers(_state, _resolve)
+	# Same control as the unarmed run: an unemptyable pool, so this is a rate and not
+	# a race to the kill.
+	armed.enemy_max_hp = 1_000_000.0
+	armed.enemy_hp = armed.enemy_max_hp
+	armed.gap = 0.0
 	var armed_enemy_hp := armed.enemy_hp
 	_run(armed, 6000)
 	var armed_damage := armed_enemy_hp - armed.enemy_hp

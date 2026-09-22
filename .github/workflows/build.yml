@@ -172,6 +172,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ARENA_SCREEN_ALL_PASS=true"
 
+      # The MONSTER's side of the fight. Five of the eleven enemy spells used to be
+      # unimplemented, so a caster could pick `defensive_shout` and burn its whole swing
+      # on a no-op — which reads as "the monster stopped attacking", not as a missing
+      # feature. The monster's own buffs are the same trap the hero's side already had:
+      # a buff whose timer nobody ticks never expires.
+      - name: Enemy spells test (all eleven, buffs, types, poison)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_enemy_spells.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ENEMY_SPELLS_ALL_PASS=true"
+
       # The LAYOUT, which is what "the port looks like a different game" actually was.
       # The PWA's CSS is written for a 390x844 viewport and every measurement in the port
       # is relative to it; on a landscape canvas the whole port is a different screen, and

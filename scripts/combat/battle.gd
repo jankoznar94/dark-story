@@ -63,6 +63,15 @@ var enemy_resists: Dictionary = {}
 var enemy_dmg_reduction := 1.0     # Stone Skin: incoming physical damage multiplier
 var elite_affix: Dictionary = {}
 var elite_name := ""
+## The monster's own TYPE (`critmaster`, `lifestealer`, `manastealer`, `poison`) and a
+## boss's list of them. These are not decoration: the type changes what a landed hit
+## DOES — a critmaster rolls a x2, a lifestealer heals itself for half the hit, a
+## manastealer drains the hero's mana, a poison one leaves a DoT. A boss carries several.
+var monster_type := ""
+var boss_types: Array = []
+## Satyr's flag: every melee hit applies a poison DoT on the hero. A monster without
+## this keeps its poison to `poison_bolt`.
+var passive_poison_weapon := false
 
 ## Pack members: the fight runs on the ACTIVE member, the rest wait. The leader is
 ## deliberately last, so an elite pack is three slaves and then the elite.
@@ -93,6 +102,44 @@ var enemy_slow_ms := 0
 var enemy_dot := 0
 var enemy_dot_ticks := 0
 var enemy_dot_clock := 0.0
+
+## The hero's DODGE (Evasion): +50 % for 10 s on top of the passive DEX dodge. The PWA
+## modelled it as a coin flip in the enemy's attack path; kept as a percentage here so
+## the passive and the buff compose in one place (`hero_dodge_chance`).
+var hero_dodge_buff_ms := 0
+const HERO_DODGE_BUFF_PCT := 50.0
+## The hero's ATTACK SPEED buff (Assassin's Speed Boost), as a percentage and a clock.
+var hero_speed_boost_pct := 0.0
+var hero_speed_boost_ms := 0
+
+## Poison on the HERO (a poison monster's melee, Satyr's poisoned weapon, the
+## `poison_bolt` spell). Per-tick damage and a tick count; re-applying refreshes.
+var hero_dot := 0
+var hero_dot_ticks := 0
+var hero_dot_clock := 0.0
+
+## Cursed (elite): the hero takes 50 % more physical damage while it lasts.
+var amplify_dmg_ms := 0
+## The enemy's own Defensive Shout (a caster buff): 30 % off incoming damage for 8 s.
+var enemy_defensive_shout_ms := 0
+## The enemy's Thorn Shield: returns a flat 5-10 to whoever hits it.
+var enemy_thorn_shield_ms := 0
+## The enemy's Faerie Fire: halves what the hero's spells get through its resistances.
+var enemy_faerie_fire_ms := 0
+## The enemy's Battle Shout: +50 % on its own hits.
+var enemy_battle_shout_ms := 0
+## The enemy's Evasion: 30 % dodge against the hero's swings.
+var enemy_evasion_ms := 0
+## The enemy's Poison Weapon: a DoT added to its melee hits.
+var enemy_poison_weapon_ms := 0
+var enemy_poison_weapon_dmg := 0
+
+## The Assassin's combo points: spent by Eviscerate, Kidney Shot, Speed Boost and
+## Poison Explosion, earned by Sinister Strike. On the SAVE in the PWA (it survives a
+## fight), so it stays on `state.data` and is only read here.
+##
+## `activeSchool` is the mage's spell school, also on the save; it decides which resist
+## one of his spells is rolled against, and it is set by the spell that is cast.
 
 ## Enemy casting. A caster monster's swing is a spell, not a melee hit: it spends
 ## the swing wind-up casting and the effect lands when the cast time is up. The PWA
@@ -130,6 +177,9 @@ var player_cast_elapsed := 0.0
 ## Enemy control: a stun stops its swings entirely, and a pummel blocks recasting.
 var enemy_stun_ms := 0
 var enemy_cast_blocked_ms := 0
+## The PWA made the FIRST enemy swing a plain melee hit and only decided about casting
+## from the second one on. A boss never used the caster path at all.
+var enemy_first_swing_done := false
 
 ## Accumulator for mana regen: the save stores mana as an int, so a sub-1-per-second
 ## regen has to be carried as a fraction or it rounds away and never ticks.
@@ -192,6 +242,8 @@ func setup(state, find_item: Callable) -> bool:
 		enemy_attack_type = str(boss.get("attackType", "melee"))
 		enemy_defense = int(act.get("monsterDefense", 0))
 		enemy_resists = (act.get("resists", {}) as Dictionary).duplicate()
+		# A boss carries a LIST of types, and all of them apply to every hit.
+		boss_types = (boss.get("types", []) as Array).duplicate()
 	else:
 		var mon: Dictionary = _pick_monster(int(act.get("theme", 0)), progress)
 		if mon.is_empty():
@@ -211,6 +263,8 @@ func setup(state, find_item: Callable) -> bool:
 		enemy_attack_type = str(mon.get("attackType", "melee"))
 		enemy_defense = int(mon.get("defense", 0))
 		enemy_resists = (mon.get("resists", {}) as Dictionary).duplicate()
+		monster_type = str(mon.get("type", ""))
+		passive_poison_weapon = bool(mon.get("passivePoisonWeapon", false))
 
 		if is_elite:
 			hp = round(hp * 2.5)
@@ -265,6 +319,18 @@ func setup(state, find_item: Callable) -> bool:
 
 	_pick_enemy_spells_sanity()
 	_reset_clocks()
+	# A CASTER monster opens with a spell, not a melee swing — the PWA did this in
+	# startLocation for non-boss casters. Without it the first enemy action is always a
+	# melee hit and a caster reads as a melee monster for the first few seconds.
+	enemy_first_swing_done = is_boss
+	if enemy_attack_type == "caster" and not is_boss:
+		var opener := _choose_spell()
+		if opener != "":
+			var spells_tbl: Dictionary = _data.enemy_spells()
+			var sp: Dictionary = spells_tbl.get(opener, {})
+			cast_spell_id = opener
+			cast_time = float(sp.get("castTime", 1200))
+			cast_elapsed = 0.0
 	return true
 
 
@@ -592,6 +658,11 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 	# applied to the interval the tick compares against.
 	if frenzy_speed_pct > 0.0:
 		eff_player_ms = maxf(450.0, round(eff_player_ms * (1.0 - frenzy_speed_pct / 100.0)))
+	# The Assassin's Speed Boost, on the same hook. It is a flat percentage off the
+	# interval, which the PWA applied when the spell was CAST; here it is read every
+	# tick so the buff's expiry restores the pace by itself.
+	if hero_speed_boost_pct > 0.0 and hero_speed_boost_ms > 0:
+		eff_player_ms = maxf(450.0, round(eff_player_ms * (1.0 - hero_speed_boost_pct / 100.0)))
 
 	if player_swing_elapsed >= eff_player_ms:
 		player_swing_elapsed -= eff_player_ms
@@ -665,6 +736,44 @@ func _tick_spell_clocks(delta_ms: float, state, find_item: Callable) -> void:
 	if enemy_cast_blocked_ms > 0:
 		enemy_cast_blocked_ms = maxi(0, enemy_cast_blocked_ms - dt)
 
+	# The monster's own buffs, on the same clock as everything else. Without these the
+	# Thorn Shield and the shouts would never expire — the exact "permanent buff" failure
+	# the hero's side already had a test for.
+	for key in ["enemy_defensive_shout_ms", "enemy_battle_shout_ms", "enemy_thorn_shield_ms",
+			"enemy_faerie_fire_ms", "enemy_evasion_ms", "enemy_poison_weapon_ms",
+			"amplify_dmg_ms", "hero_dodge_buff_ms", "hero_speed_boost_ms"]:
+		var left := int(get(key)) - dt
+		if left <= 0:
+			set(key, 0)
+			if key == "enemy_poison_weapon_ms":
+				enemy_poison_weapon_dmg = 0
+			if key == "hero_speed_boost_ms":
+				hero_speed_boost_pct = 0.0
+		else:
+			set(key, left)
+
+	# Enemy resource regen. The PWA ran this on a 100 ms interval: mana at 0.5/s so a
+	# caster can eventually cast again, energy at 1.5/s, and RAGE only from being hit.
+	# Without it a caster spends its pool in the first few swings and then only ever
+	# melees for the rest of the fight, which is not what the PWA did.
+	if enemy_max_resource > 0.0 and enemy_resource_cur < enemy_max_resource:
+		if enemy_resource == "mana":
+			enemy_resource_cur = minf(enemy_max_resource, enemy_resource_cur + 0.5 * delta_ms / 1000.0)
+		elif enemy_resource == "energy":
+			enemy_resource_cur = minf(enemy_max_resource, enemy_resource_cur + 1.5 * delta_ms / 1000.0)
+
+	# Poison on the HERO ticks once a second, like the enemy's.
+	if hero_dot_ticks > 0:
+		hero_dot_clock += delta_ms
+		while hero_dot_clock >= 1000.0 and hero_dot_ticks > 0:
+			hero_dot_clock -= 1000.0
+			hero_dot_ticks -= 1
+			hero_hp -= float(hero_dot)
+			_note("HERO POISON", hero_dot, true)
+			if hero_hp <= 0.0:
+				_finish(false, state, find_item)
+				return
+
 	# Mana regen, the PWA's 0.3/s plus 0.01 per INT point, both per second. It has to be
 	# accumulated as a FRACTION: the save stores mana as an int, so an int-only regen of
 	# under 1 per second would round to zero and never tick at all.
@@ -688,6 +797,12 @@ func _tick_spell_clocks(delta_ms: float, state, find_item: Callable) -> void:
 
 ## The effect of a finished cast. The caster's resource is spent here, not when the
 ## cast started, so an interrupted-looking swing still costs nothing.
+##
+## Every spell in ENEMY_SPELLS is applied, including the ones that change the MONSTER's
+## own behaviour (the shouts, the shields, Faerie Fire, Evasion, Poison Weapon). Leaving
+## them out was the one place the port silently diverged from the PWA: a caster picked
+## `defensive_shout` and burned its swing on a no-op, which reads as a monster that
+## simply stops attacking.
 func _resolve_cast(state, find_item: Callable) -> void:
 	var spells: Dictionary = _data.enemy_spells()
 	var spell: Dictionary = spells.get(cast_spell_id, {})
@@ -697,7 +812,11 @@ func _resolve_cast(state, find_item: Callable) -> void:
 	cast_time = 0.0
 	if spell.is_empty():
 		return
-	enemy_resource_cur = maxf(0.0, enemy_resource_cur - float(spell.get("manaCost", 0)))
+	# A rage monster pays a rage cost, the rest pay mana. The PWA made that distinction
+	# at the swing-decision step; the resource is still spent at the END of the cast.
+	var cost := float(spell.get("rageCost", 0)) if enemy_resource == "rage" \
+		else float(spell.get("manaCost", 0))
+	enemy_resource_cur = maxf(0.0, enemy_resource_cur - cost)
 
 	var diffs: Array = _data.difficulties()
 	var diff_mult := float((diffs[difficulty] as Dictionary).get("mult", 1.0)) \
@@ -710,32 +829,79 @@ func _resolve_cast(state, find_item: Callable) -> void:
 	match spell_id:
 		"poison_bolt":
 			var amount := int(round(base * 0.3))
-			hero_hp -= float(amount)
+			amount = _hero_magic_damage(state, "nature", amount)
+			# Poison Bolt leaves a DoT, not a lump of damage — the PWA applied the whole
+			# 0.3x as three ticks on the hero.
+			_apply_hero_poison(maxi(1, amount))
 			_note("ENEMY POISON", amount, true)
 		"drain_life":
-			var amount2 := int(round(base * 0.7))
-			hero_hp -= float(amount2)
-			enemy_hp = minf(enemy_max_hp, enemy_hp + round(float(amount2) * 0.6))
-			_note("ENEMY DRAIN", amount2, true)
+			var amount2 := _hero_magic_damage(state, "nature", int(round(base * 0.7)))
+			var drained := _hero_damage_after_mitigation(state, find_item, amount2)
+			hero_hp -= float(drained)
+			enemy_hp = minf(enemy_max_hp, enemy_hp + round(float(drained) * 0.6))
+			_note("ENEMY DRAIN", drained, true)
 		"mana_drain":
-			var amount3 := int(round(base * 0.6))
-			hero_hp -= float(amount3)
-			state.hero()["mana"] = maxi(0, int(state.hero().get("mana", 0)) - int(round(float(amount3) * 0.8)))
-			_note("ENEMY MANA DRAIN", amount3, true)
+			var amount3 := _hero_magic_damage(state, "nature", int(round(base * 0.6)))
+			var drained2 := _hero_damage_after_mitigation(state, find_item, amount3)
+			hero_hp -= float(drained2)
+			state.hero()["mana"] = maxi(0, int(state.hero().get("mana", 0)) - int(round(float(drained2) * 0.8)))
+			_note("ENEMY MANA DRAIN", drained2, true)
 		"shadow_bolt":
 			var amount4 := int(round(base * 1.2))
 			var crit := rng.randf() < 0.5
 			if crit:
 				amount4 = int(round(float(amount4) * 2.0))
-			hero_hp -= float(amount4)
-			_note("ENEMY CRIT" if crit else "ENEMY BOLT", amount4, true)
+			amount4 = _hero_magic_damage(state, "fire", amount4)
+			var landed := _hero_damage_after_mitigation(state, find_item, amount4)
+			hero_hp -= float(landed)
+			_note("ENEMY CRIT" if crit else "ENEMY BOLT", landed, true)
 		"heal":
 			var heal := int(round(enemy_max_hp * 0.3))
 			enemy_hp = minf(enemy_max_hp, enemy_hp + float(heal))
 			_note("ENEMY HEAL", heal, false)
+		# The monster's own buffs. 60 fps ticks in the PWA: 8 s = 480 ticks.
+		"defensive_shout":
+			enemy_defensive_shout_ms = 8000
+			_note("ENEMY DEFENSIVE SHOUT", 0, false)
+		"battle_shout":
+			enemy_battle_shout_ms = 8000
+			_note("ENEMY BATTLE SHOUT", 0, false)
+		"thorn_shield":
+			enemy_thorn_shield_ms = 10000
+			_note("ENEMY THORN SHIELD", 0, false)
+		"faerie_fire":
+			enemy_faerie_fire_ms = 10000
+			_note("ENEMY FAERIE FIRE", 0, false)
+		"slow":
+			# 50 % off the hero's attack speed for 5 s — applied by lengthening the swing
+			# interval, which is the only place the hero's own clock reads it.
+			player_slow_pct = 50.0
+			player_slow_ms = 5000
+			_note("ENEMY SLOW", 0, true)
+		"evasion":
+			enemy_evasion_ms = 6000
+			_note("ENEMY EVASION", 0, false)
+		"poison_weapon":
+			enemy_poison_weapon_ms = 8000
+			enemy_poison_weapon_dmg = maxi(1, int(round(base * 0.15)))
+			_note("ENEMY POISON WEAPON", 0, false)
 
 	if hero_hp <= 0.0:
 		_finish(false, state, find_item)
+
+
+## Damage a caster's spell does to the HERO, after the hero's armour, flat reduction and
+## the Cursed debuff. The PWA chained exactly this for spell damage too (an earlier port
+## note that claimed spells used a separate formula was wrong).
+func _hero_damage_after_mitigation(state, find_item: Callable, raw: int) -> int:
+	return incoming_damage(state, find_item, raw)
+
+
+## The hero's gear resistance against one school, applied BEFORE the armour curve — the
+## order the PWA used (`getPlayerResist` first, then the defence curve then the flat
+## reduction). Faerie Fire halves it, which is the only effect that spell has.
+func _hero_magic_damage(state, school: String, raw: int) -> int:
+	return maxi(1, int(round(float(raw) * hero_school_resist(state, school))))
 
 
 ## One hero swing. Dual wield alternates hands and the off hand swings at 0.6x.
@@ -765,6 +931,16 @@ func player_attack(state, find_item: Callable) -> Dictionary:
 		mult *= 1.0 + battle_shout_dmg_pct / 100.0
 
 	var result := _resolve_player_hit(state, find_item, weapon, mult, is_offhand, ar_mult)
+	# The enemy's Thorn Shield returns a flat 5-10 to whoever hits it. The PWA rolled
+	# this inside the player's attack resolution; it is the MONSTER's buff, but it fires
+	# on the hero's swing, so it lands here — right after the hit that triggered it.
+	if bool(result.get("hit", false)) and enemy_thorn_shield_ms > 0:
+		var thorn := 5 + rng.randi_range(0, 5)
+		hero_hp -= float(thorn)
+		_note("THORN SHIELD", thorn, true)
+		if hero_hp <= 0.0:
+			_finish(false, state, find_item)
+			return result
 	# A Frenzy stack is earned only by a hit that LANDED, and only by the main hand.
 	if queued_frenzy and bool(result.get("hit", false)):
 		apply_frenzy_stack(state)
@@ -787,6 +963,12 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 	if enemy_block_chance > 0.0 and rng.randf() * 100.0 < enemy_block_chance:
 		_note("BLOCK", 0, false)
 		return {"hit": false, "reason": "block"}
+
+	# The enemy's own Evasion: 30 % of the hero's swings miss outright while it lasts.
+	# This is the mirror of the hero's dodge and the only thing the spell does.
+	if enemy_evasion_ms > 0 and rng.randf() < 0.3:
+		_note("ENEMY EVASION DODGE", 0, false)
+		return {"hit": false, "reason": "evasion"}
 
 	var base_dmg := 0.0
 	if is_staff:
@@ -856,7 +1038,12 @@ func _tick_dots(delta_ms: float) -> void:
 func enemy_attack(state, find_item: Callable) -> Dictionary:
 	if cast_spell_id != "":
 		return {"hit": false, "reason": "casting"}
-	if enemy_attack_type == "caster":
+	# The hero's own dodge, passive plus Evasion. A dodged swing is spent: the monster
+	# does not get to hit anyway, and the PWA started a fresh swing.
+	if _roll_hero_dodge(state, find_item):
+		_note("DODGE", 0, true)
+		return {"hit": false, "reason": "dodge"}
+	if enemy_attack_type == "caster" and enemy_first_swing_done:
 		var chosen := _choose_spell()
 		if chosen != "":
 			var spells: Dictionary = _data.enemy_spells()
@@ -866,14 +1053,138 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 			cast_elapsed = 0.0
 			_note("ENEMY CAST %s" % chosen, 0, true)
 			return {"hit": false, "reason": "cast"}
+	# The first swing of a caster is still a melee hit — the PWA's decision about
+	# casting only starts from the second swing on.
+	enemy_first_swing_done = true
 
 	var raw := rng.randi_range(enemy_dmg_min, maxi(enemy_dmg_max, enemy_dmg_min))
-	var dmg := incoming_damage(state, find_item, raw)
+	# A melee hit is scaled by the zone and by the difficulty exactly as the PWA did it,
+	# and by the monster's OWN multipliers (a critmaster's x2, an elite's aura).
+	var amount := _enemy_melee_damage(raw)
+	var life_steal := 0
+	var mana_steal := 0
+	# The monster's type changes what a landed hit DOES. A boss carries a list, and every
+	# type on it applies.
+	for t in _active_types():
+		match str(t):
+			"critmaster":
+				if rng.randf() < 0.33:
+					amount = int(round(float(amount) * 2.0))
+			"lifestealer":
+				life_steal += int(round(float(amount) * 0.5))
+			"manastealer":
+				mana_steal += int(round(float(amount) * 0.5))
+			"poison":
+				_apply_hero_poison(maxi(1, int(round(float(amount) * 0.2))))
+	# D2 elite mods that ride on the hit itself.
+	_apply_elite_on_hit(amount, state)
+	# The hero's armour and flat reduction, in ONE place.
+	var dmg := incoming_damage(state, find_item, amount)
+	# A rage monster builds rage by being hit; the PWA granted it on both sides.
+	if enemy_resource == "rage":
+		enemy_resource_cur = minf(enemy_max_resource, enemy_resource_cur + 5.0)
 	hero_hp -= float(dmg)
+	# Satyr: its weapon is poisoned, so every melee hit leaves a DoT behind.
+	if passive_poison_weapon:
+		_apply_hero_poison(maxi(1, int(round(float(dmg) * 0.15))))
+	if enemy_poison_weapon_ms > 0 and enemy_poison_weapon_dmg > 0:
+		_apply_hero_poison(enemy_poison_weapon_dmg)
+	if life_steal > 0:
+		enemy_hp = minf(enemy_max_hp, enemy_hp + float(life_steal))
+		_note("ENEMY LIFESTEAL", life_steal, false)
+	if mana_steal > 0:
+		state.hero()["mana"] = maxi(0, int(state.hero().get("mana", 0)) - mana_steal)
+		_note("ENEMY MANA STEAL", mana_steal, true)
 	_note("ENEMY HIT", dmg, true)
 	if hero_hp <= 0.0:
 		_finish(false, state, find_item)
 	return {"hit": true, "damage": dmg}
+
+
+## The monster's raw melee base for this fight: its own damage roll, the difficulty
+## multiplier, the zone scaling (a boss's stats are already absolute) and the elite's
+## aura. Kept as one function so a spell on the enemy side is scaled the same way.
+func _enemy_melee_damage(raw: int) -> int:
+	var diffs: Array = _data.difficulties()
+	var diff_mult := float((diffs[difficulty] as Dictionary).get("mult", 1.0)) \
+		if difficulty < diffs.size() else 1.0
+	var zone := 1.0 if is_boss else prog.zone_mult(progress, difficulty)
+	var aura := 1.0
+	if is_elite and elite_affix.has("auraDmgMult"):
+		aura = float(elite_affix["auraDmgMult"])
+	return int(round(float(raw) * diff_mult * zone * aura))
+
+
+## The monster's own types for this fight. A boss's list wins over the single type a
+## normal monster carries.
+func _active_types() -> Array:
+	if not boss_types.is_empty():
+		return boss_types
+	if monster_type == "":
+		return []
+	return [monster_type]
+
+
+## Elite affixes that fire on the enemy's own landing hit: an elemental rider, Mana
+## Burn, the Lightning burst and the Cursed debuff. The rest (resist, dr, hp, speed)
+## are applied when the encounter is built.
+func _apply_elite_on_hit(amount: int, state) -> void:
+	if not is_elite or elite_affix.is_empty():
+		return
+	var ea := elite_affix
+	if ea.has("element") and ea.has("elementDmgMult"):
+		var school := str(ea["element"])
+		var rider := maxi(1, int(round(float(amount) * float(ea["elementDmgMult"]))))
+		hero_hp -= float(rider)
+		_note("ENEMY %s" % school.to_upper(), rider, true)
+	if bool(ea.get("manaBurn", false)):
+		var burn := mini(int(state.hero().get("mana", 0)), int(round(float(amount) * 0.25)))
+		if burn > 0:
+			state.hero()["mana"] = int(state.hero().get("mana", 0)) - burn
+			enemy_hp = minf(enemy_max_hp, enemy_hp + float(int(round(float(burn) * 0.5))))
+			_note("ENEMY MANA BURN", burn, true)
+	if str(ea.get("onHit", "")) == "lightning":
+		var bolt := maxi(1, int(round(float(amount) * 0.3)))
+		hero_hp -= float(bolt)
+		_note("ENEMY LIGHTNING", bolt, true)
+	if str(ea.get("onHit", "")) == "poison":
+		_apply_hero_poison(maxi(1, int(round(float(amount) * 0.2))))
+	if bool(ea.get("curse", false)) and rng.randf() < 0.75 and amplify_dmg_ms <= 0:
+		amplify_dmg_ms = 10000
+		_note("CURSED", 0, true)
+
+
+## A poison DoT on the hero: damage per second and a count of ticks. Re-applying it
+## REFRESHES the duration without resetting the clock, which is what stops a monster
+## that poisons every swing from stacking to a one-shot.
+func _apply_hero_poison(per_tick: int) -> void:
+	if per_tick <= 0:
+		return
+	if hero_dot_ticks <= 0:
+		hero_dot_clock = 0.0
+	hero_dot = per_tick
+	hero_dot_ticks = 3
+
+
+## The hero's chance to dodge this swing, in percent: the passive DEX dodge plus the
+## Evasion buff. The PWA's Evasion was a flat coin flip (50 %) on top; keeping both in
+## one percentage means the two compose instead of one silently overriding the other.
+func _roll_hero_dodge(state, find_item: Callable) -> bool:
+	var chance := hero_dodge_chance(state, find_item)
+	return rng.randf() * 100.0 < chance
+
+
+## `getPlayerDodgeChance` — passive dodge from the hero's level difference and DEX,
+## capped at 50 %, plus Evasion's 50 % while it is up (capped at 75 % together).
+func hero_dodge_chance(state, find_item: Callable) -> float:
+	var hero: Dictionary = state.hero()
+	var diff := float(int(hero.get("level", 1)) - monster_level_value)
+	var base := clampf(2.0 - diff * 1.5, 0.0, 30.0)
+	var dex := int(hero.get("attrDex", 0)) + _equip_stat(state.equip(), find_item, "dex")
+	var passive := minf(base + floor(float(dex) / 10.0), 50.0)
+	if hero_dodge_buff_ms <= 0:
+		return passive
+	return minf(passive + HERO_DODGE_BUFF_PCT, 75.0)
 
 
 ## What an enemy hit actually costs the hero, after armour and flat reduction.
@@ -888,6 +1199,12 @@ const ARMOR_K := 300.0
 
 func incoming_damage(state, find_item: Callable, raw: int) -> int:
 	var amount := float(raw)
+	# Battle Shout on the ENEMY: +50 % on its own hits for 8 s.
+	if enemy_battle_shout_ms > 0:
+		amount = round(amount * 1.5)
+	# Cursed (elite amplify damage): the hero takes 50 % more physical damage.
+	if amplify_dmg_ms > 0:
+		amount = round(amount * 1.5)
 	var defense := Talents.total_defense(state, find_item)
 	# Defensive Shout multiplies the armour for its 30 s, which is the ONLY thing it
 	# does — a shout that writes a percentage into a field nothing reads is not a buff.
@@ -897,12 +1214,19 @@ func incoming_damage(state, find_item: Callable, raw: int) -> int:
 		amount = round(amount * (1.0 - float(defense) / (float(defense) + ARMOR_K)))
 	# Flat reduction is applied AFTER the percentage, so the two compose the way the
 	# PWA composed them rather than double-dipping on the same number.
-	return maxi(1, int(round(amount)) - _equip_stat(state.equip(), find_item, "dmgReduction"))
+	var out := maxi(1, int(round(amount)) - _equip_stat(state.equip(), find_item, "dmgReduction"))
+	# The enemy's own Defensive Shout cuts what it takes by 30 % — the mirror of the
+	# hero's, and it has to sit on the INCOMING side or it protects nothing.
+	if enemy_defensive_shout_ms > 0:
+		out = maxi(1, int(round(float(out) * 0.7)))
+	return out
 
 
 
-## Which spell the caster would cast now, or "" for none affordable. Heal is skipped
-## at (near) full HP, which the PWA did explicitly.
+## Which spell the caster would cast now, or "" for none affordable. The PWA's
+## `pickEnemySpell` in full: it skips a spell that is already running (a second Thorn
+## Shield is a wasted swing), skips Heal at (near) full HP, skips Poison Bolt while the
+## hero is already poisoned, and only ever picks something the monster can pay for.
 func _choose_spell() -> String:
 	if enemy_spells.is_empty():
 		return ""
@@ -917,14 +1241,34 @@ func _choose_spell() -> String:
 		var sp: Dictionary = spells.get(id, {})
 		if sp.is_empty():
 			continue
-		var cost := float(sp.get("manaCost", 0))
+		var cost := float(sp.get("rageCost", 0)) if enemy_resource == "rage" \
+			else float(sp.get("manaCost", 0))
+		# The PWA required a MINIMUM resource percentage for several spells; without it a
+		# caster with 1 mana spams its cheapest spell forever.
+		var min_pct := float(sp.get("minManaPct", 0.0))
+		if min_pct > 0.0 and enemy_max_resource > 0.0 \
+				and enemy_resource_cur < min_pct * enemy_max_resource:
+			continue
 		if cost > 0.0 and enemy_resource_cur < cost:
 			continue
 		if id == "heal" and enemy_hp / maxf(enemy_max_hp, 1.0) >= 0.9:
 			continue
-		# The shouts and shields change the enemy's own behaviour, which the port
-		# does not model yet; choosing one would burn the swing for nothing.
-		if not _spell_implemented(id):
+		if id == "poison_bolt" and hero_dot_ticks > 0:
+			continue
+		# A buff already running is not worth a swing — the PWA filtered each of these.
+		if id == "thorn_shield" and enemy_thorn_shield_ms > 0:
+			continue
+		if id == "defensive_shout" and enemy_defensive_shout_ms > 0:
+			continue
+		if id == "battle_shout" and enemy_battle_shout_ms > 0:
+			continue
+		if id == "faerie_fire" and enemy_faerie_fire_ms > 0:
+			continue
+		if id == "evasion" and enemy_evasion_ms > 0:
+			continue
+		if id == "poison_weapon" and enemy_poison_weapon_ms > 0:
+			continue
+		if id == "slow" and player_slow_ms > 0:
 			continue
 		affordable.append(id)
 	if affordable.is_empty():
@@ -932,15 +1276,63 @@ func _choose_spell() -> String:
 	return str(_pick(affordable))
 
 
-## Spells whose effect this port actually applies. The rest exist in the data and
-## are deliberately not chosen rather than being pretended at.
+## Spells whose effect this port actually applies. Kept as the assertion the enemy's
+## spell list is checked against in `test_combat`: every one of the eleven is
+## implemented, so a monster can never pick a spell that does nothing.
+const IMPLEMENTED_ENEMY_SPELLS := [
+	"poison_bolt", "drain_life", "mana_drain", "shadow_bolt", "heal",
+	"defensive_shout", "battle_shout", "thorn_shield", "faerie_fire", "slow",
+	"evasion", "poison_weapon",
+]
+
+
 static func _spell_implemented(id: String) -> bool:
-	return id in ["poison_bolt", "drain_life", "mana_drain", "shadow_bolt", "heal"]
+	return id in IMPLEMENTED_ENEMY_SPELLS
 
 
+## The hero's resistance against one magic school, as the multiplier the damage is
+## scaled by. It is 1.0 minus the summed gear resistances (capped at 75 %, D2 style),
+## halved again by the enemy's Faerie Fire — which is the ONE thing Faerie Fire does
+## and the reason it cannot be a number nobody reads.
+func hero_school_resist(state, school: String) -> float:
+	var total := 0
+	var key: String = {"fire": "fireRes", "ice": "coldRes", "lightning": "lightningRes",
+		"nature": "poisonRes"}.get(school, "")
+	if key != "":
+		for slot in ItemGen.EQUIP_SLOTS:
+			var item_id: Variant = state.equip().get(slot)
+			if item_id == null or item_id == "":
+				continue
+			var item: Dictionary = _find_item_any(state, item_id)
+			if not item.is_empty():
+				total += int(item.get(key, 0))
+	var pct := mini(75, total)
+	if enemy_faerie_fire_ms > 0:
+		pct = int(round(float(pct) * 0.5))
+	return 1.0 - float(pct) / 100.0
+
+
+## The battle only carries the caller's `find_item` for its own lifetime, and the
+## resistance lookup happens on the save's equipped items too, so this keeps the
+## simplest possible resolution: the same table the rest of the battle reads.
+func _find_item_any(state, item_id: Variant) -> Dictionary:
+	if _data == null:
+		return {}
+	return _data.item(str(item_id))
+
+
+## The resist multiplier for the hero's own spells, from the ENEMY's resistances. The
+## monster's table is a multiplier already (0.9 = 10 % resist), so it is returned as-is;
+## `activeSchool` picks which entry — the mage sets it when he casts.
 func _school_resist(state) -> float:
 	var school := str(state.data.get("activeSchool", "") or "fire")
 	var resist := float(enemy_resists.get(school, 1.0))
+	# Faerie Fire halves the enemy's own resistances against the hero's spells too.
+	if enemy_faerie_fire_ms > 0 and resist != 1.0:
+		if resist < 1.0:
+			resist = 1.0 - (1.0 - resist) * 0.5
+		else:
+			resist = 1.0 + (resist - 1.0) * 0.5
 	return resist if resist > 0.0 else 1.0
 
 
