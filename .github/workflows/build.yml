@@ -228,6 +228,33 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "MAP_SCREEN_ALL_PASS=true"
 
+      # The arena's DISTANCE rule and the class kit. The PWA starts the duel at maximum
+      # separation and the hero walks in; out of his weapon's reach the swing is DISCARDED
+      # and its clock restarted. Without it the port's first hit lands on tick zero, which
+      # reads as "the swing timers do not work". Half of this asserts the rule, half the
+      # RENDERER's projection of it (`_place_hero` endpoint positions plus a monotone walk
+      # against `_gap`) — a renderer that ignores `_gap` passes two endpoint checks if it
+      # happens to sit at one of them.
+      - name: Duel distance test (walk-in, reach gate, class kit)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_duel_distance.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "DUEL_DISTANCE_ALL_PASS=true"
+
+      # The arena's CLOCK and its END, driven through `_process(delta)` — the seam no other
+      # test touches. `test_combat` supplies the clock itself (it ticks the battle 100 ms at
+      # a time), so a screen that pumped one tick per FRAME looked perfect to it while the
+      # fight actually ran at the frame rate, about 6x fast. This also pins the pack fight
+      # reaching its LAST member, a defeat settling the save exactly once, and a cleared stop
+      # offering the map instead of another fight forever.
+      - name: Arena pacing test (real-time clock, pack end, defeat, cleared stop)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_arena_pacing.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ARENA_PACING_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

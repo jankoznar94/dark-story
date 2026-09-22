@@ -42,6 +42,26 @@ signal another_fight_requested()
 ## keeps the pace identical on every machine and lets a test drive the same fight.
 const TICK_MS := 100
 
+## The screen's own clock is REAL TIME. `_process` used to pump exactly ONE 100 ms tick
+## per frame and ignore `delta`, which made the FRAME RATE the fight's speed: the port
+## renders at roughly 60 fps (its per-frame work is ~0.1 ms — measured by
+## tools/probe_timing.gd), so a 1156 ms weapon swung every ~17 frames, about 170 ms.
+## The fight ran ~6x fast and no weapon's `swingMs` could be felt at all.
+##
+## Now the accumulator converts elapsed real time into fixed steps, which is what the
+## PWA did with `performance.now()`: the fight advances by however much time passed, and
+## the intervals in `battle.gd` are the ones the player actually experiences.
+##
+## A step is still TICK_MS, never `delta`, so a frame dropped on a slow machine cannot
+## hand either side a free swing.
+const MAX_STEPS_PER_FRAME := 5
+var _tick_accumulator := 0.0
+
+## One class spell is at most one cast per frame: `_refresh_spells()` rebuilds the bar
+## when a spell's blocked reason changes, so casting every spell in one frame would free
+## the buttons under the player's finger mid-tap.
+var _cast_this_frame := false
+
 ## How many log lines the (small, dim) footer keeps. The PWA had no text log at all —
 ## its feedback was floating numbers over the arena — so the log is deliberately quiet
 ## here: it is a debugging aid, not the main readout.
@@ -104,6 +124,8 @@ var _location_label: Label
 var _enemy_hp_label: Label
 var _hero_sprite: TextureRect
 var _pack_row: HBoxContainer
+## Which pack member the screen is currently showing, so a hand-over is noticed.
+var _pack_displayed := 0
 var _spell_ring_enabled := false
 
 # Ring arcs, drawn from battle numbers each render.
@@ -132,6 +154,7 @@ var _spell_signature := ""
 var _log_box: VBoxContainer
 var _result_label: Label
 var _cast_icon: TextureRect
+var _confirm_layer: Control
 var _surrender_button: Button
 var _next_button: Button
 var _loot_button: Button
@@ -155,6 +178,16 @@ var _monster_lunge := 0.0
 var _hero_flinch := 0.0
 var _prev_enemy_hp := -1.0
 var _prev_hero_hp := -1.0
+
+## Everything the screen consumed out of `battle.log`, with the fight's clock at the moment
+## each entry arrived. The screen is what DRAINS the log, so anything that wants to know
+## what the player saw has to ask here — reading `battle.log` from outside comes back
+## empty, and a pacing test that did so reported "0 landed hits in 12 s" about a fight
+## that was landing them the whole time.
+##
+## Capped, because a long fight logs a lot: the oldest entry is dropped.
+const DRAIN_HISTORY_MAX := 400
+var drain_history: Array = []
 
 
 func _init(game_data: Node, gen: ItemGen, loot, state, find_item: Callable) -> void:
@@ -225,6 +258,66 @@ func _build() -> void:
 	_leave_button = _make_button("Zpet do mesta")
 	_leave_button.pressed.connect(func(): _on_leave_pressed())
 	buttons.add_child(_leave_button)
+
+	_build_confirm()
+
+
+## `.surrender-modal` — the confirmation the PWA put between the flag and the forfeit.
+## Drawn as a layer over the arena rather than as a Godot `AcceptDialog`, because the game
+## forbids the OS dialog chrome and the PWA's own modal is a flat panel on the page.
+func _build_confirm() -> void:
+	_confirm_layer = Control.new()
+	_confirm_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_confirm_layer.visible = false
+	add_child(_confirm_layer)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.7)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_confirm_layer.add_child(dim)
+
+	var centre := CenterContainer.new()
+	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_confirm_layer.add_child(centre)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(280, 0)
+	panel.add_theme_stylebox_override("panel", _flat_style("#1a1a1a", C_BORDER, 10))
+	centre.add_child(panel)
+
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_left", 16)
+	pad.add_theme_constant_override("margin_right", 16)
+	pad.add_theme_constant_override("margin_top", 16)
+	pad.add_theme_constant_override("margin_bottom", 16)
+	panel.add_child(pad)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 12)
+	pad.add_child(column)
+
+	var title := _label("Vzdát souboj?", 16, Color(C_NAME), HORIZONTAL_ALIGNMENT_CENTER)
+	column.add_child(title)
+	var body := _label("Přijdeš o všechny souboje této zastávky a započítá se smrt.",
+		12, Color(C_LOCATION), HORIZONTAL_ALIGNMENT_CENTER)
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(240, 0)
+	column.add_child(body)
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 8)
+	column.add_child(row)
+	var no_button := _make_button("Zrušit")
+	no_button.custom_minimum_size = Vector2(110, 38)
+	no_button.pressed.connect(func(): _close_confirm())
+	row.add_child(no_button)
+	var yes_button := _make_button("Vzdát se")
+	yes_button.custom_minimum_size = Vector2(110, 38)
+	yes_button.pressed.connect(func(): _on_surrender_confirmed())
+	row.add_child(yes_button)
 
 
 func _background() -> Control:
@@ -346,7 +439,7 @@ func _build_arena() -> void:
 	flag.set_anchors_preset(Control.PRESET_FULL_RECT)
 	flag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_surrender_button.add_child(flag)
-	_surrender_button.pressed.connect(func(): leave_requested.emit())
+	_surrender_button.pressed.connect(func(): _on_surrender())
 	_arena.add_child(_surrender_button)
 
 	# `.arena-class-spells` — the class spell bar sits INSIDE the arena, bottom centre.
@@ -568,11 +661,22 @@ func start(state, find_item: Callable) -> bool:
 	_loot_button.visible = false
 	_loot_button.disabled = false
 	_button_lock = 0
+	# A new fight starts with a clean real-time clock: a remainder left over from the
+	# previous fight would hand the first swing a free 100 ms.
+	_tick_accumulator = 0.0
+	_cast_this_frame = false
 	# A new fight gets a fresh bar: the old signature would suppress the rebuild.
 	_spell_signature = ""
 	_floats = []
 	_seen_log_index = 0
+	drain_history = []
+	# The roster's "which member am I showing" marker belongs to the FIGHT, not the screen:
+	# left over from a pack fight it would read as a hand-over on the next fight's first
+	# render and fire a spurious monster lunge.
+	_pack_displayed = 0
 	_prev_enemy_hp = -1.0
+	# Set BEFORE the fight can be refused: `battle` is a fresh object here, but on a
+	# second `start()` a refused setup must not leave a stale readout of the old fight.
 	_prev_hero_hp = -1.0
 	_hero_lunge = 0.0
 	_monster_lunge = 0.0
@@ -602,20 +706,21 @@ func start(state, find_item: Callable) -> bool:
 	return true
 
 
-## Advance the fight one tick and re-render. The screen's _process calls this; a test
-## calls it in a loop instead, which is the whole reason it is separate.
+## Advance the fight one fixed step and re-render. The screen's _process calls this; a
+## test calls it in a loop instead, which is the whole reason it is separate.
+##
+## ONE call is always exactly TICK_MS of game time — the real-time pacing lives in
+## `_process`, so a test still measures ticks and not frames.
 func step() -> void:
 	if _button_lock > 0:
 		_button_lock -= 1
 	if battle == null or battle.ended:
 		return
 	battle.tick(float(TICK_MS), _state, _find_item)
-	if battle.hero_hp <= 0.0:
-		# The HP the BATTLE settled must reach the save even if the player never taps
-		# anything: a fight left on screen must not be a way to keep a dead hero alive.
-		var hero: Dictionary = _state.hero()
-		hero["hp"] = 0
-		_state.data["deaths"] = int(_state.data.get("deaths", 0)) + 1
+	if battle.ended and battle.hero_hp <= 0.0:
+		# A defeat is the BATTLE's to settle (`_finish` counts the death, pays the
+		# consolation and resets the stop's fights). The screen used to bump `deaths`
+		# here as well, so every death the player saw was counted twice.
 		_state.save()
 	_drain_log()
 	render()
@@ -623,19 +728,46 @@ func step() -> void:
 		_finish_fight()
 
 
-func _process(_delta: float) -> void:
-	step()
+## The fight's real-time clock. `delta` is seconds of wall time; the accumulator turns it
+## into whole fixed steps, so the intervals the battle settles are the intervals the player
+## feels. The remainder carries to the next frame instead of being rounded away, which is
+## what stops a fast frame from shortening a swing.
+func _process(delta: float) -> void:
+	_cast_this_frame = false
+	_tick_accumulator += delta * 1000.0
+	var steps := 0
+	while _tick_accumulator >= float(TICK_MS) and steps < MAX_STEPS_PER_FRAME:
+		_tick_accumulator -= float(TICK_MS)
+		steps += 1
+		step()
+		if battle == null or battle.ended:
+			break
 	_apply_centring()
-	_animate()
+	_animate(delta)
 
 
 func _drain_log() -> void:
 	for entry in battle.log:
 		var kind := str(entry.get("kind", ""))
 		var amount := int(entry.get("amount", 0))
-		var on_player := bool(entry.get("on_player", false))
+		# The battle writes `onPlayer`; this read `on_player`, so every number the HERO
+		# took was drawn in the enemy's white instead of red and the whole colour code
+		# of the floating text was dead. Read the key the battle actually writes.
+		var on_player := bool(entry.get("onPlayer", false))
 		_append_log("%s %d" % [kind, amount] if amount > 0 else kind)
 		_spawn_float(kind, amount, on_player)
+		drain_history.append({"kind": kind, "amount": amount, "onPlayer": on_player,
+			"game_ms": battle.ticks_elapsed * TICK_MS})
+		if drain_history.size() > DRAIN_HISTORY_MAX:
+			drain_history = drain_history.slice(drain_history.size() - DRAIN_HISTORY_MAX)
+		# Swing animations, driven by what actually happened rather than by a timer:
+		# the hero lunges on his own landed hit, the monster lunges and the hero
+		# flinches when the hero is the one hit.
+		if not on_player and kind.begins_with("HIT"):
+			_hero_lunge = 1.0
+		elif on_player and kind.begins_with("ENEMY HIT"):
+			_monster_lunge = 1.0
+			_hero_flinch = 1.0
 	battle.log.clear()
 
 
@@ -678,7 +810,12 @@ func _clear_floats() -> void:
 
 ## Float and fade. 1.15 s end to end: long enough to read a number, short enough that a
 ## 2 s swing does not stack two of them.
-func _animate() -> void:
+##
+## Everything here is scaled by `delta`, not by frames: the animations used to decay a
+## fixed amount per frame, so the same "0.06" was a 200 ms animation at 60 fps and a
+## 100 ms one at 120 fps — and at the port's own frame rate an entire animation was over
+## in six frames, which is why nothing on screen appeared to move.
+func _animate(delta: float) -> void:
 	if _float_layer == null:
 		return
 	var mid := _float_layer.size * 0.5
@@ -687,8 +824,8 @@ func _animate() -> void:
 		var node: Control = f["node"]
 		if not is_instance_valid(node):
 			continue
-		f["life"] = float(f["life"]) - 0.02
-		f["dy"] = float(f["dy"]) - 1.6
+		f["life"] = float(f["life"]) - delta / 1.15
+		f["dy"] = float(f["dy"]) - delta * 96.0
 		node.position = Vector2(round(mid.x - node.size.x * 0.5 + float(f["drift"])),
 			round(mid.y - 40.0 + float(f["dy"])))
 		node.modulate = Color(1, 1, 1, clampf(float(f["life"]), 0.0, 1.0))
@@ -698,10 +835,10 @@ func _animate() -> void:
 			node.queue_free()
 	_floats = alive
 
-	# Lunges decay the same way the PWA's 200 ms CSS animation did.
-	_hero_lunge = maxf(0.0, _hero_lunge - 0.06)
-	_monster_lunge = maxf(0.0, _monster_lunge - 0.06)
-	_hero_flinch = maxf(0.0, _hero_flinch - 0.05)
+	# Lunges decay over the PWA's 200 ms CSS animation.
+	_hero_lunge = maxf(0.0, _hero_lunge - delta * 5.0)
+	_monster_lunge = maxf(0.0, _monster_lunge - delta * 5.0)
+	_hero_flinch = maxf(0.0, _hero_flinch - delta * 5.0)
 	if is_instance_valid(_hero_sprite):
 		var lift := 14.0 * _hero_lunge - 10.0 * _hero_flinch
 		_place_hero(lift)
@@ -765,12 +902,13 @@ func _log_box_clear() -> void:
 func render() -> void:
 	if battle == null:
 		return
-	_portrait.texture = _load(battle.enemy_face)
-	var elite_tag := ""
-	if battle.is_elite and not battle.elite_affix.is_empty():
-		elite_tag = "%s " % str(battle.elite_affix.get("name", ""))
-	_enemy_name.text = elite_tag + battle.enemy_name
-
+	# The ROSTER is checked first. A member that just stepped up owns the portrait, the
+	# name and the walk-in, so it has to be noticed before the display is written — the
+	# old order set `_pack_displayed` here and then called `_refresh_pack()`, so the
+	# hand-over branch compared a value against itself and `_on_pack_member_began()` was
+	# unreachable code. Pack member two appeared with the DEAD member's name and face.
+	_refresh_pack()
+	sync_enemy_display()
 	var act: Dictionary = _data.act_by_id(battle.act_id)
 	var diffs: Array = _data.difficulties()
 	var diff_name := str((diffs[battle.difficulty] as Dictionary).get("name", "")) \
@@ -833,6 +971,27 @@ func render() -> void:
 	_refresh_spells()
 
 
+## A member that just stepped up is a NEW enemy: the portrait, the name and the HP bar all
+## have to move to it, and the walk-in restarts — the port used to keep the arena in
+## contact, so pack member two was hit the instant it appeared.
+func _on_pack_member_began() -> void:
+	sync_enemy_display()
+	battle.reset_gap()
+	_monster_lunge = 1.0
+
+
+## The portrait and the name of the enemy currently being fought. Called from render() and
+## again whenever a pack hands the fight over.
+func sync_enemy_display() -> void:
+	if battle == null:
+		return
+	_portrait.texture = _load(battle.enemy_face)
+	var elite_tag := ""
+	if battle.is_elite and not battle.elite_affix.is_empty():
+		elite_tag = "%s " % str(battle.elite_affix.get("name", ""))
+	_enemy_name.text = elite_tag + battle.enemy_name
+
+
 ## `.pack-roster` — one 46px tile per member, the active one outlined red, dead ones
 ## greyed with a cross. The LEADER is the last member, per battle.gd's pack order.
 func _refresh_pack() -> void:
@@ -851,6 +1010,10 @@ func _refresh_pack() -> void:
 			_pack_row.add_child(tile)
 	if wanted == 0:
 		return
+	if battle.pack_active != _pack_displayed:
+		_pack_displayed = battle.pack_active
+		if battle.pack_active > 0:
+			_on_pack_member_began()
 	for i in wanted:
 		var tile := _pack_row.get_child(i) as TextureRect
 		var member: Dictionary = battle.pack_members[i] if i < battle.pack_members.size() else {}
@@ -972,6 +1135,11 @@ func _clear_row(row: Node) -> void:
 ## Cast one class spell. The rule lives in `PlayerSpells` — this only forwards the call
 ## and reports what came back. A refused cast writes its reason into the log verbatim.
 func cast_spell(spell_id: String) -> Dictionary:
+	# One cast per rendered frame: the bar is rebuilt when a spell's state changes, so
+	# a second cast in the same frame would free the button the player's finger is on.
+	if _cast_this_frame:
+		return {"ok": false, "message": "Pockej na dalsi snimek", "damage": 0, "spell": spell_id}
+	_cast_this_frame = true
 	if battle == null or battle.ended:
 		return {"ok": false, "message": "Zadny souboj", "damage": 0, "spell": spell_id}
 	var result: Dictionary = PlayerSpells.cast(battle, spell_id, _state, _find_item, _data, battle.rng)
@@ -1053,19 +1221,75 @@ func _set_bar(track: Control, fill: ColorRect, value: float, maximum: float) -> 
 
 func _finish_fight() -> void:
 	_button_lock = 3
+	var stop_complete := int(_state.data["areaFightProgress"][battle.act_id]) >= Battle.FIGHTS_PER_ZONE
 	if battle.won:
 		_append_log("Vyhrano")
 		_result_label.text = "Vitezstvi"
 		award_loot()
+		# The PWA gave the finished stop a MAP button (and a way to town) instead of
+		# "next fight", because the next stop is chosen on the map. The port always
+		# offered another fight in the same stop, so there was no way to leave the
+		# cleared stop at all.
+		_next_button.visible = not stop_complete
 	else:
 		_append_log("Porazeno")
 		_result_label.text = "Porazka"
 		_state.save()
-	_next_button.visible = true
+	# Only a LIVE victory gets the next fight. A loss, or a cleared stop, has exactly one
+	# way on: the map (the town heals and resets the shop, and every defeat ends there).
+	_next_button.visible = battle.won and not stop_complete
 	# The loot that did NOT fit in the bag is offered as a button rather than dropped
 	# silently: a player who wins a rare with a full bag must be able to see it exists.
 	_loot_button.visible = _pending_loot.size() > 0
+	# A defeat's readout says where the player is being taken, because the tap that
+	# follows it leaves the arena rather than starting another fight.
+	if battle.won and stop_complete:
+		_leave_button.text = "Mapa"
+	else:
+		_leave_button.text = "Zpet do mesta"
 	fight_over.emit(battle.won)
+	# The next fight's clock starts from the tap, not from the last frame of this fight:
+	# a remainder carried over would hand the new fight's first swing a free tick.
+	_tick_accumulator = 0.0
+
+
+## The surrender flag. The PWA asked for confirmation first, and the forfeit costs a
+## death plus every fight of the current stop — a single tap on a 40px flag in the arena's
+## corner must not do that silently.
+func _on_surrender() -> void:
+	if battle == null or battle.ended:
+		return
+	_open_confirm()
+
+
+func _open_confirm() -> void:
+	_confirm_layer.visible = true
+
+
+func _close_confirm() -> void:
+	_confirm_layer.visible = false
+
+
+## Forfeit: end the fight as a defeat and leave for town. A forfeit pays no consolation
+## (the PWA's own comment: "forfeit je prohra bez odmeny") but still counts a death and
+## resets the current stop's fights.
+func _on_surrender_confirmed() -> void:
+	_close_confirm()
+	if battle == null or battle.ended:
+		return
+	var loc_progress: Array = _state.data["locationProgress"]
+	# One home for the death's bookkeeping: `Battle._finish(false, ...)` already counted
+	# the death, paid the consolation and reset this stop's fights. Doing any of it again
+	# here is how the port double-counted every death.
+	_state.data["deaths"] = int(_state.data.get("deaths", 0)) + 1
+	_state.data["areaFightProgress"][battle.act_id] = 0
+	var hero: Dictionary = _state.hero()
+	hero["maxHp"] = _gen.hero_max_hp(hero, _state.equip(), _find_item)
+	hero["hp"] = hero["maxHp"]
+	battle.ended = true
+	battle.won = false
+	_state.save()
+	leave_requested.emit()
 
 
 func _on_next_pressed() -> void:

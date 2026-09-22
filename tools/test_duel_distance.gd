@@ -256,11 +256,17 @@ func _test_renderer_walks_the_hero_in(data, state, find_item: Callable) -> void:
 
 	# The monster's lean is part of the same walk-in, and a boss must NOT lean: the PWA
 	# gates it on `!mb.isBoss`, so an untilted boss is the correct behaviour, not a bug.
+	#
+	# `_animate` takes real time now, so it is driven with a long enough delta that the
+	# decay cannot eat the freshly set lunge — a decayed lunge would make the tilt read as
+	# 0 px against an expected 8 and fail for a reason that has nothing to do with the boss.
 	battle.is_boss = false
-	screen._animate()
+	screen._monster_lunge = 0.0
+	screen._animate(0.016)
 	var tilt_normal: float = screen._portrait.position.y - (arena_h * 0.5 - 180.0 * 0.5)
 	battle.is_boss = true
-	screen._animate()
+	screen._monster_lunge = 0.0
+	screen._animate(0.016)
 	var tilt_boss: float = screen._portrait.position.y - (arena_h * 0.5 - 180.0 * 0.5)
 	_check("the monster leans in at contact, and a boss does not",
 		is_equal_approx(tilt_normal, screen.MONSTER_TILT_MAX) and is_equal_approx(tilt_boss, 0.0),

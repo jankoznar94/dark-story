@@ -80,6 +80,11 @@ var pack_active := 0
 
 ## --- running state -----------------------------------------------------------
 
+## The fight's OWN clock: how many fixed steps have been ticked. The screen is what
+## decides how many of these a real second contains, so this is the only handle a test
+## has on "did the fight advance in real time or in frames".
+var ticks_elapsed := 0
+
 var hero_hp := 0.0
 var hero_max_hp := 0.0
 var ended := false
@@ -488,6 +493,10 @@ func _roll_boss_affixes() -> Array:
 
 ## Champion pack = three champs at 1.6x HP / 1.3x damage. Elite pack = three slaves
 ## (normal stats) and the elite LEADER LAST, so the fight ends on the elite.
+##
+## Every member carries its OWN full stat block, because `pack_advance()` hands the fight
+## over to the next one: a slave list of HP and damage alone left the elite leader with a
+## slave's attack speed, defence and spells.
 func _build_pack(champion: bool, theme: int, base_hp: float, diff_mult: float,
 		zone_mult: float) -> void:
 	var m: Dictionary = _pick_monster(theme, progress)
@@ -503,6 +512,16 @@ func _build_pack(champion: bool, theme: int, base_hp: float, diff_mult: float,
 				"hp": round(normal_hp * 1.6), "maxHp": round(normal_hp * 1.6),
 				"dmgMin": int(round(float(m.get("dmgMin", 5)) * 1.3)),
 				"dmgMax": int(round(float(m.get("dmgMax", 10)) * 1.3)),
+				"attackSpeed": int(m.get("attackSpeed", 2000)),
+				"defense": int(m.get("defense", 0)),
+				"blockChance": float(m.get("blockChance", 0.0)),
+				"attackType": str(m.get("attackType", "melee")),
+				"spells": (m.get("spells", []) as Array).duplicate(),
+				"resists": (m.get("resists", {}) as Dictionary).duplicate(),
+				"type": str(m.get("type", "")),
+				"passivePoisonWeapon": bool(m.get("passivePoisonWeapon", false)),
+				"resource": str(m.get("resource", "mana")),
+				"maxResource": float(m.get("maxResource", 50)),
 				"dead": false,
 			})
 	else:
@@ -516,13 +535,35 @@ func _build_pack(champion: bool, theme: int, base_hp: float, diff_mult: float,
 				"hp": normal_hp, "maxHp": normal_hp,
 				"dmgMin": int(round(float(m.get("dmgMin", 5)) * aura_boost)),
 				"dmgMax": int(round(float(m.get("dmgMax", 10)) * aura_boost)),
+				"attackSpeed": int(m.get("attackSpeed", 2000)),
+				"defense": int(m.get("defense", 0)),
+				"blockChance": float(m.get("blockChance", 0.0)),
+				"attackType": str(m.get("attackType", "melee")),
+				"spells": (m.get("spells", []) as Array).duplicate(),
+				"resists": (m.get("resists", {}) as Dictionary).duplicate(),
+				"type": str(m.get("type", "")),
+				"passivePoisonWeapon": bool(m.get("passivePoisonWeapon", false)),
+				"resource": str(m.get("resource", "mana")),
+				"maxResource": float(m.get("maxResource", 50)),
 				"dead": false,
 			})
+		# The leader is the ELITE, so it carries the elite's own stats (already scaled by
+		# the affixes when the encounter was built).
 		pack_members.append({
 			"name": elite_name if elite_name != "" else str(m.get("name", "Monster")),
 			"face": str(m.get("face", "")),
 			"hp": enemy_max_hp, "maxHp": enemy_max_hp,
 			"dmgMin": enemy_dmg_min, "dmgMax": enemy_dmg_max,
+			"attackSpeed": enemy_attack_speed,
+			"defense": enemy_defense,
+			"blockChance": enemy_block_chance,
+			"attackType": enemy_attack_type,
+			"spells": enemy_spells.duplicate(),
+			"resists": enemy_resists.duplicate(),
+			"type": monster_type,
+			"passivePoisonWeapon": passive_poison_weapon,
+			"resource": enemy_resource,
+			"maxResource": enemy_max_resource,
 			"isLeader": true, "dead": false,
 		})
 	pack_active = 0
@@ -532,8 +573,15 @@ func pack_size() -> int:
 	return pack_members.size() if not pack_members.is_empty() else 1
 
 
-## Death of the active pack member: move to the next living one. Returns false when
-## the pack is finished, which lets the normal victory path run.
+## Death of an active pack member. The next LIVING one steps up and takes the fight over —
+## the PWA did this through `packTryAdvance` before it ever reached the victory path.
+##
+## A member needs its OWN stats carried over, not just its HP: the port used to keep the
+## dead member's attack speed, defence, spells and monster type, so the elite LEADER of a
+## pack swung as fast as a slave and lost its own spell list. The fight that "worked" was
+## measuring the wrong monster entirely.
+##
+## Returns false when the pack is finished, which lets the normal victory path run.
 func pack_advance() -> bool:
 	if pack_members.is_empty():
 		return false
@@ -548,8 +596,28 @@ func pack_advance() -> bool:
 			enemy_hp = enemy_max_hp
 			enemy_dmg_min = int(m["dmgMin"])
 			enemy_dmg_max = int(m["dmgMax"])
+			enemy_attack_speed = int(m.get("attackSpeed", enemy_attack_speed))
+			enemy_defense = int(m.get("defense", enemy_defense))
+			enemy_block_chance = float(m.get("blockChance", 0.0))
+			enemy_attack_type = str(m.get("attackType", "melee"))
+			enemy_spells = (m.get("spells", []) as Array).duplicate()
+			enemy_resists = (m.get("resists", {}) as Dictionary).duplicate()
+			monster_type = str(m.get("type", ""))
+			passive_poison_weapon = bool(m.get("passivePoisonWeapon", false))
+			enemy_resource = str(m.get("resource", enemy_resource))
+			enemy_max_resource = float(m.get("maxResource", enemy_max_resource))
+			enemy_resource_cur = enemy_max_resource
+			enemy_dot = 0
+			enemy_dot_ticks = 0
+			enemy_dot_clock = 0.0
+			# The new member gets a fresh clock: it must not inherit the dead one's
+			# wind-up and hit the instant it appears.
 			enemy_swing_elapsed = 0.0
 			enemy_swing_ms = prog.enemy_swing_time(enemy_attack_speed, enemy_slow_pct, enemy_slow_ms)
+			cast_spell_id = ""
+			cast_elapsed = 0.0
+			cast_time = 0.0
+			enemy_first_swing_done = false
 			return true
 	return false
 
@@ -623,10 +691,17 @@ func enemy_in_reach() -> bool:
 func tick(delta_ms: float, state, find_item: Callable) -> bool:
 	if ended:
 		return false
+	ticks_elapsed += 1
 	if pending_kill:
 		# The PWA delayed the kill by 300 ms so the death animation could play. The
 		# arena keeps that by simply not ending until the caller resumes us.
 		pending_kill = false
+		# A PACK DOES NOT END WHEN ONE MEMBER DIES. The next living member steps up and the
+		# fight goes on — the leader is LAST, so an elite pack is four kills. The port
+		# declared victory on the first death here, which is the whole reason a pack fight
+		# was one enemy long and the win "did not work".
+		if is_pack and pack_advance():
+			return true
 		_finish(true, state, find_item)
 		return false
 
@@ -1346,6 +1421,12 @@ func _on_enemy_dead(state, find_item: Callable) -> void:
 
 ## Settle the fight. On a win this is where progression moves: the fight counter,
 ## the stop advance, XP, gold and the boss flag. All of it lives here, not in the UI.
+##
+## A LOSS is not just "not a win": the PWA's death path counts the death, pays a
+## consolation XP/gold, RESETS the fights of the current stop (`areaFightProgress = 0`)
+## and puts the hero back to full HP, because the death sends him to town. The port
+## counted the death and then left the fight counter and the HP alone, so a death was
+## an invisible no-op on the save — the exact "the loss does not work" symptom.
 func _finish(won_flag: bool, state, find_item: Callable) -> void:
 	ended = true
 	won = won_flag
@@ -1356,7 +1437,17 @@ func _finish(won_flag: bool, state, find_item: Callable) -> void:
 
 	if not won_flag:
 		state.data["deaths"] = int(state.data.get("deaths", 0)) + 1
-		hero["hp"] = maxf(1.0, hero_hp)
+		# Consolation: 20 % of the kill XP, floored at 3, plus 5-15 gold. A death with
+		# no consolation at all made a lost fight cost the player a whole stop AND pay
+		# nothing for it, which reads as the game eating the attempt.
+		var cons_xp := maxi(3, int(round(float(monster_level_value) * 30.0 * 0.2)))
+		hero["xp"] = int(hero.get("xp", 0)) + cons_xp
+		hero["gold"] = int(hero.get("gold", 0)) + prog.kill_gold(rng)
+		# Death resets the fights of the CURRENT stop only; the stop itself is kept.
+		fight_progress[act_id_local] = 0
+		state.data["areaFightProgress"] = fight_progress
+		hero["maxHp"] = ItemGen.new(_data).hero_max_hp(hero, state.equip(), find_item)
+		hero["hp"] = hero["maxHp"]
 		return
 
 	state.data["wins"] = int(state.data.get("wins", 0)) + 1
