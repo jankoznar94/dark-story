@@ -1,4 +1,4 @@
-extends Control
+extends MinSizeBox
 class_name InventoryScreen
 ## InventoryScreen — the character sheet: equipment slots, belt potions, bag grid.
 ##
@@ -20,10 +20,16 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const CELL := 64
 const GRID_COLUMNS := 5
 const BAG_CELLS := 20
-## 5 columns inside 358 - 32 (container) - 24 (wrap padding) - 4*6 (gaps) = 278 / 5.
-## Class level rather than local to `_build`, because `_refresh_bag` rebuilds the cells
-## and needs the same number — a local copy is how the two drift apart.
-const BAG_CELL := 55.0
+## `(338 - 4*6) / 5 = 62.8` — the live PWA's own computed width, measured as
+## `cols=62.8281px 62.8438px 62.8281px 62.8438px 62.8438px`. 338 is the `.inv-grid`
+## inside `#invGridWrap` (364 wide, minus 1px border each side, minus 12px padding each
+## side). The port hardcoded 55, so every cell was 8px narrow and the fifth one landed at
+## x=313 instead of 301.
+##
+## It is a MINIMUM, not a fixed width: the cells also get SIZE_EXPAND_FILL, which is what
+## makes a `GridContainer` behave like the CSS's `repeat(5, 1fr)` (equal columns that fill
+## the row) instead of five fixed boxes bunched at the left.
+const BAG_CELL := 62.8
 
 ## Slot order and labels for the equipment panel. The label is what the empty slot
 ## shows; the icon underneath is the "placeholder" PNG the PWA used per slot.
@@ -71,10 +77,17 @@ var _bag_nodes: Array = []           # Button per bag cell
 var _potion_nodes: Array = []
 var _bag_grid: GridContainer
 var _potion_row: HBoxContainer
+## The PWA shows a selected item's detail — including its sockets and the gems that fit
+## — in `#invItemOverlay`, a tap-through overlay OUTSIDE `#inventoryScreen`. The port had
+## it as a permanent "Sockets" block at the bottom of the pane, which is invented state:
+## the live pane has exactly three children (doll, potions, bag) and the extra block moved
+## every real element below it.
+var _socket_overlay: Control
 var _socket_row: HBoxContainer
 var _gem_row: HBoxContainer
 var _socket_label: Label
-var _stats_label: Label
+## The standalone (non-embedded) header's gold readout. Only the page form draws it; inside
+## the modal there is no header at all, which is why the PWA's tab has no gold line.
 var _gold_label: Label
 
 ## Which item the socket panel is showing. Set by tapping a bag cell, so the panel
@@ -126,22 +139,44 @@ func _build() -> void:
 	# Embedded, there is no `screen_page`: that helper adds its own full-rect background
 	# and its own ScrollContainer, and inside the modal the body already scrolls and the
 	# dialog already paints black. A nested scroll container swallows drags.
+	#
+	# ⚠️ The PWA's `#inventoryScreen` holds EXACTLY THREE children and this column must
+	# hold the same three. Measured on the live pane (`probe_pane_pwa.py inventory`):
+	#   div.inv-equip-panel   [13,112 364x326]  margin 12px 0
+	#   div.inv-potion-slots  [13,450 364x36]   margin 4px 0
+	#   div.inv-grid-wrap     [13,494 364x295]  margin 8px 0
+	# Everything the port added on top of those three — a "Batoh" heading, a "Belt"
+	# heading, a "Sockets" heading with its socket/gem rows and a Level/HP/STR stat
+	# line — is INVENTED state, and invented state is the biggest visual diff there is:
+	# it moved every real element below it. The PWA's item detail (including socketing)
+	# is the `#invItemOverlay`, a tap-through overlay, not a permanent block.
 	if _embedded:
 		var inline := VBoxContainer.new()
 		inline.set_anchors_preset(Control.PRESET_FULL_RECT)
-		inline.add_theme_constant_override("separation", 8)
+		# The three children carry the PWA's own MARGINS and the column adds no
+		# separation: the PWA's `margin:12px 0` / `4px 0` / `8px 0` COLLAPSE between
+		# adjacent siblings (max, not sum), which a `VBoxContainer` cannot express.
+		# Measured on the live pane: doll bottom 438 -> potion top 450 (12), potion
+		# bottom 486 -> wrap top 494 (8), wrap bottom 789 -> pane bottom 797 (8).
+		# Emulated as 12/0, 8/0, 8/8 with separation 0, which gives exactly 12, 8, 8.
+		inline.add_theme_constant_override("separation", 0)
 		add_child(inline)
-		inline.add_child(_make_equipment_panel())
-		inline.add_child(_make_bag_panel())
+		inline.add_child(_margined(_make_equipment_panel(), 12.0, 0.0))
+		inline.add_child(_margined(_make_potion_panel(), 8.0, 0.0))
+		inline.add_child(_margined(_make_bag_panel(), 8.0, 8.0))
 		return
 
 	var page := UIKit.screen_page(self)
 	var column: VBoxContainer = page["column"]
 	column.add_theme_constant_override("separation", 6)
 
+	# The standalone page form (only reachable if something shows the inventory as a
+	# SCREEN, which the PWA never does — `inventory` is a modal tab). Same three blocks in
+	# the same order, with the page header on top.
 	column.add_child(_make_header())
-	column.add_child(_make_equipment_panel())
-	column.add_child(_make_bag_panel())
+	column.add_child(_margined(_make_equipment_panel(), 12.0, 0.0))
+	column.add_child(_margined(_make_potion_panel(), 8.0, 0.0))
+	column.add_child(_margined(_make_bag_panel(), 8.0, 8.0))
 
 
 ## Standalone chrome only — the "Zpet do mesta" button and the "Inventar" title. An
@@ -175,35 +210,70 @@ func _make_header() -> Control:
 ##                    justify-content:center }` — a PAPER DOLL, not an ordered list.
 ## The CSS pins every slot to a (row, column) pair:
 ##
-##   #invSlotHelmet { grid-column:2; grid-row:1 }   #invSlotAmulet { grid-column:3; grid-row:1 }
-##   #invSlotWeapon { grid-column:1; grid-row:2 }   #invSlotArmor  { grid-column:2; grid-row:2 }
-##   #invSlotShield { grid-column:3; grid-row:2 }   #invSlotRing1  { grid-column:1; grid-row:3 }
-##   #invSlotBelt   { grid-column:2; grid-row:3 }   #invSlotRing2  { grid-column:3; grid-row:3 }
-##   #invSlotGloves { grid-column:1; grid-row:4 }   #invSlotBoots  { grid-column:3; grid-row:4 }
+##   #invSlotTownPortal { grid-column:1; grid-row:1 }   #invSlotHelmet { grid-column:2; grid-row:1 }
+##   #invSlotAmulet { grid-column:3; grid-row:1 }
+##   #invSlotWeapon { grid-column:1; grid-row:2 }       #invSlotArmor  { grid-column:2; grid-row:2 }
+##   #invSlotShield { grid-column:3; grid-row:2 }
+##   #invSlotRing1  { grid-column:1; grid-row:3 }       #invSlotBelt   { grid-column:2; grid-row:3 }
+##   #invSlotRing2  { grid-column:3; grid-row:3 }
+##   #invSlotGloves { grid-column:1; grid-row:4 }       #invSlotBoots  { grid-column:3; grid-row:4 }
 ##
 ## Godot's GridContainer fills row-major and cannot place a child at a cell, so the grid
 ## is walked cell by cell with invisible fillers where the PWA has no slot.
 ##
-## [row, column, slot, height] — columns and rows are ZERO-based here, one less than the
-## CSS `grid-column`/`grid-row` values. `.inv-slot-square` is 75x75, `.inv-slot-tall`
-## (the weapon) is 75x110, `.inv-slot-belt` is 75x48.
+## [row, column, slot, width, height] — columns and rows are ZERO-based here, one less than
+## the CSS `grid-column`/`grid-row` values. EVERY SIZE IS MEASURED off the live PWA via
+## `tools/import/probe_equip_pwa.py`, because the CSS is content-box and the slot classes
+## differ: `.inv-slot-square` 75x75, `.inv-slot-tall` 75x110, **`.inv-slot-small` 48x48**
+## (the amulet and both rings — the port drew them 75x75), `.inv-slot-belt` 75x48 and
+## `.inv-slot-tp` 48x48 (the town portal, which the port did not draw AT ALL).
+## Getting these wrong is the "itemy byly větší než equip sloty" report: a 48px slot with a
+## 75px cell's icon in it overflows its own border.
+## `#invSlotTownPortal/#invSlotWeapon/#invSlotRing1 { justify-self:end }`,
+## `#invSlotShield/#invSlotGloves { justify-self:start }`, everything else `stretch`.
+## Read out of `style.css` line by line; a 48px slot in a 75px column needs to know which
+## edge it hugs, and guessing "centre" put the two rings 13px off their column's edge.
+const JUSTIFY_SELF := {
+	"townPortal": "end", "weapon": "end", "ring1": "end",
+	"shield": "start", "gloves": "start",
+}
+
 const DOLL: Array = [
-	[0, 1, "helmet", 75.0],
-	[0, 2, "amulet", 75.0],
-	[1, 0, "weapon", 110.0],
-	[1, 1, "armor", 75.0],
-	[1, 2, "shield", 75.0],
-	[2, 0, "ring1", 75.0],
-	[2, 1, "belt", 48.0],
-	[2, 2, "ring2", 75.0],
-	[3, 0, "gloves", 75.0],
-	[3, 2, "boots", 75.0],
+	[0, 0, "townPortal", 48.0, 48.0],
+	[0, 1, "helmet", 75.0, 75.0],
+	[0, 2, "amulet", 48.0, 48.0],
+	[1, 0, "weapon", 75.0, 110.0],
+	[1, 1, "armor", 75.0, 110.0],
+	[1, 2, "shield", 75.0, 110.0],
+	[2, 0, "ring1", 48.0, 48.0],
+	[2, 1, "belt", 75.0, 48.0],
+	[2, 2, "ring2", 48.0, 48.0],
+	[3, 0, "gloves", 75.0, 75.0],
+	[3, 2, "boots", 75.0, 75.0],
 ]
 
 
+## `.inv-equip-panel { display:grid; gap:6px; margin:12px 0; justify-content:center;
+##                    grid-template-columns:repeat(3, auto); width:100% }`.
+##
+## The column widths are `auto`, i.e. the widest item in each column: 75px for columns 1
+## and 3 (weapon/gloves and amulet/ring2/boots) and 75px for column 2. Measured live:
+## `cols=75px 75px 75px`, the grid itself 237 wide and CENTRED (`justify-content:center`)
+## with its first cell at x=77 — not at the pane's left edge.
+##
+## `justify-self` is per slot and it is what makes the doll look symmetric, because the
+## 48px slots do not fill their 75px column:
+##   townPortal / weapon / ring1 -> `end`      (right edge of the column)
+##   shield / gloves             -> `start`    (left edge)
+##   everything else             -> stretch (75px slot fills the column)
+## The port centred every small slot, which put the rings 13px off and made the "ring
+## column" read as a wobbly vertical line instead of one aligned edge.
 func _make_equipment_panel() -> Control:
 	var panel := VBoxContainer.new()
-	panel.add_theme_constant_override("separation", 6)
+	panel.add_theme_constant_override("separation", 0)
+	# `.inv-equip-panel { width:100%; justify-content:center }` — the grid is centred by
+	# its own `size_flags`, the panel spans the full body width.
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var grid := GridContainer.new()
 	grid.columns = 3
@@ -224,35 +294,81 @@ func _make_equipment_panel() -> Control:
 			grid.add_child(_filler())
 			cursor += 1
 		var slot := str(entry[2])
-		var button := _make_slot_button(SLOT_LABELS.get(slot, slot), Vector2(75.0, float(entry[3])))
-		# A slot that is shorter than its row (the belt) must not be stretched to the
+		# Each slot carries its OWN measured size (`[row, col, slot, width, height]`).
+		var button := _make_slot_button(SLOT_LABELS.get(slot, slot),
+			Vector2(float(entry[3]), float(entry[4])))
+		# A slot shorter than its row (the belt, the rings) must not be stretched to the
 		# row height: in the PWA `height:48px` wins over the grid's stretch.
-		button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		# `justify-self`, per the CSS above. A 48px slot in a 75px column sits on the
+		# side the CSS names; anything not listed stretches to the column.
+		match str(JUSTIFY_SELF.get(slot, "stretch")):
+			"end":
+				button.size_flags_horizontal = Control.SIZE_SHRINK_END
+			"start":
+				button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+			_:
+				button.size_flags_horizontal = Control.SIZE_FILL
 		var slot_name := slot
 		button.pressed.connect(func(): equip_slot_tapped.emit(slot_name))
 		_slot_nodes[slot] = button
 		grid.add_child(button)
 		cursor += 1
 
-	_stats_label = Label.new()
-	_stats_label.add_theme_font_size_override("font_size", 13)
-	_stats_label.add_theme_color_override("font_color", Color("#aaaaaa"))
-	panel.add_child(_stats_label)
+	return panel
 
-	var potion_title := Label.new()
-	potion_title.text = "Belt"
-	potion_title.add_theme_font_size_override("font_size", 14)
-	panel.add_child(potion_title)
 
-	# `.inv-potion-slots { display:grid; grid-template-columns:repeat(4, 36px); gap:2px;
-	#                      justify-content:center }` — 36px cells, 2px gap.
+## `.inv-potion-slots { display:grid; grid-template-columns:repeat(4, 36px); gap:2px;
+##                      margin:4px 0; justify-content:center }` — its own element in the
+## PWA, NOT part of the doll panel, and `justify-content:center` centres the 4x36+3x2 =
+## 150px block in the 364px pane (measured: first slot at x=120, i.e. (364-150)/2 = 107
+## plus the 13px pane offset).
+func _make_potion_panel() -> Control:
+	var panel := VBoxContainer.new()
+	panel.add_theme_constant_override("separation", 0)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_potion_row = HBoxContainer.new()
 	_potion_row.add_theme_constant_override("separation", 2)
 	_potion_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_potion_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_child(_potion_row)
-
 	return panel
+
+
+## A wrapper adding the PWA's own vertical MARGIN to one of the pane's children.
+##
+## A CSS margin on a block inside a plain block container does not collapse with a
+## sibling's own margin unless they actually touch, and the PWA's three children use
+## `max(m1, m2)`: measured doll->potion 12px (12 vs 4), potion->wrap 8px (8 vs 4),
+## wrap->bottom 8px. A `VBoxContainer` separation is ADDED, so the only way to express
+## the real numbers is to put the gaps on the boxes and keep the separation at 0.
+class _Margined extends Container:
+	var top := 0.0
+	var bottom := 0.0
+	var _child: Control
+
+	func setup(child: Control, top_px: float, bottom_px: float) -> void:
+		add_child(child)
+		_child = child
+		top = top_px
+		bottom = bottom_px
+		child.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	func _get_minimum_size() -> Vector2:
+		if _child == null:
+			return Vector2.ZERO
+		var inner := _child.get_combined_minimum_size()
+		return Vector2(inner.x, inner.y + top + bottom)
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_SORT_CHILDREN and _child != null:
+			fit_child_in_rect(_child, Rect2(Vector2(0.0, top), Vector2(size.x, size.y - top - bottom)))
+
+
+func _margined(child: Control, top_px: float, bottom_px: float) -> Control:
+	var box := _Margined.new()
+	box.setup(child, top_px, bottom_px)
+	return box
 
 
 ## An empty paper-doll cell: the PWA's grid leaves the cell out entirely, but a
@@ -265,23 +381,34 @@ func _filler() -> Control:
 	return spacer
 
 
+## `.inv-potion-slots { display:grid; grid-template-columns:repeat(4, 36px); gap:2px;
+##                      margin:4px 0; justify-content:center }` — 36px cells, 2px gap, and
+## the PWA's `* { box-sizing:border-box }` means the 2px border is INSIDE the 36, not
+## outside it. This is the ONLY content between the doll and the bag in the PWA; the
+## "Belt" heading the port drew above it pushed the bag grid 23px down.
 func _make_bag_panel() -> Control:
 	var panel := VBoxContainer.new()
-	panel.add_theme_constant_override("separation", 6)
+	panel.add_theme_constant_override("separation", 0)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	var title := Label.new()
-	title.text = "Batoh"
-	title.add_theme_font_size_override("font_size", 14)
-	panel.add_child(title)
-
-	# `.inv-grid-wrap { background:#000; border:1px solid #333; border-radius:10px;
-	#                  padding:12px }` — the bag grid lives in its own bordered box.
+	# `.inv-grid-wrap { max-height:200px; overflow-y:auto; margin:8px 0;
+	#                  background:#000; border:1px solid #333; border-radius:10px;
+	#                  padding:12px; box-sizing:border-box }` — but `#invGridWrap`
+	# (the inventory's own id) overrides it with `max-height:none; padding:12px`.
+	# Measured live: `div.inv-grid-wrap [13,494 364x295]` with `div.inv-grid [26,507 338x269]`
+	# inside it — 364 - 2 (border) - 24 (padding) = 338, the grid's own width. A Godot
+	# `PanelContainer` measures `content_margin` from INSIDE its border, so `12` here is
+	# already the CSS's 12px padding and the 338 follows. The port's grid had come out 350
+	# because the panel's stylebox did not carry the border width when the margin was
+	# applied; assert the built width, do not eyeball it.
 	var wrap := PanelContainer.new()
 	var wrap_style := StyleBoxFlat.new()
 	wrap_style.bg_color = Color("#000000")
 	wrap_style.border_color = Color("#333333")
 	wrap_style.set_border_width_all(1)
 	wrap_style.set_corner_radius_all(10)
+	# The panel's content margin is measured from INSIDE its border in Godot, so 12 is
+	# already the PWA's 12px padding. `_filler()`'s cells carry the grid.
 	wrap_style.content_margin_left = 12
 	wrap_style.content_margin_right = 12
 	wrap_style.content_margin_top = 12
@@ -291,44 +418,18 @@ func _make_bag_panel() -> Control:
 	panel.add_child(wrap)
 
 	_bag_grid = GridContainer.new()
-	# `.inv-grid { grid-template-columns:repeat(5, 1fr); gap:6px }`
+	# `.inv-grid { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px }`
 	_bag_grid.columns = GRID_COLUMNS
 	_bag_grid.add_theme_constant_override("h_separation", 6)
 	_bag_grid.add_theme_constant_override("v_separation", 6)
 	_bag_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	wrap.add_child(_bag_grid)
 
-	# 5 columns inside 358 - 32 (container) - 24 (wrap padding) - 4*6 (gaps) = 278 / 5.
-	# `UIKit.item_cell` owns the `.chest-cell` look (light #aaa fill, 25% when empty) —
-	# in the PWA the bag and the chest grid are the SAME widget, and the port had them
-	# diverge. The cells are REBUILT on refresh rather than restyled, the way the chest
-	# screen does it: an empty cell and a filled one differ in fill, border, opacity and
-	# children, and patching four of those into a live Button is how one of them gets
-	# forgotten. That rebuild is `_refresh_bag`'s job; this only reserves the slots.
+	# 338px of grid, 4 gaps of 6px = 24, leaves 314 / 5 = 62.8 per cell — which is what
+	# the live PWA computes (`cols=62.8281px 62.8438px ...`). The port hardcoded 55 and
+	# drew every cell 8px narrower with the row ending 40px short of the wrap.
 	for i in BAG_CELLS:
 		_bag_nodes.append(null)
-
-	# The socket panel: one row of sockets for the item currently selected, plus the
-	# gems in the bag that may go into them. A separate panel rather than a modal
-	# because the PWA's gem picker was a full overlay and Jan wants dialogs gone.
-	var socket_title := Label.new()
-	socket_title.text = "Sockets"
-	socket_title.add_theme_font_size_override("font_size", 14)
-	panel.add_child(socket_title)
-
-	_socket_label = Label.new()
-	_socket_label.add_theme_font_size_override("font_size", 12)
-	_socket_label.add_theme_color_override("font_color", Color(UIKit.DIM))
-	_socket_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	panel.add_child(_socket_label)
-
-	_socket_row = HBoxContainer.new()
-	_socket_row.add_theme_constant_override("separation", 4)
-	panel.add_child(_socket_row)
-
-	_gem_row = HBoxContainer.new()
-	_gem_row.add_theme_constant_override("separation", 4)
-	panel.add_child(_gem_row)
 
 	return panel
 
@@ -391,8 +492,9 @@ func refresh() -> void:
 	_refresh_equipment()
 	_refresh_potions()
 	_refresh_bag()
+	# `_refresh_sockets` rebuilds the overlay's contents, not a pane child: the pane keeps
+	# the PWA's three children exactly.
 	_refresh_sockets()
-	_refresh_stats()
 
 
 func _refresh_equipment() -> void:
@@ -413,21 +515,39 @@ func _refresh_potions() -> void:
 	_potion_nodes.clear()
 
 	var slots: Array = _state.equip().get("beltPotionSlots", [])
+	# `.inv-potion-slot { width:36px; height:36px; border:2px solid #4a4a4a;
+	#                     border-radius:4px }` with `* { box-sizing:border-box }`, so the
+	# 36 INCLUDES the border. In Godot a Button's stylebox border is drawn OUTSIDE its
+	# `custom_minimum_size`, so the size goes up by the border on each side: 32 + 2 + 2.
+	# Measured, the port's potion slots came out 40px wide against the PWA's 36.
+	const POTION := 36.0
+	const POTION_BORDER := 2.0
 	for i in slots.size():
-		# `.inv-potion-slot { width:36px; height:36px; border:2px solid #4a4a4a;
-		#                     border-radius:4px }`
-		var button := _make_slot_button("", Vector2(36, 36))
+		var button := _make_slot_button("", Vector2(POTION - POTION_BORDER * 2.0,
+			POTION - POTION_BORDER * 2.0))
+		button.add_theme_stylebox_override("normal", _potion_style(POTION_BORDER))
+		button.add_theme_stylebox_override("pressed", _potion_style(POTION_BORDER))
 		var item_id: Variant = slots[i]
 		var item: Dictionary = {} if item_id == null else _resolve(item_id)
 		if item.is_empty():
-			_set_empty_style(button)
-			# Empty potion slots show a desaturated potion icon, never an emoji.
 			_set_placeholder_icon(button, "assets/items/potion_healing_light.png", 0.25)
 		else:
-			_set_slot_content(button, item, "", false)
+			_set_placeholder_icon(button, str(item.get("iconImg", "")), 1.0)
 		button.pressed.connect(func(): potion_slot_tapped.emit(i))
 		_potion_nodes.append(button)
 		_potion_row.add_child(button)
+
+
+## `.inv-potion-slot { background:#000; border:2px solid #4a4a4a; border-radius:4px }` and
+## `.empty { border-color:#3a3a3a; border-style:dashed }`. Godot draws a Button's stylebox
+## around its content box, so a 2px border on a 32px minimum gives the PWA's 36 total.
+func _potion_style(border: float) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#000000")
+	style.border_color = Color("#3a3a3a")
+	style.set_border_width_all(int(border))
+	style.set_corner_radius_all(4)
+	return style
 
 
 func _refresh_bag() -> void:
@@ -450,6 +570,11 @@ func _refresh_bag() -> void:
 				item = item.duplicate()
 				item["count"] = count
 		var cell := UIKit.item_cell(item, BAG_CELL, item.is_empty())
+		# `.inv-grid { grid-template-columns:repeat(5, 1fr) }` — five EQUAL columns that
+		# fill the row. A GridContainer sizes each column to its widest child unless the
+		# children expand, which is why the measured cells are all 62.8 and the last one
+		# ends exactly at the wrap's inner edge.
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		# A tap equips (the router decides) but ALSO selects the item for the socket
 		# panel — that is the whole reason no gem dialog is needed.
 		var index := i
@@ -458,30 +583,105 @@ func _refresh_bag() -> void:
 		_bag_grid.add_child(cell)
 
 
-## One tap = one action, and the selection follows it. The router still gets the tap so
-## equipping works; this only records which item the socket panel should show.
+## One tap = one action: the router equips it, and — for an item that HAS a socket —
+## the detail overlay opens with that item's sockets and the gems that fit. That is the
+## PWA's `#invItemOverlay` reached through `openItemOverlay`, and it is why no gem dialog
+## is needed for a single-socket item.
 func _on_bag_tapped(index: int) -> void:
 	var inventory: Array = _state.inventory()
 	if index >= 0 and index < inventory.size():
 		var entry: Variant = inventory[index]
 		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
 		var item: Dictionary = _resolve(item_id)
-		# Only a socketable item becomes the host; anything else clears the panel.
 		if int(item.get("sockets", 0)) > 0:
+			# A different host invalidates the armed socket index.
 			if _socket_host_id != item_id:
-				_socket_host_id = item_id
-				# A different host invalidates the armed socket index.
 				_armed_socket = -1
-		elif _socket_host_id == item_id:
-			_socket_host_id = ""
-			_armed_socket = -1
+			_socket_host_id = item_id
+			_open_socket_overlay()
+		else:
+			_close_socket_overlay()
 	item_tapped.emit(index)
+
+
+## The overlay is built once and shown/hidden, so opening it never rebuilds a node under
+## the player's finger (a tap delivered to a node that was already `queue_free`d is lost).
+func _open_socket_overlay() -> void:
+	if _socket_overlay == null:
+		_build_socket_overlay()
+	_refresh_sockets()
+	_socket_overlay.visible = true
+
+
+func _close_socket_overlay() -> void:
+	_socket_host_id = ""
+	_armed_socket = -1
+	if _socket_overlay != null:
+		_socket_overlay.visible = false
+
+
+## `#invItemOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:1200 }`
+## with a bordered `.inv-item-overlay-content` centred in it. Outside the pane on purpose:
+## it is an overlay, not a fourth block in the column.
+func _build_socket_overlay() -> void:
+	var overlay := Control.new()
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.visible = false
+	add_child(overlay)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.8)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.gui_input.connect(func(event):
+		if event is InputEventMouseButton and event.pressed:
+			_close_socket_overlay()
+		elif event is InputEventScreenTouch and event.pressed:
+			_close_socket_overlay())
+	overlay.add_child(dim)
+
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#0a0a0a")
+	style.border_color = Color("#333333")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(10)
+	style.set_content_margin_all(14)
+	panel.add_theme_stylebox_override("panel", style)
+	panel.anchor_left = 0.05
+	panel.anchor_right = 0.95
+	panel.anchor_top = 0.3
+	panel.anchor_bottom = 0.3
+	panel.offset_bottom = 1.0
+	overlay.add_child(panel)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	panel.add_child(column)
+
+	_socket_label = UIKit.label("", 13, UIKit.DIM)
+	column.add_child(_socket_label)
+
+	_socket_row = HBoxContainer.new()
+	_socket_row.add_theme_constant_override("separation", 6)
+	column.add_child(_socket_row)
+
+	_gem_row = HBoxContainer.new()
+	_gem_row.add_theme_constant_override("separation", 6)
+	column.add_child(_gem_row)
+
+	var close := UIKit.flat_button("Zavrit", 120.0, 36.0, 13)
+	close.pressed.connect(_close_socket_overlay)
+	column.add_child(close)
+
+	_socket_overlay = overlay
 
 
 ## The socket panel: one cell per socket of the selected item, then the gems and
 ## jewels in the bag. Tapping an EMPTY socket arms it; tapping a gem fills the armed
 ## socket. That two-tap flow replaces the PWA's full-screen gem modal.
 func _refresh_sockets() -> void:
+	if _socket_row == null:
+		return
 	for child in _socket_row.get_children():
 		child.queue_free()
 	for child in _gem_row.get_children():
@@ -532,27 +732,6 @@ func _refresh_sockets() -> void:
 		hint.add_theme_font_size_override("font_size", 12)
 		hint.add_theme_color_override("font_color", Color(UIKit.DIM))
 		_gem_row.add_child(hint)
-
-
-func _refresh_stats() -> void:
-	var hero: Dictionary = _state.hero()
-	var find := _find_item_callable()
-	var max_hp := _gen.hero_max_hp(hero, _state.equip(), find)
-	var max_mana := _gen.hero_max_mana(hero, _state.equip(), _state.data.get("heroClass", ""), find)
-	var attrs := _gen.equip_attr_sum(_state.equip(), find, ["str", "vit", "dex", "int"])
-	_stats_label.text = "Level %d   HP %d   Mana %d   STR %d  VIT %d  DEX %d  INT %d" % [
-		int(hero["level"]), max_hp, max_mana,
-		int(hero.get("attrStr", 0)) + int(attrs["str"]),
-		int(hero.get("attrVit", 0)) + int(attrs["vit"]),
-		int(hero.get("attrDex", 0)) + int(attrs["dex"]),
-		int(hero.get("attrInt", 0)) + int(attrs["int"]),
-	]
-	# The gold readout is the nav/header's job, not a stat line's: at 390px the seven
-	# stats plus gold overflow the right edge and get clipped. The PWA's `.inv-item-stats`
-	# is 13px right-aligned text inside a panel; one line of stats is all that fits.
-	_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	if _gold_label != null:
-		_gold_label.text = "%d zlata" % int(hero.get("gold", 0))
 
 
 ## One slot's contents: an icon (or a dimmed placeholder when empty) and a border in

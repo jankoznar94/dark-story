@@ -91,6 +91,22 @@ func _process(_delta: float) -> void:
 	_apply_panel_height()
 
 
+## Each pane carries its OWN padding, measured with `probe_pane_pwa.py`. The port applied
+## one uniform 4px body margin to all three, which made the talents tree 34px too wide
+## (its cells came out 118 against the PWA's 106.7) and left the inventory's bag grid
+## sitting 12px too low.
+##
+## [tab, top, right, bottom, left] — the `container` div's own `padding`, per `style.css`:
+##   `#inventoryScreen`  `.container` overridden to `padding:0 4px`
+##   `#talentsScreen`    `.container { padding:16px 16px 70px }`
+##   `#heroScreen`       `.container` overridden to `padding:0 4px 16px`
+const PANE_PADDING := {
+	"inventory": [0.0, 4.0, 0.0, 4.0],
+	"skills": [16.0, 16.0, 70.0, 16.0],
+	"stats": [0.0, 4.0, 16.0, 4.0],
+}
+
+
 func _build() -> void:
 	# `.modal-overlay { background:rgba(0,0,0,0.7); align-items:center; justify-content:center }`
 	var dim := ColorRect.new()
@@ -140,6 +156,9 @@ func _build() -> void:
 
 	# `.modal-body { flex:1; overflow-y:auto; padding:0 4px }` — the scroll belongs to the
 	# body, not to the dialog, so the tab strip stays put while a long pane scrolls.
+	# The body's own `padding` here is 0: the PWA's `0 4px` is the `#inventoryScreen`
+	# override, and each pane brings its OWN padding (`PANE_PADDING`). Applying 4px to all
+	# three panes was the bug — a `MarginContainer` under the scroll cannot vary per child.
 	var scroll := ScrollContainer.new()
 	_scroll = scroll
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -179,11 +198,24 @@ func _build() -> void:
 
 	for entry in TABS:
 		var key := str(entry[0])
+		# A `MarginContainer` per pane carrying that pane's OWN CSS padding. The 4px body
+		# margin it replaces was uniform across all three tabs, which is why the talents
+		# tree was 34px too wide and the stats content sat 4px off.
+		var pad: Array = PANE_PADDING.get(key, [0.0, 4.0, 0.0, 4.0])
+		var pane_margin := MarginContainer.new()
+		pane_margin.add_theme_constant_override("margin_top", int(pad[0]))
+		pane_margin.add_theme_constant_override("margin_right", int(pad[1]))
+		pane_margin.add_theme_constant_override("margin_bottom", int(pad[2]))
+		pane_margin.add_theme_constant_override("margin_left", int(pad[3]))
+		pane_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# The pane is the margin box: `set_tab()` toggles visibility on THIS node, and its
+		# minimum is the padded content, which `_apply_panel_height()` reads.
 		var pane := VBoxContainer.new()
 		pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		pane.visible = false
-		stack.add_child(pane)
-		_panes[key] = pane
+		pane_margin.add_child(pane)
+		pane_margin.visible = false
+		stack.add_child(pane_margin)
+		_panes[key] = pane_margin
 
 	# The inventory screen is built as a full page (its own back button and title) because
 	# it predates the modal. Inside the modal the PWA's tab strip replaces that chrome, so
@@ -191,9 +223,12 @@ func _build() -> void:
 	# removes the "Zpet do mesta"/"Inventar" row rather than leaving a second title under
 	# the tab that already says which tab this is.
 	_inventory.hide_chrome()
-	(_panes["inventory"] as VBoxContainer).add_child(_inventory)
-	(_panes["skills"] as VBoxContainer).add_child(_skills)
-	(_panes["stats"] as VBoxContainer).add_child(_stats)
+	# `_panes` holds the PADDING box (a `MarginContainer`); the panel goes into its inner
+	# column, or the padding would be applied to the wrong node and the panels would each be
+	# laid out inside a box the size of the padding rather than the body.
+	(_panes["inventory"] as MarginContainer).get_child(0).add_child(_inventory)
+	(_panes["skills"] as MarginContainer).get_child(0).add_child(_skills)
+	(_panes["stats"] as MarginContainer).get_child(0).add_child(_stats)
 
 	set_tab(_active)
 

@@ -223,6 +223,14 @@ jobs:
       # over), that the three nav keys land on three distinct panes (a strip that highlights
       # the tab you tapped while showing one pane for all of them), and that the nav bar
       # does not stay up over the dialog.
+      #
+      # It ALSO pins the MEASURED GEOMETRY of the panes, read off the live PWA with
+      # `tools/import/probe_pane_pwa.py`: the inventory column's child COUNT (three, and a
+      # fourth is invented state), the per-pane padding (uniform 4px made the talents tree
+      # 34px too wide and its cells 118 against the PWA's 106.7), the bag cell's measured
+      # 62.8px (hardcoded 55 left the row 40px short of its own frame), and every paper-doll
+      # slot's own size and edge. All five verified by mutation — restoring the bug turns
+      # exactly that assertion red.
       - name: Character modal test (tabs, overlay, nav-bar suppression)
         run: |
           set -e

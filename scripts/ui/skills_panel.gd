@@ -1,4 +1,4 @@
-extends Control
+extends MinSizeBox
 class_name SkillsPanel
 ## SkillsPanel — the "Dovednosti" tab of CharacterModal.
 ##
@@ -25,6 +25,14 @@ const Talents := preload("res://scripts/items/talents.gd")
 signal message(text: String)
 
 const CELL := 64.0
+## `.talent-tier-row { grid-template-columns:repeat(3, 1fr); gap:10px }` measured on the
+## live PWA at 340px of row width: three 106.7px columns. `.talent-btn-icon` is
+## `width:100%; aspect-ratio:1`, so the ICON is 106.7 - 4 (2px border each side) = ~102
+## square and the whole cell (icon + the 10px `/5` line + the name) is 120px tall.
+##
+## The port drew a fixed 64px tile, so every tier's skills sat in 64px boxes with 42px of
+## dead space in each column, and the "N/5" counter line was narrower than the icon above it.
+const TALENT_CELL := 106.7
 
 ## `const tierUnlocked = [true, heroLv >= 6, heroLv >= 12]`
 const TIER_LEVELS := [1, 6, 12]
@@ -143,12 +151,26 @@ func _tier_row(tier_idx: int, tier: Dictionary) -> Control:
 		tier_name += " - odemkne se na levelu %d" % need
 	box.add_child(UIKit.label(tier_name, 12, UIKit.TEXT if unlocked else UIKit.DIM))
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	var row := GridContainer.new()
+	# `.talent-tier-row { display:grid; gap:10px; width:100%;
+	#                      grid-template-columns:repeat(3, 1fr) }` — THREE EQUAL columns of
+	# `.talent-btn`, each `1fr` wide. Measured on the live PWA at 390px: the row spans
+	# 340px and its columns are 106.7/106.7/106.7 with a 10px gap, so a FOUR-choice tier
+	# wraps its fourth cell onto a second line rather than squeezing four into one.
+	# The port's HBox of fixed 64px cells put every tier's skills at the left edge with the
+	# rest of the row empty (measured: cells at x=0/70/140 in a 374px row), which is the
+	# "skilly namačkané vlevo" report. A GridContainer with 3 columns is the same layout —
+	# an HBox cannot wrap and cannot make equal columns.
+	row.columns = 3
+	row.add_theme_constant_override("h_separation", 10)
+	row.add_theme_constant_override("v_separation", 10)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(row)
 	for choice in tier.get("choices", []):
 		var key := "%s_%s" % [str(_state.data.get("heroClass", "")), str(choice.get("k", ""))]
-		row.add_child(_skill_cell(key, choice, unlocked))
+		var cell_column := _skill_cell(key, choice, unlocked)
+		cell_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(cell_column)
 	return box
 
 
@@ -171,7 +193,10 @@ func _skill_cell(key: String, choice: Dictionary, tier_open: bool) -> Control:
 	var available := tier_open and _talents.prerequisites_met(_state, key)
 
 	var cell := Button.new()
-	cell.custom_minimum_size = Vector2(CELL, CELL)
+	# `.talent-btn-icon { width:100%; aspect-ratio:1; border:2px solid #2a2a2a;
+	#                     border-radius:8px; padding:2px; background:#000 }` — the icon is
+	# the whole 1fr column wide and square, and the `/N` line sits directly under it.
+	cell.custom_minimum_size = Vector2(TALENT_CELL, TALENT_CELL)
 	cell.focus_mode = Control.FOCUS_NONE
 	var border := Color(UIKit.BORDER)
 	if _selected_key == key:

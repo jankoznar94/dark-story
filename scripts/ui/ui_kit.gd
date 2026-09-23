@@ -50,26 +50,101 @@ const PAGE_BG := "#121212"
 const BTN_SECONDARY_BG := "#3a3a5a"
 
 
-## A label that can always shrink. A Godot Label reports its whole UNWRAPPED text as its
-## minimum width and a container honours that minimum, so a single long line was widening
-## whole screens past the 390px canvas (measured: the craft screen built 447px wide and
-## the chest 554px, i.e. 60-160px of every screen sat off the right edge). In a browser a
-## long line wraps inside its parent — this makes `label()` behave the same way, so no
-## screen can be pushed off-canvas by its own copy. Callers that want a wider label give
-## it SIZE_EXPAND_FILL, which still works.
+## A label that can always shrink — but never below its LONGEST WORD.
 ##
+## A Godot Label reports its whole UNWRAPPED text as its minimum width and a container
+## honours that minimum, so a single long line was widening whole screens past the 390px
+## canvas (measured: the craft screen built 447px wide and the chest 554px, i.e. 60-160px
+## of every screen sat off the right edge). In a browser a long line wraps inside its
+## parent — this makes `label()` behave the same way.
+##
+## ⚠️ The wrapping mode decides the label's minimum WIDTH, and the naive fix is worse than
+## the bug. `AUTOWRAP_WORD_SMART` (and WORD, and ARBITRARY) report a minimum of **ONE
+## CHARACTER**, measured: every one of "Dobrodruh", "Smrti 0   Vítězství 0", "Poškození"
+## comes back `min=(1.0, 23.0)`. A container hands a child that does not EXPAND exactly
+## that minimum, so every such label was given a 1px-wide box and wrapped one character
+## per line — the vertical "ribbon of letters" Jan reported on the Stats tab, and the
+## reason the panel's content came out 1931px tall instead of 591. Only `AUTOWRAP_OFF`
+## reports the real width (86px for "Dobrodruh"), and turning wrapping off brings the
+## off-canvas screens straight back.
+##
+## Three ways to override that minimum were measured and only the third works:
+##   * `_get_minimum_size()` on a Label subclass — never called (Label overrides it in C++);
+##   * shadowing the native `text` property — a parse error;
+##   * overriding `get_minimum_size()` — "overrides a method from native class" and, here,
+##     that warning is treated as an error.
+## What DOES work is `custom_minimum_size`, plus a recompute that runs on every path that
+## can change the text:
+##   * `label()` computes it at construction;
+##   * `write()` sets the text and recomputes — use it, not `.text =`, on any label whose
+##     text changes later;
+##   * the `minimum_size_changed` signal is connected as well — it fires when the label is
+##     a plain child of a Control, but **measured: NOT when a container owns its size**
+##     (inside an `HBoxContainer` the signal never arrived for a `text` write, which is
+##     exactly where the 1px minimum bites). That is why `write()` exists instead of
+##     relying on the signal alone.
+##
+## (`set_text()` would be the natural name and is a PARSE ERROR here: it overrides
+## `Label.set_text()` and this project treats that warning as an error.)
+##
+## The minimum is the width of the LONGEST WORD — what a browser uses for `min-width:auto`
+## on a flex item, i.e. what the PWA's CSS does — so the label still wraps at spaces when a
+## container gives it less room. Callers that want a wider label give it SIZE_EXPAND_FILL,
+## which still works.
+##
+## ⚠️ `clip_text = true` collapses the minimum HEIGHT to 1 PIXEL, measured:
+## "Poškození" is `min=(64.0, 23.0)` without it and `min=(64.0, 1.0)` with it. A container
+## hands a non-expanding child exactly its minimum, so every `.hero-detail-item` row came
+## out 1px tall — six details in a 198px grid collapsed into a 30px strip. It was added as
+## a width workaround (`right.clip_text = true` in `screen_page`/`page_header`) BEFORE the
+## longest-word minimum existed, and it is now redundant: the width is already capped.
+## Do not use `clip_text` on a label inside a row that has to have a height.
+class FlexLabel extends Label:
+	## Guards the recursion: `custom_minimum_size` is itself a minimum, so writing it
+	## re-emits `minimum_size_changed`.
+	var _fixing := false
+
+	func _init() -> void:
+		minimum_size_changed.connect(_recompute)
+
+	## Set the text AND keep the minimum correct. Prefer this over `.text =` on any label
+	## whose text changes after construction — a stale minimum is the 1px bug.
+	## Not named `set_text`: that overrides `Label.set_text()` and the warning is an error.
+	func write(value: String) -> void:
+		text = value
+		_recompute()
+
+	func _recompute() -> void:
+		if _fixing:
+			return
+		var f: Font = get_theme_font("font")
+		var fs: int = get_theme_font_size("font_size")
+		if f == null:
+			return
+		var widest := 0.0
+		for word in text.split(" ", false):
+			widest = maxf(widest, f.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+		if is_equal_approx(custom_minimum_size.x, widest):
+			return
+		_fixing = true
+		custom_minimum_size.x = widest
+		_fixing = false
+
+
 ## `bold` is the CSS `font-weight: bold` — a real face (see `UIFonts`), not an embolden
 ## pass, because DejaVu's bold is 13% wider and the reference frames are drawn with it.
 static func label(text: String, size: int = 14, colour: String = TEXT,
 		align: int = HORIZONTAL_ALIGNMENT_LEFT, bold: bool = false) -> Label:
-	var l := Label.new()
+	var l := FlexLabel.new()
 	l.text = text
 	l.add_theme_font_override("font", UIFonts.get_font(size, bold))
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", Color(colour))
 	l.horizontal_alignment = align
-	l.custom_minimum_size = Vector2(0, 0)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# The signal fires on a re-shape, which can happen before the font is in place; this
+	# is the one guaranteed measurement.
+	l._recompute()
 	return l
 
 

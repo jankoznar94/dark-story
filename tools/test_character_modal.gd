@@ -62,6 +62,10 @@ func _run() -> void:
 	_test_nav_keys_map_to_distinct_panes()
 	_test_nav_bar_is_drawn_under_the_modal_not_hidden()
 	_test_closing_returns_to_town()
+	_test_inventory_pane_has_exactly_the_pwas_children()
+	_test_each_pane_carries_its_own_padding()
+	_test_bag_cells_are_the_measured_width()
+	_test_doll_slots_carry_their_measured_sizes()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -195,3 +199,104 @@ func _test_closing_returns_to_town() -> void:
 			_fail("closing the modal did not bring the town back")
 		elif str(key) != "town" and visible:
 			_fail("screen '%s' is visible after closing the modal" % str(key))
+
+
+## The PWA's `#inventoryScreen` holds exactly THREE children and nothing else. Measured
+## live (`probe_pane_pwa.py inventory`): `inv-equip-panel [13,112 364x326]`,
+## `inv-potion-slots [13,450 364x36]`, `inv-grid-wrap [13,494 364x295]`.
+##
+## The port carried six: the three real ones plus a "Batoh" heading, a "Belt" heading and a
+## permanent "Sockets" block with a stat line. All three were INVENTIONS, and invented state
+## is the largest visual diff on any screen because it moves every real element below it.
+## The PWA's item detail (socketing included) is `#invItemOverlay`, a tap-through overlay
+## OUTSIDE this element — so a socket block in the pane is wrong however useful it looks.
+func _test_inventory_pane_has_exactly_the_pwas_children() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	# `_build()` puts ONE column in the pane; that column carries the three blocks.
+	if inventory.get_child_count() != 1:
+		_fail("the embedded inventory built %d children, expected 1 column"
+			% inventory.get_child_count())
+		return
+	var column: Control = inventory.get_child(0)
+	if column.get_child_count() != 3:
+		var names: Array[String] = []
+		for child in column.get_children():
+			names.append(child.get_class())
+		_fail("the inventory column has %d blocks, the PWA has 3 (%s) — an extra block is invented state"
+			% [column.get_child_count(), ", ".join(names)])
+
+
+## Each pane has its OWN padding in the PWA and the port applied one uniform 4px body
+## margin to all three. Measured with `probe_pane_pwa.py`:
+##   inventory `[9,100 372x697]`   its `.container` overridden to `padding:0 4px`
+##   talents   `[9,117 372x590]`   `.container { padding:16px 16px 70px }`
+##   hero      `[9,117 372x591]`   overridden to `padding:0 4px 16px`
+## With a uniform margin the talents tree was 34px too wide and its cells came out 118
+## against the PWA's 106.7 — the "skilly jsou moc siroké" report.
+func _test_each_pane_carries_its_own_padding() -> void:
+	var modal = _main._screens["character"]
+	var pads := {"inventory": [0, 4, 0, 4], "skills": [16, 16, 70, 16],
+		"stats": [0, 4, 16, 4]}
+	for key in pads:
+		_main.open_modal(key)
+		var pane = modal._panes[key]
+		if not (pane is MarginContainer):
+			_fail("pane '%s' is a %s — the padding has to come from a MarginContainer"
+				% [key, pane.get_class()])
+			continue
+		var want: Array = pads[key]
+		for axis in [["margin_top", 0], ["margin_right", 1], ["margin_bottom", 2],
+				["margin_left", 3]]:
+			var got := int(pane.get_theme_constant(str(axis[0])))
+			if got != int(want[int(axis[1])]):
+				_fail("pane '%s' %s is %d, the PWA's CSS says %d"
+					% [key, str(axis[0]), got, int(want[int(axis[1])])])
+
+
+## `.inv-grid { grid-template-columns:repeat(5, 1fr); gap:6px }` inside `#invGridWrap`
+## (364 wide, minus 2px border, minus 24px padding = 338). The live PWA computes
+## `cols=62.8281px 62.8438px 62.8281px 62.8438px 62.8438px`.
+##
+## The port hardcoded 55, so every cell was 8px narrow and the fifth landed at x=313
+## instead of 301 — the row visibly stopped short of its own frame.
+func _test_bag_cells_are_the_measured_width() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	var cell: float = inventory.BAG_CELL
+	if absf(cell - 62.8) > 0.1:
+		_fail("the bag cell is %.1fpx, the live PWA computes 62.8" % cell)
+	if inventory.GRID_COLUMNS != 5:
+		_fail("the bag grid has %d columns, the PWA's `repeat(5, 1fr)` says 5"
+			% inventory.GRID_COLUMNS)
+
+
+## Every slot's own measured size, and which edge it hugs. `style.css`:
+##   `.inv-slot-square { 75x75 }`  `.inv-slot-tall { 75x110 }`
+##   `.inv-slot-small { 48x48 }`   `.inv-slot-belt { 75x48 }`  `.inv-slot-tp { 48x48 }`
+##   `#invSlotTownPortal/#invSlotWeapon/#invSlotRing1 { justify-self:end }`
+##   `#invSlotShield/#invSlotGloves { justify-self:start }`
+## The port drew the amulet and both rings at 75 and had no town-portal slot at all, so a
+## 75px icon overflowed a 48px border — the "itemy byly větší než equip sloty" report.
+func _test_doll_slots_carry_their_measured_sizes() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	var want := {
+		"townPortal": Vector2(48, 48), "helmet": Vector2(75, 75), "amulet": Vector2(48, 48),
+		"weapon": Vector2(75, 110), "armor": Vector2(75, 110), "shield": Vector2(75, 110),
+		"ring1": Vector2(48, 48), "belt": Vector2(75, 48), "ring2": Vector2(48, 48),
+		"gloves": Vector2(75, 75), "boots": Vector2(75, 75),
+	}
+	for slot in want:
+		if not inventory._slot_nodes.has(slot):
+			_fail("no '%s' slot — the PWA's paper doll has it (town portal included)" % slot)
+			continue
+		var button: Button = inventory._slot_nodes[slot]
+		var size := button.custom_minimum_size
+		var expect: Vector2 = want[slot]
+		if not size.is_equal_approx(expect):
+			_fail("slot '%s' is %.0fx%.0f, the PWA's CSS says %.0fx%.0f"
+				% [slot, size.x, size.y, expect.x, expect.y])

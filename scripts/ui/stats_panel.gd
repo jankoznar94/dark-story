@@ -1,4 +1,4 @@
-extends Control
+extends MinSizeBox
 class_name StatsPanel
 ## StatsPanel — the "Staty" tab of CharacterModal.
 ##
@@ -89,6 +89,11 @@ func _ready() -> void:
 
 
 func _build() -> void:
+	# MinSizeBox, not a plain Control: the panel is embedded in the character modal and a
+	# plain Control reports a minimum of ZERO for its children, which is how every pane in
+	# the dialog ended up laid out inside a zero-height box (measured: the Stats content
+	# was 1931px inside a pane whose rect was `size=(374, 0)`). A Container subclass is the
+	# only shape whose `_get_minimum_size()` the engine calls.
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 10)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -324,7 +329,9 @@ func _build_details() -> Control:
 		var name_label := UIKit.label(str(detail_name), 13, UIKit.DIM)
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		name_label.clip_text = true
+		# NOT `clip_text`: it collapses the label's minimum HEIGHT to 1px (measured), and
+		# this row is 28px in the PWA (`.hero-detail-item { padding:6px 10px; font-size:13px }`).
+		# Six collapsed rows turned the 198px detail grid into a 30px strip.
 		line.add_child(name_label)
 
 		# `.hero-detail-val { font-weight:bold; color:#e8e0e8; text-align:right }`
