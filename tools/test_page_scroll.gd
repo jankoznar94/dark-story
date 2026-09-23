@@ -59,6 +59,7 @@ func _initialize() -> void:
 	_test_the_driver_moves_the_page_with_the_finger()
 	_test_the_deadzone_absorbs_the_first_pixels()
 	_test_a_drag_that_starts_outside_the_page_is_ignored()
+	_test_the_driver_runs_on_a_touchscreen_too()
 	# The last one needs the REAL input pipeline (`push_input` refuses outside the tree and
 	# the headless window is 64x64 until a real frame runs), so it goes on the first frame.
 	process_frame.connect(_pipeline_phase, CONNECT_ONE_SHOT)
@@ -232,32 +233,57 @@ func _test_a_drag_that_starts_outside_the_page_is_ignored() -> void:
 	print("  a drag from y=-40 scrolled nothing")
 
 
-## On a device where Godot's own finger drag is live, this driver must do nothing at all —
-## otherwise every swipe would scroll twice as far.
-func _test_the_driver_stands_down_where_godot_drags_it_itself() -> void:
-	print("== the driver stands down on a touchscreen ==")
-	# The branch is `if DisplayServer.is_touchscreen_available(): return` at the top of
-	# `_input`, and this box reports false, so what can be asserted here is that the branch
-	# EXISTS and reads the gate. Stated plainly rather than faked: the mutation to check is
-	# deleting the early return, and that cannot be seen from here.
+## On a device where Godot's own finger drag would be live, this driver must STILL run.
+##
+## This is the assertion whose opposite was in here before, and it was wrong. The old check
+## was "scroll_swipe.gd still reads `is_touchscreen_available`", i.e. it PINNED the driver
+## standing down on a phone. Measured on the port's own web build under CDP touch emulation,
+## that stand-down is what produced:
+##
+##     touch profile: drag starting on a town tile -> page did NOT move
+##     touch profile: drag starting on empty space -> page scrolled 56px
+##
+## Jan's own report. A phone would only scroll from somewhere nothing is.
+func _test_the_driver_runs_on_a_touchscreen_too() -> void:
+	print("== the driver does not stand down on a phone ==")
 	var src := FileAccess.get_file_as_string("res://scripts/ui/scroll_swipe.gd")
-	if not src.contains("is_touchscreen_available"):
-		_fail("scroll_swipe.gd no longer reads is_touchscreen_available() — on a phone it "
-			+ "would scroll the page a second time, on top of Godot's own drag")
-	# The driver must not CONSUME the incoming event: a tap has to reach its button. The
-	# check is on the CALL, not on the token — the file's own prose mentions the name often
-	# enough that a plain `contains` reads the comment instead of the code (which is how the
-	# first version of this check failed against a driver that never called it).
 	var code := ""
 	for line in src.split("\n"):
 		var trimmed := (line as String).strip_edges()
 		if trimmed.begins_with("#"):
 			continue
 		code += trimmed
+	# The gate must be GONE from the code (the header prose may still explain why it was).
+	if code.contains("is_touchscreen_available"):
+		_fail("scroll_swipe.gd gates on is_touchscreen_available() again — measured, a drag "
+			+ "from a button then does NOT scroll the page on a phone")
+	else:
+		print("  the driver is unconditional (one scroll path on every platform)")
+	# And Godot's own drag must be made inert, or the phone scrolls twice.
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	var gate: bool = swipe._scroll != null and scroll.scroll_deadzone > 100000.0
+	if not gate:
+		_fail("the driver left the container's own finger drag live (scroll_deadzone=%s) — "
+			% str(scroll.scroll_deadzone) + "a phone would scroll through this driver AND "
+			+ "through Godot's own drag")
+	else:
+		print("  Godot's own drag is made inert (scroll_deadzone=%d)" % int(scroll.scroll_deadzone))
+	# The deadzone must not cost a TAP: the wheel is a separate branch, so check the wheel
+	# still reaches the container — that is the desktop mouse path and it must survive.
+	var src2 := FileAccess.get_file_as_string("res://scripts/ui/scroll_swipe.gd")
+	if not src2.contains("scroll_deadzone = 1_000_000"):
+		_fail("the inert-deadzone line is gone — a phone would scroll twice as fast")
+	# The driver must not CONSUME the incoming event: a tap has to reach its button. The
+	# check is on the CALL, not on the token — the file's own prose mentions the name often
+	# enough that a plain `contains` reads the comment instead of the code (which is how the
+	# first version of this check failed against a driver that never called it).
 	if code.contains("set_input_as_handled("):
 		_fail("the swipe driver calls set_input_as_handled — it would eat the tap")
 	else:
 		print("  the driver never consumes an event (a tap still reaches its button)")
+
 
 
 ## A DRAG must not fire the button it started on, and a TAP must still fire it.

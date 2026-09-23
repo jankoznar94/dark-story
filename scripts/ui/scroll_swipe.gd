@@ -30,8 +30,35 @@ class_name ScrollSwipe
 ## The deadzone is small (8px, the ScrollContainer's own), so a tap remains a tap: it is only
 ## a finger that actually moved that loses its button press.
 ##
-## It stands DOWN where Godot's own drag is live (`is_touchscreen_available()`), so a phone
-## never scrolls at double speed.
+## ── WHY THIS DRIVER NOW RUNS ON EVERY PLATFORM ───────────────────────────────────────────
+##
+## It used to stand down on a touchscreen (`is_touchscreen_available()` -> return), on the
+## theory that Godot's own finger drag would handle the phone and two drivers would scroll
+## twice as fast. **On a phone that theory produced a page which cannot be scrolled from a
+## button at all** — measured on the port's own web build under CDP touch emulation:
+##
+##     desktop profile: drag starting on a town tile -> page scrolled 56px
+##     touch   profile: drag starting on a town tile -> page did NOT move
+##     touch   profile: drag starting on empty space  -> page scrolled 56px
+##
+## which is Jan's report exactly: "when I tap a button and want to scroll, it doesn't work at
+## all. I have to hit somewhere where nothing is, which is sometimes a problem."
+##
+## The cause is that Godot's `ScrollContainer` begins its drag on the PRESS
+## (`if (mb->is_pressed()) { ... drag_touching = true; }`), and a `Button` under the finger
+## consumes that press, so the container never enters drag mode and the following motion is
+## ignored. This driver only *cancels* the button's press AFTER the deadzone — by then the
+## container has already missed the press it needed. Godot's own drag can therefore never be
+## made to start from a button, and the driver is the only thing that can.
+##
+## `setup()` therefore makes Godot's own drag INERT (a `scroll_deadzone` far larger than any
+## finger movement, so `beyond_deadzone` never flips) and this node becomes the ONE scroll
+## implementation on every platform. One path is also the only one that can be tested: the
+## arithmetic below is what `tools/test_page_scroll.gd` drives, and the same arithmetic is
+## what a finger now gets on a phone.
+##
+## A WHEEL is untouched by all this — `gui_input`'s wheel branch runs before the deadzone is
+## ever consulted, so a desktop mouse wheel still scrolls natively.
 
 ## Movement before the drag is allowed to move the page, matching the ScrollContainer's own
 ## `scroll_deadzone`. Without it every tap would nudge the page.
@@ -51,6 +78,13 @@ var _past_deadzone := false
 
 func setup(scroll: ScrollContainer) -> void:
 	_scroll = scroll
+	# Make Godot's OWN finger drag inert so this node is the single scroll path on every
+	# platform (see the header). `ScrollContainer` flips `beyond_deadzone` only once
+	# `abs(drag_accum) > scroll_deadzone`, so a deadzone larger than the canvas can never be
+	# crossed by a finger and its drag stays off — while the WHEEL branch runs earlier and
+	# still works for a desktop mouse.
+	if scroll != null:
+		scroll.scroll_deadzone = 1_000_000
 
 
 func _input(event: InputEvent) -> void:
@@ -61,9 +95,6 @@ func _input(event: InputEvent) -> void:
 	if _scroll == null or not is_instance_valid(_scroll):
 		return
 	if not _scroll.is_visible_in_tree():
-		return
-	# Godot's own finger drag is on: two drivers would scroll twice as fast.
-	if DisplayServer.is_touchscreen_available():
 		return
 
 	if event is InputEventScreenTouch:
@@ -101,6 +132,13 @@ func _input(event: InputEvent) -> void:
 
 ## A drag only starts inside the page. A swipe anywhere else in the window is somebody
 ## else's event — the arena has its own input and must not scroll a hidden town page.
+##
+## ⚠️ The rect MUST be the scroll container's and NOT the child column's. The town's banner
+## uses the PWA's full-bleed trick (`width:100vw; margin-left:calc(50% - 50vw)`), so a drag
+## that starts on the banner is still a drag on the PAGE — and so is one in the 8px gutter
+## beside the content. Measured on the port's web build: with the child column's rect a
+## banner drag did not scroll (0px) while a drag on a tile did, which reads to the player as
+## "scrolling works in some places and not others".
 func _begin(position: Vector2, pointer: int) -> void:
 	if not _scroll.get_global_rect().has_point(position):
 		_pointer = INACTIVE
