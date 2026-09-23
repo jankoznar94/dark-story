@@ -153,12 +153,29 @@ func generate_item(state, loc_id: int, floor_num: int, boss_drop: bool,
 ## Which base items are eligible: everything whose dropFloor has been reached.
 ## `dropFloor` in the data is a global depth (0-~150), not a per-act floor number,
 ## which is why it is compared against floor_num scaled by the act.
+##
+## ONLY EQUIPPABLE GEAR IS ELIGIBLE. The table also holds the consumables, the crafting
+## rune and the town portal scroll, all at `dropFloor` 0, so an unfiltered pool put 12 of
+## its 31 entries at act 1 (38.7 %) outside `generateLootItem` altogether: potions, runes
+## and scrolls arrived through the GEAR branch, at full gear weight, unasked. That is what
+## made act 1 drop "greater potions" — the branch rolls `quality` and affixes for a base
+## that has none, and a tier-5 potion can carry no affixes at all, so `generate` returned
+## the raw table entry. Every one of those has its own branch BELOW (`_roll_special`, and
+## the 70/30 gold split); this function is the PWA's `generateLootItem`, whose type bands
+## are weapon/armor/helmet/shield/belt/gloves/boots/ring/amulet and nothing else.
+const GEAR_TYPES := ["weapon", "armor", "helmet", "shield", "belt", "gloves", "boots",
+	"ring", "amulet"]
+
+
 func _pick_base_item(floor_num: int, rng: RandomNumberGenerator) -> Dictionary:
 	var depth := floor_num * 16
 	var pool: Array = []
 	for item in _data.items():
-		if int(item.get("dropFloor", 0)) <= depth and item.get("id") != "fists":
-			pool.append(item)
+		if int(item.get("dropFloor", 0)) > depth or item.get("id") == "fists":
+			continue
+		if not GEAR_TYPES.has(str(item.get("type", ""))):
+			continue
+		pool.append(item)
 	if pool.is_empty():
 		for item in _data.items():
 			if item.get("id") == "fists":

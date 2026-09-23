@@ -228,7 +228,7 @@ var _loot_button: Button
 ## rewired `#resultScreen.onclick` per outcome.
 var _result_tap_goes_to_map := false
 ## True once `_finish_fight` has settled this fight, so the page is built once and taps on
-## it are accepted only after `_button_lock` has run out.
+## it are accepted only after `_button_lock_ms` has run out.
 var _result_built := false
 
 var _log_lines: Array = []
@@ -237,10 +237,28 @@ var _pending_loot: Array = []
 ## Everything this fight rolled, bagged or not, for the result page's loot list. Kept apart
 ## from the bag because the page has to show a drop the bag could not take.
 var _result_loot_rows: Array = []
-## How many ticks each end-of-fight button must be up before it accepts a tap. A tap
-## that lands while the last damage frame is still drawing ends up on whichever button
-## just appeared — the player asked to attack, not to walk away. 3 ticks = 300 ms.
-var _button_lock := 0
+## Milliseconds left before the end-of-fight buttons accept a tap. Counted in REAL time —
+## see `BUTTON_LOCK_MS` — and decremented in `_process`, which is the only clock that runs
+## once a fight is over.
+var _button_lock_ms := 0
+## Re-entrancy guard for `_on_actions_resized`: `_place_tiles` writes the tiles' sizes, which
+## resizes the row, which fires the signal again.
+var _resizing_tiles := false
+## How many MILLISECONDS the end-of-fight buttons are up before they accept a tap. A tap
+## that lands while the last damage frame is still drawing ends up on whichever button just
+## appeared — the player asked to attack, not to walk away. 300 ms, as the PWA's own delay.
+##
+## It is counted in REAL time, not in fight ticks. The port first decremented this inside
+## `step()` once per tick, which tied a tap guard to the FIGHT's clock: a tick is 100 ms of
+## GAME time, and the screen's `_process` pumps ticks only while a fight is live — once the
+## fight ends, `step()` returns early at `battle.ended` and `_process` stops pumping ticks
+## entirely. The countdown therefore ran at whatever rate frames happened to deliver ticks
+## and, on a frame that delivered more than one tick (a hitch, or the browser tab being
+## backgrounded), two or three of them were spent at once. Read the report: "the Dalsi
+## souboj button sometimes does not work and I have to tap it repeatedly" — the taps landed
+## while the guard was still up. Real milliseconds cannot be spent faster than the player's
+## clock.
+const BUTTON_LOCK_MS := 300
 
 # Floating combat text, the PWA's replacement for a damage log.
 var _float_layer: Control
@@ -468,6 +486,10 @@ func _build_result_layer() -> void:
 	_tiles_holder.add_theme_constant_override("margin_bottom", 10)
 	_tiles_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_layer.add_child(_tiles_holder)
+	# The row is the tapped part of the page, so it re-places itself whenever its own rect
+	# changes rather than waiting for the one deferred layout pass per fight. See
+	# `_on_actions_resized()`.
+	_tiles_holder.resized.connect(_on_actions_resized)
 	_result_actions = HBoxContainer.new()
 	_result_actions.alignment = BoxContainer.ALIGNMENT_CENTER
 	_result_actions.add_theme_constant_override("separation", 6)
@@ -1000,7 +1022,7 @@ func start(state, find_item: Callable) -> bool:
 	_log_box_clear()
 	_loot_button.visible = false
 	_loot_button.disabled = false
-	_button_lock = 0
+	_button_lock_ms = 0
 	# The result page belongs to the PREVIOUS fight: left visible it would sit over the new
 	# one, and left built it would accept a tap meant for the arena.
 	_result_built = false
@@ -1082,8 +1104,6 @@ func start(state, find_item: Callable) -> bool:
 ## ONE call is always exactly TICK_MS of game time — the real-time pacing lives in
 ## `_process`, so a test still measures ticks and not frames.
 func step() -> void:
-	if _button_lock > 0:
-		_button_lock -= 1
 	if battle == null or battle.ended:
 		return
 	battle.tick(float(TICK_MS), _state, _find_item)
@@ -1105,6 +1125,11 @@ func step() -> void:
 func _process(delta: float) -> void:
 	_cast_this_frame = false
 	_frame_delta = maxf(delta, 0.0001)
+	# The tap guard runs on REAL time and on every frame, because once the fight is over
+	# `step()` returns early and ticks stop entirely — a guard counted in ticks would never
+	# come down at all. See `BUTTON_LOCK_MS`.
+	if _button_lock_ms > 0:
+		_button_lock_ms = maxi(0, _button_lock_ms - int(round(delta * 1000.0)))
 	_tick_accumulator += delta * 1000.0
 	var steps := 0
 	while _tick_accumulator >= float(TICK_MS) and steps < MAX_STEPS_PER_FRAME:
@@ -1741,7 +1766,7 @@ func _set_bar(track: Control, fill: ColorRect, value: float, maximum: float) -> 
 
 
 func _finish_fight() -> void:
-	_button_lock = 3
+	_button_lock_ms = BUTTON_LOCK_MS
 	var stop_complete := int(_state.data["areaFightProgress"][battle.act_id]) >= Battle.FIGHTS_PER_ZONE
 	if battle.won:
 		_append_log("Vyhrano")
@@ -1823,8 +1848,32 @@ func _show_result_page(stop_complete: bool) -> void:
 	_refresh_result_loot(won)
 	_result_tap_goes_to_map = won and stop_complete
 	_result_layer.visible = true
-	# The art's rect depends on the tiles' height, so it is settled after the page is up.
+	_place_tiles(_result_layer.size, _result_actions_h())
+	# The art's rect depends on the tiles' height, so a full layout pass has to follow any
+	# rebuild — but it is the LAST resort, not the first. See `_on_actions_resized()`:
+	# `_result_actions_h()` needs the tiles' `size.y`, which a container only assigns during
+	# its own layout pass, and when the deferred call below did not run (the window being
+	# resized, the tree mid-layout) every block kept the rect of the fight BEFORE this one.
 	call_deferred("_layout_result_page")
+
+
+## The tile row's rect, re-placed on EVERY change it reports.
+##
+## The tiles are the only things on the result page that are TAPPED, so a stale row is a
+## page whose buttons are dead to the finger. In the port the row was placed only from
+## `_layout_result_page()`, which runs deferred once per fight, while a `Control` sibling
+## laid over the page can sit on top of the tiles and swallow taps that were aimed at them
+## (the PWA's `#resultScreen` is the whole page's click target, and its own tiles are
+## z-indexed above it; a Godot `Button` does not have z-index, only tree order).
+##
+## The row's own height comes from the `HBoxContainer`, which resizes as it is populated,
+## so this fires exactly when the row has become the size the layout pass will use.
+func _on_actions_resized() -> void:
+	if _result_layer == null or not _result_layer.visible or _resizing_tiles:
+		return
+	_resizing_tiles = true
+	_place_tiles(_result_layer.size, _result_actions_h())
+	_resizing_tiles = false
 
 
 ## Place the artwork and the two overlays that sit ON it.
@@ -2008,7 +2057,7 @@ func _stop_name(act_id: int, stop: int) -> String:
 ## The page tap. The PWA rewired `#resultScreen.onclick` per outcome: a defeat goes to town
 ## (and the town heals), a cleared stop goes to the MAP so the next stop is chosen there.
 func _on_result_clicked() -> void:
-	if _button_lock > 0 or not _result_built:
+	if _button_lock_ms > 0 or not _result_built:
 		return
 	if _result_tap_goes_to_map:
 		map_requested.emit()
@@ -2017,13 +2066,13 @@ func _on_result_clicked() -> void:
 
 
 func _on_portal_pressed() -> void:
-	if _button_lock > 0:
+	if _button_lock_ms > 0:
 		return
 	portal_requested.emit()
 
 
 func _on_hero_pressed() -> void:
-	if _button_lock > 0:
+	if _button_lock_ms > 0:
 		return
 	hero_requested.emit()
 
@@ -2068,13 +2117,13 @@ func _on_surrender_confirmed() -> void:
 
 
 func _on_next_pressed() -> void:
-	if _button_lock > 0:
+	if _button_lock_ms > 0:
 		return
 	another_fight_requested.emit()
 
 
 func _on_leave_pressed() -> void:
-	if _button_lock > 0:
+	if _button_lock_ms > 0:
 		return
 	leave_requested.emit()
 
@@ -2082,7 +2131,7 @@ func _on_leave_pressed() -> void:
 ## Take the loot that did not fit. It stays in `_pending_loot` until a slot frees up, so
 ## nothing is destroyed by a full bag.
 func _on_loot_pressed() -> void:
-	if _button_lock > 0:
+	if _button_lock_ms > 0:
 		return
 	var taken := 0
 	var still: Array = []

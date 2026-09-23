@@ -38,7 +38,6 @@ func _initialize() -> void:
 	_test_stacking(data, gen, state)
 	_test_magic_find_curve(gen)
 	_test_loot_drops(data, gen, state)
-
 	for f in _failures:
 		print("  FAIL: %s" % f)
 	if _failures.is_empty():
@@ -271,3 +270,38 @@ func _test_loot_drops(data: Node, gen: ItemGen, state) -> void:
 	print("  boss rolls -> %d/200 guaranteed items" % boss_drops)
 	if boss_drops != 200:
 		_fail("a boss did not always drop an item (%d/200)" % boss_drops)
+
+	_test_gear_branch_drops_only_gear(data, gen, state)
+
+
+## The `item` branch is `generateLootItem`: GEAR with quality and affixes. The table it
+## picks its base from also holds the consumables, the crafting rune and the town portal
+## scroll — all at `dropFloor` 0 — so an unfiltered pool delivered potions and runes through
+## the gear branch, at full gear weight and unasked. That is what Jan saw as "act 1 drops
+## greater potions, which is nothing like how the PWA had loot set up".
+##
+## Each of those ids has its own branch in `_roll_special` (potions, the rune, the scroll),
+## and gold has the 70/30 split, so a gear drop must be EQUIPPABLE and nothing else.
+func _test_gear_branch_drops_only_gear(data: Node, gen: ItemGen, state) -> void:
+	var loot := LootSystem.new(data, gen)
+	var equip_types := ["weapon", "armor", "helmet", "shield", "belt", "gloves", "boots",
+		"ring", "amulet"]
+	var rng := _rng(4242)
+	var seen := {}
+	var wrong := 0
+	# Depth 0 is where the table has the most non-gear in it (12 of 31 entries, 38.7 %).
+	for _i in 1500:
+		var item: Dictionary = loot.generate_item(state, 0, 0, false, 5, 0, rng)
+		if item.is_empty():
+			wrong += 1
+			continue
+		var t := str(item.get("type", ""))
+		seen[t] = int(seen.get(t, 0)) + 1
+		if not equip_types.has(t):
+			wrong += 1
+	print("  1500 gear rolls at depth 0 -> %s, non-gear %d" % [str(seen), wrong])
+	if wrong > 0:
+		_fail("%d gear drops were not equippable (types: %s)" % [wrong, str(seen.keys())])
+	# And the branch must actually produce gear, not fall through to something empty.
+	if seen.size() < 3:
+		_fail("the gear branch produced only %d item types" % seen.size())

@@ -41,6 +41,7 @@ func _initialize() -> void:
 	_test_cast_through_the_screen_changes_the_battle()
 	_test_the_bar_refreshes_when_a_cooldown_expires()
 	_test_buttons_survive_a_render_tick()
+	_test_the_result_tiles_come_down_on_the_tap_clock()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -231,3 +232,64 @@ func _test_buttons_survive_a_render_tick() -> void:
 		_fail("render() replaced the spell buttons instead of leaving them alone")
 	if first.is_queued_for_deletion():
 		_fail("render() queued the spell button for deletion")
+
+
+## The end-of-fight tap guard must come down on the PLAYER's clock, and it must come down
+## once the fight is over.
+##
+## Jan's report: "the Dalsi souboj button on the victory page sometimes does not work and I
+## have to tap it repeatedly." The guard used to be decremented inside `step()`, i.e. once
+## per 100 ms FIGHT tick — and `_process` only pumps ticks while the fight is LIVE, so after
+## the kill the countdown depended on stray ticks from leftover accumulator time and a frame
+## that delivered several spent the whole guard at once. A tap during those frames was lost.
+##
+## Two halves, because either one alone can be broken:
+##   1. frames of REAL time bring the guard down (0.3 s of frames, not of fight time), and
+##   2. the guard does NOT come down at all when only `step()` is called, which is what a
+##      tick-only countdown did.
+const FRAME := 1.0 / 60.0
+
+
+func _test_the_result_tiles_come_down_on_the_tap_clock() -> void:
+	var s = _hero("barbarian", {}, 20)
+	var screen = _arena(s)
+	screen.battle.enemy_hp = 0.0
+	screen.battle.gap = 0.0
+	var guard := 0
+	while (not screen.battle.ended or not screen._result_built) and guard < 500:
+		screen.step()
+		guard += 1
+	if not screen._result_built:
+		_fail("the fight never settled, so the result page was never built")
+		return
+	if screen._button_lock_ms <= 0:
+		_fail("the result page came up with no tap guard at all")
+		return
+	var locked_ms: int = screen._button_lock_ms
+	# Half the guard in real frames: still locked. A tap here would be the lost one.
+	var frames := int(round(float(locked_ms) / 2.0 / (FRAME * 1000.0)))
+	for _i in frames:
+		screen._process(FRAME)
+	if screen._button_lock_ms <= 0:
+		_fail("half of the tap guard (%d ms of frames) already came down" % locked_ms)
+		return
+	# The rest of it, and a little past: now a tap must land.
+	for _i in frames + 4:
+		screen._process(FRAME)
+	if screen._button_lock_ms > 0:
+		_fail("the tap guard was still up after %d ms of real frames" % locked_ms)
+		return
+	# And the guard must be spent by FRAMES, not by ticks: a page with the guard up that
+	# only receives `step()` calls must stay locked, which is the bug in one line.
+	var fresh = _arena(_hero("barbarian", {}, 20))
+	fresh.battle.enemy_hp = 0.0
+	fresh.battle.gap = 0.0
+	guard = 0
+	while (not fresh.battle.ended or not fresh._result_built) and guard < 500:
+		fresh.step()
+		guard += 1
+	var before: int = fresh._button_lock_ms
+	for _i in 6:
+		fresh.step()
+	if fresh._button_lock_ms != before:
+		_fail("step() moved the tap guard: it is still counted in FIGHT ticks")
