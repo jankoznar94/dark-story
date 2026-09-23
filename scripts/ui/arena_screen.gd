@@ -105,6 +105,9 @@ const LOG_LINES := 3
 ## PWA colours, verbatim from public/style.css.
 const C_BG := "#121212"
 const C_GOLD := "#f1c40f"
+## The icon on the result page's GOLD row — a real image, because the game has no emoji, and
+## drawn by `tools/import/make_coin.py` so it is reproducible.
+const COIN_ICON := "assets/items/coin_gold.png"
 const C_ENEMY_TIMER := "#e67e22"
 const C_DIVIDER := "#9a9a9a"
 const C_ENEMY_HP := "#e74c3c"
@@ -237,6 +240,11 @@ var _pending_loot: Array = []
 ## Everything this fight rolled, bagged or not, for the result page's loot list. Kept apart
 ## from the bag because the page has to show a drop the bag could not take.
 var _result_loot_rows: Array = []
+## The gold this fight PAID, for the result page's loot list. Gold is a row of its own — Jan
+## asked for it, because a fight that paid only gold otherwise showed "Zadne predmety" over a
+## purse that had just been filled. Zero on a defeat (`battle.gd`'s loss path pays a
+## consolation that is not a drop), which is the same rule as the item rows.
+var _result_gold_won := 0
 ## Milliseconds left before the end-of-fight buttons accept a tap. Counted in REAL time —
 ## see `BUTTON_LOCK_MS` — and decremented in `_process`, which is the only clock that runs
 ## once a fight is over.
@@ -281,9 +289,13 @@ var _frame_delta := 1.0 / 60.0
 #
 # Nothing here is a rule: the battle's HP already IS the new number, the swing interval
 # already IS the weapon's interval. These are the values the SCREEN draws.
+#
+# The enemy's TIMER is deliberately not in this list: its clock is RESTARTED by the rules on
+# every swing, so an eased value re-targeted ten times a second could never reach the end of
+# the sweep (measured peaks: 87 % / 91 % / 93 % on 1 s / 1.5 s / 2 s swings). It is drawn
+# straight from `battle.enemy_swing_elapsed`, like the two gold rings.
 const EASE_HP_SECONDS := 0.2
 const EASE_MANA_SECONDS := 0.2
-const EASE_ENEMY_TIMER_SECONDS := 0.25
 ## `.enemy-hp-ghost-ring { transition: stroke-dashoffset 0.6s ease-out }` — the ghost is
 ## the slow one, so a hit bites.
 const EASE_GHOST_SECONDS := 0.6
@@ -311,9 +323,10 @@ var _mana_max_shown := 1.0
 var _enemy_hp_shown := 0.0
 var _enemy_hp_max_shown := 1.0
 
-## Swing animations: the hero lunges, the monster lunges, on their own attack.
+## Swing animations: the HERO lunges on his own attack and flinches when he is hit. The
+## monster has none — its dip-and-return on being hit read as its picture twitching and Jan
+## asked for it gone; the hit wash and the ±2px shake are what say the blow landed on it.
 var _hero_lunge := 0.0
-var _monster_lunge := 0.0
 var _hero_flinch := 0.0
 
 ## Everything the screen consumed out of `battle.log`, with the fight's clock at the moment
@@ -1027,6 +1040,7 @@ func start(state, find_item: Callable) -> bool:
 	# one, and left built it would accept a tap meant for the arena.
 	_result_built = false
 	_result_loot_rows = []
+	_result_gold_won = 0
 	_result_layer.visible = false
 	_result_tap_goes_to_map = false
 	# A new fight starts with a clean real-time clock: a remainder left over from the
@@ -1050,7 +1064,6 @@ func start(state, find_item: Callable) -> bool:
 	# there re-snapped the trail ten times a second — which is a ghost that never trails.
 	_arc_enemy_hp_ghost.set_value_ratio(1.0)
 	_hero_lunge = 0.0
-	_monster_lunge = 0.0
 	_hero_flinch = 0.0
 	_hero_flash = 0.0
 	_monster_flash = 0.0
@@ -1079,7 +1092,6 @@ func start(state, find_item: Callable) -> bool:
 	_snap_ease("hero_hp_max", battle.hero_max_hp)
 	_snap_ease("enemy_hp_max", battle.enemy_max_hp)
 	_snap_ease("mana_max", float(maxi(start_max_mana, 1)))
-	_snap_ease("enemy_timer", 0.0)
 	# The ghost starts FULL: a fresh enemy has taken no damage, so there is no trail to
 	# carry over from the previous fight.
 	_snap_ease("enemy_hp_ghost", 1.0)
@@ -1180,7 +1192,10 @@ func _drain_log() -> void:
 			_hero_lunge = 1.0
 			_monster_flash = 1.0
 		elif is_player_blow(kind, amount, on_player):
-			_monster_lunge = 1.0
+			# The MONSTER does not lunge. Its own 20px dip-and-return on being hit read as
+			# a twitch of its picture and Jan asked for it gone; the HIT wash is what says
+			# the blow landed on it now. Only the hero lunges (his own attack) and flinches
+			# (being hit).
 			_hero_flinch = 1.0
 			if amount > 0:
 				_hero_flash = 1.0
@@ -1253,6 +1268,14 @@ func _clear_floats() -> void:
 ## fixed amount per frame, so the same "0.06" was a 200 ms animation at 60 fps and a
 ## 100 ms one at 120 fps — and at the port's own frame rate an entire animation was over
 ## in six frames, which is why nothing on screen appeared to move.
+## The monster's own lunge (a 20px dip on being hit) is GONE — Jan read it as the enemy's
+## picture twitching down and up on every blow, and the HIT wash already says where the blow
+## landed. What stays is the walk-in tilt (`--monster-dy`, `closed * 8` px), which is part of
+## the approach, and the shake when the hero's swing lands.
+##
+## The swing TIMER has no lunge to ride, so the ring is now the only countdown on screen:
+## `_smooth_update` runs the bar itself and snaps the sweep at a restart. See the ease note
+## there for why a 0.25 s ease could never reach 100%.
 func _animate(delta: float) -> void:
 	if _float_layer == null:
 		return
@@ -1283,7 +1306,6 @@ func _animate(delta: float) -> void:
 
 	# Lunges decay over the PWA's 200 ms CSS animation.
 	_hero_lunge = maxf(0.0, _hero_lunge - delta * 5.0)
-	_monster_lunge = maxf(0.0, _monster_lunge - delta * 5.0)
 	_hero_flinch = maxf(0.0, _hero_flinch - delta * 5.0)
 	_hero_flash = maxf(0.0, _hero_flash - delta / EASE_HIT_SECONDS)
 	_monster_flash = maxf(0.0, _monster_flash - delta / EASE_HIT_SECONDS)
@@ -1296,10 +1318,14 @@ func _animate(delta: float) -> void:
 		# this needs no second node.
 		_hero_sprite.modulate = Color.WHITE.lerp(HIT_TINT, _hero_flash * HIT_TINT_STRENGTH)
 	if is_instance_valid(_portrait):
-		# The monster's own lunge (20px) plus the depth tilt the PWA applies as the hero
-		# walks in (`--monster-dy`, `closed * 8` px) — a boss keeps its geometry and
-		# does not tilt, exactly as the PWA's `if (monsterFig && !mb.isBoss)`.
+		# The depth tilt the PWA applies as the hero walks in (`--monster-dy`,
+		# `closed * 8` px) — a boss keeps its geometry and does not tilt, exactly as the
+		# PWA's `if (monsterFig && !mb.isBoss)`.
 		# Smoothed with the hero: the lean is part of the same walk-in and stepped with it.
+		#
+		# The monster's own 20px lunge used to be added here. It is gone (Jan: the enemy's
+		# picture twitched on every blow); the tilt is the only vertical motion left, and
+		# it belongs to the APPROACH, not to a hit.
 		var tilt := 0.0
 		if battle != null and not battle.is_boss:
 			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_displayed(), 0.0, 1.0))
@@ -1307,8 +1333,7 @@ func _animate(delta: float) -> void:
 		# wash. Without it the portrait was the one thing on screen that never reacted to
 		# its own damage — the ring and the bar moved and the figure did not.
 		var shake: float = round(2.0 * _monster_flash * sin(_monster_flash * 32.0))
-		var drop := 20.0 * _monster_lunge + tilt
-		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + drop)
+		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + tilt)
 		_portrait.position.x = round((_arena.size.x - _portrait.size.x) * 0.5 + shake)
 		_portrait.modulate = Color.WHITE.lerp(HIT_TINT, _monster_flash * HIT_TINT_STRENGTH)
 	if is_instance_valid(_cast_icon):
@@ -1476,20 +1501,23 @@ func _smooth_update() -> void:
 	if battle.offhand_swing_ms > 0:
 		_arc_offhand.set_value_ratio(clampf((battle.player_swing_elapsed + ahead)
 			/ float(battle.offhand_swing_ms), 0.0, 1.0))
-	# The enemy's timer is eased rather than interpolated straight off `ahead`: its clock is
-	# RESTARTED on every swing (the tick subtracts the interval), so a value read straight
-	# off `enemy_swing_elapsed` snapped backwards by a whole interval each time the monster
-	# swung — the same stutter the gold ring had before it was eased.
+	# The enemy's timer is the ONE gauge that must NOT be eased, and easing it was the
+	# whole of Jan's "the enemy's swing timer never finishes, it always resets at ~90 %".
+	#
+	# `_ease_to` re-targets on EVERY tick (the clock advances 100 ms ten times a second),
+	# and a re-target drops the duration back to 0.25 s from wherever the value had got to.
+	# Ten re-targets a second against a 0.25 s transition is an asymptotic crawl: measured
+	# against the real clocks (100 ms tick, 60 fps frames) the arc peaked at 87.1 % on a
+	# 1000 ms swing, 91.4 % on 1500 ms and 93.5 % on 2000 ms — never once full, and the
+	# shorter the weapon the earlier it looked to give up. The DAMAGE was always correct
+	# (it lands in the tick where `enemy_swing_elapsed` reaches `enemy_swing_ms`); only the
+	# drawing lagged, so it read as "it hits before the ring is done".
+	#
+	# A clock the rules RESTART must be drawn from the rules' own number. Read it straight,
+	# exactly like the two gold rings, which never had an ease for the same reason.
 	var timer_target := clampf((battle.enemy_swing_elapsed + ahead)
 		/ maxf(float(battle.enemy_swing_ms), 1.0), 0.0, 1.0)
-	var timer_now := _ease_value("enemy_timer")
-	# A restart is a real reset of the sweep; easing it over 250 ms would draw the ring
-	# travelling backwards. Snap on the drop, ease everything else.
-	if timer_target < timer_now - 0.5:
-		_snap_ease("enemy_timer", timer_target)
-	else:
-		_ease_to("enemy_timer", timer_target, EASE_ENEMY_TIMER_SECONDS)
-	_arc_enemy_timer.set_value_ratio(_ease_value("enemy_timer"))
+	_arc_enemy_timer.set_value_ratio(timer_target)
 
 	var enemy_ratio := clampf(_enemy_hp_shown / maxf(_enemy_hp_max_shown, 1.0), 0.0, 1.0)
 	_arc_enemy_hp.set_value_ratio(enemy_ratio)
@@ -1523,7 +1551,6 @@ func _smooth_update() -> void:
 func _on_pack_member_began() -> void:
 	sync_enemy_display()
 	battle.reset_gap()
-	_monster_lunge = 1.0
 
 
 ## The portrait and the name of the enemy currently being fought. Called from render() and
@@ -1773,6 +1800,10 @@ func _finish_fight() -> void:
 		award_loot()
 	else:
 		_append_log("Porazeno")
+		# A defeat drops nothing (the PWA clears the list), and the consolation gold the
+		# battle paid is not a DROP — it must not appear as a loot row either.
+		_result_loot_rows = []
+		_result_gold_won = 0
 		_state.save()
 	# The loot that did NOT fit in the bag is offered as a button rather than dropped
 	# silently: a player who wins a rare with a full bag must be able to see it exists.
@@ -1986,6 +2017,15 @@ func _result_actions_h() -> float:
 ## coloured, with its icon. A fight with no drops says so rather than showing nothing, which
 ## is how the PWA's own list reads.
 ##
+## GOLD IS A ROW TOO, on Jan's request: a fight that paid only gold used to leave the list
+## saying "Zadne predmety" over a purse that had just been filled, which reads as the fight
+## having paid nothing. It is drawn exactly like an item — same 32px icon slot, same row
+## shape — with `Zlato xN` in the game's own gold colour. The icon is a real asset
+## (`assets/items/coin_gold.png`, made by `tools/import/make_coin.py`); the game has no emoji.
+##
+## A row that is not an item is marked with a `gold` key, so one row builder handles both
+## without a second list to keep in step.
+##
 ## The PWA CLEARS this list on a defeat (`$('resultLootList').innerHTML = ''` — a defeat
 ## drops nothing at all), so `show` is passed in rather than inferred: a defeat page showing
 ## the drops of a monster that never died is worse than showing nothing.
@@ -1998,31 +2038,51 @@ func _refresh_result_loot(show: bool = true) -> void:
 		return
 	# The rows are the items the fight rolled, bagged OR pending: `_pending_loot` is the
 	# overflow, and a list that showed only what fit would hide exactly the drop the player
-	# needs to know about.
-	var rows: Array = _result_loot_rows
+	# needs to know about. The gold row is appended here rather than stored with them, so
+	# the two lists cannot drift.
+	var rows: Array = _loot_rows_with_gold()
 	if rows.is_empty():
 		_loot_list.add_child(_label("Zadne predmety", 12, Color("#555555"),
 			HORIZONTAL_ALIGNMENT_CENTER))
 		_loot_list.visible = true
 		return
-	for item in rows:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
-		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(32, 32)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		var icon_path := ItemStats.icon_path(item)
-		icon.texture = _load(icon_path) if icon_path != "" else null
-		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(icon)
-		var name_label := _label(str(item.get("name", item.get("id", ""))), 15,
-			ItemStats.quality_color(item), HORIZONTAL_ALIGNMENT_LEFT)
-		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		name_label.clip_text = true
-		row.add_child(name_label)
-		_loot_list.add_child(row)
+	for row_data in rows:
+		_loot_list.add_child(_make_loot_row(row_data))
 	_loot_list.visible = true
+
+
+## The fight's loot rows plus the gold row, if this fight paid any. The gold row is a
+## dictionary of its own shape so it cannot be mistaken for a real item:
+##   {"gold": <amount>, "name": "Zlato x<amount>"}
+func _loot_rows_with_gold() -> Array:
+	var rows: Array = _result_loot_rows.duplicate()
+	if _result_gold_won > 0:
+		rows.append({"gold": _result_gold_won, "name": "Zlato x%d" % _result_gold_won,
+			"id": "gold", "iconImg": COIN_ICON})
+	return rows
+
+
+## One row of `.result-loot-scroll`: a 32px icon, a rarity-coloured name, clipped to the row.
+## An item and the gold row differ ONLY in which icon and which colour they take, which is
+## what makes the gold read as "another thing this fight gave me".
+func _make_loot_row(row_data: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(32, 32)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var icon_path := COIN_ICON if row_data.has("gold") else ItemStats.icon_path(row_data)
+	icon.texture = _load(icon_path) if icon_path != "" else null
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(icon)
+	var colour := Color(UIKit.GOLD) if row_data.has("gold") else ItemStats.quality_color(row_data)
+	var name_label := _label(str(row_data.get("name", row_data.get("id", ""))), 15,
+		colour, HORIZONTAL_ALIGNMENT_LEFT)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
+	row.add_child(name_label)
+	return row
 
 
 ## The stop's own art, the PWA's `getStopImage`: generated images for the acts that have
@@ -2174,6 +2234,10 @@ func award_loot() -> void:
 		_state.add_item(item_id, item)
 		bagged += 1
 	_state.hero()["gold"] = int(_state.hero().get("gold", 0)) + int(result["gold"])
+	# The result page shows the gold as a row of its own, so the amount is kept here. Every
+	# other gold source (the kill gold inside `battle._finish`, a boss's reward) is settled
+	# before this and is not part of the drop list.
+	_result_gold_won = int(result["gold"])
 	_state.data["townPortalCount"] = int(_state.data.get("townPortalCount", 0)) + int(result["portals"])
 	if bagged > 0:
 		_append_log("Predmety: %d" % bagged)

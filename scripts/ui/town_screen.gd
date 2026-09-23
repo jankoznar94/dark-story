@@ -98,8 +98,15 @@ func _build() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# No scrollbar on screen — a page is scrolled by the finger, as in the PWA. See
+	# `ui_kit.screen_page` and `scroll_swipe.gd`.
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	scroll.scroll_deadzone = 8
 	add_child(scroll)
+
+	var swipe := ScrollSwipe.new()
+	swipe.setup(scroll)
+	add_child(swipe)
 
 	var column := VBoxContainer.new()
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL

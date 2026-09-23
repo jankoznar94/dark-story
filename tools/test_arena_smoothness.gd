@@ -334,29 +334,43 @@ func _test_a_hit_does_not_land_in_one_frame() -> void:
 
 
 ## The enemy's timer arc is read off a clock the battle RESTARTS on every swing (the tick
-## subtracts the whole interval), so a value read straight off `enemy_swing_elapsed` jumps
-## backwards by a full interval each time the monster swings. That is a stutter, and it is the
-## same class of bug the gold ring had.
+## subtracts the whole interval), so the arc jumps back to ~0 each time the monster swings.
 ##
 ## A jump back to ~0 IS the restart of a new sweep — the PWA does that too — but it may only
-## happen at the moment the ring is FULL, never halfway up.
+## happen at the moment the ring is FULL, never halfway up. And "full" has to mean full: the
+## arc used to be EASED (0.25 s) while `_ease_to` re-targeted it on every 100 ms tick, which
+## is an asymptotic crawl that peaked at 87 % / 91 % / 93 % on 1 s / 1.5 s / 2 s swings — never
+## once reaching 100 %. That is exactly the report "the enemy's swing timer never gets to the
+## end, it always resets at about 90 %". The fix is to draw the rules' own number, so this
+## test asserts BOTH halves: it sweeps monotonically up, and it really gets to the top.
+##
+## The bar cannot show a literal 1.00: the swing LANDS inside a tick, and that same tick is
+## the one that subtracts the whole interval, so the last thing drawn before the restart is
+## the interval minus whatever the frame had not yet spent (~1 %, i.e. 100 ms of a 2000 ms
+## swing). What the test pins is that the sweep gets essentially all the way — the eased
+## version never passed 93 % on that same clock.
 func _test_the_enemy_timer_never_sweeps_backwards() -> void:
-	print("== the enemy timer never sweeps backwards ==")
+	print("== the enemy timer never sweeps backwards == and it reaches the end")
 	var s = _hero()
 	var screen = _arena(s)
 	screen.battle.gap = 0.0
 	var backwards := 0
+	var peak := 0.0
 	var prev: float = screen._arc_enemy_timer.value
 	for _i in 240:   # 4 s: several enemy swings
 		screen._process(FRAME)
 		var now: float = screen._arc_enemy_timer.value
 		if now < prev - 0.05 and prev < 0.9:
 			backwards += 1
+		peak = maxf(peak, now)
 		prev = now
 	if backwards > 0:
 		_fail("the enemy timer jumped backwards %d times in 4 s" % backwards)
+	elif peak < 0.97:
+		_fail("the enemy timer peaked at %.1f %% over 4 s of frames - it never gets to the "
+			% (peak * 100.0) + "end of the sweep and the ring resets early")
 	else:
-		print("  the enemy timer advanced monotonically through 4 s of frames")
+		print("  the enemy timer advanced monotonically and reached %.1f %%" % (peak * 100.0))
 
 
 ## The other half of the split, and the reason it is safe: none of this may change what the

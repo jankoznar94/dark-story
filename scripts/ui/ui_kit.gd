@@ -154,7 +154,13 @@ static func coloured_panel(border_colour: Color) -> StyleBoxFlat:
 ##   var page := UIKit.screen_page(self)
 ##   page["column"].add_child(...)
 ##
-## Returns {root, column}.
+## `page["swipe"]` is the `ScrollSwipe` node driving the drag where Godot's own one is off —
+## see `scroll_swipe.gd`. The port draws NO scrollbar (`SCROLL_MODE_SHOW_NEVER`): the PWA is
+## scrolled by the finger and draws nothing, and a grey bar down the right edge is chrome the
+## original never had. SHOW_NEVER is also the one value that keeps the page's full width —
+## AUTO and RESERVE both reserve the bar's space.
+##
+## Returns {root, column, scroll, swipe}.
 static func screen_page(host: Control, top_pad: float = CONTAINER_PAD,
 		bottom_pad: float = NAV_RESERVE) -> Dictionary:
 	var bg := ColorRect.new()
@@ -166,10 +172,16 @@ static func screen_page(host: Control, top_pad: float = CONTAINER_PAD,
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	# Touch drag is how a phone scrolls; Godot's default deadzone is fine, but the scroll
-	# must not be swallowed by child buttons, so drag is enabled explicitly.
+	# No visible vertical bar. The scroll itself is unchanged — the bar is still moved by
+	# `ScrollSwipe` and by the wheel; only its drawing is off. SHOW_NEVER is the one value
+	# that keeps the full page width (AUTO and RESERVE both reserve the bar's space).
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	scroll.scroll_deadzone = 8
 	host.add_child(scroll)
+
+	var swipe := ScrollSwipe.new()
+	swipe.setup(scroll)
+	host.add_child(swipe)
 
 	var pad := MarginContainer.new()
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -184,7 +196,7 @@ static func screen_page(host: Control, top_pad: float = CONTAINER_PAD,
 	column.add_theme_constant_override("separation", 10)
 	pad.add_child(column)
 
-	return {"root": scroll, "column": column}
+	return {"root": scroll, "column": column, "scroll": scroll, "swipe": swipe}
 
 
 ## `.shop-back-map` — the full-width "Back to Town" button at the top of every sub-screen.

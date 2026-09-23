@@ -73,24 +73,64 @@ func _process(_delta: float) -> bool:
 	return false
 
 
+## Resolve `--screen` to (router key, tab). `inventory`, `talents` and `hero` are the PWA's
+## three tabs of ONE modal — in the port they are `character` plus a tab name. Both the
+## reference set's own names and an explicit `<screen>@<tab>` resolve here, and this is the
+## ONE place that knows the mapping.
+##
+## Why it is a function with a verdict rather than an `if` chain: `--screen inventory` used to
+## fall through to `show_screen("inventory")`, which pushes an error and shows NOTHING — the
+## town stayed up and `town.png` was written under the name `inventory.png`. The frame was
+## real and the file name was a lie, which is exactly how four of the ten PWA reference frames
+## went wrong in an earlier session. An unknown key now stops the capture instead.
+## The PWA's nav keys and the modal's PANE keys are two different vocabularies:
+## `main.gd`'s `MODAL_TABS` maps `talents -> skills` and `hero -> stats`, and the modal's own
+## `TABS` are `inventory` / `skills` / `stats`. Passing a nav key straight to `set_tab()` hits
+## `if not _panes.has(key): return` and leaves whatever tab was up — which is why all three
+## captures came back as the Inventory pane. The map is spelled out here the same way, and
+## an explicit `<screen>@<pane>` form stays available for an exact pane.
+func _resolve(name: String) -> Dictionary:
+	match name:
+		"inventory":
+			return {"key": "character", "tab": "inventory"}
+		"talents":
+			return {"key": "character", "tab": "skills"}
+		"hero":
+			return {"key": "character", "tab": "stats"}
+		"character":
+			return {"key": "character", "tab": "inventory"}
+		_:
+			if name.begins_with("character@"):
+				return {"key": "character", "tab": name.split("@")[1]}
+			return {"key": name, "tab": ""}
+
+
 func _entry() -> void:
 	if _screen == "":
 		return
-	# `inventory`, `talents` and `hero` are the PWA's three tabs of ONE modal — in the port
-	# they are `character` plus a tab name, so both the old keys (which the reference set
-	# is named after) and explicit `<screen>@<tab>` forms resolve here.
-	if _screen.begins_with("character"):
-		var tab := "inventory"
-		if _screen.contains("@"):
-			tab = _screen.split("@")[1]
+	var resolved := _resolve(_screen)
+	var key := str(resolved["key"])
+	if key == "character":
+		var tab := str(resolved["tab"])
 		_main.open_modal(tab)
+		# `CharacterModal.set_tab()` returns silently for a key it has no pane for, so a
+		# capture with a wrong key would write a REAL frame of whatever pane was already up
+		# under the name it asked for. All three of these came back byte-identical once.
+		var modal = _main._screens["character"]
+		if str(modal._active) != tab:
+			push_error("capture_screen: asked for pane '%s', the modal is on '%s'"
+				% [tab, str(modal._active)])
+			print("capture: FAIL pane '%s' is not in the modal (asked '%s', got '%s')"
+				% [tab, _screen, str(modal._active)])
+			quit(2)
+			return
 		return
-	if _screen == "arena":
+	if key == "arena":
 		# Entering through the REAL route: a stop on the map winds progress forward and
 		# starts the fight. `_on_wilderness()` used to exist and was deleted with the
 		# map rebuild, which silently broke every arena capture after that.
 		_main._on_stop_selected(0, 0)
-	elif _screen == "result":
+	elif key == "result":
 		# The result PAGE, which only exists at the end of a fight — so the fight has to
 		# actually end. `--result lose` kills the hero instead of the enemy.
 		_main._on_stop_selected(0, 0)
@@ -107,9 +147,17 @@ func _entry() -> void:
 			while (not arena.battle.ended or not arena._result_built) and guard < 300:
 				arena.step()
 				guard += 1
+	elif not _main._screens.has(key):
+		# A name the router does not have used to be a silent no-op: the capture then wrote
+		# whatever WAS up under the asked-for name.
+		push_error("capture_screen: no screen named '%s' (asked for '%s')" % [key, _screen])
+		print("capture: FAIL no screen named '%s'" % key)
+		quit(2)
+		return
 	else:
-		_main.show_screen(_screen)
-	if _fight_ticks > 0 and _screen == "arena":
+		_main.show_screen(key)
+
+	if _fight_ticks > 0 and key == "arena":
 		var arena = _main._screens["arena"]
 		var t := 0
 		while t < _fight_ticks and arena.battle != null and not arena.battle.ended:
@@ -121,5 +169,8 @@ func _capture() -> void:
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	img.save_png(_out)
-	print("capture: %s %dx%d" % [_out, img.get_width(), img.get_height()])
+	# `current` is the screen the port says is up — a file name is not evidence of its own
+	# contents, and these are diffs against the PWA.
+	print("capture: %s %dx%d asked=%s current=%s" % [_out, img.get_width(), img.get_height(),
+		_screen, str(_main._current)])
 	quit()

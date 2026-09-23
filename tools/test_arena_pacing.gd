@@ -25,6 +25,10 @@ const LootSystem := preload("res://scripts/items/loot_system.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 
+## One 60 Hz frame, the clock `_process` is driven with. Same constant as
+## `test_arena_smoothness` and `test_arena_screen` — a frame is not a tick.
+const FRAME := 1.0 / 60.0
+
 var _data: Node
 var _gen: ItemGen
 var _loot: LootSystem
@@ -48,6 +52,8 @@ func _initialize() -> void:
 	_test_the_result_page_actually_gets_laid_out()
 	_test_a_pack_hand_over_restarts_the_walk_in()
 	_test_a_swing_lunge_exists_on_a_landed_hit()
+	_test_a_gold_only_win_still_lists_the_gold()
+	_test_a_defeat_does_not_list_the_consolation_gold()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -354,10 +360,15 @@ func _test_the_result_page_shows_the_loot_and_the_ways_on() -> void:
 		if rows.is_empty():
 			_fail("the loot list has no rows at all (not even the 'no items' line)")
 		# Every item the fight rolled is registered as a known drop, so the row list has to
-		# agree with what the bag and the overflow between them hold.
+		# agree with what the bag and the overflow between them hold — PLUS the gold row,
+		# which is not an item and is deliberately kept out of `_result_loot_rows`.
 		var expected: int = screen._result_loot_rows.size()
-		if expected > 0 and rows.size() != expected:
-			_fail("the page lists %d loot rows for %d rolled drops" % [rows.size(), expected])
+		if screen._result_gold_won > 0:
+			expected += 1
+		if expected != rows.size():
+			_fail("the page lists %d loot rows for %d rolled drops (+%d gold row)"
+				% [rows.size(), screen._result_loot_rows.size(),
+					1 if screen._result_gold_won > 0 else 0])
 	# The tiles: a live win is Next Fight + Town + Hero, as the PWA's own `else` branch.
 	var labels := _action_labels(screen)
 	for needed in ["Dalsi souboj", "Do mesta"]:
@@ -400,10 +411,14 @@ func _test_a_defeat_page_has_no_tiles_and_leads_to_town() -> void:
 	# The tap must actually emit the town route once the button lock has run out.
 	var left := {"n": 0}
 	screen.leave_requested.connect(func(): left["n"] = int(left["n"]) + 1)
-	# `_button_lock` is 3 ticks, so a tap on the frame the page appeared is ignored on purpose
-	# (the player aimed at the arena). Burn the lock and tap.
-	while screen._button_lock > 0:
-		screen.step()
+	# `_button_lock_ms` runs on REAL time (see BUTTON_LOCK_MS) and the fight is already over,
+	# so `step()` no longer ticks at all — the lock is burned with frames, which is the clock
+	# the player's tap actually waits on. A tap on the frame the page appeared is ignored on
+	# purpose (the player aimed at the arena).
+	var lock_guard := 0
+	while screen._button_lock_ms > 0 and lock_guard < 600:
+		screen._process(FRAME)
+		lock_guard += 1
 	screen._on_result_clicked()
 	if int(left["n"]) != 1:
 		_fail("a defeat's page tap did not ask to leave (emitted %d times)" % int(left["n"]))
@@ -629,3 +644,70 @@ func _test_a_swing_lunge_exists_on_a_landed_hit() -> void:
 		on_player = bool(entry.get("onPlayer", false))
 	if not on_player:
 		_fail("the log's onPlayer key is not readable by the screen")
+
+
+## A win that paid ONLY gold must still show something: the list used to read "Zadne predmety"
+## over a purse the fight had just filled, which is indistinguishable from a fight that paid
+## nothing. Jan asked for the gold to be a row of its own, "as if it were an item".
+##
+## Forced rather than rolled: `roll_loot` is seeded off the wall clock, so a run can produce
+## items and then the test proves nothing about the gold row. The gold amount is written
+## straight and the list is rebuilt through the screen's own `_refresh_result_loot`.
+func _test_a_gold_only_win_still_lists_the_gold() -> void:
+	var s = _hero()
+	var screen = _arena(s)
+	screen._result_loot_rows = []
+	screen._result_gold_won = 137
+	screen._refresh_result_loot(true)
+	var rows := _loot_row_texts(screen)
+	if rows.size() != 1:
+		_fail("a gold-only win listed %d loot rows, expected exactly the gold row: %s"
+			% [rows.size(), str(rows)])
+		return
+	if not str(rows[0]).contains("137"):
+		_fail("the gold row reads '%s' - the amount is not on it" % str(rows[0]))
+	if str(rows[0]).contains("Zadne predmety"):
+		_fail("a gold-only win still says 'Zadne predmety'")
+	# The icon is a real asset and it must load: the game has no emoji, so a missing file
+	# would leave the row with an empty 32px slot.
+	var icon := _loot_row_icon(screen, 0)
+	if icon == null:
+		_fail("the gold row has no icon node")
+	elif icon.texture == null:
+		_fail("the gold row's icon is '%s' and it did not load" % screen.COIN_ICON)
+	print("  a gold-only win lists: %s" % str(rows))
+
+
+## ...and a defeat must NOT list it: the list is cleared on a loss (the PWA does the same),
+## and the consolation gold the battle pays is not a drop. A page that showed it would offer
+## a reward for dying.
+func _test_a_defeat_does_not_list_the_consolation_gold() -> void:
+	var s = _hero(1, 0)
+	s.equip()["weapon"] = "fists"
+	var screen = _arena(s, 6)
+	var b = screen.battle
+	b.hero_hp = 0.0
+	var guard := 0
+	while not b.ended or not screen._result_built:
+		screen.step()
+		guard += 1
+		if guard > 60:
+			_fail("the defeat never raised a result page")
+			return
+	if screen._result_gold_won != 0:
+		_fail("a defeat's page carries a gold row of %d - a loss pays no drop"
+			% screen._result_gold_won)
+	if _loot_row_texts(screen).size() != 0:
+		_fail("a defeat's page listed %s - a defeat drops nothing"
+			% str(_loot_row_texts(screen)))
+
+
+## The TextureRect of a loot row, for the icon assertion above.
+func _loot_row_icon(screen, index: int) -> TextureRect:
+	var children: Array = screen._loot_list.get_children()
+	if index >= children.size():
+		return null
+	for grand in children[index].get_children():
+		if grand is TextureRect:
+			return grand
+	return null

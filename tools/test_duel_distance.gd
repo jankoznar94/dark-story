@@ -262,17 +262,36 @@ func _test_renderer_walks_the_hero_in(data, state, find_item: Callable) -> void:
 	# The monster's lean is part of the same walk-in, and a boss must NOT lean: the PWA
 	# gates it on `!mb.isBoss`, so an untilted boss is the correct behaviour, not a bug.
 	#
-	# `_animate` takes real time now, so it is driven with a long enough delta that the
-	# decay cannot eat the freshly set lunge — a decayed lunge would make the tilt read as
-	# 0 px against an expected 8 and fail for a reason that has nothing to do with the boss.
+	# The MONSTER's own hit lunge is deliberately not part of this: it is gone (the
+	# portrait's 20px dip on every blow read as its picture twitching), so the tilt below is
+	# the ONLY vertical motion the portrait may have. `_animate` is driven with a real delta
+	# because the walk-in tilt is read through `_gap_displayed()`.
 	battle.is_boss = false
-	screen._monster_lunge = 0.0
 	screen._animate(0.016)
 	var tilt_normal: float = screen._portrait.position.y - (arena_h * 0.5 - 180.0 * 0.5)
 	battle.is_boss = true
-	screen._monster_lunge = 0.0
 	screen._animate(0.016)
 	var tilt_boss: float = screen._portrait.position.y - (arena_h * 0.5 - 180.0 * 0.5)
 	_check("the monster leans in at contact, and a boss does not",
 		is_equal_approx(tilt_normal, screen.MONSTER_TILT_MAX) and is_equal_approx(tilt_boss, 0.0),
 		"normal %.0f px, boss %.0f px" % [tilt_normal, tilt_boss])
+	# And a landed hit must NOT move the portrait vertically any more: the whole of "the
+	# enemy's picture twitches down and up on every blow" was the monster lunge, so this is
+	# the assertion that keeps it out. A blow the HERO landed is pushed through the log the
+	# way the battle writes it — plain `HIT`, `onPlayer` false — and the screen's own drain
+	# is what reacts to it.
+	battle.is_boss = false
+	# Settle the tilt FIRST: at contact a non-boss leans 8px, and measuring before that
+	# settle would blame the lean on the hit.
+	screen._animate(0.016)
+	screen._monster_flash = 0.0
+	var before_hit: float = screen._portrait.position.y
+	battle.log.append({"kind": "HIT", "amount": 7, "onPlayer": false})
+	screen._drain_log()
+	_check("the hero's blow lights the monster up", screen._monster_flash > 0.5,
+		"flash %.2f" % screen._monster_flash)
+	screen._animate(0.016)
+	_check("a landed hit does not dip the monster's portrait",
+		absf(screen._portrait.position.y - before_hit) <= 2.0,
+		"moved %.1f px on a hit (only the +/-2px shake is allowed)"
+			% (screen._portrait.position.y - before_hit))

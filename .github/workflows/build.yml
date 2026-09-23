@@ -145,6 +145,19 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SOCKETING_ALL_PASS=true"
 
+      # Jan's report: "the vertical scrollbar is visible, the page can only be scrolled with
+      # it, and a normal swipe does nothing." Both halves are invisible to every other test —
+      # a `ScrollContainer` only drags with a finger where Godot's own touch drag is live
+      # (false in a desktop browser), and the bar is drawn unless the mode is SHOW_NEVER.
+      # This pins the driver's arithmetic AND, on a real frame, that a DRAG does not fire the
+      # button it started on (the player swipes the town and a shop opens).
+      - name: Page scroll test (drag driver, no scrollbar, drag vs tap)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_page_scroll.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "PAGE_SCROLL_ALL_PASS=true"
+
       # The difficulty ladder is the one gate whose failure mode is a DEAD END, not a
       # wrong number: the town hides the Wilderness button when no act is left at the
       # current difficulty, so a ladder that never advances finishes Normal and stops
