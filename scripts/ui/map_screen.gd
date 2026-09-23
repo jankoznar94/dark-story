@@ -298,7 +298,37 @@ func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 	style.set_corner_radius_all(10)
 	for state_name in ["normal", "hover", "focus", "disabled"]:
 		card.add_theme_stylebox_override(state_name, style)
-	card.modulate = Color(1, 1, 1, 0.7) if completed else Color(1, 1, 1, 1)
+	# `.map-location.completed` -> `opacity:0.7`; `.map-location.locked` -> `opacity:0.6`.
+	# The locked value was MISSING here, and a locked card therefore came out at full
+	# opacity while the reference dims it — measured on the live PWA's own computed style.
+	if completed:
+		card.modulate = Color(1, 1, 1, 0.7)
+	elif not unlocked:
+		card.modulate = Color(1, 1, 1, 0.6)
+
+	# The card's own WASH, which the port used to draw as flat black and which is the reason
+	# the unlocked act read as "not lit": the PWA's inline style is
+	#   background:linear-gradient(135deg, ${theme.bg}cc, ${theme.bg}99 80%)
+	# i.e. the THEME's colour at 80 % alpha fading to 60 % along the top-left -> bottom-right
+	# diagonal. A `#000000` plate instead of it darkened the whole card, and it is the one
+	# layer that sits UNDER `.map-loc-bg` (z-index 0), so it shows through the artwork's 35 %
+	# of transparency.
+	var wash := TextureRect.new()
+	wash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	wash.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	wash.stretch_mode = TextureRect.STRETCH_SCALE
+	var wash_colour := Color(str(theme.get("bg", "#000000")))
+	var ramp := Gradient.new()
+	ramp.set_color(0, Color(wash_colour.r, wash_colour.g, wash_colour.b, 0.8))
+	ramp.set_color(1, Color(wash_colour.r, wash_colour.g, wash_colour.b, 0.6))
+	var ramp_tex := GradientTexture2D.new()
+	ramp_tex.gradient = ramp
+	ramp_tex.fill = GradientTexture2D.FILL_LINEAR
+	ramp_tex.fill_from = Vector2(0.0, 0.0)
+	ramp_tex.fill_to = Vector2(1.0, 1.0)
+	wash.texture = ramp_tex
+	wash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(wash)
 
 	# `.map-loc-bg` — the act's dungeon art behind the card at 65% opacity.
 	var art := TextureRect.new()
@@ -310,8 +340,32 @@ func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(art)
 
-	# `.map-loc-gate` — a locked act gets its gate art over the top, on 60% black.
+	# `.map-loc-gate` — the locked act's gate art over the card.
+	#
+	# The PWA's rule is
+	#   .map-loc-gate { position:absolute; inset:0; background-size:CONTAIN;
+	#                   background-position:center; background-repeat:NO-REPEAT;
+	#                   background-color:rgba(0,0,0,0.6); z-index:2 }
+	# and the port drew it wrong in TWO ways, both of which darken the card:
+	#
+	#   1. `background-size:contain` is the whole point. The gate art is a 900x300 image and
+	#      the card's content box is 356x117.3 — RATIOS 3.000 vs 3.036, so it fits almost
+	#      exactly and only a sliver of the edges is bare. The port stretched instead.
+	#   2. **The `background-color` and the image are not two visible layers.** Measured: the
+	#      gate art has NO alpha channel (`mode=RGB`, both `.webp` and `.png`), so the art
+	#      COVERS the 60 % black behind it and that colour is never seen. The port drew a
+	#      `ColorRect(0, 0, 0, 0.6)` ON TOP of the art as a separate layer, so the locked
+	#      card got the gate dimmed by 60 % AND the card dimmed again by the 0.6 modulate —
+	#      measured against the live PWA as 13 against 27, i.e. 0.6 x 0.8.
+	#
+	# So: the veil goes UNDER the art (which is what `background-color` means in CSS) and the
+	# card's own modulate carries the locked dimming.
 	if not unlocked:
+		var veil := ColorRect.new()
+		veil.color = Color(0, 0, 0, 0.6)
+		veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+		veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(veil)
 		var gate := TextureRect.new()
 		gate.set_anchors_preset(Control.PRESET_FULL_RECT)
 		gate.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -319,11 +373,6 @@ func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 		gate.texture = _theme_art(act_id, act, "gates")
 		gate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(gate)
-		var veil := ColorRect.new()
-		veil.color = Color(0, 0, 0, 0.6)
-		veil.set_anchors_preset(Control.PRESET_FULL_RECT)
-		veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		card.add_child(veil)
 
 	var row := HBoxContainer.new()
 	row.set_anchors_preset(Control.PRESET_FULL_RECT)

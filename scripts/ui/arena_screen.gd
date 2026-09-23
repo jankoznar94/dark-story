@@ -492,11 +492,15 @@ func _build_result_layer() -> void:
 	_result_layer.add_child(_loot_button)
 
 	# `.result-bottom { position:absolute; bottom:0; padding:10px 12px; gap:6px }`.
+	# The row's total height is `_result_actions_h()` = 20 (the two 10px paddings) + a tile,
+	# so the box already contains the padding — a `margin_bottom` of 10 here would take its
+	# 10px OUT of that total and leave the tiles 97 tall inside a 107 row (measured). The
+	# live PWA's 4-tile row is 107 tall at y=737 and its tiles are square 87.
 	_tiles_holder = MarginContainer.new()
 	_tiles_holder.add_theme_constant_override("margin_left", 12)
 	_tiles_holder.add_theme_constant_override("margin_right", 12)
 	_tiles_holder.add_theme_constant_override("margin_top", 0)
-	_tiles_holder.add_theme_constant_override("margin_bottom", 10)
+	_tiles_holder.add_theme_constant_override("margin_bottom", 0)
 	_tiles_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_layer.add_child(_tiles_holder)
 	# The row is the tapped part of the page, so it re-places itself whenever its own rect
@@ -532,6 +536,14 @@ func _make_action_tile(icon_path: String, label_text: String, on_press: Callable
 	var tile := Button.new()
 	tile.custom_minimum_size = Vector2(RESULT_TILE, RESULT_TILE)
 	tile.focus_mode = Control.FOCUS_NONE
+	# `.result-bottom { align-items:center }` + `.result-tile { aspect-ratio:1 }` — a tile is
+	# SQUARE. Its parent is an `HBoxContainer` inside the `.result-bottom` MarginContainer, and
+	# an `HBoxContainer` stretches every child to the row's full height by default, so the tiles
+	# came out 87 WIDE and 97 TALL: the row's height is the container's 107 minus the 10px
+	# bottom margin, and the buttons filled all of it. Measured in the port as
+	# `actions=[12, 737, 366x97]` against the live PWA's square 87x87 / 90x90. Tall rectangles
+	# packed edge to edge is exactly what "the buttons are crammed together" looks like.
+	tile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var style := _flat_style("#000000", "#333333", 10)
 	style.set_border_width_all(2)
 	for state_name in ["normal", "hover", "focus", "disabled"]:

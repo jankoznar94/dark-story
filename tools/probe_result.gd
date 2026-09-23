@@ -67,6 +67,11 @@ func _process(_delta: float) -> bool:
 	_rect("hp_line", arena._result_hp_line)
 	_rect("loot_list", arena._loot_list)
 	_rect("actions", arena._result_actions)
+	for i in arena._result_actions.get_child_count():
+		var tile: Control = arena._result_actions.get_child(i)
+		var g := tile.get_global_rect()
+		print("  tile[%d]     %s size=%s flags_v=%d" % [i, str(g), str(tile.size),
+			tile.size_flags_vertical])
 	print("actions=%d loot_rows=%d tiles=%s"
 		% [arena._result_actions.get_child_count(), arena._loot_list.get_child_count(),
 			str(_labels(arena))])
