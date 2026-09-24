@@ -107,8 +107,14 @@ func _build_gem_items() -> void:
 				"type": "gem",
 				"gemType": gem_type,
 				"gemQuality": q,
-				# iconImg uses the 0-based quality INDEX, matching the asset names.
-				"iconImg": "assets/gems/%s%d.png" % [gem_type, idx],
+				# The asset names use the QUALITY NAME, not the 0-based index this used to
+				# emit: the files are `emerald_chipped.png` / `emerald.png` and the code asked
+				# for `emerald0.png` / `emerald2.png`, so `_load` returned null for all 20
+				# gems and every gem drew as an empty 32px slot — on the victory page, in the
+				# bag, in the shop and in socketing. `normal` is the bare `<type>.png`, which
+				# is the same "no suffix" rule the id above already uses.
+				"iconImg": "assets/gems/%s%s.png" % [gem_type,
+					"" if q == "normal" else "_" + str(q)],
 				"cost": costs.get(q, 20),
 				"tier": tiers.get(q, 1),
 				"quality": "magic",
@@ -150,6 +156,29 @@ func items() -> Array:
 func item(id: String) -> Dictionary:
 	_ensure_loaded()
 	return _items_by_id.get(id, {})
+
+
+## EVERY item the game can hand out, keyed by id — the static ITEMS table PLUS the gems
+## `_build_gem_items()` synthesises from GEMS.json.
+##
+## `items()` above returns the RAW table and therefore does NOT contain a single gem: the
+## 20 gem entries live only in `_items_by_id`. A test that walked `items()` to check icon
+## paths was blind to exactly the entries that were broken (all 20 gems pointed at files
+## that do not exist, and the check still reported "0 missing").
+func item_ids() -> Array:
+	_ensure_loaded()
+	var ids: Array = _items_by_id.keys()
+	ids.sort()
+	return ids
+
+
+## All items by id, as an Array of dictionaries. The counterpart to `item_ids()`.
+func all_items() -> Array:
+	_ensure_loaded()
+	var out: Array = []
+	for id in item_ids():
+		out.append(_items_by_id[id])
+	return out
 
 
 func unique_items() -> Array:

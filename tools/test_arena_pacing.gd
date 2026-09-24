@@ -56,6 +56,7 @@ func _initialize() -> void:
 	_test_a_defeat_does_not_list_the_consolation_gold()
 	_test_the_combat_log_is_gone()
 	_test_a_loot_row_is_readable()
+	_test_a_loot_row_hairline_is_one_pixel()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -803,6 +804,55 @@ func _test_a_loot_row_is_readable() -> void:
 	if icon_h + float(pad) < 42.0:
 		_fail("a loot row's height is icon %s + padding %d px — the rows are still packed: %s"
 			% [str(icon_h), pad, str(rows[0].get_combined_minimum_size())])
+
+
+## The row's `border-bottom` must stay 1px, and the failure this guards against was NOT a
+## wrong constant: `custom_minimum_size` was already (0, 1). The line was a direct child of
+## the row's `MarginContainer`, and `MarginContainer` calls `fit_child_in_rect()` on every
+## child, so the line came out as tall as the row and — because it is added AFTER the
+## `HBoxContainer` — painted straight over the icon and the name. Jan saw grey rectangles
+## with no text and the constant looked innocent the whole time.
+##
+## So the assertion is STRUCTURAL, not numeric: a rule-height `ColorRect` must not sit
+## directly in a `MarginContainer`. Checking only `custom_minimum_size` would pass against
+## the broken code, which is exactly what the old test did.
+func _test_a_loot_row_hairline_is_one_pixel() -> void:
+	var screen = _arena(_hero())
+	screen._result_loot_rows = [{"id": "loot_1", "name": "Kratky mec", "rarity": "rare"}]
+	screen._result_gold_won = 0
+	screen._refresh_result_loot(true)
+	var rows: Array = screen._loot_list.get_children()
+	if rows.is_empty():
+		_fail("the loot list has no rows, so the hairline is not under test")
+		return
+	var rules: Array = []
+	_collect_rules(rows[0], rules)
+	if rules.is_empty():
+		_fail("a loot row has no hairline under it — the CSS `border-bottom` is gone")
+		return
+	for entry in rules:
+		var rule: ColorRect = entry["node"]
+		var parent: Node = entry["parent"]
+		if rule.custom_minimum_size.y > 1.0:
+			_fail("the loot row's hairline claims %dpx of minimum height, expected 1"
+				% int(rule.custom_minimum_size.y))
+		# The structural half — this is the one that catches the real bug.
+		if parent is MarginContainer:
+			_fail(("the loot row's hairline is a direct child of a MarginContainer, which "
+				+ "forces it to the full row height and paints it over the icon and the "
+				+ "name — put it in a BoxContainer instead"))
+
+
+## Every `ColorRect` in the subtree whose minimum height is at most 1px — i.e. a hairline
+## rather than a filled plate. Returned with its PARENT, because the bug is about the
+## parent's layout behaviour and not the rect's own size.
+func _collect_rules(node: Node, out: Array) -> void:
+	for child in node.get_children():
+		if child is ColorRect:
+			var rect := child as ColorRect
+			if rect.custom_minimum_size.y <= 1.0:
+				out.append({"node": rect, "parent": node})
+		_collect_rules(child, out)
 
 
 func _subtree_label(node: Node) -> Label:

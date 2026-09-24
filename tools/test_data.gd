@@ -85,6 +85,43 @@ func _initialize() -> void:
 	else:
 		print("  act 0 -> %s, boss %s" % [act["name"], act["boss"]["name"]])
 
+	# EVERY item's `iconImg` must point at a file that EXISTS. The check above covers assets
+	# whose CONTENT lies about their extension; this one covers a path that names a file
+	# nobody ever wrote, which reads as correct in the data layer — the String is non-empty,
+	# every `iconImg` assertion passes — and is only visible when something tries to LOAD it.
+	# That is exactly how all 20 gems shipped with an empty 32px slot everywhere (the data
+	# built `assets/gems/emerald0.png` while the files are `emerald_chipped.png`).
+	#
+	# `fists` is the deliberate exception: it is the UNARMED state rather than a real weapon,
+	# it is never dropped (`loot_system` skips it) and the PWA's own entry carries an empty
+	# `iconImg`. Anything else missing is a bug.
+	const NO_ICON_BY_DESIGN := ["fists"]
+	var missing_icons: Array[String] = []
+	var icons_checked := 0
+	# `data.all_items()`, NOT `data.items()`: the latter is the raw ITEMS table and contains
+	# no gem at all — the 20 gems are synthesised into `_items_by_id` by `_build_gem_items()`.
+	# Walking `items()` made this check blind to precisely the entries that were broken.
+	var all_items: Array = data.all_items()
+	if all_items.size() <= data.items().size():
+		failures.append(("all_items() returned %d entries against a %d-row ITEMS table, so the "
+			+ "synthesised items (gems) are missing from it and this check is blind again")
+			% [all_items.size(), data.items().size()])
+	for entry in all_items:
+		if not entry is Dictionary:
+			continue
+		var id := str(entry.get("id", "?"))
+		var icon_path := str(entry.get("iconImg", ""))
+		if icon_path == "":
+			if not NO_ICON_BY_DESIGN.has(id):
+				missing_icons.append("%s (%s): no iconImg at all" % [id, entry.get("type", "?")])
+			continue
+		icons_checked += 1
+		if not ResourceLoader.exists(icon_path):
+			missing_icons.append("%s (%s): %s" % [id, entry.get("type", "?"), icon_path])
+	print("  %d item icons -> %d missing" % [icons_checked, missing_icons.size()])
+	for missing in missing_icons:
+		failures.append("item icon does not exist: %s" % missing)
+
 	for f in failures:
 		print("  FAIL: %s" % f)
 	if failures.is_empty():

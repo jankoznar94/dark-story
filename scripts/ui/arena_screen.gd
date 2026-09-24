@@ -155,6 +155,10 @@ const RESULT_TILE := 84.0
 ## the reference — the reference is a desktop page, he plays on a phone.
 const LOOT_ROW_FONT := 17
 const LOOT_ROW_PAD := 5
+## The row's `border-bottom`, in px. Kept a named constant because a bare `1` is what a
+## reviewer reads as "obviously one pixel" — it was one, in the minimum size, and the row
+## still came out covered by it (see `_make_loot_row`).
+const LOOT_ROW_RULE := 1
 
 var _data: Node
 var _gen: ItemGen
@@ -2074,6 +2078,14 @@ func _loot_rows_with_gold() -> Array:
 ## One row of `.result-loot-scroll`: a 32px icon, a rarity-coloured name, clipped to the row.
 ## An item and the gold row differ ONLY in which icon and which colour they take, which is
 ## what makes the gold read as "another thing this fight gave me".
+##
+## THE HAIRLINE IS IN A `VBoxContainer`, NOT IN THE `MarginContainer`, and that is not a
+## style choice. `MarginContainer` calls `fit_child_in_rect()` on each child, so it FORCES
+## every one of them to the full margin box — a `ColorRect` whose `custom_minimum_size` is
+## (0, 1) therefore came out 32px tall, drawn AFTER the row and straight over the icon and
+## the name. Jan's report was "only grey rectangles, no text", and it was exactly this: the
+## 1px `border-bottom` covering the whole row. A `BoxContainer` gives a non-expanding child
+## its minimum size on the main axis, so the line stays 1px there.
 func _make_loot_row(row_data: Dictionary) -> Control:
 	# `.loot-scroll-item { padding:5px 8px; font-size:15px; gap:10px;
 	#   border-bottom:1px solid #1a1a1a }` — the port had NO padding at all and a 0px list
@@ -2081,14 +2093,23 @@ func _make_loot_row(row_data: Dictionary) -> Control:
 	# Jan: "the loot on the victory page is hard to read, make the font a bit bigger,
 	# maybe slightly bigger vertical gaps too." So the row is now a padded box (the CSS's
 	# own 5px above/below) with a 17px name, which lifts each row to ~42px.
+	#
+	# The vertical padding is on the OUTER box and the 8px side padding on an INNER one, so
+	# the hairline spans the row's full width the way a CSS `border-bottom` does — an
+	# `8px` margin on the outer box would have inset the line by 8px on each side.
 	var pad := MarginContainer.new()
 	pad.add_theme_constant_override("margin_top", LOOT_ROW_PAD)
 	pad.add_theme_constant_override("margin_bottom", LOOT_ROW_PAD)
-	pad.add_theme_constant_override("margin_left", 8)
-	pad.add_theme_constant_override("margin_right", 8)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	pad.add_child(column)
+	var sides := MarginContainer.new()
+	sides.add_theme_constant_override("margin_left", 8)
+	sides.add_theme_constant_override("margin_right", 8)
+	column.add_child(sides)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
-	pad.add_child(row)
+	sides.add_child(row)
 	var icon := TextureRect.new()
 	icon.custom_minimum_size = Vector2(32, 32)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2103,11 +2124,16 @@ func _make_loot_row(row_data: Dictionary) -> Control:
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	row.add_child(name_label)
-	# A hairline under every row but the last, the CSS's own `border-bottom`.
+	# A hairline under every row but the last, the CSS's own `border-bottom`. `SHRINK_BEGIN`
+	# is set as well as the minimum size: the minimum is what the box container uses, but
+	# stating the flag means a future move back into a `MarginContainer` cannot silently
+	# stretch it over the row again.
 	var line := ColorRect.new()
 	line.color = Color("#1a1a1a")
-	line.custom_minimum_size = Vector2(0, 1)
-	pad.add_child(line)
+	line.custom_minimum_size = Vector2(0, LOOT_ROW_RULE)
+	line.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(line)
 	return pad
 
 
