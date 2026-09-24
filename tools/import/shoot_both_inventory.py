@@ -51,8 +51,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 REF = os.path.join(ROOT, "tools", "reference")
 GODOT = os.path.expanduser("~/tools/godot/godot4")
-SAVE = os.path.expanduser(
+# ⚠️  THE PORT HAS NO ISOLATED `user://` BY DEFAULT — a Godot run reads AND writes
+# `~/.local/share/godot/app_userdata/Dungeon Recall/`, which is the PLAYER'S OWN SAVE.
+# Writing the measurement loadout there and forgetting to restore it deleted Jan's
+# progress twice in one session (145 KB -> 1.4 KB skeletons). `XDG_DATA_HOME` redirects
+# the whole app_userdata tree, which is the only isolation that actually holds — so every
+# Godot invocation in this script runs under an isolated one and the real save is READ
+# ONCE, as a seed, and never written.
+ISO_DATA = os.environ.get("DR_ISO_DATA", "/tmp/dr_godot_iso")
+ISO_SAVE = os.path.join(ISO_DATA, "godot", "app_userdata", "Dungeon Recall",
+                        "dungeon_recall_save.json")
+REAL_SAVE = os.path.expanduser(
     "~/.local/share/godot/app_userdata/Dungeon Recall/dungeon_recall_save.json")
+SAVE = ISO_SAVE
 LS_KEY = "dungeonRecallV7"
 
 # The ONE loadout, in (item id, equip slot) order. Every id exists in ITEMS.json
@@ -71,7 +82,22 @@ EQUIP_ORDER = [
 ]
 
 # What stays in the bag, so the grid is not empty in either frame. Bought but not worn.
-BAG_ITEMS = ["armor_ringMail", "helm_helm", "silverRing"]
+#
+# ⚠️  `blade_shortSword` IS PART OF THIS LIST, and its absence made the bag unusable as
+# evidence: the hero's class KIT equips the start weapon, so the PWA's own save carries it
+# back in the bag the moment the scimitar replaces it (measured: `inv` =
+# ["blade_shortSword", "armor_ringMail", "helm_helm", "silverRing"]). The port's save
+# REPLACES `hero.equip` wholesale, so its bag was three items and every cell held a
+# DIFFERENT icon from the PWA's corresponding cell — which makes each cell's pixel
+# difference unattributable (a diff there can be the icon, the fill, the border or the
+# backing). Same order on both sides, so cell i shows the same item.
+#
+# `healingPotion` is bought too, but it never lands in the bag: the PWA's `buyItem` puts a
+# consumable straight into the first EMPTY BELT slot, which is the state the port's
+# `beltPotionSlots` already describes. Without the buy the PWA's belt row is eight empty
+# tiles against the port's seven-plus-a-potion, and the belt band reads as 5.9 % differ
+# for no reason but the harness.
+BAG_ITEMS = ["armor_ringMail", "helm_helm", "silverRing", "healingPotion"]
 
 # The port's save is written directly (it has no shop to drive), and it uses the same
 # ids — so the two frames show the same thing.
@@ -149,6 +175,13 @@ async def pwa_side():
         #    `#testToggle` is the page's own gold/test control.
         await ev("(() => { const t=document.getElementById('testToggle'); if (t) t.click(); })()")
         await asyncio.sleep(1.5)
+        # ⚠️  `toggleTestMode()` SETS `talentPoints = 50` AND `attrPoints = 150`, and that is
+        # NOT a cosmetic side effect: it is what makes the two `.tab-badge` pills appear
+        # (Skills "50", Stats "150"), and the pills are 1 733 differing pixels of the frame.
+        # The PORT's save has 0 of each, so a frame shot after this leaves the port without
+        # badges through no fault of its own — the diff would be measuring a state the port
+        # was never told to reproduce. The loadout below therefore carries the same two
+        # numbers, so both sides show what the player is shown.
         built = []
         for item, slot in EQUIP_ORDER:
             await ev(f"(() => {{ try {{ game.buyItem('{item}'); }} catch(e) {{}} }})()")
@@ -186,6 +219,9 @@ async def pwa_side():
             "         weapon:(s.hero||{}).equip ? s.hero.equip.weapon : null,"
             "         belt:(s.hero||{}).equip ? s.hero.equip.belt : null,"
             "         invsz:(s.hero ? s.hero.inventory : []).length}; })()")
+        out["bagIds"] = await ev(
+            "(() => { const s=JSON.parse(localStorage.getItem('" + LS_KEY + "')||'{}');"
+            " return ((s.hero||{}).inventory||[]).map(e => (e && e.id) || e); })()")
         out["saved"] = check
         # OPEN the modal and ASSERT it opened. `game.showScreen('inventory')` LOOKS like the
         # right call and prints nothing when it fails: the PWA's `showScreen` starts with a
@@ -212,7 +248,8 @@ REPORT_JS = """
     const r = el.getBoundingClientRect();
     return [+r.x.toFixed(1), +r.y.toFixed(1), +r.width.toFixed(1), +r.height.toFixed(1)];
   };
-  const out = {slots: {}, bag: [], potion: null};
+  const out = {slots: {}, bag: [], potion: null, wrap: null, grid: null,
+               potionWrap: null, potionCount: 0};
   document.querySelectorAll('.inv-equip-slot').forEach(el => {
     const cs = getComputedStyle(el);
     const img = el.querySelector('img');
@@ -249,6 +286,71 @@ REPORT_JS = """
                   border: pcs.borderTopWidth + ' ' + pcs.borderTopColor,
                   img_box: pi ? box(pi) : null, fit: pics ? pics.objectFit : null};
   }
+  // The two containers the bag sits in, and the belt row's own box. Measured because a
+  // cell that moved by 4px can be a cell, a grid or a wrap — and the diff cannot say which.
+  const pw = document.querySelector('.inv-potion-slots');
+  out.potionWrap = pw ? box(pw) : null;
+  out.potionCount = document.querySelectorAll('.inv-potion-slot').length;
+  const w = document.getElementById('invGridWrap');
+  out.wrap = w ? box(w) : null;
+  const g = document.getElementById('invGrid');
+  out.grid = g ? box(g) : null;
+  // The paper doll's own container and the pane it lives in. The port's whole doll sits a
+  // uniform 4px above the PWA's, so the offset is ONE gap at the doll's top edge and not a
+  // row height — these two rects are what say which of them carries it.
+  const ep = document.querySelector('.inv-equip-panel');
+  out.equipPanel = ep ? box(ep) : null;
+  if (ep) {
+    const ecs = getComputedStyle(ep);
+    out.equipStyle = {display: ecs.display, gap: ecs.gap, padding: ecs.padding,
+                      margin: ecs.margin,
+                      rows: ecs.gridTemplateRows,
+                      cols: ecs.gridTemplateColumns};
+  }
+  const pane = document.getElementById('invGridWrap') &&
+               document.getElementById('invGridWrap').parentElement;
+  out.paneParent = pane ? box(pane) : null;
+  const scr = document.getElementById('inventoryScreen');
+  out.invScreen = scr ? box(scr) : null;
+  if (scr) {
+    const scs = getComputedStyle(scr);
+    out.invScreenStyle = {padding: scs.padding, margin: scs.margin, display: scs.display,
+                          gap: scs.gap};
+  }
+  // The modal's own head: `.modal-content` and the `.combined-tabs` strip. `#inventoryScreen`
+  // starts 4px lower in the PWA than in the port, and the tabs strip is the only thing above
+  // it — so the strip's own height is the suspect, not the pane's contents.
+  const mc = document.querySelector('.modal-content');
+  out.modalContent = mc ? box(mc) : null;
+  const ct = document.querySelector('.combined-tabs');
+  out.tabs = ct ? box(ct) : null;
+  if (ct) {
+    const tcs = getComputedStyle(ct);
+    out.tabsStyle = {display: tcs.display, padding: tcs.padding, margin: tcs.margin,
+                     gap: tcs.gap, minHeight: tcs.minHeight, height: tcs.height,
+                     alignItems: tcs.alignItems};
+  }
+  const tab = ct && ct.querySelector('.combined-tab, button, [data-tab]');
+  out.tab0 = tab ? box(tab) : null;
+  if (tab) {
+    const bcs = getComputedStyle(tab);
+    out.tab0Style = {padding: bcs.padding, margin: bcs.margin, fontSize: bcs.fontSize,
+                     lineHeight: bcs.lineHeight, height: bcs.height, border: bcs.borderTopWidth,
+                     display: bcs.display};
+  }
+  // WHO makes the strip 55 tall when its tallest declared child is 32? List every child's
+  // own box, so the extra 3px is attributed instead of guessed at (the port's strip is 52).
+  out.tabsChildren = [];
+  if (ct) {
+    for (const child of ct.children) {
+      const ccs = getComputedStyle(child);
+      out.tabsChildren.push({tag: child.tagName, cls: child.className,
+                             box: box(child), h: ccs.height, lh: ccs.lineHeight,
+                             mb: ccs.marginBottom, mt: ccs.marginTop,
+                             pt: ccs.paddingTop, pb: ccs.paddingBottom,
+                             fs: ccs.fontSize, flex: ccs.flex, alignSelf: ccs.alignSelf});
+    }
+  }
   return out;
 })()
 """
@@ -280,18 +382,57 @@ async def open_inventory(ev):
 
 
 def port_side():
-    """Write the same loadout into the port's save and shoot it."""
-    backup = SAVE + ".bak"
-    if os.path.exists(SAVE):
-        with open(SAVE) as fh:
-            original = fh.read()
-        with open(backup, "w") as fh:
-            fh.write(original)
-    with open(SAVE) as fh:
+    """Write the same loadout into an ISOLATED Godot save and shoot the port.
+
+    The isolated tree is seeded from the REAL save when one exists, so the frame still
+    shows a played state (`townPortalCount > 0` changes the result page, and an empty bag
+    makes the grid read as invented) — but nothing this function writes can reach the
+    player's own file. See the module-level `ISO_DATA` note: the earlier version wrote the
+    real save and relied on restoring it, which cost Jan his progress twice.
+    """
+    os.makedirs(os.path.dirname(ISO_SAVE), exist_ok=True)
+    # ⚠️  RE-SEEDED FROM THE REAL SAVE ON EVERY RUN, not only when the isolated file is
+    # missing. A stale isolated save keeps whatever the last `--commit`-style run left in it,
+    # so a measurement could silently show a previous loadout. The real save is only ever
+    # READ (its size is asserted below), which is the property that matters.
+    # `DR_ISO_RESET=0` keeps a hand-built isolated save for iterating on one number.
+    if os.environ.get("DR_ISO_RESET", "1") != "0" or not os.path.exists(ISO_SAVE):
+        if os.path.exists(REAL_SAVE):
+            with open(REAL_SAVE) as fh:
+                seed = fh.read()
+            with open(ISO_SAVE, "w") as fh:
+                fh.write(seed)
+    if not os.path.exists(ISO_SAVE):
+        return {"error": "no isolated save to seed — run the game once, or pass DR_SEED_SAVE"}
+    with open(ISO_SAVE) as fh:
         data = json.load(fh)
+    data.setdefault("hero", {})
     data["hero"]["equip"] = dict(LOADOUT["equip"])
-    data["hero"]["inventory"] = list(LOADOUT["inventory"])
-    with open(SAVE, "w") as fh:
+    # ⚠️  THE BAG IS THE PWA'S OWN, NOT A HAND-WRITTEN THREE. `_can_equip` / the PWA's
+    # `buyItem` decide where an item lands, and the class kit already put the start weapon
+    # back into the bag — so a bag written by hand here shows different icons in the same
+    # cells as the PWA (measured: `blade_shortSword` in the PWA's slot 0 where the port had
+    # `armor_ringMail`). Read the PWA measurement the run just produced (`pwa_measure.json`
+    # is written before this function runs) and use its own order; fall back to the declared
+    # list only when there is no PWA side to copy.
+    pwa = None
+    try:
+        with open("/tmp/pwa_measure.json") as fh:
+            pwa = json.load(fh)
+    except (OSError, ValueError):
+        pwa = None
+    bag = LOADOUT["inventory"]
+    if isinstance(pwa, dict) and isinstance(pwa.get("bagIds"), list) and pwa["bagIds"]:
+        bag = list(pwa["bagIds"])
+    data["hero"]["inventory"] = bag
+    # Match the PWA side, which runs the page's own `#testToggle`: `talentPoints = 50`,
+    # `hero.attrPoints = 150`. Both are what raise the two `.tab-badge` pills.
+    data["talentPoints"] = 50
+    data["hero"]["attrPoints"] = 150
+    data["hero"]["level"] = 50
+    data["hero"]["maxHp"] = 255
+    data["hero"]["maxMana"] = 49
+    with open(ISO_SAVE, "w") as fh:
         json.dump(data, fh, indent=1)
 
     out = os.path.join(ROOT, "tools", "reference", "port2", "inventory_gear.png")
@@ -301,14 +442,40 @@ def port_side():
     cmd = [GODOT, "--path", ROOT, "--rendering-driver", "opengl3",
            "--script", "res://tools/capture_screen.gd", "--",
            "--screen", "character@inventory", "--out", out, "--frames", "60"]
+    env = dict(os.environ)
+    env["XDG_DATA_HOME"] = ISO_DATA
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=180)
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=180,
+                              env=env)
     except subprocess.TimeoutExpired:
         return {"error": "godot timed out"}
     tail = [l for l in proc.stdout.splitlines() if "capture:" in l]
     return {"shot": out if os.path.exists(out) else None,
             "stdout": tail, "rc": proc.returncode,
-            "backup": backup if os.path.exists(backup) else None}
+            "isolated": ISO_SAVE,
+            "real_save": os.path.getsize(REAL_SAVE) if os.path.exists(REAL_SAVE) else None}
+
+
+def port_measure():
+    """Measure the PORT's own boxes, so the two sides can be compared rect by rect.
+
+    `probe_inventory_slots.gd` prints the doll and the bag cells but none of the CONTAINERS
+    between them, and a cell measured 4px off its PWA counterpart is not evidence of which
+    of the three (wrap / grid / cell) is wrong. This prints all three.
+    """
+    cmd = [GODOT, "--path", ROOT, "--rendering-driver", "opengl3",
+           "--script", "res://tools/probe_bag_geometry.gd"]
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return {"error": "godot timed out"}
+    vals = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if "=" in line and line.split("=")[0].isupper():
+            k, _, v = line.partition("=")
+            vals[k] = v.strip()
+    return vals
 
 
 async def main():
@@ -318,8 +485,17 @@ async def main():
     print("  saved  :", p.get("saved"))
     print("  opened :", p.get("opened"))
     print("  shot   :", p.get("shot"))
+    # ⚠️  THE BAG IDS RIDE IN THE SAME FILE the port side reads, and they are the PWA's
+    # OWN `hero.inventory` order — not REPORT_JS's output, which is the DOM measurement and
+    # knows nothing about ids. Writing only `measure` here silently dropped them, the port
+    # fell back to its hand-written three, and every bag cell then held a DIFFERENT icon
+    # from its PWA counterpart (the class kit puts `blade_shortSword` back in the bag).
+    measure = p.get("measure") or {}
+    if isinstance(measure, dict):
+        measure["bagIds"] = p.get("bagIds") or []
     with open("/tmp/pwa_measure.json", "w") as fh:
-        json.dump(p.get("measure"), fh, indent=1)
+        json.dump(measure, fh, indent=1)
+    print("  bag ids:", p.get("bagIds"))
     print("  measure: /tmp/pwa_measure.json")
 
     print("=== PORT ===")
@@ -328,7 +504,8 @@ async def main():
     for line in q.get("stdout", []):
         print(" ", line)
     print("  shot   :", q.get("shot"))
-    print("  backup :", q.get("backup"))
+    print("  isolated:", q.get("isolated"))
+    print("  real save (must be unchanged):", q.get("real_save"), "bytes")
     return 0
 
 
