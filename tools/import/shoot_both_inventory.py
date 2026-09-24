@@ -40,12 +40,12 @@ LS_KEY = "dungeonRecallV7"
 LOADOUT = {
     "equip": {
         "weapon": "blade_shortSword", "armor": "armor_leather",
-        "helmet": "helmet_linen_hood", "shield": "shield_wooden",
-        "ring1": "ring_copper", "ring2": None, "amulet": "amulet_bone",
-        "belt": "belt_cloth", "gloves": "gloves_leather", "boots": "boots_boots",
+        "helmet": "helm_cap", "shield": "shield_buckler",
+        "ring1": "copperRing", "ring2": None, "amulet": "boneAmulet",
+        "belt": "belt_sash", "gloves": "gloves_leather", "boots": "boots_boots",
         "beltPotionSlots": ["healingPotion", None, None, None],
     },
-    "inventory": ["armor_chainmail", "helmet_iron_helm", "ring_silver", "blade_scimitar"],
+    "inventory": ["armor_ringMail", "helm_helm", "silverRing", "blade_scimitar"],
 }
 
 
@@ -122,9 +122,14 @@ async def pwa_side():
             " return {weapon:(s.hero||{}).equip ? s.hero.equip.weapon : null,"
             "         invsz:(s.hero ? s.hero.inventory : []).length}; })()")
         out["saved"] = check
-        await ev("game.showScreen('inventory')")
-        await asyncio.sleep(1.2)
-
+        # OPEN the modal and ASSERT it opened. `game.showScreen('inventory')` LOOKS like the
+        # right call and prints nothing when it fails: the PWA's `showScreen` starts with a
+        # guard that bounces everything to the class picker while `state.heroClass` is unset,
+        # so a run that never picked a class leaves the modal `hidden`, every rect 0x0 and
+        # the shot a CLASS-SELECT screen saved under `inventory_gear.png`. That is how this
+        # script produced `diff 51.75 %` — a real frame of the wrong screen, which is a
+        # confident number and a meaningless one.
+        out["opened"] = await open_inventory(ev)
         out["measure"] = await ev(REPORT_JS)
         shot = await send(ws, nxt(), "Page.captureScreenshot", {"captureBeyondViewport": False})
         path = os.path.join(REF, "pwa", "inventory_gear.png")
@@ -184,6 +189,31 @@ REPORT_JS = """
 """
 
 
+async def open_inventory(ev):
+    """Open the character modal on the Inventory tab and PROVE it is up.
+
+    `game.showScreen('inventory')` is the call the PWA's own nav bar makes, and it is a
+    silent no-op whenever `state.heroClass` is unset — `showScreen` bounces to the class
+    picker instead. So the check is not "did the call return", it is "does a slot have a
+    box", and a failure is reported rather than measured around.
+    """
+    await ev("(() => { try { game.showScreen('inventory'); }"
+             " catch (e) { game.openModal('inventory'); } })()")
+    for _ in range(24):
+        if await ev("(() => { const m=document.getElementById('modalOverlay');"
+                    " const s=document.querySelector('.inv-equip-slot');"
+                    " return !!m && !m.classList.contains('hidden')"
+                    "   && !!s && s.getBoundingClientRect().width > 0; })()") is True:
+            return "open"
+        # The fallback for a run whose class was restored from the save but whose class
+        # cards never rendered: drive the handler the PWA itself wires.
+        await ev("(() => { const b=document.querySelector('button[onclick*=\"selectClass\"]');"
+                 " if (b) b.click(); })()")
+        await ev("(() => { try { game.openModal('inventory'); } catch (e) {} })()")
+        await asyncio.sleep(0.5)
+    return "FAILED: the inventory never laid out — every rect would be 0"
+
+
 def port_side():
     """Write the same loadout into the port's save and shoot it."""
     backup = SAVE + ".bak"
@@ -221,6 +251,7 @@ async def main():
     p = await pwa_side()
     print("  fill   :", p.get("fill"))
     print("  saved  :", p.get("saved"))
+    print("  opened :", p.get("opened"))
     print("  shot   :", p.get("shot"))
     with open("/tmp/pwa_measure.json", "w") as fh:
         json.dump(p.get("measure"), fh, indent=1)
