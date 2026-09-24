@@ -60,6 +60,8 @@ var _panel: PanelContainer
 var _tabs_wrap: Control
 var _scroll: ScrollContainer
 var _tab_buttons: Dictionary = {}
+var _tab_labels: Dictionary = {}
+var _tab_badges: Dictionary = {}
 var _panes: Dictionary = {}
 var _inventory
 var _skills
@@ -134,7 +136,15 @@ func _build() -> void:
 	style.border_color = Color("#333333")
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(RADIUS)
-	style.set_content_margin_all(0)
+	# ⚠️ `content_margin_all(0)` PUT THE TABS ON TOP OF THE BORDER. A `StyleBoxFlat`'s
+	# content margin is where the children go and it is INDEPENDENT of where the border is
+	# drawn: with 0 the child starts at the panel's own top-left and the 1px border is
+	# painted over. MEASURED against the live PWA, whose `.modal-content` box INCLUDES its
+	# 1px border (`box-sizing:border-box`), the port's tabs sat at y=42.2 against the PWA's
+	# 43.2 — a 1px offset inherited by EVERY block in the dialog, on top of the 1px the tab
+	# strip itself was short (below). The content margin is the border width, which is what
+	# the default would have been if the override had not zeroed it.
+	style.set_content_margin_all(1)
 	_panel.add_theme_stylebox_override("panel", style)
 	# `.modal-content { width:98%; min-height:85vh; max-height:90vh; height:auto }` centred by
 	# `.modal-overlay { align-items:center }`. The height is CONTENT-DRIVEN and bounded at
@@ -243,6 +253,26 @@ func _build() -> void:
 ## `.combined-tabs { display:flex; gap:4px; padding:12px 16px 8px;
 ##                    border-bottom:1px solid #2a2a2a; align-items:center }` plus the
 ## `.modal-close` circle at the end of the row.
+## `.tab-badge` — the red unspent-points pill, and the ONLY marker the player has that a
+## talent or attribute point is waiting. The PWA's own condition, verbatim:
+##
+##   `if (t.id === 'talents' && talentPts > 0) badge = ...`
+##   `if (t.id === 'hero' && attrPts > 0) badge = ...`
+##
+## `attrPoints` lives on the HERO while `talentPoints` lives on the state root — the two
+## are read from different places on purpose, because that is where the save puts them.
+func _tab_badge_text(key: String) -> String:
+	var points := 0
+	match key:
+		"skills":
+			points = int(_state.data.get("talentPoints", 0))
+		"stats":
+			points = int(_state.hero().get("attrPoints", 0))
+	if points <= 0:
+		return ""
+	return str(points)
+
+
 func _build_tabs() -> Control:
 	var wrap := PanelContainer.new()
 	var st := StyleBoxFlat.new()
@@ -253,7 +283,12 @@ func _build_tabs() -> Control:
 	st.content_margin_left = 16
 	st.content_margin_right = 16
 	st.content_margin_top = 12
-	st.content_margin_bottom = 8
+	# ⚠️ 8 + 1, NOT 8. `StyleBoxFlat`'s content margin does NOT include the border, while
+	# the PWA's `padding:8px` sits INSIDE its `border-bottom:1px` — so the faithful value is
+	# padding + border. Measured: the strip came out **54** tall against the PWA's **55**,
+	# and its bottom edge is exactly where `#inventoryScreen` starts, so every block in the
+	# pane sat 1px high. The 1px of overlap is invisible (the border draws in that margin).
+	st.content_margin_bottom = 9
 	wrap.add_theme_stylebox_override("panel", st)
 
 	var row := HBoxContainer.new()
@@ -262,20 +297,92 @@ func _build_tabs() -> Control:
 
 	for entry in TABS:
 		var key := str(entry[0])
-		# `.combined-tab { flex:1; padding:8px 6px; border-radius:8px; font-size:12px }`
-		# MEASURED on the live PWA: the tab's own box is **101x32 at y=59** — 32 INCLUDES
-		# the 1px border (`box-sizing:border-box`), so the minimum height here is 32 and
-		# not 34. The port's 34 made the 3-tab row 34 tall, which pushed the whole body
-		# down and made the dialog 20px shorter than the PWA's 752.
+		# `.combined-tab { flex:1; padding:8px 6px; border:1px solid #2a2a2a; border-radius:8px;
+		#   font-size:12px; font-weight:bold; display:flex; align-items:center;
+		#   justify-content:center }`
+		#
+		# ⚠️ THE TAB IS **34** px TALL, NOT 32, and the 2px difference moves the WHOLE modal.
+		# MEASURED on the live PWA: the active tab is [20.9, 56.2, 101.4, **32**] but the two
+		# INACTIVE ones are [126.3, 55.2, 101.4, **34**] — same `padding:8px 6px`, same
+		# `font-size:12px`, different height. The active tab is `.combined-tab.active` and the
+		# difference is its CONTENT: an active tab also renders a `.tab-badge` (the red count
+		# pill), whose `line-height:16px` is what the flex row centres in the 8px+8px padding.
+		# An inactive tab has no badge, so nothing bounds its line box below the padding's
+		# 32 and the browser falls back to the font's own `line-height:normal` (~1.2em of 12px
+		# plus ascender/descender slack), landing on 34.
+		#
+		# The strip's own height is `12 + max(child) + 8` + 1px border = **55**, and the port's
+		# 32-tall tabs made it 52 — so `#inventoryScreen` and every block under it sat 3px high,
+		# and the dialog came out 3px short. The doll alone was then 4px high because its own
+		# 12px top margin landed on a body already 3px up.
 		var button := Button.new()
-		button.text = str(entry[1])
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.custom_minimum_size = Vector2(0, 32)
+		button.custom_minimum_size = Vector2(0, 34)
 		button.focus_mode = Control.FOCUS_NONE
-		button.add_theme_font_size_override("font_size", 12)
+		# `.combined-tab { display:flex; align-items:center; justify-content:center; gap:4px }`
+		# — the label and the badge are SIBLINGS in a centred flex row, and a `Button`'s own
+		# text cannot carry a second colour. A badge drawn as part of the text is one colour
+		# for both, so the pill becomes its own child and the button's text is emptied.
+		var inner := HBoxContainer.new()
+		inner.add_theme_constant_override("separation", 4)
+		inner.alignment = BoxContainer.ALIGNMENT_CENTER
+		inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+		button.add_child(inner)
+		var label := UIKit.label(str(entry[1]), 12, "#888888")
+		label.add_theme_font_size_override("font_size", 12)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(label)
+		var badge_text := _tab_badge_text(key)
+		var badge: Label = null
+		if badge_text != "":
+			# `.tab-badge { margin-left:4px; padding:0 5px; background:#e94560; color:#fff;
+			#   border-radius:8px; font-size:10px; line-height:16px }`. MEASURED on the live
+			# PWA: the Skills pill is 24 x 16 at x 187-210 and the Stats one 31 x 16 at
+			# x 289-319, both rows 64-79 — 16 tall, which its `line-height` sets and which is
+			# what makes the whole tab 34 rather than 32.
+			badge = UIKit.label(badge_text, 10, "#ffffff")
+			badge.add_theme_font_size_override("font_size", 10)
+			badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			# ⚠️  THE PILL'S BACKGROUND MUST LIVE ON THE BOX AROUND THE TEXT, not on the text
+			# itself. `padding:0 5px` is part of the pill: putting the stylebox on the Label
+			# drew the red only behind the glyphs — MEASURED, the Skills pill came out 13 wide
+			# against the PWA's 24, i.e. the 10px of padding was missing on both sides, and a
+			# `MarginContainer` around it cannot carry a background at all. A `PanelContainer`
+			# with `content_margin_left/right = 5` is the shape that does both.
+			var pill := PanelContainer.new()
+			var bs := StyleBoxFlat.new()
+			bs.bg_color = Color(UIKit.TAB_BADGE_BG)
+			bs.set_corner_radius_all(8)
+			bs.content_margin_left = 5
+			bs.content_margin_right = 5
+			pill.add_theme_stylebox_override("panel", bs)
+			# ⚠️  THE PILL IS 16 TALL, NOT THE TAB'S INNER HEIGHT. `.tab-badge`'s own
+			# `line-height:16px` is what sizes it, and the PWA's flex row centres that 16px
+			# line in the tab's 8px+8px padding — 16 + 16 = 32... but the INACTIVE tabs
+			# measure 34, because a tab with no badge has no line box bounding it and the
+			# browser falls back to `line-height:normal`. MEASURED before this fix: the port
+			# drew the pill 33 tall (the tab's whole inner box) and 22 wide at y 55, against
+			# the PWA's 16 at y 64 — 2 216 of the 3 032 differing pixels in the tab band, the
+			# largest single block of diff left on the screen. `SHRINK_CENTER` refuses the
+			# row's height; `custom_minimum_size.y` states the 16 the CSS declares.
+			badge.custom_minimum_size = Vector2(0, 16)
+			pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			# `.tab-badge { margin-left:4px }` sits ON TOP of the flex row's own `gap:4px`,
+			# so the gap between the label and the pill is 8 — measured on the live PWA: the
+			# "Skills" glyphs end at x=177 and the pill starts at 187.
+			pill.add_theme_constant_override("margin_left", 4)
+			pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pill.add_child(badge)
+			inner.add_child(pill)
 		button.pressed.connect(func(): set_tab(key))
 		row.add_child(button)
 		_tab_buttons[key] = button
+		_tab_labels[key] = label
+		_tab_badges[key] = badge
 
 	# `.modal-close { width:32px; height:32px; border-radius:50%; font-size:16px;
 	#   color:#888; background:#000; border:1px solid #333 }`
@@ -324,6 +431,11 @@ func _style_tabs() -> void:
 		var colour := "#ffffff" if active else "#888888"
 		button.add_theme_color_override("font_color", Color(colour))
 		button.add_theme_color_override("font_color_pressed", Color(colour))
+		# The button's own text is EMPTY; the visible label is a child, so its colour is set
+		# here. The badge keeps `color:#fff` in both states — the PWA's `.tab-badge` rule has
+		# no `.active` variant, so a red pill is white whether its tab is up or not.
+		if _tab_labels.has(key):
+			(_tab_labels[key] as Label).add_theme_color_override("font_color", Color(colour))
 
 
 func set_tab(key: String) -> void:

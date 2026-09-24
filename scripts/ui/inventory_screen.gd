@@ -199,7 +199,14 @@ func _build() -> void:
 		inline.add_theme_constant_override("separation", 0)
 		add_child(inline)
 		inline.add_child(_margined(_make_equipment_panel(), 12.0, 0.0))
-		inline.add_child(_margined(_make_potion_panel(), 8.0, 0.0))
+		# ⚠️ 12, NOT 8. The PWA's margins COLLAPSE to `max(m1, m2)`: `.inv-equip-panel` is
+		# `margin:12px 0` and `.inv-potion-slots` is `margin:4px 0`, so the gap between the
+		# doll's bottom edge and the belt row is `max(12, 4) = 12`. MEASURED on the live pane:
+		# equip bottom 436.2 -> potion top 448.2. A `VBoxContainer` adds separations instead
+		# of collapsing them, so the only way to say 12 is to put the whole 12 on ONE of the
+		# two boxes — and the port carried 8 here, which put the belt row 4px high and every
+		# block under it with it.
+		inline.add_child(_margined(_make_potion_panel(), 12.0, 0.0))
 		inline.add_child(_margined(_make_bag_panel(), 8.0, 8.0))
 		return
 
@@ -334,12 +341,23 @@ func _make_equipment_panel() -> Control:
 		# Each slot carries its OWN measured size (`[row, col, slot, width, height]`).
 		var button := _make_slot_button(SLOT_LABELS.get(slot, slot),
 			Vector2(float(entry[3]), float(entry[4])))
-		# A slot shorter than its row (the belt, the rings) must not be stretched to the
-		# row height: in the PWA `height:48px` wins over the grid's stretch.
-		button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		# `justify-self`, per the CSS above. A 48px slot in a 75px column sits on the
-		# side the CSS names; anything not listed stretches to the column.
-		match str(JUSTIFY_SELF.get(slot, "stretch")):
+		# ⚠️  `align-items` DEFAULTS TO `stretch` IN CSS, BUT A FIXED HEIGHT TURNS THAT INTO
+		# `start`. `.inv-equip-slot` has no `align-self`, so every slot inherits the grid's
+		# `align-items:stretch` — and `.inv-slot-small { height:48px }` is a fixed height, so
+		# stretch cannot stretch it and the browser places it at the ROW'S TOP. The port's
+		# `SIZE_SHRINK_CENTER` centred it instead: MEASURED, the amulet came out at y=123.2
+		# against the PWA's 110.2 (exactly `(75 - 48) / 2`) and the town portal with it. Two
+		# of the three rows are 48 tall so the bug is invisible there, which is why it
+		# survived — the top row is 75 and it is the one that shows.
+		button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		# `justify-self` per the CSS above. Its DEFAULT is `stretch` too, and a FIXED WIDTH
+		# makes that behave as `start` as well: `#invSlotAmulet { grid-column:3 }` has no
+		# `justify-self` and is still only 48 wide, so it sits on the column's LEFT edge.
+		# The port stretched it to the full 75px column. MEASURED: amulet and ring2 both
+		# came out 75 wide at x=237.9 where the PWA has 48 at 238.5. A slot whose width
+		# EQUALS the column (75) is unaffected — start and stretch agree there — so only the
+		# 48px slots need the distinction, and they are exactly the ones the map lists.
+		match str(JUSTIFY_SELF.get(slot, "start")):
 			"end":
 				button.size_flags_horizontal = Control.SIZE_SHRINK_END
 			"start":
@@ -462,10 +480,16 @@ func _make_bag_panel() -> Control:
 	wrap_style.set_corner_radius_all(10)
 	# The panel's content margin is measured from INSIDE its border in Godot, so 12 is
 	# already the PWA's 12px padding. `_filler()`'s cells carry the grid.
-	wrap_style.content_margin_left = 12
-	wrap_style.content_margin_right = 12
-	wrap_style.content_margin_top = 12
-	wrap_style.content_margin_bottom = 12
+	#
+	# ⚠️ 12 IS NOT THE FAITHFUL VALUE — it is 12 + the 1px border. MEASURED: with 12 the
+	# grid came out **340 x 24.9**, against the PWA's **338.2 x 25.9**, i.e. 2px too wide and
+	# 1px too far left, exactly one border width on each side. This is the same trap as the
+	# tab strip's bottom margin: a `StyleBoxFlat` draws its border OUTSIDE the content margin,
+	# so a CSS box whose padding sits inside its border must add that border here.
+	wrap_style.content_margin_left = 13
+	wrap_style.content_margin_right = 13
+	wrap_style.content_margin_top = 13
+	wrap_style.content_margin_bottom = 13
 	wrap.add_theme_stylebox_override("panel", wrap_style)
 	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_child(wrap)
@@ -476,6 +500,15 @@ func _make_bag_panel() -> Control:
 	_bag_grid.add_theme_constant_override("h_separation", 6)
 	_bag_grid.add_theme_constant_override("v_separation", 6)
 	_bag_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# ⚠️  A `GridContainer` COMPUTES ITS MINIMUM IN WHOLE PIXELS: four rows of a 62.8px cell
+	# plus three 6px gaps are 269.2, and the grid reported **266** (4 x 62 + 18), i.e. the
+	# fractional part is dropped ONCE PER ROW. MEASURED: the port's rows landed 68.0 apart
+	# against the PWA's 68.8, so each row after the first sat 0.8px high and the last one
+	# 2.4px — a 4 790-pixel band of drift at rows 679-828 that no cell-level check can see
+	# (every individual cell is the right size; the PITCH is wrong). The PWA's grid is
+	# 269.4, so pin the grid's own minimum and let the rows divide it — which is what the
+	# browser does with `grid-template-rows` on a 269.4-tall box.
+	_bag_grid.custom_minimum_size = Vector2(0, 269)
 	wrap.add_child(_bag_grid)
 
 	# 338px of grid, 4 gaps of 6px = 24, leaves 314 / 5 = 62.8 per cell — which is what
@@ -664,12 +697,18 @@ func _refresh_bag() -> void:
 			if not item.is_empty() and count > 1:
 				item = item.duplicate()
 				item["count"] = count
-		var cell := UIKit.item_cell(item, BAG_CELL, item.is_empty())
+		var cell := UIKit.item_cell(item, BAG_CELL)
 		# `.inv-grid { grid-template-columns:repeat(5, 1fr) }` — five EQUAL columns that
 		# fill the row. A GridContainer sizes each column to its widest child unless the
 		# children expand, which is why the measured cells are all 62.8 and the last one
 		# ends exactly at the wrap's inner edge.
 		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# ⚠️  A `GridContainer` HANDS EVERY ROW ITS MINIMUM, so with the grid's own minimum
+		# pinned to the PWA's 269 the extra 3px must be claimed by the CELLS or it stays
+		# unused at the bottom: `SIZE_EXPAND_FILL` makes each cell take its row's share, and
+		# the rows then land 68.8 apart (the PWA's pitch) instead of 68.0. Without it the
+		# cells keep their 62.8 and the drift survives the minimum fix.
+		cell.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		# A tap opens the item's info overlay (the PWA's `#invItemOverlay`); equipping is
 		# the overlay's button, not the tap.
 		var index := i

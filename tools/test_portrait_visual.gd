@@ -229,6 +229,12 @@ func _arena():
 ##   - `flat = true` skips every stylebox the cell carries, turning the tile invisible;
 ##   - an empty cell must dim by `modulate` (CSS opacity inherits the whole box), not by
 ##     painting a black background.
+##
+## A THIRD way, added after it cost a whole session: `dimmed` (the `.dimmed` branch, for an
+## item the class cannot use) must be driven by the ITEM, never by emptiness. The bag passed
+## `item.is_empty()` into it, so every empty cell took `.dimmed`'s opacity 0.35 and rendered
+## rgb(59,59,59) where the PWA renders rgb(43,43,43) — 61 364 pixels of the bag band, the
+## largest remaining diff on the screen, and completely invisible to the rules.
 func _test_grid_cells_are_the_pwa_light_box() -> void:
 	var empty_cell: Button = UIKit.item_cell({}, 44.0)
 	root.add_child(empty_cell)
@@ -243,12 +249,24 @@ func _test_grid_cells_are_the_pwa_light_box() -> void:
 		_fail("an empty cell's fill is %s, not the PWA's light #aaa" % empty_style.bg_color)
 	if not empty_style.border_color.is_equal_approx(Color(UIKit.CELL_BORDER_EMPTY)):
 		_fail("an empty cell's border is %s, not the PWA's #777" % empty_style.border_color)
-	if not is_equal_approx(empty_cell.modulate.a, 0.25):
+	if not is_equal_approx(empty_cell.modulate.a, UIKit.CELL_OPACITY_EMPTY):
 		_fail("an empty cell's alpha is %.2f, not the PWA's `.empty { opacity:0.25 }`"
 			% empty_cell.modulate.a)
 	if empty_cell.modulate.r < 0.99:
 		_fail("the empty cell is tinted (%s); the PWA dims by opacity alone"
 			% empty_cell.modulate)
+
+	# An EMPTY cell handed the `dimmed` flag must still be `.empty` — the flag is about the
+	# item, and there is no item. This is the exact call the bag used to make.
+	var empty_dimmed: Button = UIKit.item_cell({}, 44.0, true)
+	root.add_child(empty_dimmed)
+	var empty_dimmed_style := empty_dimmed.get_theme_stylebox("normal") as StyleBoxFlat
+	if not is_equal_approx(empty_dimmed.modulate.a, UIKit.CELL_OPACITY_EMPTY):
+		_fail("an empty cell with dimmed=true dims to %.2f; emptiness wins over the "
+			% empty_dimmed.modulate.a + "dimmed flag (PWA `.empty { opacity:0.25 }`)")
+	if not empty_dimmed_style.border_color.is_equal_approx(Color(UIKit.CELL_BORDER_EMPTY)):
+		_fail("an empty cell with dimmed=true has a %s border; an empty slot keeps #777"
+			% empty_dimmed_style.border_color)
 
 	# A filled cell is the SAME tile with the quality colour on the border. `unique` is
 	# the one quality `quality_color` derives from a flag rather than the string, so this
@@ -267,6 +285,23 @@ func _test_grid_cells_are_the_pwa_light_box() -> void:
 	if not is_equal_approx(filled_cell.modulate.a, 1.0):
 		_fail("a filled cell is dimmed to alpha %.2f; only empty cells dim"
 			% filled_cell.modulate.a)
+
+	# `.chest-cell.dimmed` — a filled cell the hero's class cannot use. The RED REPLACES the
+	# quality colour (the PWA writes one inline `border-color`, not a second layer) and the
+	# box goes to `opacity:0.35`. `UIKit.BAD` is a DIFFERENT red and was used here for a
+	# whole session, so the two constants are asserted apart on purpose.
+	var dimmed_cell: Button = UIKit.item_cell(item, 44.0, true)
+	root.add_child(dimmed_cell)
+	var dimmed_style := dimmed_cell.get_theme_stylebox("normal") as StyleBoxFlat
+	if not dimmed_style.border_color.is_equal_approx(Color(UIKit.CELL_DIM_BORDER)):
+		_fail("a class-locked cell's border is %s, not the PWA's inline #e74c3c"
+			% dimmed_style.border_color)
+	if dimmed_style.border_color.is_equal_approx(Color(UIKit.BAD)):
+		_fail("a class-locked cell uses UIKit.BAD (#c0392b); the PWA writes #e74c3c")
+	if not is_equal_approx(dimmed_cell.modulate.a, UIKit.CELL_OPACITY_DIMMED):
+		_fail("a class-locked cell's alpha is %.2f, not `.dimmed { opacity:0.35 }`"
+			% dimmed_cell.modulate.a)
+
 	# `.chest-cell:active { background:#aaa }` is the only state change — no hover.
 	for state in ["hover", "focus"]:
 		var hover_style := filled_cell.get_theme_stylebox(state) as StyleBoxFlat

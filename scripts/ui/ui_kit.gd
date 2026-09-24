@@ -26,12 +26,24 @@ const DIM := "#888888"
 const GOLD := "#f1c40f"
 const BAD := "#c0392b"
 const MOD_BLUE := "#4a7dff"
+## `.tab-badge { background:#e94560 }` — the unspent-point pill on the modal's tab strip.
+## The same red as `.map-*`'s accent, and NOT `BAD` (#c0392b): the PWA's own rule names it.
+const TAB_BADGE_BG := "#e94560"
 ## `.chest-cell { background:#aaa; border:1px solid #777 }` — the grid cell fill. It is
 ## LIGHT: at the PWA's `.empty { opacity:0.25 }` it renders as rgb(43,43,43) inside a
 ## #000 box, and a filled cell is a light grey tile. Both grids read as a light lattice
 ## in the reference frames, not as black holes.
 const CELL_FILL := "#aaaaaa"
 const CELL_BORDER_EMPTY := "#777777"
+## `.chest-cell.dimmed` — the PWA's inline `border-color:#e74c3c` for an item the hero's
+## class cannot use. It is NOT `BD`/`BAD` (#c0392b); that is a different red used for other
+## messages, and it is off the PWA's rendered border by ~25 levels per channel.
+const CELL_DIM_BORDER := "#e74c3c"
+## `.chest-cell.empty { opacity:0.25 }` and `.chest-cell.dimmed { opacity:0.3 }`. Kept as
+## constants because the same pair is applied in three places and one of them (the bag)
+## used to reach for `dimmed` with an ITEM instead of an emptiness flag.
+const CELL_OPACITY_EMPTY := 0.25
+const CELL_OPACITY_DIMMED := 0.35
 
 ## `.container { padding: 16px 16px 70px 16px }` — the 70px bottom is where the PWA's
 ## fixed `.nav-bar` sits. Without it every screen hides its last row behind the nav.
@@ -539,8 +551,18 @@ static func item_tooltip(item: Dictionary, data: Node, width: float = 380.0) -> 
 ## of their pixels — the single largest visual difference in the whole port, and invisible
 ## to every gameplay test.
 ##
-## `dimmed` is the port's own extra: a filled cell the hero CANNOT equip. The PWA wrote
-## `border-color:#e74c3c; opacity:0.35` inline for it.
+## ⚠️ THE PWA ALSO SETS `background:#000` ON THE ICON ITSELF, and that is what makes a
+## FILLED cell read as BLACK in the reference frames (`renderItemIcon`'s `size === 0`
+## branch: `<img style="…;background:#000">`). A filled cell therefore never shows the
+## `#aaa` at all — the icon covers it edge to edge. The port's icon was inset by
+## `size * 0.1` (`.cell-icon img { width:80% }`, which is only true for the `size !== 0`
+## branch the bag does NOT use), so every filled cell kept a grey ring of `#aaa` around its
+## icon. Measured: the port had 3 546 pixels of `#aaa` in the bag band against the PWA's 2.
+##
+## `is_empty` must be the EMPTINESS of the slot, never a property of the item. This
+## function's third parameter is `dimmed`, an item the hero's class cannot use; an earlier
+## caller passed `item.is_empty()` into it, so every empty bag cell took the `.dimmed`
+## branch (opacity 0.35 -> rgb(59,59,59)) instead of `.empty` (0.25 -> rgb(43,43,43)).
 static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 		placeholder: String = "") -> Button:
 	var cell := Button.new()
@@ -550,6 +572,10 @@ static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 	var border := Color(CELL_BORDER_EMPTY)
 	if not is_empty:
 		border = ItemStats.quality_color(item)
+		if dimmed:
+			# `.chest-cell.dimmed` inline: `border-color:#e74c3c` — the RED replaces the
+			# quality colour, it does not sit beside it.
+			border = Color(CELL_DIM_BORDER)
 	var style := panel_style()
 	style.bg_color = Color(CELL_FILL)
 	style.border_color = border
@@ -564,11 +590,11 @@ static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 	# `.chest-cell.empty { opacity:0.25 }` — a CSS opacity is inherited by the whole box,
 	# not just the icon, so it has to be applied to the cell's own modulate. Godot
 	# multiplies a parent's modulate into its children, so the icon dims with it and does
-	# NOT get a second alpha of its own.
-	if is_empty and not dimmed:
-		cell.modulate = Color(1, 1, 1, 0.25)
-	elif is_empty and dimmed:
-		cell.modulate = Color(1, 1, 1, 0.35)
+	# NOT get a second alpha of its own. Only an EMPTY cell dims; a filled one is opaque.
+	if is_empty:
+		cell.modulate = Color(1, 1, 1, CELL_OPACITY_EMPTY)
+	elif dimmed:
+		cell.modulate = Color(1, 1, 1, CELL_OPACITY_DIMMED)
 
 	var icon_path := ""
 	if not is_empty:
@@ -578,12 +604,29 @@ static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 	if icon_path != "":
 		var texture := load_texture(icon_path)
 		if texture != null:
+			# ⚠️ `background:#000` ON THE ICON IS PART OF THE SPEC, but ONLY for a real item.
+			# `renderItemIcon`'s `size === 0` branch writes it inline on the `<img>`, and it
+			# is what fills the two bands beside a NON-square icon (measured: a 73x108 slot
+			# draws a 73x73 icon with black bands above and below). Without it those bands
+			# are transparent and the `#aaa` tile shows through them, which reads as "the
+			# bag cells are grey" — the same symptom as the inverted `dimmed` flag, from the
+			# other side. Measured in the bag band: 6 049 pixels of `#aaa` the PWA lacks.
+			#
+			# An EMPTY cell never gets it: the PWA writes `<div class="chest-cell empty">`
+			# with no icon at all, and the tile is supposed to show through.
+			if not is_empty:
+				var backing := ColorRect.new()
+				backing.color = Color("000000")
+				backing.set_anchors_preset(Control.PRESET_FULL_RECT)
+				backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				cell.add_child(backing)
 			var icon := TextureRect.new()
 			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-			icon.offset_left = size * 0.1
-			icon.offset_top = size * 0.1
-			icon.offset_right = -size * 0.1
-			icon.offset_bottom = -size * 0.1
+			# ⚠️ FULL BLEED, no inset. The bag renders its icon with `size === 0`, whose
+			# `<img>` is `width:100%; height:100%; background:#000` — it covers the whole
+			# cell. `.cell-icon img { width:80% }` in style.css is overridden by that inline
+			# style, exactly as `object-fit:cover` is, and reading the stylesheet instead of
+			# the inline style is what put an 80% icon in a 100% cell.
 			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			icon.texture = texture

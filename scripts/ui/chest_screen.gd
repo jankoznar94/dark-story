@@ -148,14 +148,13 @@ func _refresh_bag() -> void:
 			if not item.is_empty() and entry is Dictionary:
 				item = item.duplicate()
 				item["count"] = int(entry.get("count", 1))
-		var cell := UIKit.item_cell(item, CELL)
-		if not item.is_empty() and not _can_equip(item):
-			# The class restrictions are shown here rather than only in the bag screen:
-			# a wrong-class item moved into the bag is a wasted chest cell.
-			var style: StyleBoxFlat = cell.get_theme_stylebox("normal").duplicate()
-			style.border_color = Color(UIKit.BAD)
-			for state_name in ["normal", "pressed", "hover", "focus", "disabled"]:
-				cell.add_theme_stylebox_override(state_name, style)
+		var can_equip := item.is_empty() or _can_equip(item)
+		# The class restrictions are shown here rather than only in the bag screen:
+		# a wrong-class item moved into the bag is a wasted chest cell. `item_cell` owns
+		# the `.dimmed` look now (`border-color:#e74c3c; opacity:0.35`), so the chest
+		# cannot drift from the bag again — it used to repaint the border with `UIKit.BAD`
+		# (#c0392b), a different red the PWA never uses for a cell.
+		var cell := UIKit.item_cell(item, CELL, not can_equip)
 		var index := i
 		cell.pressed.connect(func(): _on_bag_tapped(index))
 		cell.mouse_entered.connect(func(): _select(item))
