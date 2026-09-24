@@ -29,6 +29,8 @@ signal equip_slot_tapped(slot: String)
 signal potion_slot_tapped(index: int)
 signal socket_armed(host_id: String, socket_index: int)
 signal gem_tapped(host_id: String, gem_id: String)
+## A button inside the item-info overlay was pressed — see `ItemInfoOverlay.action`.
+signal overlay_action(action: String, slot: String)
 
 ## The PWA's tab strip, in order: `{id:'inventory',label:'Inventory'}`,
 ## `{id:'talents',label:'Skills'}`, `{id:'hero',label:'Stats'}`.
@@ -191,6 +193,7 @@ func _build() -> void:
 	_inventory.potion_slot_tapped.connect(func(i): potion_slot_tapped.emit(i))
 	_inventory.socket_armed.connect(func(h, i): socket_armed.emit(h, i))
 	_inventory.gem_tapped.connect(func(h, g): gem_tapped.emit(h, g))
+	_inventory.overlay_action.connect(func(a, s): overlay_action.emit(a, s))
 	_skills = SkillsPanel.new(_data, _state, _find_item)
 	_skills.message.connect(func(t): message.emit(t))
 	_stats = StatsPanel.new(_data, _gen, _state, _find_item)
@@ -227,6 +230,10 @@ func _build() -> void:
 	# column, or the padding would be applied to the wrong node and the panels would each be
 	# laid out inside a box the size of the padding rather than the body.
 	(_panes["inventory"] as MarginContainer).get_child(0).add_child(_inventory)
+	# `#invItemOverlay { position:fixed; inset:0; z-index:1200 }` — OUTSIDE the inventory
+	# pane, covering the whole dialog. Its own layer is inside `_panel`, so it cannot be
+	# clipped by the pane it belongs to. Mounted after the pane so it paints on top.
+	_inventory.mount_overlay(self)
 	(_panes["skills"] as MarginContainer).get_child(0).add_child(_skills)
 	(_panes["stats"] as MarginContainer).get_child(0).add_child(_stats)
 

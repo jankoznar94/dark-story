@@ -109,6 +109,76 @@ static func equip_from_bag(state, inventory_index: int, resolve: Callable) -> Di
 	return {"ok": true, "reason": ""}
 
 
+## Which equipment slot an item TYPE naturally occupies. The PWA's `typeToSlot`, in one
+## place so the overlay's own button routing and `equip_from_bag` cannot disagree.
+## A ring maps to `ring1` — `equip_from_bag` still fills ring1 then ring2, which is the
+## behaviour a plain "Equip" button wants; only the overlay's two named buttons override
+## that.
+static func slot_for_type(item_type: String) -> String:
+	return str({
+		"weapon": "weapon", "armor": "armor", "helmet": "helmet", "shield": "shield",
+		"ring": "ring1", "belt": "belt", "amulet": "amulet", "gloves": "gloves",
+		"boots": "boots",
+	}.get(item_type, ""))
+
+
+## Equip the item at `inventory_index` into a NAMED slot — the PWA's `equipItemToSlot`,
+## which exists only for the cases where the natural slot is not enough:
+##
+##   * a RING, which can go into either hand  (`Equip Ring 1` / `Equip Ring 2`)
+##   * an OFF-HAND weapon for a dual-wielding class
+##
+## Everything else must agree with the item's natural slot; a mismatch is a refusal with
+## a reason, never a silent no-op, because a button that does nothing is the bug this
+## function exists to avoid.
+##
+## `equip_from_bag` still owns the class restrictions, the bag-full case and the
+## two-handed eviction; this only redirects the destination.
+static func equip_from_bag_into(state, inventory_index: int, slot: String, resolve: Callable) -> Dictionary:
+	var inventory: Array = state.inventory()
+	if inventory_index < 0 or inventory_index >= inventory.size():
+		return {"ok": false, "reason": "empty_slot"}
+	var entry: Variant = inventory[inventory_index]
+	var item_id: String = entry.get("id", "") if entry is Dictionary else str(entry)
+	if item_id == "":
+		return {"ok": false, "reason": "empty_slot"}
+	var item: Dictionary = resolve.call(item_id)
+	if item.is_empty():
+		return {"ok": false, "reason": "unknown_item"}
+	var item_type := str(item.get("type", ""))
+	var natural := slot_for_type(item_type)
+
+	# A ring into a named hand: D2's rule is that the slot is chosen, not searched, so
+	# this path does NOT fall through to `equip_from_bag`'s "first empty ring slot".
+	if item_type == "ring" and slot in ["ring1", "ring2"]:
+		var equip: Dictionary = state.equip()
+		ItemGen.remove_from_inventory(inventory, item_id)
+		if equip.get(slot) != null:
+			var old: String = str(equip[slot])
+			ItemGen.add_to_inventory(inventory, old, resolve.call(old))
+		equip[slot] = item_id
+		return {"ok": true, "reason": ""}
+
+	# An off-hand weapon: only a dual-wielding class may, and only a one-hander.
+	if slot == "shield" and item_type == "weapon":
+		if bool(item.get("twoHand", false)):
+			return {"ok": false, "reason": "two_handed_offhand"}
+		var cls: Dictionary = state.data_ref().class_by_id(str(state.data.get("heroClass", "")))
+		if not bool(cls.get("dualWield", false)):
+			return {"ok": false, "reason": "class_cannot_dual_wield"}
+		var equip2: Dictionary = state.equip()
+		ItemGen.remove_from_inventory(inventory, item_id)
+		if equip2.get("shield") != null:
+			var old_shield: String = str(equip2["shield"])
+			ItemGen.add_to_inventory(inventory, old_shield, resolve.call(old_shield))
+		equip2["shield"] = item_id
+		return {"ok": true, "reason": ""}
+
+	if slot != natural:
+		return {"ok": false, "reason": "wrong_slot"}
+	return equip_from_bag(state, inventory_index, resolve)
+
+
 ## Take an item off. `slot` is an equipment slot name. Returns the result shape
 ## as equip_from_bag.
 static func unequip(state, slot: String, resolve: Callable) -> Dictionary:

@@ -66,6 +66,12 @@ func _run() -> void:
 	_test_each_pane_carries_its_own_padding()
 	_test_bag_cells_are_the_measured_width()
 	_test_doll_slots_carry_their_measured_sizes()
+	_test_equip_slots_clip_their_children()
+	_test_item_info_overlay_exists_outside_the_pane()
+	_test_bag_tap_opens_the_overlay_without_equipping()
+	_test_closing_the_overlay_clears_the_selection()
+	_test_equip_slot_tap_shows_info_then_unequips()
+	_test_empty_slot_opens_nothing()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -280,6 +286,12 @@ func _test_bag_cells_are_the_measured_width() -> void:
 ##   `#invSlotShield/#invSlotGloves { justify-self:start }`
 ## The port drew the amulet and both rings at 75 and had no town-portal slot at all, so a
 ## 75px icon overflowed a 48px border — the "itemy byly větší než equip sloty" report.
+##
+## ⚠️ The assertion is the TOTAL drawn size, not `custom_minimum_size`. The PWA has
+## `* { box-sizing:border-box }`, so its 75px INCLUDES the 1px border; Godot draws a
+## stylebox border OUTSIDE the content box, so the minimum is 73 and the drawn slot is 75.
+## Comparing the minimum against the CSS number demands a 75px slot that DRAWS 77 — the
+## assertion has to add the border back, or it pins the very bug it is meant to catch.
 func _test_doll_slots_carry_their_measured_sizes() -> void:
 	var modal = _main._screens["character"]
 	_main.open_modal("inventory")
@@ -295,8 +307,140 @@ func _test_doll_slots_carry_their_measured_sizes() -> void:
 			_fail("no '%s' slot — the PWA's paper doll has it (town portal included)" % slot)
 			continue
 		var button: Button = inventory._slot_nodes[slot]
-		var size := button.custom_minimum_size
 		var expect: Vector2 = want[slot]
-		if not size.is_equal_approx(expect):
-			_fail("slot '%s' is %.0fx%.0f, the PWA's CSS says %.0fx%.0f"
-				% [slot, size.x, size.y, expect.x, expect.y])
+		var style: StyleBoxFlat = button.get_theme_stylebox("normal")
+		var drawn: Vector2 = button.custom_minimum_size + Vector2(
+			style.border_width_left + style.border_width_right,
+			style.border_width_top + style.border_width_bottom)
+		if not drawn.is_equal_approx(expect):
+			_fail("slot '%s' draws %.0fx%.0f, the PWA's CSS says %.0fx%.0f"
+				% [slot, drawn.x, drawn.y, expect.x, expect.y])
+
+
+## `overflow:hidden` on the live PWA's slots, and the port had no equivalent: Godot does
+## NOT clip a Button's children, so an icon that reached the slot's edge drew over the
+## border and past the rounded corner. `clip_contents` is the one property that fixes it,
+## and it is invisible to every other test in this suite.
+func _test_equip_slots_clip_their_children() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	for slot in inventory._slot_nodes:
+		var button: Button = inventory._slot_nodes[slot]
+		if not button.clip_contents:
+			_fail("slot '%s' does not clip its children — the PWA's slot is `overflow:hidden`"
+				% slot)
+
+
+## The item-info overlay: the PWA's `#invItemOverlay`, opened by a tap on a bag cell or an
+## equipment slot. It was missing from the port entirely, so a player could equip but
+## never read an item's stats or compare it against what is worn. These assertions are the
+## structure — the overlay exists, is mounted OUTSIDE the inventory pane at full size, and
+## is closed until something is tapped.
+func _test_item_info_overlay_exists_outside_the_pane() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	if inventory._item_overlay == null:
+		_fail("the inventory has no item-info overlay — the PWA's `#invItemOverlay` is missing")
+		return
+	if inventory._item_overlay.visible:
+		_fail("the item-info overlay is visible with nothing selected")
+	# It must NOT be a child of the inventory pane: a fourth child there is invented state
+	# and the pane's own box would clip a full-screen overlay.
+	var column: Control = inventory.get_child(0)
+	if column.get_child_count() != 3:
+		_fail("the inventory column has %d blocks after the overlay was added, the PWA has 3 — the overlay belongs OUTSIDE the pane"
+			% column.get_child_count())
+	if inventory._item_overlay.get_parent() == null:
+		_fail("the item-info overlay was never mounted, so it cannot be shown")
+
+
+## A tap on a bag cell OPENS the overlay and does NOT equip. That ordering is the PWA's:
+## the item info comes first and equipping is the overlay's own button.
+func _test_bag_tap_opens_the_overlay_without_equipping() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	var state = _main.state
+	state.set_class("barbarian")
+	# A weapon the barbarian may NOT wear, so an accidental equip is visible.
+	# ⚠️ The id has to be REAL: a nonexistent one makes `_resolve` return {} and the tap
+	# refuses to open the overlay, which reads as "the overlay is broken" instead of "the
+	# test named an item the table does not have".
+	state.inventory().clear()
+	state.inventory().append("claws_katar")
+	state.equip()["weapon"] = "blade_shortSword"
+	var weapon_before: Variant = state.equip().get("weapon")
+	inventory._on_bag_tapped(0)
+	if not inventory._item_overlay.visible:
+		_fail("tapping a bag cell did not open the item-info overlay")
+	if state.equip().get("weapon") != weapon_before:
+		_fail("tapping a bag cell EQUIPPED the item — the PWA shows the info and equips from its button")
+	if inventory.shown_item_id() != "claws_katar":
+		_fail("the overlay shows '%s', expected the tapped item 'claws_katar'"
+			% inventory.shown_item_id())
+
+
+## Closing the overlay clears the selection, so the next tap starts clean.
+func _test_closing_the_overlay_clears_the_selection() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	state_reset_for_overlay(inventory)
+	inventory._on_bag_tapped(0)
+	if not inventory._item_overlay.visible:
+		_fail("could not open the overlay to test closing it")
+		return
+	inventory.close_item_info()
+	if inventory._item_overlay.visible:
+		_fail("closing the overlay left it visible")
+	if inventory._selected_bag != -1 or inventory._selected_slot != "":
+		_fail("closing the overlay left a selection behind (bag=%d slot='%s')"
+			% [inventory._selected_bag, inventory._selected_slot])
+
+
+func state_reset_for_overlay(inventory) -> void:
+	_main.state.set_class("barbarian")
+	_main.state.inventory().clear()
+	_main.state.inventory().append("blade_shortSword")
+
+
+## An equip-slot tap shows the WORN item with an Unequip button; a second tap on the same
+## slot takes it off. That two-step is the PWA's `_invSelectedSlot` behaviour and it is why
+## one tap never silently removes a piece of gear.
+func _test_equip_slot_tap_shows_info_then_unequips() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	var state = _main.state
+	state.set_class("barbarian")
+	state.inventory().clear()
+	state.equip()["armor"] = "armor_leather"
+	var slot_before: Variant = state.equip().get("armor")
+
+	inventory._on_equip_slot_pressed("armor")
+	if not inventory._item_overlay.visible:
+		_fail("tapping a filled equip slot did not open the item-info overlay")
+		return
+	if inventory._item_overlay.origin() != "equipped":
+		_fail("the overlay opened with origin '%s', expected 'equipped'"
+			% inventory._item_overlay.origin())
+	if state.equip().get("armor") != slot_before:
+		_fail("the FIRST tap on a filled equip slot already took the item off")
+
+	# The second tap on the SAME slot: the router's unequip path.
+	inventory._on_equip_slot_pressed("armor")
+	if state.equip().get("armor") != null:
+		_fail("the second tap on the same equip slot did not unequip it")
+
+
+## An empty slot has nothing to show: the tap must not open an empty overlay.
+func _test_empty_slot_opens_nothing() -> void:
+	var modal = _main._screens["character"]
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	_main.state.equip()["boots"] = null
+	inventory._on_equip_slot_pressed("boots")
+	if inventory._item_overlay.visible:
+		_fail("tapping an EMPTY equip slot opened the item-info overlay")

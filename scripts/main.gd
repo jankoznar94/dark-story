@@ -111,6 +111,7 @@ func _build_screens() -> void:
 	modal.potion_slot_tapped.connect(_on_potion_slot_tapped)
 	modal.socket_armed.connect(_on_socket_armed)
 	modal.gem_tapped.connect(_on_gem_tapped)
+	modal.overlay_action.connect(_on_overlay_action)
 	_add_screen("character", modal)
 
 	var town := TownScreen.new(data, gen, state, _resolve)
@@ -506,13 +507,84 @@ func _on_result_portal() -> void:
 	show_screen("town")
 
 
-func _on_item_tapped(inventory_index: int) -> void:
-	var result := EquipLogic.equip_from_bag(state, inventory_index, _resolve)
+## A bag cell was tapped. The PWA does NOT equip here — it opens `#invItemOverlay` and
+## the equipping happens from that overlay's button. So this only keeps the two entry
+## points in step: the tap already opened the overlay (in `InventoryScreen`), and this
+## makes sure the socket row reflects the new selection.
+func _on_item_tapped(_inventory_index: int) -> void:
+	var inv = _modal().inventory()
+	_modal().refresh()
+	inv._refresh_sockets()
+
+
+## A button inside the item-info overlay. This is the ONE place equipping is triggered
+## from the inventory now, and it is what the PWA's `invItemOverlayBtn` handler did:
+##
+##   equip      -> `equipItem(idx)`            natural slot for the type
+##   equip_mh   -> `equipItemToSlot(idx,'weapon')`   dual wield, main hand
+##   equip_oh   -> `equipItemToSlot(idx,'shield')`   dual wield, off hand
+##   equip_r1   -> `equipItemToSlot(idx,'ring1')`
+##   equip_r2   -> `equipItemToSlot(idx,'ring2')`
+##   unequip    -> `unequipSlot(slot)`
+##
+## `EquipLogic` owns every rule; this only decides WHICH call the button means.
+func _on_overlay_action(action_key: String, slot: String) -> void:
+	var inventory = _modal().inventory()
+	var index: int = int(inventory._selected_bag)
+	var result: Dictionary = {"ok": true, "reason": ""}
+
+	if action_key == "unequip":
+		result = EquipLogic.unequip(state, slot, _resolve)
+	else:
+		if index < 0:
+			# Nothing selected — the overlay button was pressed with a cleared selection,
+			# which cannot equip. Say so rather than equipping an arbitrary item.
+			_set_status("Zadny predmet vybrany")
+			return
+		var item: Dictionary = inventory.shown_item()
+		var item_type := str(item.get("type", ""))
+		# Rings and off-hand weapons go into a NAMED slot; everything else takes the
+		# natural one, which is the same rule `equip_from_bag` already applies.
+		var target := ""
+		match action_key:
+			"equip_mh":
+				target = "weapon"
+			"equip_oh":
+				target = "shield"
+			"equip_r1":
+				target = "ring1"
+			"equip_r2":
+				target = "ring2"
+			_:
+				target = str(EquipLogic.slot_for_type(item_type))
+		result = EquipLogic.equip_from_bag_into(state, index, target, _resolve)
+
 	if result["ok"]:
 		state.save()
-		_modal().inventory().refresh()
+		inventory.close_item_info()
+		_modal().refresh()
+		_set_status("Nasazeno" if action_key != "unequip" else "Sundano")
 	else:
-		_set_status("Nasazeni odmitnuto: %s" % str(result["reason"]))
+		_set_status(_reason_text(str(result["reason"])))
+
+
+## A refusal reason in Czech, in ONE place — the messages used to be built per call site
+## and two of them drifted. A missing entry falls back to the raw key rather than going
+## silent, so a new rule is visible the first time it fires.
+func _reason_text(reason: String) -> String:
+	return str({
+		"empty_slot": "Slot je prazdny",
+		"unknown_item": "Predmet se nenasel",
+		"already_equipped": "Predmet uz je nasazeny",
+		"class_cannot_use": "Tato trida nemuze pouzit tento typ zbrane",
+		"class_cannot_use_shield": "Tato trida nemuze pouzit stit",
+		"class_cannot_dual_wield": "Tato trida nemuze nosit zbran v off ruce",
+		"two_handed_offhand": "Dvorucni zbran nemuze byt v off ruce",
+		"wrong_slot": "Predmet do tohoto slotu nepatri",
+		"unknown_type": "Neznamy typ predmetu",
+		"unknown_slot": "Neznamy slot",
+		"bag_full": "Batoh je plny",
+	}.get(reason, reason))
 
 
 func _on_equip_slot_tapped(slot: String) -> void:
@@ -521,7 +593,7 @@ func _on_equip_slot_tapped(slot: String) -> void:
 		state.save()
 		_modal().inventory().refresh()
 	else:
-		_set_status("Sundani odmitnuto: %s" % str(result["reason"]))
+		_set_status("Sundani odmitnuto: %s" % _reason_text(str(result["reason"])))
 
 
 ## A potion slot in the inventory: tapping it moves the potion from the bag into the

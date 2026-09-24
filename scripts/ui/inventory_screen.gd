@@ -16,6 +16,8 @@ class_name InventoryScreen
 const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const ItemStats := preload("res://scripts/items/item_stats.gd")
+const ItemInfoOverlay := preload("res://scripts/ui/item_info_overlay.gd")
 
 const CELL := 64
 const GRID_COLUMNS := 5
@@ -59,12 +61,18 @@ const QUALITY_FALLBACK := {
 	"rare": Color("#ffd700"), "unique": Color("#b8860b"),
 }
 
+## A bag cell was tapped. The router equips through it only when the overlay is closed —
+## the PWA shows the item info FIRST and equips from the overlay's button, so this signal
+## is the fallback, not the main path.
 signal item_tapped(inventory_index: int)
 signal equip_slot_tapped(slot: String)
 signal potion_slot_tapped(index: int)
-## A socket cell was tapped: arm it (it must be empty) for the next gem tap.
+## An overlay button was pressed: "equip"/"equip_mh"/"equip_oh"/"equip_r1"/"equip_r2"
+## for a bag item, "unequip" for a worn one.
+signal overlay_action(action: String, slot: String)
+## A socket was tapped: arm it (it must be empty) for the next gem tap.
 signal socket_armed(host_id: String, socket_index: int)
-## A gem in the panel was tapped: put it into the armed socket.
+## A gem in the overlay was tapped: put it into the armed socket.
 signal gem_tapped(host_id: String, gem_id: String)
 signal back_pressed()
 
@@ -77,15 +85,17 @@ var _bag_nodes: Array = []           # Button per bag cell
 var _potion_nodes: Array = []
 var _bag_grid: GridContainer
 var _potion_row: HBoxContainer
-## The PWA shows a selected item's detail — including its sockets and the gems that fit
-## — in `#invItemOverlay`, a tap-through overlay OUTSIDE `#inventoryScreen`. The port had
-## it as a permanent "Sockets" block at the bottom of the pane, which is invented state:
-## the live pane has exactly three children (doll, potions, bag) and the extra block moved
-## every real element below it.
-var _socket_overlay: Control
-var _socket_row: HBoxContainer
-var _gem_row: HBoxContainer
-var _socket_label: Label
+## The PWA shows a selected item's detail — stats, the compare block, its sockets and the
+## gems that fit — in `#invItemOverlay`, a tap-through overlay OUTSIDE `#inventoryScreen`.
+## The port had it as a permanent "Sockets" block at the bottom of the pane, which is
+## invented state: the live pane has exactly three children (doll, potions, bag) and the
+## extra block moved every real element below it.
+##
+## The socket-only panel it grew into afterwards was still wrong: it had no stats, no
+## compare and no equip button, so tapping an item showed nothing a player reads an item
+## for. `ItemInfoOverlay` is the whole thing, and it is a sibling here on purpose — it is
+## an overlay, not a fourth block in the column.
+var _item_overlay: ItemInfoOverlay
 ## The standalone (non-embedded) header's gold readout. Only the page form draws it; inside
 ## the modal there is no header at all, which is why the PWA's tab has no gold line.
 var _gold_label: Label
@@ -95,6 +105,10 @@ var _gold_label: Label
 var _socket_host_id: String = ""
 ## Which socket the next gem tap will fill. -1 means none is armed yet.
 var _armed_socket: int = -1
+## The PWA's `_invSelectedIdx` / `_invSelectedSlot`: which cell the overlay is showing.
+## They drive the `.selected` gold border and are cleared together (`clearSelection()`).
+var _selected_bag: int = -1
+var _selected_slot: String = ""
 
 
 func _init(game_data: Node, gen: ItemGen, state) -> void:
@@ -106,7 +120,26 @@ func _init(game_data: Node, gen: ItemGen, state) -> void:
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
+	# The overlay is built here but added by `mount_overlay()` to the DIALOG, not to this
+	# pane. It matters: the PWA's `#invItemOverlay` is a SIBLING of `#inventoryScreen` at
+	# `z-index:1000`, and the inventory pane is asserted to hold exactly the PWA's three
+	# blocks. A fourth child here is invented state AND it would be clipped by the pane's
+	# own box, so a full-screen overlay could never reach the screen edges.
+	_item_overlay = ItemInfoOverlay.new(_data, _gen, _state, _find_item_callable(),
+		ItemGen.EQUIP_SLOTS)
+	_item_overlay.action.connect(func(a, s): overlay_action.emit(a, s))
+	_item_overlay.dismissed.connect(_on_overlay_dismissed)
+	_item_overlay.socket_tapped.connect(_on_socket_cell_tapped)
+	_item_overlay.gem_tapped.connect(_on_gem_cell_tapped)
 	refresh()
+
+
+## Hand the overlay to whoever owns the full-screen dialog. `CharacterModal` calls this
+## with its own root, so the overlay covers the dialog and the game world under it and is
+## not a child of the inventory pane.
+func mount_overlay(host: Control) -> void:
+	if _item_overlay != null and _item_overlay.get_parent() == null:
+		host.add_child(_item_overlay)
 
 
 # --- construction ------------------------------------------------------------
@@ -310,7 +343,7 @@ func _make_equipment_panel() -> Control:
 			_:
 				button.size_flags_horizontal = Control.SIZE_FILL
 		var slot_name := slot
-		button.pressed.connect(func(): equip_slot_tapped.emit(slot_name))
+		button.pressed.connect(func(): _on_equip_slot_pressed(slot_name))
 		_slot_nodes[slot] = button
 		grid.add_child(button)
 		cursor += 1
@@ -434,14 +467,36 @@ func _make_bag_panel() -> Control:
 	return panel
 
 
-## `.inv-equip-slot { background:#000; border:1.5px solid #4a4a4a; border-radius:8px }`
-## and `.empty { border-style:dashed; background:#000 }` with the placeholder icon at
-## opacity 0.25. No hover state — Jan's rule for a mobile screen: a tap is the only
-## feedback (the PWA's `:hover` rules are desktop leftovers and are deliberately not
-## ported).
+## `.inv-equip-slot { background:#000; border:1.5px solid #4a4a4a; border-radius:8px;
+##                    overflow:hidden }` and `.empty { border-style:dashed; background:#000 }`
+## with the placeholder icon at opacity 0.25. No hover state — Jan's rule for a mobile
+## screen: a tap is the only feedback (the PWA's `:hover` rules are desktop leftovers and
+## are deliberately not ported).
+##
+## ⚠️ `overflow:hidden` IS THE POINT, and it was missing. Godot does NOT clip a Button's
+## children unless `clip_contents` is set, so an icon that reached the slot's edge drew
+## over the border and past the rounded corner — the "the icon looks like a picture
+## pasted into the slot with its own edge" report. Measured on the live PWA: the slot is
+## 75px with `overflow:hidden`, and its `<img>` is EXACTLY the content box (73px), so the
+## art can never cross the border there.
+##
+## The border is 1px, not 2px: `probe_slots_live.py` reads
+## `border: 1px rgb(74,74,74)` on every slot of the live build, and `* { box-sizing:
+## border-box }` means the border is INSIDE the 75px. Godot draws a stylebox border
+## OUTSIDE the content box, so the minimum goes DOWN by the border on each side
+## (75 - 1 - 1 = 73) or every slot ships 2px too wide.
+const SLOT_BORDER := 1.0
+
+
 func _make_slot_button(label: String, size: Vector2 = Vector2(CELL, CELL)) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = size
+	# `box-sizing:border-box`: the CSS width INCLUDES the border, and Godot's stylebox
+	# border sits outside the content box — so the content is the CSS size minus the
+	# border on each side. Getting this wrong is 2px per slot on every edge.
+	button.custom_minimum_size = Vector2(maxf(1.0, size.x - SLOT_BORDER * 2.0),
+		maxf(1.0, size.y - SLOT_BORDER * 2.0))
+	# `overflow:hidden`. Without it every icon child draws over the slot's own border.
+	button.clip_contents = true
 	# NOT `flat = true`: `flat` makes a Button skip drawing its stylebox entirely, so
 	# every slot border in the PWA's inventory was invisible — items floated on the
 	# background and empty slots did not exist at all. The border comes from the
@@ -452,8 +507,9 @@ func _make_slot_button(label: String, size: Vector2 = Vector2(CELL, CELL)) -> Bu
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("#000000")
 	style.border_color = Color("#4a4a4a")
-	style.set_border_width_all(2)
+	style.set_border_width_all(int(SLOT_BORDER))
 	style.set_corner_radius_all(8)
+	style.set_content_margin_all(0)
 	for state_name in ["normal", "hover", "focus", "disabled"]:
 		button.add_theme_stylebox_override(state_name, style)
 	var pressed := style.duplicate()
@@ -470,13 +526,13 @@ func _make_slot_button(label: String, size: Vector2 = Vector2(CELL, CELL)) -> Bu
 func _set_empty_style(button: Button) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("#000000")
-	style.border_color = Color("#4a4a4a")
-	style.set_border_width_all(2)
+	style.border_color = Color("#3a3a3a")
+	style.set_border_width_all(int(SLOT_BORDER))
 	style.set_corner_radius_all(8)
+	style.set_content_margin_all(0)
 	# `border-style:dashed` — Godot has no dashed border for a StyleBox, so the dashed
 	# look comes from the dimmer colour plus the 25%-opacity placeholder icon. Drawing
 	# dashes by hand per slot would be four draw calls per cell for one visual cue.
-	style.border_color = Color("#3a3a3a")
 	for state_name in ["normal", "hover", "focus", "disabled"]:
 		button.add_theme_stylebox_override(state_name, style)
 	var pressed := style.duplicate()
@@ -492,9 +548,16 @@ func refresh() -> void:
 	_refresh_equipment()
 	_refresh_potions()
 	_refresh_bag()
-	# `_refresh_sockets` rebuilds the overlay's contents, not a pane child: the pane keeps
-	# the PWA's three children exactly.
+	# `_refresh_sockets` rebuilds the OVERLAY's socket row, not a pane child: the pane
+	# keeps the PWA's three children exactly.
 	_refresh_sockets()
+	# A refresh can land while the overlay is open (an equip, a socket insert). Its
+	# contents are built from the item dictionary, so a host that changed identity has to
+	# be re-read — otherwise the overlay shows the previous item's stats.
+	if _item_overlay != null and _item_overlay.visible:
+		var live := _resolve(_item_overlay.current_item_id())
+		if not live.is_empty():
+			_item_overlay._item = live
 
 
 func _refresh_equipment() -> void:
@@ -575,167 +638,199 @@ func _refresh_bag() -> void:
 		# children expand, which is why the measured cells are all 62.8 and the last one
 		# ends exactly at the wrap's inner edge.
 		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		# A tap equips (the router decides) but ALSO selects the item for the socket
-		# panel — that is the whole reason no gem dialog is needed.
+		# A tap opens the item's info overlay (the PWA's `#invItemOverlay`); equipping is
+		# the overlay's button, not the tap.
 		var index := i
 		cell.pressed.connect(func(): _on_bag_tapped(index))
 		_bag_nodes.append(cell)
 		_bag_grid.add_child(cell)
 
 
-## One tap = one action: the router equips it, and — for an item that HAS a socket —
-## the detail overlay opens with that item's sockets and the gems that fit. That is the
-## PWA's `#invItemOverlay` reached through `openItemOverlay`, and it is why no gem dialog
-## is needed for a single-socket item.
+## The PWA's tap routing on a bag cell: it does NOT equip. It selects the cell, marks it
+## `.selected` and opens `#invItemOverlay` — the equipping happens from the overlay's own
+## button, and a tap on the dim or the X clears the selection. The port equipped straight
+## from the tap, which is why stats and compare had nowhere to appear.
+##
+## `_on_bag_tapped` is also driven by `_refresh_bag`'s own signal, so the two entry points
+## (a fresh tap and the router's fallback) cannot drift.
 func _on_bag_tapped(index: int) -> void:
 	var inventory: Array = _state.inventory()
-	if index >= 0 and index < inventory.size():
-		var entry: Variant = inventory[index]
-		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
-		var item: Dictionary = _resolve(item_id)
-		if int(item.get("sockets", 0)) > 0:
-			# A different host invalidates the armed socket index.
-			if _socket_host_id != item_id:
-				_armed_socket = -1
-			_socket_host_id = item_id
-			_open_socket_overlay()
-		else:
-			_close_socket_overlay()
+	if index < 0 or index >= inventory.size():
+		close_item_info()
+		return
+	var entry: Variant = inventory[index]
+	var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+	var item: Dictionary = _resolve(item_id)
+	if item.is_empty():
+		close_item_info()
+		return
+	# A different host invalidates the armed socket index.
+	if _socket_host_id != item_id:
+		_armed_socket = -1
+		_socket_host_id = item_id
+	_select_bag(index)
+	_item_overlay.show_for_bag(item, index)
 	item_tapped.emit(index)
 
 
-## The overlay is built once and shown/hidden, so opening it never rebuilds a node under
-## the player's finger (a tap delivered to a node that was already `queue_free`d is lost).
-func _open_socket_overlay() -> void:
-	if _socket_overlay == null:
-		_build_socket_overlay()
-	_refresh_sockets()
-	_socket_overlay.visible = true
+## Tapping an EQUIP slot shows that item's info with an Unequip button; tapping the SAME
+## slot again takes it off. That is the PWA's own two-step (`_invSelectedSlot`), and it is
+## why one tap does not silently remove a piece of gear.
+func _on_equip_slot_pressed(slot: String) -> void:
+	var held: Variant = _state.equip().get(slot)
+	var item_id: String = "" if held == null else str(held)
+	# 'fists' is the implicit weapon: the slot reads as empty even though the id is set.
+	if item_id == "" or item_id == "fists":
+		close_item_info()
+		equip_slot_tapped.emit(slot)
+		return
+	if _item_overlay.visible and _item_overlay.origin() == "equipped" 			and _item_overlay.origin_slot() == slot:
+		close_item_info()
+		equip_slot_tapped.emit(slot)
+		return
+	_select_slot(slot)
+	_socket_host_id = item_id
+	_armed_socket = -1
+	_item_overlay.show_for_equipped(_resolve(item_id), slot)
 
 
-func _close_socket_overlay() -> void:
+func close_item_info() -> void:
+	_item_overlay.close()
+
+
+func _on_overlay_dismissed() -> void:
 	_socket_host_id = ""
 	_armed_socket = -1
-	if _socket_overlay != null:
-		_socket_overlay.visible = false
+	_clear_selection()
 
 
-## `#invItemOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:1200 }`
-## with a bordered `.inv-item-overlay-content` centred in it. Outside the pane on purpose:
-## it is an overlay, not a fourth block in the column.
-func _build_socket_overlay() -> void:
-	var overlay := Control.new()
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	overlay.visible = false
-	add_child(overlay)
-
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.8)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.gui_input.connect(func(event):
-		if event is InputEventMouseButton and event.pressed:
-			_close_socket_overlay()
-		elif event is InputEventScreenTouch and event.pressed:
-			_close_socket_overlay())
-	overlay.add_child(dim)
-
-	var panel := PanelContainer.new()
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#0a0a0a")
-	style.border_color = Color("#333333")
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(10)
-	style.set_content_margin_all(14)
-	panel.add_theme_stylebox_override("panel", style)
-	panel.anchor_left = 0.05
-	panel.anchor_right = 0.95
-	panel.anchor_top = 0.3
-	panel.anchor_bottom = 0.3
-	panel.offset_bottom = 1.0
-	overlay.add_child(panel)
-
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
-	panel.add_child(column)
-
-	_socket_label = UIKit.label("", 13, UIKit.DIM)
-	column.add_child(_socket_label)
-
-	_socket_row = HBoxContainer.new()
-	_socket_row.add_theme_constant_override("separation", 6)
-	column.add_child(_socket_row)
-
-	_gem_row = HBoxContainer.new()
-	_gem_row.add_theme_constant_override("separation", 6)
-	column.add_child(_gem_row)
-
-	var close := UIKit.flat_button("Zavrit", 120.0, 36.0, 13)
-	close.pressed.connect(_close_socket_overlay)
-	column.add_child(close)
-
-	_socket_overlay = overlay
-
-
-## The socket panel: one cell per socket of the selected item, then the gems and
-## jewels in the bag. Tapping an EMPTY socket arms it; tapping a gem fills the armed
-## socket. That two-tap flow replaces the PWA's full-screen gem modal.
-func _refresh_sockets() -> void:
-	if _socket_row == null:
-		return
-	for child in _socket_row.get_children():
-		child.queue_free()
-	for child in _gem_row.get_children():
-		child.queue_free()
-
-	var host: Dictionary = _resolve(_socket_host_id)
-	if host.is_empty():
-		_socket_label.text = "Klepni na predmet v batohu pro vlozeni gemu."
-		return
-	var sockets := int(host.get("sockets", 0))
-	if sockets <= 0:
-		_socket_label.text = "%s nema socket." % str(host.get("name", _socket_host_id))
-		return
-
-	_socket_label.text = "%s - klepni na prazdny socket, pak na gem." % str(host.get("name", ""))
-	var filled: Array = host.get("socketedGems", [])
-	for i in sockets:
-		var button := _make_slot_button("")
-		button.custom_minimum_size = Vector2(44, 44)
-		var record: Variant = filled[i] if i < filled.size() else null
-		if record == null:
-			_set_placeholder_icon(button, "assets/items/jewel_ruby.png", 0.22)
+## `.chest-cell.selected { border-color:#f1c40f !important }` — the tap feedback the PWA
+## gives the cell it just opened. One selection at a time, across both grids.
+func _select_bag(index: int) -> void:
+	for i in _bag_nodes.size():
+		var cell: Button = _bag_nodes[i]
+		if i == index:
+			_set_border(cell, Color("#f1c40f"))
+		elif i < _state.inventory().size():
+			_set_border(cell, _quality_color(_cell_item(i)))
 		else:
-			var entry: Dictionary = record
-			var gem_id := ""
-			if str(entry.get("type", "")) == "jewel":
-				gem_id = str(entry.get("jewelId", ""))
-			_set_slot_content(button, _resolve(gem_id), "", gem_id == "")
-		button.pressed.connect(func(): socket_armed.emit(_socket_host_id, i))
-		_socket_row.add_child(button)
-
-	# Gems and jewels from the bag, so the player can see what fits.
-	var shown := 0
-	for entry in _state.inventory():
-		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
-		var item: Dictionary = _resolve(item_id)
-		if str(item.get("type", "")) not in ["gem", "jewel"]:
-			continue
-		var gem_button := _make_slot_button("")
-		gem_button.custom_minimum_size = Vector2(40, 40)
-		_set_slot_content(gem_button, item, "", false)
-		gem_button.pressed.connect(func(): gem_tapped.emit(_socket_host_id, item_id))
-		_gem_row.add_child(gem_button)
-		shown += 1
-	if shown == 0:
-		var hint := Label.new()
-		hint.text = "V batohu neni zadny gem."
-		hint.add_theme_font_size_override("font_size", 12)
-		hint.add_theme_color_override("font_color", Color(UIKit.DIM))
-		_gem_row.add_child(hint)
+			cell.add_theme_stylebox_override("normal", _empty_bag_style())
+	_clear_slot_selection_visuals()
+	_selected_bag = index
+	_selected_slot = ""
 
 
-## One slot's contents: an icon (or a dimmed placeholder when empty) and a border in
-## the item's quality colour.
+func _select_slot(slot: String) -> void:
+	# First undo the previous selection (bag OR slot), then paint the new one gold.
+	_selected_bag = -1
+	if _selected_slot != "" and _slot_nodes.has(_selected_slot):
+		_restore_slot_visual(_selected_slot)
+	if _selected_slot != slot:
+		pass
+	for name in _slot_nodes:
+		if name != slot:
+			_restore_slot_visual(name)
+	if _slot_nodes.has(slot):
+		_set_border(_slot_nodes[slot], Color("#f1c40f"))
+	_selected_slot = slot
+
+
+## Put every cell and slot back to its own quality colour — the PWA's `clearSelection()`.
+func _clear_selection() -> void:
+	_selected_bag = -1
+	_selected_slot = ""
+	for name in _slot_nodes:
+		_restore_slot_visual(name)
+	for i in _bag_nodes.size():
+		_restore_bag_visual(i)
+
+
+## A slot back to its own colour (quality when filled, the empty style when not).
+func _restore_slot_visual(slot: String) -> void:
+	if not _slot_nodes.has(slot):
+		return
+	var button: Button = _slot_nodes[slot]
+	var held: Variant = _state.equip().get(slot)
+	var held_id: String = "" if held == null else str(held)
+	if held_id == "" or held_id == "fists":
+		button.add_theme_stylebox_override("normal", _empty_slot_style())
+		button.add_theme_stylebox_override("pressed", _empty_slot_style())
+	else:
+		_set_border(button, _quality_color(_resolve(held_id)))
+
+
+func _restore_bag_visual(index: int) -> void:
+	if index < 0 or index >= _bag_nodes.size():
+		return
+	var cell: Button = _bag_nodes[index]
+	var item := _cell_item(index)
+	if item.is_empty():
+		cell.add_theme_stylebox_override("normal", _empty_bag_style())
+	else:
+		_set_border(cell, _quality_color(item))
+
+
+## Undo the gold selection on the cell the overlay was opened from — kept as its own
+## function because BOTH `_select_bag` and `_select_slot` have to undo the other one.
+func _clear_slot_selection_visuals() -> void:
+	for name in _slot_nodes:
+		_restore_slot_visual(name)
+
+
+func _cell_item(index: int) -> Dictionary:
+	var inventory: Array = _state.inventory()
+	if index < 0 or index >= inventory.size():
+		return {}
+	var entry: Variant = inventory[index]
+	var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+	return _resolve(item_id)
+
+
+## The item the overlay is showing, or {} when it is closed. The router reads this to
+## decide what an overlay button means without keeping a second copy of the selection.
+func shown_item() -> Dictionary:
+	return _item_overlay._item if _item_overlay != null else {}
+
+
+func shown_item_id() -> String:
+	return _item_overlay.current_item_id() if _item_overlay != null else ""
+
+
+## The socket panel lives inside the overlay now: tapping a socket cell arms it, and the
+## gems in the bag are listed under it. Both are re-rendered from the overlay's own
+## `socket_armed`/`gem_tapped` signals.
+func _refresh_sockets() -> void:
+	if _item_overlay != null:
+		_item_overlay.refresh_sockets(_socket_host_id, _armed_socket, _state.inventory())
+
+
+## The panel's socket row was tapped: arm it (only an empty one is armable) and let the
+## router validate against the socketing rules.
+func _on_socket_cell_tapped(index: int) -> void:
+	_armed_socket = index
+	socket_armed.emit(_socket_host_id, index)
+
+
+## A gem cell in the overlay was tapped.
+func _on_gem_cell_tapped(gem_id: String) -> void:
+	gem_tapped.emit(_socket_host_id, gem_id)
+
+
+func _empty_bag_style() -> StyleBoxFlat:
+	return UIKit.item_cell({}, BAG_CELL, false).get_theme_stylebox("normal")
+
+
+func _empty_slot_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#000000")
+	style.border_color = Color("#3a3a3a")
+	style.set_border_width_all(int(SLOT_BORDER))
+	style.set_corner_radius_all(8)
+	style.set_content_margin_all(0)
+	return style
+
+
+
 func _set_slot_content(button: Button, item: Dictionary, placeholder: String, is_empty: bool) -> void:
 	for child in button.get_children():
 		child.queue_free()
@@ -746,23 +841,37 @@ func _set_slot_content(button: Button, item: Dictionary, placeholder: String, is
 			_set_placeholder_icon(button, placeholder, 0.25)
 		return
 
-	var icon := TextureRect.new()
-	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.texture = _load_texture(str(item.get("iconImg", "")))
-	button.add_child(icon)
+	var icon := _slot_icon(button, ItemStats.icon_path(item))
+	icon.modulate = Color(1, 1, 1, 1)
 	_set_border(button, _quality_color(item))
 
 
 func _set_placeholder_icon(button: Button, path: String, alpha: float) -> void:
+	var icon := _slot_icon(button, path)
+	icon.modulate = Color(1, 1, 1, alpha)
+
+
+## A TextureRect filling a slot's CONTENT box — the Button's rect inset by the border —
+## drawing the item icon the way the PWA's `<img>` does: `width:100%; height:100%;
+## object-fit:contain; background:#000`.
+##
+## `STRETCH_KEEP_ASPECT_CENTERED` IS the CSS `object-fit:contain`, and it is what the live
+## PWA uses (measured: `fit: "contain"` on every slot's `<img>`, from the inline style
+## `renderItemIcon` writes — the `object-fit:cover` in `style.css` is overridden by it).
+## So a square 256px icon in a 73x108 slot renders 73x73 centred in a black band, in both.
+func _slot_icon(button: Button, path: String) -> TextureRect:
 	var icon := TextureRect.new()
 	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = SLOT_BORDER
+	icon.offset_top = SLOT_BORDER
+	icon.offset_right = -SLOT_BORDER
+	icon.offset_bottom = -SLOT_BORDER
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture = _load_texture(path)
-	icon.modulate = Color(1, 1, 1, alpha)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(icon)
+	return icon
 
 
 ## Stack size badge, bottom-right, gold border — the PWA's `.cell-count`.
