@@ -287,11 +287,13 @@ func _test_bag_cells_are_the_measured_width() -> void:
 ## The port drew the amulet and both rings at 75 and had no town-portal slot at all, so a
 ## 75px icon overflowed a 48px border — the "itemy byly větší než equip sloty" report.
 ##
-## ⚠️ The assertion is the TOTAL drawn size, not `custom_minimum_size`. The PWA has
-## `* { box-sizing:border-box }`, so its 75px INCLUDES the 1px border; Godot draws a
-## stylebox border OUTSIDE the content box, so the minimum is 73 and the drawn slot is 75.
-## Comparing the minimum against the CSS number demands a 75px slot that DRAWS 77 — the
-## assertion has to add the border back, or it pins the very bug it is meant to catch.
+## ⚠️ The assertion is `custom_minimum_size` ITSELF, and the formula it used to use was
+## wrong. It added the stylebox border back on the theory that Godot draws the border
+## OUTSIDE the content box, so a 73px minimum was a 75px slot. Measured on a bare Button
+## (`tools/probe_border_box.gd`): the border is INSIDE, `custom_minimum_size = 75` draws
+## 75x75. The old formula therefore demanded a 75px slot whose minimum was 75 while the
+## code under test subtracted 2 — the two agreed on paper and the real slots shipped 2px
+## short on every axis. Assert the number the CSS names, directly.
 func _test_doll_slots_carry_their_measured_sizes() -> void:
 	var modal = _main._screens["character"]
 	_main.open_modal("inventory")
@@ -308,13 +310,10 @@ func _test_doll_slots_carry_their_measured_sizes() -> void:
 			continue
 		var button: Button = inventory._slot_nodes[slot]
 		var expect: Vector2 = want[slot]
-		var style: StyleBoxFlat = button.get_theme_stylebox("normal")
-		var drawn: Vector2 = button.custom_minimum_size + Vector2(
-			style.border_width_left + style.border_width_right,
-			style.border_width_top + style.border_width_bottom)
-		if not drawn.is_equal_approx(expect):
-			_fail("slot '%s' draws %.0fx%.0f, the PWA's CSS says %.0fx%.0f"
-				% [slot, drawn.x, drawn.y, expect.x, expect.y])
+		if not button.custom_minimum_size.is_equal_approx(expect):
+			_fail("slot '%s' is %.0fx%.0f, the PWA's CSS says %.0fx%.0f"
+				% [slot, button.custom_minimum_size.x, button.custom_minimum_size.y,
+					expect.x, expect.y])
 
 
 ## `overflow:hidden` on the live PWA's slots, and the port had no equivalent: Godot does

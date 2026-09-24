@@ -481,20 +481,26 @@ func _make_bag_panel() -> Control:
 ## art can never cross the border there.
 ##
 ## The border is 1px, not 2px: `probe_slots_live.py` reads
-## `border: 1px rgb(74,74,74)` on every slot of the live build, and `* { box-sizing:
-## border-box }` means the border is INSIDE the 75px. Godot draws a stylebox border
-## OUTSIDE the content box, so the minimum goes DOWN by the border on each side
-## (75 - 1 - 1 = 73) or every slot ships 2px too wide.
+## `border: 1px rgb(74,74,74)` on every slot of the live build.
+##
+## ⚠️ And the SIZE is the CSS size, NOT the CSS size minus the border. The comment here
+## used to claim "Godot draws a stylebox border OUTSIDE the content box, so the minimum
+## goes DOWN by 2" — that is WRONG, and it made every slot in the inventory 2px short on
+## each axis. Measured on a bare Button with a 1px StyleBoxFlat and nothing else
+## (`tools/probe_border_box.gd`): `custom_minimum_size = 75` draws 75x75, and
+## `custom_minimum_size = 73` draws 73x73. The border is INSIDE, so subtracting it
+## double-counts the same way the PWA's `box-sizing:border-box` does not.
+##
+## The visible symptom was the doll: the tall row came out 108 instead of 110, so the doll
+## was 320 tall against the PWA's 326 and every block below it sat 6px high.
 const SLOT_BORDER := 1.0
 
 
 func _make_slot_button(label: String, size: Vector2 = Vector2(CELL, CELL)) -> Button:
 	var button := Button.new()
-	# `box-sizing:border-box`: the CSS width INCLUDES the border, and Godot's stylebox
-	# border sits outside the content box — so the content is the CSS size minus the
-	# border on each side. Getting this wrong is 2px per slot on every edge.
-	button.custom_minimum_size = Vector2(maxf(1.0, size.x - SLOT_BORDER * 2.0),
-		maxf(1.0, size.y - SLOT_BORDER * 2.0))
+	# The CSS box IS the drawn box — see the note on SLOT_BORDER. `box-sizing:border-box`
+	# and Godot's stylebox agree; subtracting the border was the bug.
+	button.custom_minimum_size = size
 	# `overflow:hidden`. Without it every icon child draws over the slot's own border.
 	button.clip_contents = true
 	# NOT `flat = true`: `flat` makes a Button skip drawing its stylebox entirely, so
@@ -580,14 +586,13 @@ func _refresh_potions() -> void:
 	var slots: Array = _state.equip().get("beltPotionSlots", [])
 	# `.inv-potion-slot { width:36px; height:36px; border:2px solid #4a4a4a;
 	#                     border-radius:4px }` with `* { box-sizing:border-box }`, so the
-	# 36 INCLUDES the border. In Godot a Button's stylebox border is drawn OUTSIDE its
-	# `custom_minimum_size`, so the size goes up by the border on each side: 32 + 2 + 2.
-	# Measured, the port's potion slots came out 40px wide against the PWA's 36.
+	# 36 INCLUDES the border — and so does Godot's stylebox (see SLOT_BORDER). The old
+	# comment here claimed the border is drawn outside and produced 32 + 2 + 2; measured,
+	# the slots came out 30x30 against the PWA's 36.
 	const POTION := 36.0
 	const POTION_BORDER := 2.0
 	for i in slots.size():
-		var button := _make_slot_button("", Vector2(POTION - POTION_BORDER * 2.0,
-			POTION - POTION_BORDER * 2.0))
+		var button := _make_slot_button("", Vector2(POTION, POTION))
 		button.add_theme_stylebox_override("normal", _potion_style(POTION_BORDER))
 		button.add_theme_stylebox_override("pressed", _potion_style(POTION_BORDER))
 		var item_id: Variant = slots[i]

@@ -263,10 +263,14 @@ func _build_tabs() -> Control:
 	for entry in TABS:
 		var key := str(entry[0])
 		# `.combined-tab { flex:1; padding:8px 6px; border-radius:8px; font-size:12px }`
+		# MEASURED on the live PWA: the tab's own box is **101x32 at y=59** — 32 INCLUDES
+		# the 1px border (`box-sizing:border-box`), so the minimum height here is 32 and
+		# not 34. The port's 34 made the 3-tab row 34 tall, which pushed the whole body
+		# down and made the dialog 20px shorter than the PWA's 752.
 		var button := Button.new()
 		button.text = str(entry[1])
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.custom_minimum_size = Vector2(0, 34)
+		button.custom_minimum_size = Vector2(0, 32)
 		button.focus_mode = Control.FOCUS_NONE
 		button.add_theme_font_size_override("font_size", 12)
 		button.pressed.connect(func(): set_tab(key))
