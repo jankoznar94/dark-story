@@ -28,6 +28,8 @@ extends SceneTree
 ##   * every page has a `ScrollSwipe` bound to it, so the drag exists at all,
 ##   * the driver's own arithmetic moves the bar in the right direction, is gated by the
 ##     deadzone, only starts inside the page, and stands down where Godot's own drag is live.
+##   * a FLICK coasts on after the finger leaves, by a sensible distance, for a while and then
+##     stops — while a slow drag, a held finger and a mouse release none of them fling.
 ##
 ## Verify by mutation: point a driver at the wrong bar, drop the deadzone, or let it start
 ## outside its own rect and the matching assertion goes red.
@@ -47,6 +49,15 @@ var _failures: Array[String] = []
 ## Set by `_test_a_page_keeps_its_full_width_and_draws_no_bar()` when it runs in the pipeline
 ## phase, where a layout pass exists and the bar's visibility is a real reading.
 var _page_in_phase := false
+## The fake clock the flick tests install into the driver. A headless run delivers a whole
+## gesture inside the same millisecond, so a real time stamp yields a velocity of infinity and
+## the flick cannot be measured at all.
+var _fake_ms := 0
+## Where the fake clock currently is — read by the closure installed in `_flick`, which cannot
+## capture the variable itself, only the object (a lambda closes over the object, and a
+## `SceneTree` script IS the object).
+func fake_now() -> int:
+	return _fake_ms
 
 
 func _initialize() -> void:
@@ -60,6 +71,13 @@ func _initialize() -> void:
 	_test_the_deadzone_absorbs_the_first_pixels()
 	_test_a_drag_that_starts_outside_the_page_is_ignored()
 	_test_the_driver_runs_on_a_touchscreen_too()
+	_test_a_flick_coasts_after_the_finger_leaves()
+	_test_a_violent_flick_is_clamped()
+	_test_a_phone_flick_survives_the_emulated_mouse()
+	_test_a_slow_drag_does_not_fling()
+	_test_a_finger_held_still_does_not_fling()
+	_test_a_mouse_release_does_not_fling()
+	_test_the_coast_ends_at_the_end_of_the_page()
 	# The last one needs the REAL input pipeline (`push_input` refuses outside the tree and
 	# the headless window is 64x64 until a real frame runs), so it goes on the first frame.
 	process_frame.connect(_pipeline_phase, CONNECT_ONE_SHOT)
@@ -84,6 +102,38 @@ func _pipeline_phase() -> void:
 	_test_a_page_keeps_its_full_width_and_draws_no_bar()
 	_test_a_drag_does_not_fire_the_button_it_started_on()
 	_test_a_tap_still_fires_without_dragging()
+	# The last one is asynchronous: a coast has to be driven by REAL frames to prove the node's
+	# `set_process` actually drives it — `_process` called by hand passes even if the engine
+	# never calls it.
+	_coast_on_real_frames()
+
+
+## The wiring half of the flick, and the one a hand-called `_process` cannot see: a driver whose
+## `set_process(true)` did nothing (or a node whose processing the engine never enables) coasts
+## perfectly in a unit test and not at all on the device.
+func _coast_on_real_frames() -> void:
+	print("== the coast runs on real frames ==")
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	_flick(d, 12.0, 16, 8)
+	if not swipe._flinging:
+		_fail("the flick did not start a coast")
+		_verdict()
+		return
+	var after_drag: int = scroll.scroll_vertical
+	var bar := scroll.get_v_scroll_bar()
+	var moved := 0
+	for _i in 8:
+		await process_frame
+		if bar.value > float(after_drag) + 0.5:
+			moved += 1
+	if moved == 0:
+		_fail("the page did not move on a single real frame — the coast never runs (the "
+			+ "driver's `set_process` is not reaching the engine)")
+	else:
+		print("  %d of 8 real frames advanced the coast (page at %.1f px, dragged to %d)"
+			% [moved, bar.value, after_drag])
 	_verdict()
 
 
@@ -170,7 +220,7 @@ func _test_the_driver_moves_the_page_with_the_finger() -> void:
 	var d := _driver()
 	var scroll: ScrollContainer = d["scroll"]
 	var swipe = d["swipe"]
-	swipe._begin(Vector2(195, 500), 0)
+	swipe._begin(Vector2(195, 500), 0, true)
 	if swipe._pointer != 0:
 		_fail("a drag inside the page did not begin")
 	for _i in 20:
@@ -189,7 +239,7 @@ func _test_the_driver_moves_the_page_with_the_finger() -> void:
 			% [scroll.scroll_vertical, after_up])
 	print("  160px up -> %d px, then back to %d px" % [after_up, scroll.scroll_vertical])
 	# The page must not be scrolled past its ends.
-	swipe._begin(Vector2(195, 500), 0)
+	swipe._begin(Vector2(195, 500), 0, true)
 	for _i in 300:
 		swipe._move(-40.0)
 	if scroll.scroll_vertical < 0:
@@ -203,7 +253,7 @@ func _test_the_deadzone_absorbs_the_first_pixels() -> void:
 	var d := _driver()
 	var scroll: ScrollContainer = d["scroll"]
 	var swipe = d["swipe"]
-	swipe._begin(Vector2(195, 500), 0)
+	swipe._begin(Vector2(195, 500), 0, true)
 	for _i in 5:
 		swipe._move(-1.5)   # 7.5px, under the 8px deadzone
 	if scroll.scroll_vertical != 0:
@@ -223,7 +273,7 @@ func _test_a_drag_that_starts_outside_the_page_is_ignored() -> void:
 	var scroll: ScrollContainer = d["scroll"]
 	var swipe = d["swipe"]
 	# The host is 390x844 at the origin; y=-40 is above it.
-	swipe._begin(Vector2(195, -40), 0)
+	swipe._begin(Vector2(195, -40), 0, true)
 	if swipe._pointer != swipe.INACTIVE:
 		_fail("a drag that began outside the page was accepted")
 	for _i in 20:
@@ -284,6 +334,206 @@ func _test_the_driver_runs_on_a_touchscreen_too() -> void:
 	else:
 		print("  the driver never consumes an event (a tap still reaches its button)")
 
+
+
+## A FLICK: the page must keep going after the finger is lifted, and by roughly the distance a
+## browser gives it.
+##
+## The gesture is driven with realistic per-event durations through the driver's `clock` — a
+## headless run delivers a whole gesture inside the same millisecond, where a "velocity" does
+## not exist, so without the fake clock this test would measure an infinite one and prove
+## nothing about the arithmetic.
+func _test_a_flick_coasts_after_the_finger_leaves() -> void:
+	print("== a flick coasts after the finger leaves ==")
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	_flick(d, 12.0, 16, 8)                     # 8 events x 12 px / 16 ms = 750 px/s
+	var after_drag: int = scroll.scroll_vertical
+	if after_drag <= 0:
+		_fail("the drag itself moved the page 0 px")
+		return
+	if not swipe._flinging:
+		_fail("a 750 px/s flick did not start a coast — the page stops dead when the finger "
+			+ "leaves, which is Jan's report")
+		return
+	var ended := false
+	for _i in 300:
+		sim_frame(swipe)
+		if not swipe._flinging:
+			ended = true
+			break
+	if not ended:
+		_fail("the coast never stopped (still flinging after 5 s of frames)")
+	var extra: int = scroll.scroll_vertical - after_drag
+	# Expected = the sampled sum of `v0 * exp(-decel*t) * dt` cut off at the driver's own stop
+	# speed. It converges on the continuous ideal `v0 / decel` — 748/2.5 ≈ 300 px — and what
+	# matters is the SHAPE: a per-FRAME decay instead of a per-second one overshoots it by
+	# hundreds, and a flick that never stops would run to the end of the page.
+	if extra < 250 or extra > 360:
+		_fail("a 750 px/s flick coasted %d px after the finger (expected ~300)" % extra)
+	print("  finger gave %d px, the page coasted a further %d px, then stopped"
+		% [after_drag, extra])
+
+
+## A violent flick is CLAMPED: the page may cross a page or two, not the whole app. The clamp is
+## the only thing standing between a fast swipe and a page that flies past everything the player
+## wanted to read, and it cannot be seen on a SHORT page (the end stops the coast first) — so
+## this one runs on the long page.
+func _test_a_violent_flick_is_clamped() -> void:
+	print("== a violent flick is clamped ==")
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	_flick(d, 120.0, 16, 8)                    # 7500 px/s, above anything a finger produces
+	var after_drag: int = scroll.scroll_vertical
+	var ended := false
+	for _i in 400:
+		sim_frame(swipe)
+		if not swipe._flinging:
+			ended = true
+			break
+	if not ended:
+		_fail("a 7500 px/s throw never stopped")
+	var extra: int = scroll.scroll_vertical - after_drag
+	# A 4000 px/s ceiling coasts ~1590 px; unclamped, the same throw coasts ~2960.
+	if extra > 1750:
+		_fail("a 7500 px/s throw coasted %d px — the speed is not clamped (a 4000 px/s ceiling "
+			% extra + "gives ~1590)")
+	elif extra < 1400:
+		_fail("a 7500 px/s throw coasted only %d px — the clamp bites far too early" % extra)
+	else:
+		print("  a 7500 px/s throw coasted %d px, held at the 4000 px/s ceiling" % extra)
+
+
+## A phone does not send a clean touch stream: with `emulate_mouse_from_touch` (the default) the
+## same finger ALSO arrives as a mouse press, mouse motion and a mouse release. If the driver
+## decided "may this coast?" by which event delivered the RELEASE, a phone's flick would be read
+## as a mouse and never coast — i.e. the feature would be missing exactly where Jan plays.
+##
+## This drives the two streams interleaved, as the engine does, and both orders of the press.
+func _test_a_phone_flick_survives_the_emulated_mouse() -> void:
+	print("== a phone's flick survives the emulated mouse events ==")
+	for touch_first in [true, false]:
+		var d := _driver()
+		var scroll: ScrollContainer = d["scroll"]
+		var swipe = d["swipe"]
+		_flick(d, 12.0, 16, 8, 16, true, true, touch_first)
+		if not swipe._flinging:
+			_fail("a flick was lost when the touch press arrived %s the emulated mouse press"
+				% ("before" if touch_first else "after"))
+			return
+		sim_frame(swipe)
+		if scroll.scroll_vertical <= 0:
+			_fail("the page did not move on a phone-style gesture")
+			return
+	print("  both event orders: the flick coasts (the gesture is remembered, not the release type)")
+
+
+## A drag that ends SLOWLY is not a flick. Jan's complaint was about the opposite (too little
+## travel), but the same code path decides this one, and a page that lurches away from a finger
+## which was placed carefully is the way a flick is experienced as broken.
+func _test_a_slow_drag_does_not_fling() -> void:
+	print("== a slow drag does not fling ==")
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	_flick(d, 1.5, 16, 12)                     # 94 px/s, well under the flick threshold
+	if swipe._flinging:
+		_fail("a 94 px/s drag started a coast — a careful drag throws the page")
+	else:
+		print("  94 px/s: the page stopped with the finger (moved %d px)"
+			% scroll.scroll_vertical)
+
+
+## A finger that stops moving and THEN lifts did not flick. The velocity is sampled per event,
+## so it has to decay away with the pause rather than being averaged over the whole drag.
+func _test_a_finger_held_still_does_not_fling() -> void:
+	print("== a finger held still does not fling ==")
+	var d := _driver()
+	var swipe = d["swipe"]
+	_flick(d, 12.0, 16, 8, 400)                # ...then 400 ms of holding before the release
+	if swipe._flinging:
+		_fail("a finger that rested 400 ms before lifting still flung the page — a stop on "
+			+ "purpose must be a stop")
+	else:
+		print("  a 400 ms pause before the release: no coast")
+
+
+## No browser coasts after a MOUSE drag, and the mouse is the desktop case the drag test drives,
+## so this is deliberate behaviour rather than an oversight.
+func _test_a_mouse_release_does_not_fling() -> void:
+	print("== a mouse release does not fling ==")
+	var d := _driver()
+	var swipe = d["swipe"]
+	_flick(d, 12.0, 16, 8, 0, false)
+	if swipe._flinging:
+		_fail("a mouse drag flung the page — the desktop drag must stay one-for-one")
+	else:
+		print("  a mouse drag of the same speed: no coast")
+
+
+## A fling that reaches the end of the page has to STOP there, not sit pushing a bar that
+## cannot move. Assert it stops far sooner than the velocity would decay on its own, which is
+## the only way this is visible from out here.
+func _test_the_coast_ends_at_the_end_of_the_page() -> void:
+	print("== a coast ends at the end of the page ==")
+	var d := _driver()
+	var scroll: ScrollContainer = d["scroll"]
+	var swipe = d["swipe"]
+	# A page only 400 px long, so a hard throw (240 px of drag + the coast) runs into its end.
+	scroll.get_v_scroll_bar().max_value = 400.0
+	_flick(d, 30.0, 16, 8)                     # 1875 px/s, a hard throw
+	var frames := 0
+	for _i in 300:
+		sim_frame(swipe)
+		frames += 1
+		if not swipe._flinging:
+			break
+	if swipe._flinging:
+		_fail("a coast into the page's end never stopped")
+	elif frames > 40:
+		_fail("the coast kept pushing the page's end for %d frames (the decay alone needs "
+			% frames + "~87) — it must end when the page stops moving")
+	elif absf(scroll.get_v_scroll_bar().value - 400.0) > 1.0:
+		_fail("the page settled at %d, not at its end (400)"
+			% int(scroll.get_v_scroll_bar().value))
+	else:
+		print("  hit the end at 400 px and stopped after %d frames" % frames)
+
+
+## One simulated frame for the driver's coast.
+func sim_frame(swipe) -> void:
+	swipe._process(1.0 / 60.0)
+
+
+## Drag a finger up, `px` per event, one event every `dt_ms`, and release it `rest_ms` later.
+##
+## `touch = false` makes it a MOUSE drag: the same motion and the same speeds, released with a
+## mouse button — which must not coast.
+##
+## `emulate` adds the phone's SECOND stream: with `emulate_mouse_from_touch` on, the same finger
+## also arrives as a mouse press/motion/release. `touch_first` picks which press leads; both
+## orders are something a real device can produce.
+func _flick(d: Dictionary, px: float, dt_ms: int, count: int, rest_ms: int = 16,
+		touch: bool = true, emulate: bool = false, touch_first: bool = true) -> void:
+	var swipe = d["swipe"]
+	_fake_ms = 1000
+	swipe.clock = fake_now
+	if touch:
+		if emulate and not touch_first:
+			swipe._begin(Vector2(195, 500), -1, false)
+		swipe._begin(Vector2(195, 500), 0, true)
+		if emulate and touch_first:
+			# The emulated mouse press of the same finger; the driver must not take it over.
+			swipe._begin(Vector2(195, 500), -1, false)
+	else:
+		swipe._begin(Vector2(195, 500), -1, false)
+	for _i in count:
+		_fake_ms += dt_ms
+		swipe._move(-px, _fake_ms)
+	_fake_ms += rest_ms
+	swipe._end(_fake_ms)
 
 
 ## A DRAG must not fire the button it started on, and a TAP must still fire it.

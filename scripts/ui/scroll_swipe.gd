@@ -59,10 +59,50 @@ class_name ScrollSwipe
 ##
 ## A WHEEL is untouched by all this — `gui_input`'s wheel branch runs before the deadzone is
 ## ever consulted, so a desktop mouse wheel still scrolls natively.
+##
+## ── MOMENTUM: the page keeps going after the finger leaves ───────────────────────────────
+##
+## Jan: "the scroll only moves by the distance the finger moved; I need it like a browser —
+## swipe and it keeps going with some inertia, that is much faster to scroll through."
+##
+## A drag that tracked the finger one-for-one is the *minimum* of a scroll view, not the feel
+## of one. The flick is what makes a long page usable: the finger gives the page a velocity
+## and the page coasts to a stop. Three things decide whether that reads as a browser or as a
+## glitch, and all three are easy to get wrong:
+##
+##   1. **The velocity comes from the last few MOTION events, not from the whole drag.** A
+##      finger that drags slowly, stops, and then lets go must NOT fling — so the velocity is
+##      sampled per event with a time stamp and decays to zero once the finger has been still
+##      for `flick_hold_ms` before the release.
+##   2. **The decay is per SECOND, not per FRAME.** `_vel *= 0.9` every frame is frame-rate
+##      dependent: the same flick travels twice as far at 120 fps as at 60. It is
+##      `exp(-deceleration * delta)`, so the distance is the same on any device.
+##   3. **It has to stop at the end of the page, by itself.** A fling that keeps pushing a
+##      bar already sitting at its limit sits there "vibrating" (and, before the check below,
+##      simply never ended). The fling ends when the page stops moving in response to it.
+##
+## Only a FINGER flings: a mouse drag is a deliberate, precise gesture and browsers do not
+## coast after one, so a desktop mouse keeps the old one-for-one behaviour.
 
 ## Movement before the drag is allowed to move the page, matching the ScrollContainer's own
 ## `scroll_deadzone`. Without it every tap would nudge the page.
 var deadzone := 8.0
+
+## Friction of the coast, as an exponential rate per second: the distance a flick travels is
+## `v0 / deceleration` px. 2.5 gives a strong flick (~2000 px/s) roughly 800 px of travel —
+## about one page of this app — and a hard one (~4000 px/s) two pages.
+var deceleration := 2.5
+## Below this speed (px/s) a release is a drag that ended, not a flick, and nothing coasts.
+var min_flick_speed := 120.0
+## A flick faster than this is clamped, so a violent swipe cannot throw the page across
+## several screens.
+var max_flick_speed := 4000.0
+## Once the coast is slower than this (px/s) it is over.
+var stop_speed := 30.0
+## How long the finger may be still before letting go and still count as a flick. A release
+## arrives a frame or two after the last motion; a real pause means the player stopped on
+## purpose, and then the page must stop with them.
+var flick_hold_ms := 80
 
 var _scroll: ScrollContainer = null
 ## Which pointer is mid-drag: -1 = the mouse, >= 0 = a finger's index, INACTIVE = nobody.
@@ -74,6 +114,21 @@ var _pointer := INACTIVE
 var _start := Vector2.ZERO
 var _accum := 0.0
 var _past_deadzone := false
+## The PAGE's own velocity in px/s: positive = the page moves down the content = scrolling
+## DOWN. `_move` works out the same quantity as `-dy / dt`, which is what a drag moves the bar
+## by, so a flick is exactly the finger's last motion carried on. Sampled per motion event and
+## only trusted at the release (see the header).
+var _vel := 0.0
+## Whether the CURRENT gesture arrived as a finger. Set on the press and kept for the whole
+## gesture, because a phone's finger also arrives as an emulated mouse event — see `_begin`.
+var _from_touch := false
+## Time stamp of the last motion event, 0 = none yet in this gesture.
+var _last_ms := 0
+var _flinging := false
+## The clock the flick is measured on. It is real time; a TEST replaces it so a gesture can be
+## given a realistic duration without sleeping (a headless run delivers every event inside the
+## same millisecond, where a real velocity does not exist).
+var clock: Callable = Callable()
 
 
 func setup(scroll: ScrollContainer) -> void:
@@ -85,6 +140,8 @@ func setup(scroll: ScrollContainer) -> void:
 	# still works for a desktop mouse.
 	if scroll != null:
 		scroll.scroll_deadzone = 1_000_000
+	# Nothing to do per frame until a flick starts (`_start_fling`).
+	set_process(false)
 
 
 func _input(event: InputEvent) -> void:
@@ -100,15 +157,22 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
 		if touch.pressed:
-			_begin(touch.position, touch.index)
+			_begin(touch.position, touch.index, true)
 		elif _pointer == touch.index:
-			_end()
+			_end(_now_ms())
 		return
 
 	if event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
-		if _pointer == drag.index:
-			_move(drag.relative.y)
+		# A drag can only come from a finger, so it is what MARKS a phone's gesture as one
+		# (see `_begin`). The adoption of a mouse-opened gesture here is a SECOND defence: the
+		# touch press already upgrades the gesture, and this only matters if a device delivers
+		# the drag without the touch press. (Mutation: removing this line alone leaves the
+		# test suite green — the press upgrade is what carries the case.)
+		if _pointer == drag.index or (_pointer == -1 and not _from_touch):
+			_pointer = drag.index
+			_from_touch = true
+			_move(drag.relative.y, _now_ms())
 		return
 
 	if event is InputEventMouseButton:
@@ -116,9 +180,9 @@ func _input(event: InputEvent) -> void:
 		if button.button_index != MOUSE_BUTTON_LEFT:
 			return
 		if button.pressed:
-			_begin(button.position, -1)
+			_begin(button.position, -1, false)
 		elif _pointer == -1:
-			_end()
+			_end(_now_ms())
 		return
 
 	if event is InputEventMouseMotion:
@@ -127,7 +191,59 @@ func _input(event: InputEvent) -> void:
 			return
 		if not (motion.button_mask & MOUSE_BUTTON_MASK_LEFT):
 			return
-		_move(motion.relative.y)
+		_move(motion.relative.y, _now_ms())
+
+
+## Real time in milliseconds, or the test's replacement (see `clock`). Every time stamp in this
+## file goes through here, so a test can give a gesture a realistic duration.
+func _now_ms() -> int:
+	if clock.is_valid():
+		return int(clock.call())
+	return Time.get_ticks_msec()
+
+
+## The page coasts after a flick, one frame at a time.
+##
+## `delta` is REAL time and the decay is exponential in it, so the flick travels the same
+## distance whether the device runs at 60 or 120 Hz.
+func _process(delta: float) -> void:
+	if not _flinging:
+		set_process(false)
+		return
+	if _scroll == null or not is_instance_valid(_scroll):
+		_stop_fling()
+		return
+	var bar := _scroll.get_v_scroll_bar()
+	var before := bar.value
+	bar.value += _vel * delta
+	# A bar already sitting at its limit does not move, and a fling that keeps pushing it
+	# would never end — the page would look frozen mid-flick. The page not moving IS the end.
+	if is_equal_approx(bar.value, before):
+		_stop_fling()
+		return
+	_vel *= exp(-deceleration * delta)
+	if absf(_vel) < stop_speed:
+		_stop_fling()
+
+
+## A flick is only ever given by a FINGER — that is why the two release sites in `_input` pass
+## their own answer to `_end()`. A mouse drag is a deliberate, precise gesture and no browser
+## coasts after one; keeping the mouse one-for-one also keeps a desktop drag testable.
+
+
+## Let the page coast with the velocity the finger left it with.
+func _start_fling() -> void:
+	if absf(_vel) < min_flick_speed:
+		return
+	_vel = clampf(_vel, -max_flick_speed, max_flick_speed)
+	_flinging = true
+	set_process(true)
+
+
+func _stop_fling() -> void:
+	_flinging = false
+	_vel = 0.0
+	set_process(false)
 
 
 ## A drag only starts inside the page. A swipe anywhere else in the window is somebody
@@ -139,29 +255,78 @@ func _input(event: InputEvent) -> void:
 ## beside the content. Measured on the port's web build: with the child column's rect a
 ## banner drag did not scroll (0px) while a drag on a tile did, which reads to the player as
 ## "scrolling works in some places and not others".
-func _begin(position: Vector2, pointer: int) -> void:
+## Only a FINGER coasts, and on a device with a touchscreen the finger arrives as BOTH a touch
+## and an EMULATED mouse event (`input_devices/pointing/emulate_mouse_from_touch`). Deciding by
+## "which event type delivered the release" would therefore read a phone's flick as a mouse and
+## kill it exactly where Jan plays. So the gesture remembers how it STARTED, and a press that
+## arrives while a gesture is already running does not take it over — that is what keeps the
+## pair (touch + its emulated mouse press) one gesture instead of two.
+func _begin(position: Vector2, pointer: int, from_touch: bool) -> void:
+	if _pointer != INACTIVE:
+		# A gesture is already running. A finger's press may UPGRADE the gesture an emulated
+		# mouse press opened first (a phone can deliver the two in either order); anything else
+		# is the second half of the same press and must not take the gesture over.
+		if from_touch and not _from_touch:
+			_pointer = pointer
+			_from_touch = true
+			_accum = 0.0
+			_last_ms = _now_ms()
+		return
 	if not _scroll.get_global_rect().has_point(position):
 		_pointer = INACTIVE
 		return
+	# A new gesture takes over from a coast in progress: tapping a moving page stops it, the
+	# same way it does in a browser.
+	_stop_fling()
 	_pointer = pointer
+	_from_touch = from_touch
 	_start = position
 	_accum = 0.0
 	_past_deadzone = false
+	_vel = 0.0
+	_last_ms = _now_ms()
 
 
-func _end() -> void:
+## The finger left the page. Whether the page coasts from here depends on how the gesture began
+## (`_from_touch`), never on which event happened to deliver the release.
+func _end(now_ms: int) -> void:
+	# A finger that rested before letting go did not flick — a release arriving long after the
+	# last motion is a drag that ended. Without this the page jumps away from a finger that was
+	# simply held still and then lifted, which is the one way a flick reads as broken.
+	var still := now_ms - _last_ms
+	var v := _vel
+	var dragged := _past_deadzone
+	var finger := _from_touch
 	_pointer = INACTIVE
+	_from_touch = false
 	_accum = 0.0
 	_past_deadzone = false
+	_vel = 0.0
+	if finger and dragged and still <= flick_hold_ms:
+		_vel = v
+		_start_fling()
 
 
 ## Dragging UP (a negative `dy`) moves the content up, i.e. scrolls DOWN: the value is
 ## decreased by the drag, which is the direction a phone uses.
-func _move(dy: float) -> void:
+##
+## `now_ms` is the event's own time stamp; it is what makes the flick's velocity a velocity
+## rather than "how far the finger went".
+func _move(dy: float, now_ms: int = -1) -> void:
 	# Defensive: a motion with no drag behind it (a stray `_move` from a caller, or a drag
 	# whose `_begin` landed outside the page) must not move anything.
 	if _pointer == INACTIVE:
 		return
+	if now_ms >= 0:
+		# Sampled per event, so the velocity at the release is the finger's LAST movement and
+		# not an average over a drag that ended in a pause.
+		var dt := float(now_ms - _last_ms) / 1000.0
+		if dt > 0.0:
+			var inst := -dy / dt
+			# A tiny weight: one jittery event must not decide the flick, but a real flick
+			# (many fast events in a row) lands on the finger's own speed.
+			_vel = lerpf(_vel, inst, 0.5)
+		_last_ms = now_ms
 	if not _past_deadzone:
 		# The deadzone is absorbed, not jumped over: 160px of finger must mean 152px of page,
 		# never a lurch of the full 8px the instant the finger crosses it.
