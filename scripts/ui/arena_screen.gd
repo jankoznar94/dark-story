@@ -97,10 +97,11 @@ var _tick_accumulator := 0.0
 ## the buttons under the player's finger mid-tap.
 var _cast_this_frame := false
 
-## How many log lines the (small, dim) footer keeps. The PWA had no text log at all —
-## its feedback was floating numbers over the arena — so the log is deliberately quiet
-## here: it is a debugging aid, not the main readout.
-const LOG_LINES := 3
+## The combat log that used to sit at the bottom of the arena is GONE (Jan: "delete the
+## text combat log, it should not be there at all"). The PWA never had one — its readout
+## is the floating number over the arena, which this screen draws. Nothing here keeps a
+## text trail any more, so there is no `LOG_LINES`, no `_log_box` and no `_log_lines`:
+## a leftover field would only invite the log back.
 
 ## PWA colours, verbatim from public/style.css.
 const C_BG := "#121212"
@@ -149,6 +150,11 @@ const HP_RING_BOX := 200.0
 ## the PWA's 390px page with 12px padding and two 6px gaps: (390 - 24 - 18) / 4 ≈ 87, so a
 ## full row of four sits at 87 and the CSS's own 90px cap is what wins.
 const RESULT_TILE := 84.0
+## `.result-loot-scroll`'s rows, raised on Jan's request: the CSS is 15px with 5px of vertical
+## padding, which he could not read on the victory page. This is a DELIBERATE deviation from
+## the reference — the reference is a desktop page, he plays on a phone.
+const LOOT_ROW_FONT := 17
+const LOOT_ROW_PAD := 5
 
 var _data: Node
 var _gen: ItemGen
@@ -193,7 +199,6 @@ var _potion_row: HBoxContainer
 var _spell_row: HBoxContainer
 ## The bar's current contents, so render() does not rebuild it ten times a second.
 var _spell_signature := ""
-var _log_box: VBoxContainer
 var _result_label: Label
 var _cast_icon: TextureRect
 var _confirm_layer: Control
@@ -234,7 +239,6 @@ var _result_tap_goes_to_map := false
 ## it are accepted only after `_button_lock_ms` has run out.
 var _result_built := false
 
-var _log_lines: Array = []
 ## Loot that did not fit in the bag. Held here so a full bag never destroys a drop.
 var _pending_loot: Array = []
 ## Everything this fight rolled, bagged or not, for the result page's loot list. Kept apart
@@ -869,11 +873,6 @@ func _build_bottom() -> Control:
 	_xp_fill.size = Vector2(0, 8)
 	xp_fill_holder(xp_track).add_child(_xp_fill)
 
-	# The combat log, kept quiet: three 11px dim lines. The PWA's readout was floating
-	# numbers over the arena, which this screen also draws — this is the debug trail.
-	_log_box = VBoxContainer.new()
-	_log_box.add_theme_constant_override("separation", 1)
-	column.add_child(_log_box)
 	return margin
 
 
@@ -1043,8 +1042,6 @@ func _advance_ease(delta: float) -> void:
 
 
 func start(state, find_item: Callable) -> bool:
-	_log_lines = []
-	_log_box_clear()
 	_loot_button.visible = false
 	_loot_button.disabled = false
 	_button_lock_ms = 0
@@ -1118,7 +1115,6 @@ func start(state, find_item: Callable) -> bool:
 
 	render()
 	_refresh_potions()
-	_append_log("Souboj zacina")
 	return true
 
 
@@ -1186,7 +1182,6 @@ func _drain_log() -> void:
 		# took was drawn in the enemy's white instead of red and the whole colour code
 		# of the floating text was dead. Read the key the battle actually writes.
 		var on_player := bool(entry.get("onPlayer", false))
-		_append_log("%s %d" % [kind, amount] if amount > 0 else kind)
 		_spawn_float(kind, amount, on_player)
 		drain_history.append({"kind": kind, "amount": amount, "onPlayer": on_player,
 			"game_ms": battle.ticks_elapsed * TICK_MS})
@@ -1263,6 +1258,22 @@ func _spawn_float(kind: String, amount: int, on_player: bool) -> void:
 	label.scale = Vector2(0.55, 0.55)
 
 
+## A SHORT message as a floating line over the arena — the log's replacement for
+## anything the player needs to be told (a refused spell's reason, a full bag, a potion's
+## value). It shares `_float_layer` with the damage numbers, so it costs no new node and
+## fades on the same clock.
+func _float_message(text: String) -> void:
+	if _float_layer == null or text.strip_edges() == "":
+		return
+	var label := _label(text, 15, Color("#e8c66a"), HORIZONTAL_ALIGNMENT_CENTER)
+	label.size = Vector2(340, 22)
+	_float_layer.add_child(label)
+	# `msg` band: messages sit BELOW the arena's centre, where the damage numbers do not
+	# stack, and drift nowhere so a line stays readable while it fades.
+	_floats.append({"node": label, "life": 1.0, "dy": 0.0, "age": 0.0,
+		"drift": 0.0, "band": "msg"})
+
+
 func _clear_floats() -> void:
 	if _float_layer == null:
 		return
@@ -1301,8 +1312,9 @@ func _animate(delta: float) -> void:
 		f["dy"] = float(f["dy"]) - delta * 96.0
 		f["age"] = float(f.get("age", 0.0)) + delta
 		var age := float(f["age"])
+		var base_y := mid.y + 96.0 if str(f.get("band", "")) == "msg" else mid.y - 40.0
 		node.position = Vector2(round(mid.x - node.size.x * 0.5 + float(f["drift"])),
-			round(mid.y - 40.0 + float(f["dy"])))
+			round(base_y + float(f["dy"])))
 		node.modulate = Color(1, 1, 1, clampf(float(f["life"]), 0.0, 1.0))
 		# POP, then shrink: a number that appears at full size is the same "instant" the
 		# HP bars had. It grows past its size over the first 90 ms of real time and settles.
@@ -1398,21 +1410,6 @@ func _gap_displayed() -> float:
 		return 1.0
 	var ahead := clampf(_tick_accumulator, 0.0, float(TICK_MS)) / 1000.0
 	return maxf(0.0, battle.gap - battle.gap_speed() * ahead)
-
-
-func _append_log(text: String) -> void:
-	_log_lines.append(text)
-	while _log_lines.size() > LOG_LINES:
-		_log_lines.pop_front()
-	_log_box_clear()
-	for line in _log_lines:
-		_log_box.add_child(_label(str(line), 11, Color("#666666")))
-
-
-func _log_box_clear() -> void:
-	for child in _log_box.get_children():
-		_log_box.remove_child(child)
-		child.queue_free()
 
 
 # ============================================================================= render
@@ -1728,10 +1725,12 @@ func cast_spell(spell_id: String) -> Dictionary:
 	if battle == null or battle.ended:
 		return {"ok": false, "message": "Zadny souboj", "damage": 0, "spell": spell_id}
 	var result: Dictionary = PlayerSpells.cast(battle, spell_id, _state, _find_item, _data, battle.rng)
-	if bool(result["ok"]):
-		_append_log(str(result["message"]))
-	else:
-		_append_log("Nelze: %s" % str(result["message"]))
+	if not bool(result["ok"]):
+		# The log used to be where a refusal explained itself. It is gone, so the reason
+		# floats over the arena — a spell that silently does nothing reads as a broken
+		# button (the PWA's own `showMessage` is a no-op, but its bar simply has no
+		# blocked spells in it).
+		_float_message("Nelze: %s" % str(result["message"]))
 	_drain_log()
 	_state.save()
 	render()
@@ -1781,12 +1780,12 @@ func use_potion(potion_id: String) -> Dictionary:
 	var value := int(item.get("effectValue", 0))
 	if str(item.get("subtype", "")) == "heal":
 		battle.hero_hp = minf(battle.hero_max_hp, battle.hero_hp + float(value))
-		_append_log("Potion +%d HP" % value)
+		_float_message("Potion +%d HP" % value)
 	else:
 		var hero: Dictionary = _state.hero()
 		var max_mana := int(hero.get("maxMana", 0))
 		hero["mana"] = mini(max_mana, int(hero.get("mana", 0)) + value)
-		_append_log("Potion +%d many" % value)
+		_float_message("Potion +%d many" % value)
 	_state.save()
 	_refresh_potions()
 	render()
@@ -1808,10 +1807,8 @@ func _finish_fight() -> void:
 	_button_lock_ms = BUTTON_LOCK_MS
 	var stop_complete := int(_state.data["areaFightProgress"][battle.act_id]) >= Battle.FIGHTS_PER_ZONE
 	if battle.won:
-		_append_log("Vyhrano")
 		award_loot()
 	else:
-		_append_log("Porazeno")
 		# A defeat drops nothing (the PWA clears the list), and the consolation gold the
 		# battle paid is not a DROP — it must not appear as a loot row either.
 		_result_loot_rows = []
@@ -2054,7 +2051,7 @@ func _refresh_result_loot(show: bool = true) -> void:
 	# the two lists cannot drift.
 	var rows: Array = _loot_rows_with_gold()
 	if rows.is_empty():
-		_loot_list.add_child(_label("Zadne predmety", 12, Color("#555555"),
+		_loot_list.add_child(_label("Zadne predmety", 15, Color("#777777"),
 			HORIZONTAL_ALIGNMENT_CENTER))
 		_loot_list.visible = true
 		return
@@ -2078,8 +2075,20 @@ func _loot_rows_with_gold() -> Array:
 ## An item and the gold row differ ONLY in which icon and which colour they take, which is
 ## what makes the gold read as "another thing this fight gave me".
 func _make_loot_row(row_data: Dictionary) -> Control:
+	# `.loot-scroll-item { padding:5px 8px; font-size:15px; gap:10px;
+	#   border-bottom:1px solid #1a1a1a }` — the port had NO padding at all and a 0px list
+	# separation, so the rows were only as tall as the 32px icon and sat edge to edge.
+	# Jan: "the loot on the victory page is hard to read, make the font a bit bigger,
+	# maybe slightly bigger vertical gaps too." So the row is now a padded box (the CSS's
+	# own 5px above/below) with a 17px name, which lifts each row to ~42px.
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_top", LOOT_ROW_PAD)
+	pad.add_theme_constant_override("margin_bottom", LOOT_ROW_PAD)
+	pad.add_theme_constant_override("margin_left", 8)
+	pad.add_theme_constant_override("margin_right", 8)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
+	pad.add_child(row)
 	var icon := TextureRect.new()
 	icon.custom_minimum_size = Vector2(32, 32)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -2089,12 +2098,17 @@ func _make_loot_row(row_data: Dictionary) -> Control:
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(icon)
 	var colour := Color(UIKit.GOLD) if row_data.has("gold") else ItemStats.quality_color(row_data)
-	var name_label := _label(str(row_data.get("name", row_data.get("id", ""))), 15,
+	var name_label := _label(str(row_data.get("name", row_data.get("id", ""))), LOOT_ROW_FONT,
 		colour, HORIZONTAL_ALIGNMENT_LEFT)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.clip_text = true
 	row.add_child(name_label)
-	return row
+	# A hairline under every row but the last, the CSS's own `border-bottom`.
+	var line := ColorRect.new()
+	line.color = Color("#1a1a1a")
+	line.custom_minimum_size = Vector2(0, 1)
+	pad.add_child(line)
+	return pad
 
 
 ## The stop's own art, the PWA's `getStopImage`: generated images for the acts that have
@@ -2217,10 +2231,10 @@ func _on_loot_pressed() -> void:
 	_pending_loot = still
 	_loot_button.visible = _pending_loot.size() > 0
 	_loot_button.disabled = _pending_loot.size() == 0
-	if taken > 0:
-		_append_log("Sebrano: %d" % taken)
-	elif _pending_loot.size() > 0:
-		_append_log("Batoh je plny")
+	if taken == 0 and _pending_loot.size() > 0:
+		# The one case the list itself cannot explain: nothing was taken because the bag
+		# is FULL. The items stay in the list, so a silent refusal looks like a dead tap.
+		_float_message("Batoh je plny")
 	_state.save()
 
 
@@ -2252,9 +2266,9 @@ func award_loot() -> void:
 	_result_gold_won = int(result["gold"])
 	_state.data["townPortalCount"] = int(_state.data.get("townPortalCount", 0)) + int(result["portals"])
 	if bagged > 0:
-		_append_log("Predmety: %d" % bagged)
+		_float_message("Predmety: %d" % bagged)
 	if int(result["gold"]) > 0:
-		_append_log("Zlato: %d" % int(result["gold"]))
+		_float_message("Zlato: %d" % int(result["gold"]))
 	apply_levels()
 	_state.save()
 
@@ -2281,7 +2295,7 @@ func apply_levels() -> void:
 		_state.data["talentPoints"] = int(_state.data.get("talentPoints", 0)) + 1
 		levelled = true
 	if levelled:
-		_append_log("Novy level: %d" % int(hero["level"]))
+		_float_message("Novy level: %d" % int(hero["level"]))
 
 
 ## Advance the stop when the zone is finished, then start the next fight.

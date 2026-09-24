@@ -29,6 +29,16 @@ class_name MapScreen
 
 const GameData := preload("res://scripts/data/game_data.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
+## `filter:grayscale(1)` as a shader. Godot has no CSS filter, and a `modulate` is NOT the
+## same operation — it scales channels and leaves the hue alone (see the locked stop card).
+const GRAYSCALE_SHADER := preload("res://assets/shaders/grayscale.gdshader")
+static var GRAYSCALE_MATERIAL: ShaderMaterial
+
+static func _gray() -> ShaderMaterial:
+	if GRAYSCALE_MATERIAL == null:
+		GRAYSCALE_MATERIAL = ShaderMaterial.new()
+		GRAYSCALE_MATERIAL.shader = GRAYSCALE_SHADER
+	return GRAYSCALE_MATERIAL
 
 signal back_pressed()
 signal difficulty_selected(difficulty: int)
@@ -501,8 +511,13 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		card.add_theme_stylebox_override("pressed", pressed)
 		if locked:
 			# `.stop-wrap.stop-locked { opacity:0.45 }` and `.stop-locked .stop-card
-			# { filter:grayscale(1) }` — dim and desaturated, and not tappable.
-			card.modulate = Color(0.75, 0.75, 0.75, 0.45)
+			# { filter:grayscale(1) }` — dim AND desaturated, and not tappable.
+			#
+			# Only `opacity` can be a modulate; `filter:grayscale(1)` has to be the shader,
+			# and the port's `Color(0.75,0.75,0.75,0.45)` did neither: modulate SCALES the
+			# channels, so a locked card stayed coloured (just darker) while the reference
+			# is a grey card. This is the "locked should be dark" half of the map report.
+			card.modulate = Color(1, 1, 1, 0.45)
 
 		var art := TextureRect.new()
 		art.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -510,22 +525,47 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		art.texture = _stop_art(act_id, stop)
 		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if locked:
+			# A ShaderMaterial on a Control does NOT reach its children in Godot 2D, unlike
+			# CSS `filter` which applies to the whole subtree — so the desaturation goes on
+			# the ART itself (the card's modulate carries the 0.45 opacity for everything).
+			art.material = _gray()
 		card.add_child(art)
 
-		# `.stop-label` — a bottom-anchored label over a gradient. The gradient is drawn
-		# as a stack of black strips rather than a shader: same visual job, no shader.
+		# `.stop-label { padding:14px 10px 6px 10px; background:linear-gradient(to top,
+		#   rgba(0,0,0,0.85), rgba(0,0,0,0)) }` — a 42px-tall box whose gradient is
+		# OPAQUE AT THE BOTTOM and transparent at the TOP.
+		#
+		# The port had this INSIDE OUT and 2x too tall, which is exactly Jan's report
+		# ("about 70 % of the image is coloured, the bottom 30 % is black and white"):
+		# it wrote `0.85 * (1 - t) + 0.15` with `t` growing downward, i.e. its densest
+		# black was at the veil's TOP edge and it faded DOWNWARD — while the strips
+		# themselves start at the veil's top, which is 90px up the card. Measured on the
+		# port's own frame: the bottom ~26 % of the stop card came out at mean RGB
+		# [2,3,2] against the PWA's [27,30,24]. The picture was simply painted over.
+		#
+		# Measured on the live PWA: `.stop-label` is `[42, 488, 306, 42]` inside a 310px
+		# card — 42px, not 90 — and it reads `to top`, so alpha 0.85 sits at the BOTTOM.
+		const LABEL_H := 42.0
 		var veil := Control.new()
 		veil.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-		veil.offset_top = -90
+		veil.offset_top = -LABEL_H
 		veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(veil)
-		for step in 18:
-			var t := float(step) / 18.0
+		for step in 12:
+			# `to top` = the FIRST stop (0.85) is the veil's BOTTOM edge, and `t` runs
+			# from the veil's TOP, so alpha must GROW with `t`. Getting this backwards is
+			# what put the densest black over the middle of the artwork.
+			# `(step + 1) / 12` so the LAST strip REACHES the CSS's 0.85; `step / 12`
+			# stopped at 0.78 and left the very bottom of the gradient lighter than the
+			# reference (the test caught exactly that).
+			var t0 := float(step) / 12.0
+			var t1 := float(step + 1) / 12.0
 			var strip := ColorRect.new()
-			strip.color = Color(0, 0, 0, 0.85 * (1.0 - t) + 0.15)
+			strip.color = Color(0, 0, 0, 0.85 * t1)
 			strip.set_anchors_preset(Control.PRESET_TOP_WIDE)
-			strip.offset_top = t * 90.0
-			strip.offset_bottom = (t + 1.0 / 18.0) * 90.0
+			strip.offset_top = t0 * LABEL_H
+			strip.offset_bottom = t1 * LABEL_H
 			strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			veil.add_child(strip)
 
@@ -534,8 +574,10 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		name_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-		name_label.offset_top = -46
-		name_label.offset_bottom = -6
+		# `.stop-label` is 42px tall measured (padding 14 top / 6 bottom, font 19px);
+		# the port reserved 40px starting 46px up, so the text sat above its own plate.
+		name_label.offset_top = -42
+		name_label.offset_bottom = 0
 		name_label.offset_left = 10
 		name_label.offset_right = -10
 		name_label.add_theme_font_size_override("font_size", 19)

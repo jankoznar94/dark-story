@@ -68,6 +68,8 @@ func _run() -> void:
 	_test_expansion_survives_leaving_the_map()
 	_test_difficulty_switch_collapses_the_path()
 	_test_locked_acts_are_drawn_only_for_the_first_gate()
+	_test_a_locked_stop_card_is_desaturated_and_dim()
+	_test_the_stop_label_plate_is_at_the_bottom_of_the_card()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -198,3 +200,107 @@ func _test_locked_acts_are_drawn_only_for_the_first_gate() -> void:
 	if cards != 2:
 		_fail("a fresh map drew %d act cards — the PWA draws act 0 and the first locked gate (2)"
 			% cards)
+
+
+## `.stop-locked .stop-card { filter:grayscale(1) }` plus `.stop-wrap.stop-locked
+## { opacity:0.45 }` — and the port did NEITHER. It wrote `modulate = Color(0.75, 0.75,
+## 0.75, 0.45)`, and a modulate SCALES the channels: the card stayed fully coloured and
+## only went dim, which is the opposite of the reference. That is Jan's own report
+## ("the unavailable ones should be dark").
+##
+## Asserted as TWO properties, because either alone can pass against the broken version:
+## the opacity is on the card and the DESATURATION is a shader on the art (a Godot
+## ShaderMaterial on a Control does not reach its children, so it cannot live on the card).
+func _test_a_locked_stop_card_is_desaturated_and_dim() -> void:
+	_collapse()
+	_map()._toggle_act(0)
+	var locked := _first_locked_stop_card()
+	if locked == null:
+		_fail("a fresh map expanded act 0 and produced no LOCKED stop card to inspect")
+		return
+	if not is_equal_approx(locked.modulate.a, 0.45):
+		_fail("a locked stop card has alpha %f, expected the CSS's 0.45" % locked.modulate.a)
+	if locked.modulate.r < 0.99 or locked.modulate.g < 0.99:
+		# The old bug: `Color(0.75, 0.75, 0.75, 0.45)`. A modulate SCALES the channels, so
+		# that dims the card and leaves every hue in place — the reference is a GREY card.
+		_fail("a locked stop card is dimmed with a grey modulate (%s) — that leaves it "
+			% str(locked.modulate) + "COLOURED; the CSS applies filter:grayscale(1)")
+	var art := _stop_card_art(locked)
+	if art == null:
+		_fail("a locked stop card has no art node")
+		return
+	if art.material == null or art.material.shader == null:
+		_fail("a locked stop card's art has no grayscale shader — it renders in full colour")
+	elif not str(art.material.shader.code).contains("dot(rgb"):
+		_fail("a locked stop card's shader is not a luminance desaturation")
+	_collapse()
+
+
+## The `.stop-label` plate: `padding:14px 10px 6px; background:linear-gradient(to top,
+## rgba(0,0,0,0.85), rgba(0,0,0,0))`. The port drew it 90px tall with the gradient INSIDE
+## OUT (densest black at the veil's TOP), which painted over the bottom ~26 % of every stop
+## image — Jan: "about 70 % of the image is coloured, the bottom 30 % is black and white".
+##
+## Pinned on the veil's RECT and on which END is dark, because a wrong direction is exactly
+## what shipped and it is invisible to any "is the veil there" check.
+func _test_the_stop_label_plate_is_at_the_bottom_of_the_card() -> void:
+	_collapse()
+	_map()._toggle_act(0)
+	var card := _first_stop_card()
+	if card == null:
+		_fail("no stop card to inspect the label plate on")
+		return
+	var veil: Control = null
+	for child in card.get_children():
+		if child is Control and child.get_child_count() >= 6 and not (child is TextureRect):
+			veil = child
+			break
+	if veil == null:
+		_fail("the stop card has no label plate")
+		_collapse()
+		return
+	var h: float = veil.size.y
+	if h <= 0.0:
+		# No layout pass in a SceneTree test, so fall back to the offsets it was anchored with.
+		h = absf(veil.offset_top)
+	if not is_equal_approx(h, 42.0):
+		_fail("the stop label plate is %s px tall, the PWA's .stop-label is 42" % str(h))
+	# `to top` = the BOTTOM strip is the opaque one.
+	var strips: Array = veil.get_children()
+	if strips.size() < 2:
+		_fail("the label plate has %d strips — no gradient to read" % strips.size())
+		_collapse()
+		return
+	var top: Color = (strips[0] as ColorRect).color
+	var bottom: Color = (strips[strips.size() - 1] as ColorRect).color
+	if bottom.a <= top.a:
+		_fail("the label plate's gradient is upside down: top alpha %f, bottom alpha %f — "
+			% [top.a, bottom.a] + "the CSS is `to top`, so the BOTTOM is the opaque end")
+	if bottom.a < 0.8:
+		_fail("the label plate's opaque end is only %f, the CSS is 0.85" % bottom.a)
+	_collapse()
+
+
+func _first_stop_card() -> Button:
+	for child in _map()._list.get_children():
+		if child is VBoxContainer:
+			for card in child.get_children():
+				if card is Button:
+					return card as Button
+	return null
+
+
+func _first_locked_stop_card() -> Button:
+	for child in _map()._list.get_children():
+		if child is VBoxContainer:
+			for card in child.get_children():
+				if card is Button and (card as Button).modulate.a < 0.9:
+					return card as Button
+	return null
+
+
+func _stop_card_art(card: Button) -> TextureRect:
+	for child in card.get_children():
+		if child is TextureRect:
+			return child as TextureRect
+	return null

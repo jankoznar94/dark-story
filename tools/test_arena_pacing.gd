@@ -54,6 +54,8 @@ func _initialize() -> void:
 	_test_a_swing_lunge_exists_on_a_landed_hit()
 	_test_a_gold_only_win_still_lists_the_gold()
 	_test_a_defeat_does_not_list_the_consolation_gold()
+	_test_the_combat_log_is_gone()
+	_test_a_loot_row_is_readable()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -542,18 +544,26 @@ func _test_the_result_page_actually_gets_laid_out() -> void:
 
 
 ## The loot rows' own text, so a page that lists nothing can be told from one that is hidden.
+## The text of every loot row, concatenated per row.
+##
+## Walked RECURSIVELY: `_make_loot_row` wraps the row in a `MarginContainer` (the CSS's own
+## `padding:5px 8px` and the 5px vertical gap Jan asked for), so the Label is a grandchild
+## now. A helper that only looked one level down reported `""` for every row and made a
+## working list look empty.
 func _loot_row_texts(screen) -> Array:
 	var out: Array = []
 	for child in screen._loot_list.get_children():
-		if child is Label:
-			out.append((child as Label).text)
-			continue
-		var text := ""
-		for grand in child.get_children():
-			if grand is Label:
-				text += (grand as Label).text
-		out.append(text)
+		out.append(_subtree_text(child))
 	return out
+
+
+func _subtree_text(node: Node) -> String:
+	var text := ""
+	if node is Label:
+		text += (node as Label).text
+	for child in node.get_children():
+		text += _subtree_text(child)
+	return text
 
 
 ## The labels of the result page's action tiles, in order. Read off each tile's own `label`
@@ -703,11 +713,103 @@ func _test_a_defeat_does_not_list_the_consolation_gold() -> void:
 
 
 ## The TextureRect of a loot row, for the icon assertion above.
+## The row's icon, found anywhere under it — the row is a padded box now, so the
+## TextureRect is a grandchild rather than a child.
 func _loot_row_icon(screen, index: int) -> TextureRect:
 	var children: Array = screen._loot_list.get_children()
 	if index >= children.size():
 		return null
-	for grand in children[index].get_children():
-		if grand is TextureRect:
-			return grand
+	return _subtree_icon(children[index])
+
+
+func _subtree_icon(node: Node) -> TextureRect:
+	for child in node.get_children():
+		if child is TextureRect:
+			return child as TextureRect
+		var found := _subtree_icon(child)
+		if found != null:
+			return found
+	return null
+
+
+## Jan: "delete the text combat log at the very bottom, it should not be there at all."
+## The PWA never had one — its readout is the floating number over the arena — and the port's
+## was an invention that also stole the bottom of the screen.
+##
+## Asserted on the SCREEN'S OWN TREE, not on the source: the field could be renamed and the
+## node kept. Every VBox child of the arena column is checked for a stack of small dim Labels.
+func _test_the_combat_log_is_gone() -> void:
+	var screen = _arena(_hero())
+	var strays: Array = []
+	_scan_for_log(screen._arena.get_parent(), strays)
+	if strays.size() > 0:
+		_fail("the arena still builds a text log: %s" % str(strays))
+	# ...and the screen owns no log state to write into.
+	if "_log_box" in screen or "_append_log" in screen:
+		_fail("arena_screen still carries the log's field/function (%s)"
+			% str(["has _log_box" if "_log_box" in screen else "",
+				"has _append_log" if "_append_log" in screen else ""]))
+
+
+## A footer log reads as a container holding >= 2 sibling Labels of <= 12px with no icon and
+## no background. The arena has no other node of that shape.
+func _scan_for_log(node: Node, out: Array) -> void:
+	for child in node.get_children():
+		if child is VBoxContainer:
+			var small := 0
+			for sub in child.get_children():
+				if sub is Label and (sub as Label).get_theme_font_size("font_size") <= 12:
+					small += 1
+			if small >= 2:
+				out.append("%s with %d small labels at %s" % [child.get_class(), small,
+					str((child as Control).position)])
+		_scan_for_log(child, out)
+
+
+## Jan: "the loot on the victory page is hard to read — a bit bigger font, and maybe slightly
+## bigger vertical gaps between the rows." The CSS row is 15px with 5px of vertical padding;
+## the port had no padding at all and a 0px list separation, so the rows were 32px icon-tall
+## and sat edge to edge. This is a DELIBERATE deviation from the reference for a phone.
+func _test_a_loot_row_is_readable() -> void:
+	var screen = _arena(_hero())
+	screen._result_loot_rows = [{"id": "loot_1", "name": "Kratky mec", "rarity": "rare"}]
+	screen._result_gold_won = 50
+	screen._refresh_result_loot(true)
+	var rows: Array = screen._loot_list.get_children()
+	if rows.size() != 2:
+		_fail("expected an item row and a gold row, got %d" % rows.size())
+		return
+	var label := _subtree_label(rows[0])
+	if label == null:
+		_fail("a loot row has no label")
+		return
+	var font := label.get_theme_font_size("font_size")
+	if font < 17:
+		_fail("the loot row's font is %dpx — Jan asked for bigger than the CSS's 15px" % font)
+	# `get_theme_constant` returns Variant and Godot treats an inferred-Variant as a parse
+	# ERROR here ("Cannot infer the type of 'pad'") — the whole script then fails to load
+	# and the test prints NO verdict, which reads as a hang rather than as a failure.
+	var pad: int = (rows[0] as Control).get_theme_constant("margin_top") \
+		+ (rows[0] as Control).get_theme_constant("margin_bottom")
+	if pad < 8:
+		_fail("a loot row has %dpx of vertical padding, expected >= 8 (5px above and below)" % pad)
+	# The row's height must clear the icon plus that padding, or the gap is not real.
+	#
+	# Computed rather than read off `get_combined_minimum_size()`: a container's cached
+	# minimum is NOT recomputed without a layout pass, and a SceneTree test never runs one —
+	# the value comes back as the icon's own 32 and the check fails against correct code.
+	var icon := _loot_row_icon(screen, 0)
+	var icon_h: float = icon.custom_minimum_size.y if icon != null else 0.0
+	if icon_h + float(pad) < 42.0:
+		_fail("a loot row's height is icon %s + padding %d px — the rows are still packed: %s"
+			% [str(icon_h), pad, str(rows[0].get_combined_minimum_size())])
+
+
+func _subtree_label(node: Node) -> Label:
+	if node is Label:
+		return node as Label
+	for child in node.get_children():
+		var found := _subtree_label(child)
+		if found != null:
+			return found
 	return null
