@@ -22,6 +22,10 @@ const ItemInfoOverlay := preload("res://scripts/ui/item_info_overlay.gd")
 const CELL := 64
 const GRID_COLUMNS := 5
 const BAG_CELLS := 20
+## `.inv-potion-slots { grid-template-columns: repeat(4, 36px) }` — the belt row is FOUR
+## columns wide, and a 2-row belt (beltRows 2 -> 8 slots) wraps into 2 rows. See the note
+## on `_make_potion_panel`.
+const POTION_COLUMNS := 4
 ## `(338 - 4*6) / 5 = 62.8` — the live PWA's own computed width, measured as
 ## `cols=62.8281px 62.8438px 62.8281px 62.8438px 62.8438px`. 338 is the `.inv-grid`
 ## inside `#invGridWrap` (364 wide, minus 1px border each side, minus 12px padding each
@@ -84,7 +88,7 @@ var _slot_nodes: Dictionary = {}     # slot name -> Button
 var _bag_nodes: Array = []           # Button per bag cell
 var _potion_nodes: Array = []
 var _bag_grid: GridContainer
-var _potion_row: HBoxContainer
+var _potion_row: GridContainer
 ## The PWA shows a selected item's detail — stats, the compare block, its sockets and the
 ## gems that fit — in `#invItemOverlay`, a tap-through overlay OUTSIDE `#inventoryScreen`.
 ## The port had it as a permanent "Sockets" block at the bottom of the pane, which is
@@ -356,14 +360,30 @@ func _make_equipment_panel() -> Control:
 ## PWA, NOT part of the doll panel, and `justify-content:center` centres the 4x36+3x2 =
 ## 150px block in the 364px pane (measured: first slot at x=120, i.e. (364-150)/2 = 107
 ## plus the 13px pane offset).
+##
+## ⚠️  It is FOUR COLUMNS, not a single row — and the belt decides how many rows there
+## are. With no belt the PWA renders 4 slots (one row, 36 tall); with `belt_sash`
+## (`beltRows: 2`) it renders EIGHT slots in **4 columns x 2 rows** and the block is
+## **74 tall** (36 + gap 2 + 36). Measured on the live PWA with a worn sash:
+## `.inv-potion-slots [12.9, 448.2, 364.2, 74]`, and the grid wrap below it starts at
+## y=530.2. A single `HBoxContainer` put all eight in one row, so the potion block was
+## 36 tall instead of 74 and the whole bag grid sat **44px too high**.
+##
+## The PWA's own `getTotalPotionSlots()` is `belt ? beltRows * 4 : 4`, which the port's
+## `GameState.total_potion_slots` already matches — only the SHAPE was wrong here.
 func _make_potion_panel() -> Control:
 	var panel := VBoxContainer.new()
 	panel.add_theme_constant_override("separation", 0)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_potion_row = HBoxContainer.new()
-	_potion_row.add_theme_constant_override("separation", 2)
-	_potion_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_potion_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_potion_row = GridContainer.new()
+	_potion_row.columns = POTION_COLUMNS
+	_potion_row.add_theme_constant_override("h_separation", 2)
+	_potion_row.add_theme_constant_override("v_separation", 2)
+	# `justify-content:center`: the block is its OWN minimum (4x36 + 3x2 = 150) and sits in
+	# the middle of the 364px pane, measured on the live PWA as first slot x=120. SHRINK
+	# CENTER is the direct equivalent — without it the grid stretches to the pane's full
+	# width and the four slots sit hard left at x=12.
+	_potion_row.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	panel.add_child(_potion_row)
 	return panel
 
@@ -579,8 +599,15 @@ func _refresh_equipment() -> void:
 
 func _refresh_potions() -> void:
 	_state.sync_potion_slots(_find_item_callable())
+	# ⚠️  `remove_child` + `free`, NOT `queue_free`: a deferred free leaves the child in
+	# the tree until the end of the frame, so a refresh that runs twice in one frame (or
+	# a test that refreshes in a loop) APPENDS to the previous slots instead of replacing
+	# them — measured as 76 buttons where the PWA has 4. `_refresh_potions` is called from
+	# the modal's own refresh path and from `show_screen`, so this is reachable in a real
+	# session, not only in a test.
 	for child in _potion_row.get_children():
-		child.queue_free()
+		_potion_row.remove_child(child)
+		child.free()
 	_potion_nodes.clear()
 
 	var slots: Array = _state.equip().get("beltPotionSlots", [])

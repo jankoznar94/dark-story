@@ -72,6 +72,7 @@ func _run() -> void:
 	_test_closing_the_overlay_clears_the_selection()
 	_test_equip_slot_tap_shows_info_then_unequips()
 	_test_empty_slot_opens_nothing()
+	_test_belt_wraps_into_four_columns()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -443,3 +444,47 @@ func _test_empty_slot_opens_nothing() -> void:
 	inventory._on_equip_slot_pressed("boots")
 	if inventory._item_overlay.visible:
 		_fail("tapping an EMPTY equip slot opened the item-info overlay")
+
+
+## The belt row is FOUR COLUMNS, not one long row — and the belt decides how many rows.
+##
+## Measured on the live PWA with a worn `belt_sash` (`beltRows: 2`):
+## `.inv-potion-slots [12.9, 448.2, 364.2, 74]` with EIGHT `.inv-potion-slot` children in
+## 4 columns x 2 rows, first slot at x=120. The port used to build a single `HBoxContainer`,
+## so eight slots ran off in one 36px row and the bag grid sat 44px too high.
+##
+## The PWA's rule is `belt ? beltRows * 4 : 4`, so the test drives BOTH ends: no belt is
+## 4 slots in one row (36 tall), a sash is 8 in two rows (74 tall). Asserting only the
+## eight-slot case would leave the no-belt branch free to regress.
+func _test_belt_wraps_into_four_columns() -> void:
+	var modal = _main._screens["character"]
+	var equip: Dictionary = _main.state.equip()
+	# --- no belt: the PWA's DEFAULT_POTION_SLOTS of 4, one row ---
+	equip["belt"] = null
+	equip["beltPotionSlots"] = []
+	_main.open_modal("inventory")
+	var inventory = modal._panes["inventory"].get_child(0).get_child(0)
+	inventory._refresh_potions()
+	var row: GridContainer = inventory._potion_row
+	if row == null:
+		_fail("the potion row is not a GridContainer — the belt cannot wrap into rows")
+		return
+	if row.columns != 4:
+		_fail("the potion grid has %d columns, the PWA's CSS says 4" % row.columns)
+	if row.get_child_count() != 4:
+		_fail("with no belt the PWA shows 4 potion slots, the port built %d"
+			% row.get_child_count())
+	if not is_equal_approx(row.get_combined_minimum_size().y, 36.0):
+		_fail("no-belt potion block is %.0f tall, the PWA's single row is 36"
+			% row.get_combined_minimum_size().y)
+	# --- belt_sash (beltRows 2) -> 8 slots in 2 rows of 4 -> 36 + 2 + 36 = 74 ---
+	equip["belt"] = "belt_sash"
+	inventory._refresh_potions()
+	if row.get_child_count() != 8:
+		_fail("a belt_sash (beltRows 2) gives 8 potion slots, the port built %d"
+			% row.get_child_count())
+	if not is_equal_approx(row.get_combined_minimum_size().y, 74.0):
+		_fail("belt_sash potion block is %.0f tall, the live PWA's is 74 (4 cols x 2 rows)"
+			% row.get_combined_minimum_size().y)
+	if not row.size_flags_horizontal == Control.SIZE_SHRINK_CENTER:
+		_fail("the potion grid is not centred — the PWA's `justify-content:center`")

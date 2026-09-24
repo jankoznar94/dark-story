@@ -7,10 +7,30 @@ nothing at all), which makes every pixel diff meaningless. This script removes t
 variable:
 
   1. builds one loadout from real ITEMS ids
-  2. writes it into the PWA's save (localStorage `dungeonRecallV7`), reloads, shoots
-     `tools/reference/pwa/inventory_gear.png`
+  2. builds the SAME loadout in the PWA the way a player does (buy -> equip), then
+     shoots `tools/reference/pwa/inventory_gear.png`
   3. writes the same loadout into the port's save (`user://`), shoots the port
   4. prints the numbers from both, side by side
+
+⚠️  THE PWA LOSES ITS SAVE ON EVERY RELOAD — so writing localStorage and reloading
+    produces a CLASS-SELECT screen, not an inventory. `loadSave()` ends with
+
+        if (s.hero) { s.hero.maxHp = getHeroMaxHp(); ... }
+
+    and `getHeroMaxHp()` reads the GLOBAL `state`, which at that moment is still `{}`
+    (`let state = {}`; `state = loadSave()` only runs after it returns). Every reload
+    therefore throws `TypeError: Cannot read properties of undefined (reading 'equip')`
+    inside `loadSave`'s own `try`, whose `catch {}` is EMPTY — it swallows the error and
+    returns `defaultState()`. The game silently starts over with `heroClass: null`.
+
+    That is why the committed `tools/reference/pwa/inventory_gear.png` is a nearly
+    BLANK frame (0.25 % coloured pixels in the doll band against 14.59 % in the port)
+    and why every inventory diff measured against it is meaningless.
+
+    The loadout is therefore built IN ONE SESSION with the game's own controls:
+    `#testToggle` gives gold (a real control in the page, not a cheat injected here),
+    then `game.buyItem(id)` -> `game.equipItemToSlot(idx, slot)`. `saveGame()` runs on
+    every change, so localStorage tracks the live state. Never reload between steps.
 
   python3 tools/import/shoot_both_inventory.py
 """
@@ -35,17 +55,36 @@ SAVE = os.path.expanduser(
     "~/.local/share/godot/app_userdata/Dungeon Recall/dungeon_recall_save.json")
 LS_KEY = "dungeonRecallV7"
 
-# ONE loadout for both. Every id exists in ITEMS.json (i.e. in the port's table too),
-# and the set covers a tall slot, a square slot, a small slot, the belt row and the bag.
+# The ONE loadout, in (item id, equip slot) order. Every id exists in ITEMS.json
+# (i.e. in the port's table too) and the set covers a tall slot, a square slot, a
+# small slot, the belt row and the bag.
+#
+# ⚠️  `beltPotionSlots` is deliberately NOT part of this: the PWA derives the potion row
+# from the BELT (`getTotalPotionSlots()` = `beltRows * 4`, or 4 with no belt), so
+# `belt_sash` (beltRows 2) produces EIGHT slots — the PWA's own item overlay says
+# "Potion Slots  2 rows (8 slots)". The port's `beltRows * 4` matches. An earlier
+# reference frame showed 4 only because its belt was not worn at all.
+EQUIP_ORDER = [
+    ("belt_sash", "belt"), ("armor_leather", "armor"), ("helm_cap", "helmet"),
+    ("shield_buckler", "shield"), ("copperRing", "ring1"), ("boneAmulet", "amulet"),
+    ("gloves_leather", "gloves"), ("boots_boots", "boots"), ("blade_scimitar", "weapon"),
+]
+
+# What stays in the bag, so the grid is not empty in either frame. Bought but not worn.
+BAG_ITEMS = ["armor_ringMail", "helm_helm", "silverRing"]
+
+# The port's save is written directly (it has no shop to drive), and it uses the same
+# ids — so the two frames show the same thing.
 LOADOUT = {
     "equip": {
-        "weapon": "blade_shortSword", "armor": "armor_leather",
+        "weapon": "blade_scimitar", "armor": "armor_leather",
         "helmet": "helm_cap", "shield": "shield_buckler",
         "ring1": "copperRing", "ring2": None, "amulet": "boneAmulet",
         "belt": "belt_sash", "gloves": "gloves_leather", "boots": "boots_boots",
-        "beltPotionSlots": ["healingPotion", None, None, None],
+        "beltPotionSlots": ["healingPotion", None, None, None,
+                            None, None, None, None],
     },
-    "inventory": ["armor_ringMail", "helm_helm", "silverRing", "blade_scimitar"],
+    "inventory": ["armor_ringMail", "helm_helm", "silverRing"],
 }
 
 
@@ -86,7 +125,12 @@ async def pwa_side():
                 return {"__error__": str(r["exceptionDetails"])[:300]}
             return r.get("result", {}).get("value")
 
-        # 1. class on a fresh load, through the handler that actually works
+        # 1. class on a fresh load, through the handler that actually works.
+        #    Start from a CLEAN save so the bag really holds what we put there and a
+        #    leftover item from an earlier run cannot silently fill a slot.
+        await send(ws, nxt(), "Page.navigate", {"url": URL})
+        await asyncio.sleep(3.0)
+        await ev(f"localStorage.removeItem('{LS_KEY}')")
         await send(ws, nxt(), "Page.navigate", {"url": URL})
         await asyncio.sleep(4.0)
         for _ in range(15):
@@ -98,28 +142,49 @@ async def pwa_side():
                  " if (b) { b.click(); return 'card'; }"
                  " try { game.selectClass('barbarian'); return 'fn'; }"
                  " catch(e) { return 'ERR'; } })()")
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.0)
 
-        # 2. splice the loadout straight into the SAVED json, then reload so the game
-        #    boots FROM it — much more reliable than patching window.state, which is only
-        #    a snapshot and gets overwritten by the next save.
-        payload = json.dumps(LOADOUT)
-        patched = await ev(
-            "(() => {"
-            f" const s = JSON.parse(localStorage.getItem('{LS_KEY}') || 'null');"
-            " if (!s || !s.hero) return 'no save';"
-            f" const L = {payload};"
-            " s.hero.equip = Object.assign(s.hero.equip || {}, L.equip);"
-            " s.hero.inventory = L.inventory;"
-            f" localStorage.setItem('{LS_KEY}', JSON.stringify(s));"
-            " return 'patched'; })()")
-        out["fill"] = patched
-        await send(ws, nxt(), "Page.navigate", {"url": URL})
-        await asyncio.sleep(4.5)
-        # the save is loaded now; open the inventory tab
+        # 2. Build the loadout IN THIS SESSION. See the module docstring: a reload here
+        #    would throw inside `loadSave` and silently reset the game to the class picker.
+        #    `#testToggle` is the page's own gold/test control.
+        await ev("(() => { const t=document.getElementById('testToggle'); if (t) t.click(); })()")
+        await asyncio.sleep(1.5)
+        built = []
+        for item, slot in EQUIP_ORDER:
+            await ev(f"(() => {{ try {{ game.buyItem('{item}'); }} catch(e) {{}} }})()")
+            await asyncio.sleep(0.35)
+            inv = await ev(f"(() => {{ const s=JSON.parse(localStorage.getItem('{LS_KEY}')||'{{}}');"
+                          f" return JSON.stringify((s.hero||{{}}).inventory||[]); }})()")
+            try:
+                rows = json.loads(inv)
+            except (TypeError, ValueError):
+                rows = []
+            idx = None
+            for i, entry in enumerate(rows):
+                eid = entry.get("id") if isinstance(entry, dict) else entry
+                if eid == item:
+                    idx = i
+                    break
+            if idx is None:
+                built.append(f"{item}: NOT BOUGHT")
+                continue
+            await ev(f"(() => {{ try {{ game.equipItemToSlot({idx}, '{slot}'); }} catch(e) {{}} }})()")
+            await asyncio.sleep(0.35)
+            got = await ev(f"(() => {{ const s=JSON.parse(localStorage.getItem('{LS_KEY}')||'{{}}');"
+                           f" return (((s.hero||{{}}).equip)||{{}})['{slot}'] || null; }})()")
+            built.append(f"{item} -> {slot}: {got}")
+        # ...and what stays in the bag (bought, not worn)
+        for item in BAG_ITEMS:
+            await ev(f"(() => {{ try {{ game.buyItem('{item}'); }} catch(e) {{}} }})()")
+            await asyncio.sleep(0.3)
+        out["fill"] = built
+
+        # the live save, which is what the renderer reads
         check = await ev(
             "(() => { const s=JSON.parse(localStorage.getItem('" + LS_KEY + "')||'{}');"
-            " return {weapon:(s.hero||{}).equip ? s.hero.equip.weapon : null,"
+            " return {cls:s.heroClass,"
+            "         weapon:(s.hero||{}).equip ? s.hero.equip.weapon : null,"
+            "         belt:(s.hero||{}).equip ? s.hero.equip.belt : null,"
             "         invsz:(s.hero ? s.hero.inventory : []).length}; })()")
         out["saved"] = check
         # OPEN the modal and ASSERT it opened. `game.showScreen('inventory')` LOOKS like the
