@@ -26,6 +26,8 @@ const STAT_LABELS := {
 	"manaSteal": "Mana Steal",
 	"attackRating": "Attack Rating",
 	"skillDmg": "Skill Dmg",
+	"critChance": "Crit Chance",
+	"castSpeed": "Cast Speed",
 	"manaRegen": "Mana Regen",
 	"bonusMana": "+Mana",
 	"bonusHp": "+HP",
@@ -109,6 +111,17 @@ static func build_text(item: Dictionary, data: Node, show_name: bool = true) -> 
 
 	# --- rolled mods ---------------------------------------------------------
 	for stat in _mod_stat_order():
+		# A stat the TYPE BLOCK already printed must not be printed twice. `critChance`
+		# lands on the item's own base stat, so a weapon with a crit affix prints it under
+		# Damage AND as a mod row — which is what the PWA does (`buildItemStatsHtml` gates
+		# the blue row on `item.critChance` as well). The port shows it once: grey on a
+		# weapon, where the type block reads it, and blue everywhere else.
+		if stat == "critChance" and str(item.get("type", "")) == "weapon":
+			continue
+		# `poisonDur` is carried by the poison line ("Poison Dmg +10-10 (3s)") and has no
+		# row of its own.
+		if stat == "poisonDur":
+			continue
 		var value: Variant = item.get(stat, 0)
 		if not _has_value(value):
 			continue
@@ -122,10 +135,23 @@ static func build_text(item: Dictionary, data: Node, show_name: bool = true) -> 
 
 ## The order the PWA printed rolled mods in. Kept because reading the same item in
 ## two screens must not reorder its stats.
+##
+## ⚠️  A stat that is NOT in this list is INVISIBLE on every item that carries it —
+## `build_text` walks this array and nothing else, so the affix is rolled, stored,
+## equipped and silently never printed. Measured in the data: `critChance` (`crit_sharp`,
+## `ofCritical`), `castSpeed` (`ofCasting`) and `poisonDur` were all missing. The first two
+## are the WHOLE payload of their affixes, so those three items showed a name and no stats
+## at all — Jan's "I looted an amulet with no stats, just a name". `poisonDur` is never
+## printed on its own (the `poisonDmg` line carries it) but it is listed so the array is
+## the honest answer to "which keys render".
+##
+## Adding a stat to the game means adding it here too: `tools/test_items.gd` asserts that
+## every stat key present in the affix table appears in this list.
 static func _mod_stat_order() -> Array:
 	return [
-		"fireDmg", "coldDmg", "poisonDmg", "lightningDmg", "lifesteal", "manaSteal",
-		"attackRating", "skillDmg", "manaRegen", "bonusMana", "bonusHp", "ias",
+		"fireDmg", "coldDmg", "poisonDmg", "poisonDur", "lightningDmg", "lifesteal", "manaSteal",
+		"attackRating", "skillDmg", "critChance", "castSpeed", "manaRegen", "bonusMana",
+		"bonusHp", "ias",
 		"enhancedDefense", "enhancedDmg", "str", "vit", "int", "dex",
 		"magicFind", "goldFind", "fireRes", "coldRes", "lightningRes", "poisonRes",
 		"allRes", "allSkills", "classSkills", "thorns", "dmgReduction", "lifeRegen",
@@ -145,7 +171,7 @@ static func _mod_line(stat: String, item: Dictionary, ranges: Dictionary) -> Str
 			return "%s Skills +%d%s" % [cls.capitalize(), int(value), range_text]
 		"poisonDmg":
 			return "Poison Dmg +%s (%ss)%s" % [ItemStats.fmt_dmg(value), str(item.get("poisonDur", 2)), range_text]
-		"allRes", "fireRes", "coldRes", "lightningRes", "poisonRes", "enhancedDmg", "enhancedDefense", "lifesteal", "manaSteal", "skillDmg", "ias", "magicFind", "goldFind", "allSkills":
+		"allRes", "fireRes", "coldRes", "lightningRes", "poisonRes", "enhancedDmg", "enhancedDefense", "lifesteal", "manaSteal", "skillDmg", "ias", "magicFind", "goldFind", "allSkills", "critChance", "castSpeed":
 			return "%s +%s%%%s" % [_label(stat), str(int(value)), range_text]
 		"manaRegen":
 			return "Mana Regen +%d/tick%s" % [int(value), range_text]

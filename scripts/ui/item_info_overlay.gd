@@ -66,6 +66,27 @@ const PAD_V := 20.0
 const PAD_H := 24.0
 const GAP := 8.0
 const RADIUS := 8
+## `.inv-item-overlay-stats { font-size:12px; line-height:1.7 }` — a 12px row in the live
+## PWA measures **20.4px** (`line-height` 20.4px, `padding:2px 0`, 1px rule = 25.4 total).
+## A Godot Label reports a 15px line box with no line spacing, so every row came out 16px
+## and the whole stats block was 40 % short of the reference.
+const ROW_LINE_HEIGHT := 20.4
+## A Label's single-line minimum in Godot is its font's line box (measured: 15px at 12px
+## size), so the PWA's 20.4px line box is asserted through the label's own minimum height.
+const ROW_MIN_HEIGHT := 20.0
+const ROW_PAD_V := 2.0
+## `.stat-row { gap:12px }`
+const ROW_GAP := 12.0
+## `.inv-item-overlay-close { width:24px; height:24px }` — the PWA's own box, which is
+## small. Jan's report was "the close button is so small it is hard to press", and the
+## answer cannot be to grow the button past the reference: the TOUCH TARGET grows instead.
+## `.inv-item-overlay-close` sits at `top:6px; right:6px` inside the panel, so its 24px
+## circle is the middle of a 44x44 hit area, which is the standard minimum touch target
+## and what a thumb actually finds.
+const CLOSE_SIZE := 24.0
+const CLOSE_TOUCH := 44.0
+## `.inv-item-overlay-close { top:6px; right:6px }`
+const CLOSE_INSET := 6.0
 
 ## The PWA's `slotMap` — item type -> the equipment slot it occupies. `ring` maps to
 ## ring1 because a ring's two compare entries are handled as a special case.
@@ -92,6 +113,8 @@ var _root: Control
 var _panel: PanelContainer
 var _content: VBoxContainer
 var _dim: ColorRect
+## `.inv-item-overlay-close` — a sibling of the panel, positioned in `_layout()`.
+var _close_holder: Control
 
 ## What is currently shown, so a dismissal can clear the caller's selection without the
 ## caller having to remember it, and so the socket taps know their host.
@@ -151,6 +174,12 @@ func _build() -> void:
 	_content.add_theme_constant_override("separation", int(GAP))
 	_panel.add_child(_content)
 
+	# The close button is a sibling of the PANEL, not a child of its content column,
+	# because `.inv-item-overlay-close` is `position:absolute` — it reserves NO flow space
+	# at all. Built here and placed in `_layout()`, beside the panel's own rect, which is
+	# the one place that knows where the panel ended up.
+	_build_close()
+
 
 ## The panel's size, from its content. `min-width:220px; max-width:300px; max-height:80vh`
 ## with `overflow-y:auto`, and a tap OUTSIDE it closes.
@@ -169,6 +198,7 @@ func _layout() -> void:
 	_panel.offset_right = half_w
 	_panel.offset_top = -half_h
 	_panel.offset_bottom = half_h
+	_place_close(half_w, half_h)
 
 
 # --- showing -----------------------------------------------------------------
@@ -282,9 +312,6 @@ func _rebuild() -> void:
 	style.content_margin_bottom = PAD_V
 	_panel.add_theme_stylebox_override("panel", style)
 
-	_content.add_child(_build_close_row())
-
-	# `.inv-item-overlay-icon` — `renderItemIcon(item, 56)`, a 56px square in a black box.
 	_content.add_child(_build_icon(56.0))
 
 	# `.inv-item-overlay-name { font-size:15px; font-weight:bold; text-align:center }`
@@ -333,22 +360,31 @@ func _rebuild() -> void:
 
 
 ## `.inv-item-overlay-close { position:absolute; top:6px; right:6px; width:24px;
-## height:24px; border-radius:50% ... }`. In the flow it is a right-aligned row rather
-## than an absolute child: the panel is a VBoxContainer, and a 24px row at the top costs
-## the same 24px the absolute button reserves.
-func _build_close_row() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 0)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
+## height:24px; border-radius:50% }` with the `X` glyph inside it.
+##
+## ⚠️  IT IS **ABSOLUTE**, AND THAT IS THE POINT. The port drew it as the first row of the
+## content column, so it reserved 24px of flow plus a `gap:8px` — 32px of dead space that
+## the reference does not have, pushing the icon, the name, the base label and every stat
+## row down. `.inv-item-overlay-content` is `display:flex; align-items:center; gap:8px`
+## with the button taken OUT of the flow, so the icon is the first thing in it. Built here
+## as a sibling of the panel and placed beside the panel's own rect in `_layout()`.
+##
+## The visible circle is the PWA's 24px. A 24px circle is not a touch target, though, and
+## Jan's "the close button is so small it is hard to press" is about the TARGET — so the
+## circle grows an invisible 44x44 hit area on top of it (`CLOSE_TOUCH`). That overhang is
+## free: `_place_close` sizes the holder to 24px and the hit button is an absolutely
+## positioned child, so nothing about the layout moves.
+func _build_close() -> void:
+	_close_holder = Control.new()
+	_close_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_close_holder.custom_minimum_size = Vector2(CLOSE_SIZE, CLOSE_SIZE)
+	add_child(_close_holder)
 
 	# NOT named `close`: the local would shadow this class's own `close()` method, and
 	# `pressed.connect(close)` then passes a BUTTON where a Callable belongs — a parse
 	# error that names the wrong line and reads like a signal-connection bug.
 	var close_btn := Button.new()
 	close_btn.text = "X"
-	close_btn.custom_minimum_size = Vector2(24, 24)
 	close_btn.focus_mode = Control.FOCUS_NONE
 	close_btn.add_theme_font_size_override("font_size", 11)
 	close_btn.add_theme_color_override("font_color", Color("#888888"))
@@ -357,14 +393,40 @@ func _build_close_row() -> Control:
 	st.bg_color = Color("#1a1a1a")
 	st.border_color = Color("#444444")
 	st.set_border_width_all(1)
-	st.set_corner_radius_all(12)
+	st.set_corner_radius_all(int(CLOSE_SIZE * 0.5))
 	st.set_content_margin_all(0)
 	for state_name in ["normal", "hover", "focus", "disabled"]:
 		close_btn.add_theme_stylebox_override(state_name, st)
 	close_btn.add_theme_stylebox_override("pressed", st)
+	close_btn.set_anchors_preset(Control.PRESET_FULL_RECT)
 	close_btn.pressed.connect(_on_close_pressed)
-	row.add_child(close_btn)
-	return row
+	_close_holder.add_child(close_btn)
+
+	# The touch target: a transparent Button centred on the circle, 44x44, so a thumb that
+	# lands beside the X still closes the panel. Absolutely positioned, so its overhang
+	# never enters the layout.
+	var hit := Button.new()
+	hit.focus_mode = Control.FOCUS_NONE
+	_blank_style(hit)
+	var over := (CLOSE_TOUCH - CLOSE_SIZE) * 0.5
+	hit.offset_left = -over
+	hit.offset_top = -over
+	hit.offset_right = CLOSE_SIZE + over
+	hit.offset_bottom = CLOSE_SIZE + over
+	hit.pressed.connect(_on_close_pressed)
+	_close_holder.add_child(hit)
+
+
+## Place the close button at the PANEL's top-right corner, 6px inside it, in the overlay's
+## own coordinates. `half_w` / `half_h` are the panel's half-extents as `_layout()` computed
+## them, so this needs no second source of truth for where the panel is.
+func _place_close(half_w: float, half_h: float) -> void:
+	if _close_holder == null:
+		return
+	_close_holder.position = Vector2(
+		size.x * 0.5 + half_w - CLOSE_INSET - CLOSE_SIZE,
+		size.y * 0.5 - half_h + CLOSE_INSET)
+	_close_holder.size = Vector2(CLOSE_SIZE, CLOSE_SIZE)
 
 
 func _on_close_pressed() -> void:
@@ -416,13 +478,34 @@ func _build_stats(item: Dictionary) -> Control:
 	return box
 
 
+## `.inv-item-overlay-stats { line-height:1.7 }` — one row's line box.
+static func row_line_height() -> float:
+	return ROW_LINE_HEIGHT
+
+
 ## One `.stat-row`. The PWA splits label and value on the LAST colon it printed, which is
 ## visible in the text: "Damage: 12-30 (1H)  [8.5 DPS]" is one row whose label is
 ## "Damage" and whose value is the rest. A line with no colon is a section heading (the
 ## gem blocks) and gets no rule.
+##
+## ⚠️  THE ALIGNMENT IS `space-between`, NOT A RIGHT-ALIGNED LABEL. The row is
+## `display:flex; justify-content:space-between; gap:12px` with `.stat-label` and
+## `.stat-value` as two natural-width inline blocks: the label sits at the row's left edge
+## and the value at its right, and whichever text is longer is measured at its true width.
+## The port made the LEFT label `SIZE_EXPAND_FILL` and right-aligned the value, which is a
+## different mechanism with two visible consequences:
+##
+##   * a label long enough to fill the row squeezes the value into a **1px box** (measured
+##     on a 252px row: label 239px, value 1px), so the value is drawn ON TOP of the label
+##     instead of beside it;
+##   * the whole stats block overflows its own panel, because the label's minimum is its
+##     last word and the sum no longer fits.
+##
+## A spacer between the two blocks says `space-between` with no minimum of its own, and
+## both ends keep their natural size — the browser's own rule.
 func _stat_row(line: String, is_mod: bool) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", int(ROW_GAP))
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var label_text := line
 	var value_text := ""
@@ -430,24 +513,77 @@ func _stat_row(line: String, is_mod: bool) -> Control:
 	if split > 0:
 		label_text = line.substr(0, split)
 		value_text = line.substr(split + 2)
+	else:
+		# A mod row has no colon — `ItemDetail` builds it as ONE string ("Fire Resist +11%",
+		# "Mana Steal +3%  [3 - 4]") while the PWA emitted two spans. Splitting on the last
+		# " +" is what recovers the reference's two columns; without it every mod line sat
+		# as a single blob at the row's left edge and the block read as "weirdly aligned".
+		# A flag row ("Knockback") has no " +" and stays one label, which is the honest
+		# rendering of a stat that has no magnitude.
+		var plus := line.rfind(" +")
+		if plus > 0:
+			label_text = line.substr(0, plus)
+			value_text = line.substr(plus + 1)
 	var colour := UIKit.MOD_BLUE if is_mod else "#888888"
 	var value_colour := UIKit.MOD_BLUE if is_mod else "#e8e0e8"
-	row.add_child(UIKit.label(label_text, 12, colour))
-	var left: Label = row.get_child(0)
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var right := UIKit.label(value_text, 12, value_colour, HORIZONTAL_ALIGNMENT_RIGHT)
-	row.add_child(right)
+	# The two ends of a `space-between` row, expressed in the ONE way Godot can hold it:
+	# the LEFT label expands into whatever the right label does not use, and the RIGHT label
+	# is pinned to its own full text width. (A spacer between them does NOT work — with the
+	# labels' minimums zeroed, `HBoxContainer` hands them exactly 0 and both texts wrap one
+	# word per line; measured: rows came out 60-80px tall with the values split across two
+	# lines. A `SIZE_EXPAND_FILL` left label gets the same arithmetic with no such trap.)
+	row.add_child(_row_label(label_text, colour, true))
+	if value_text != "":
+		row.add_child(_row_label(value_text, value_colour, false))
+	# `.stat-row { padding:2px 0 }` — the row's own vertical padding, inside the rule.
+	var padded := MarginContainer.new()
+	padded.add_theme_constant_override("margin_top", int(ROW_PAD_V))
+	padded.add_theme_constant_override("margin_bottom", int(ROW_PAD_V))
+	padded.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	padded.add_child(row)
 	# `.stat-row { border-bottom:1px solid #1a1a1a }` — a 1px hairline under every row.
 	# Drawn as a wrapper so the rule spans the row's full width.
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", 0)
 	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wrap.add_child(row)
+	wrap.add_child(padded)
 	var rule := ColorRect.new()
 	rule.color = Color("#1a1a1a")
 	rule.custom_minimum_size = Vector2(0, 1)
 	wrap.add_child(rule)
 	return wrap
+
+
+## One end of a stat row, on the PWA's 1.7 line-height. A `Label` has no line spacing, so
+## the height comes from `line_spacing` — measured: a 12px row is 15px without it and
+## 20.4px with it, which is the reference's own line box.
+##
+## ⚠️  `custom_minimum_size.x = 0` AS WELL. `UIKit.label` sets the minimum to the LONGEST
+## WORD (the browser's `min-width:auto`), which is right when a container has to make room
+## for it — but here the row's own arithmetic decides the split, and a stale minimum makes
+## a label refuse to give ground. In the browser both ends sit on ONE line
+## (`display:flex` does not wrap here), so the minimum is what has to give.
+##
+## `expands` is the pair's own asymmetry: `space-between` = the left end takes the slack.
+##
+## ⚠️  THE RIGHT LABEL MUST NOT WRAP. A `Label`'s minimum width is its longest WORD once
+## `custom_minimum_size` has been zeroed, so a two-word value like `+3%  [3 - 4]` was handed
+## ~30px and broke across two lines — measured: rows 60-80px tall against the reference's
+## 25.4. `display:flex` does not wrap here, so `AUTOWRAP_OFF` is the honest setting: the
+## minimum becomes the full text width, the label gets exactly that, and the LEFT label
+## expands into whatever is left. It is the left end that gives ground when a row is narrow.
+func _row_label(text: String, colour: String, expands: bool) -> Label:
+	var l := UIKit.label(text, 12, colour)
+	# ⚠️  `line_spacing` does NOT raise a SINGLE-LINE label's minimum — it is only inserted
+	# BETWEEN lines, so a one-line row stayed 15px tall (measured) while the reference's
+	# line box is 20.4. The height therefore comes from `custom_minimum_size.y`. Rows then
+	# measure 25 against the PWA's 25.4 (2+20+2 padding, plus the 1px rule).
+	l.custom_minimum_size = Vector2(0, ROW_MIN_HEIGHT)
+	if expands:
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	else:
+		l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	return l
 
 
 ## `.inv-item-overlay-sockets { display:flex; gap:6px; justify-content:center }` with

@@ -20,6 +20,7 @@ const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
+const ItemDetail := preload("res://scripts/items/item_detail.gd")
 
 var _failures: Array[String] = []
 
@@ -38,6 +39,8 @@ func _initialize() -> void:
 	_test_stacking(data, gen, state)
 	_test_magic_find_curve(gen)
 	_test_loot_drops(data, gen, state)
+	_test_no_common_jewellery(data, gen, state)
+	_test_every_affix_stat_renders(data, gen)
 	for f in _failures:
 		print("  FAIL: %s" % f)
 	if _failures.is_empty():
@@ -235,6 +238,98 @@ func _test_magic_find_curve(gen: ItemGen) -> void:
 		_fail("Magic Find did not raise the unique rate at all")
 	if mf_1000 > 1200:
 		_fail("Magic Find is not diminishing: %d/20000 uniques at MF 1000" % mf_1000)
+
+
+## No COMMON jewellery, from any entry point. `roll_quality` returns `normal` about 75 % of
+## the time and a ring or amulet has no base stats — no defense, no damage, no belt rows —
+## so a common jewel is a white-named item with NOTHING under it. Jan looted exactly that:
+## "an amulet with a white name, which should not be possible, because Common jewellery
+## should not exist, and it had no stats at all."
+##
+## The PWA promotes the roll to magic in `generateLootItem`; the port's rule lives in
+## `ItemGen.generate` so every entry point obeys it. Assert the TYPE-and-QUALITY pair on
+## many rolls rather than "an item came back": the item is real either way.
+func _test_no_common_jewellery(data: Node, gen: ItemGen, state) -> void:
+	var rng := _rng(31337)
+	var bad: Array[String] = []
+	# The GEAR branch of a drop, which is how Jan got his.
+	var loot := LootSystem.new(data, gen)
+	for _i in 800:
+		var item: Dictionary = loot.generate_item(state, 0, 1, false, 8, 0, rng)
+		if item.is_empty():
+			continue
+		if str(item.get("type", "")) in ["ring", "amulet"] and str(item.get("quality", "")) == "normal":
+			bad.append(str(item.get("id", "")))
+	# ...and the generator directly, for every jewel base in the table (the shop's
+	# normal+magic pair and the gamble both come through it).
+	for base in data.items():
+		if str(base.get("type", "")) not in ["ring", "amulet"]:
+			continue
+		for _i in 40:
+			var item := gen.generate(base, "normal", 20, 20, rng)
+			if str(item.get("quality", "")) == "normal":
+				bad.append(str(item.get("id", "")))
+	print("  common jewellery from 800 gear rolls + 40 per jewel base: %d" % bad.size())
+	if not bad.is_empty():
+		_fail("%d common rings/amulets were generated (e.g. %s)" % [bad.size(), bad[0]])
+
+	# The promoted item must still BE an item: a magic jewel has to carry at least one
+	# affix, or the fix replaced "no stats" with "no stats, in blue".
+	var with_affix := 0
+	var empty_magic := 0
+	for _i in 300:
+		var item := gen.generate(data.item("silverAmulet"), "normal", 10, 10, rng)
+		if str(item.get("quality", "")) != "magic":
+			continue
+		if (item.get("affixes", []) as Array).is_empty():
+			empty_magic += 1
+		else:
+			with_affix += 1
+	print("  promoted amulets: %d with affixes, %d empty" % [with_affix, empty_magic])
+	if empty_magic > 0:
+		_fail("%d promoted magic amulets carried no affix at all" % empty_magic)
+
+
+## Every stat that exists in the AFFIX TABLE must be RENDERABLE. `ItemDetail.build_text`
+## walks `_mod_stat_order()` and nothing else, so a stat missing from that array is rolled,
+## stored, equipped and silently never printed — the item shows a name and no numbers.
+## Measured: `critChance`, `castSpeed` and `poisonDur` were all absent, and critChance was
+## the entire payload of three affixes (`crit_sharp`, `ofCritical`, `ofCasting`).
+##
+## Compare the SETS, so adding an affix with a new stat is a red test rather than an
+## invisible item.
+func _test_every_affix_stat_renders(data: Node, gen: ItemGen) -> void:
+	var rend: Array = ItemDetail._mod_stat_order()
+	var missing := {}
+	var handled := ["swingMs", "sockets"]
+	for a in data.affixes():
+		for stat in (a.get("stats", {}) as Dictionary):
+			if rend.has(stat) or handled.has(stat):
+				continue
+			missing[str(stat)] = str(a.get("id", ""))
+	print("  affix stat keys not in the render order: %s" % str(missing.keys()))
+	if not missing.is_empty():
+		_fail("affix stats invisible in every UI: %s (e.g. from %s)" % [str(missing.keys()), str(missing.values())[0]])
+
+	# And the other half: an item whose WHOLE payload is one of the once-missing stats must
+	# now print a line. This is Jan's amulet, rolled for real rather than hand-built.
+	var rng := _rng(515)
+	var printed := 0
+	var checked := 0
+	for _i in 400:
+		var item := gen.generate(data.item("goldAmulet"), "magic", 25, 25, rng)
+		for a in item.get("affixes", []):
+			var stats: Dictionary = a.get("stats", {})
+			if stats.has("critChance") or stats.has("castSpeed"):
+				checked += 1
+				if ItemDetail.build_text(item, data, false).split("\n").size() > 0:
+					printed += 1
+				break
+	print("  amulets carrying a crit/cast affix: %d, printing at least one line: %d" % [checked, printed])
+	if checked == 0:
+		_fail("no amulet rolled a critChance/castSpeed affix — the check exercised nothing")
+	elif printed != checked:
+		_fail("%d of %d crit/cast amulets printed no stats at all" % [checked - printed, checked])
 
 
 ## A full drop roll must always return something usable, and the boss branch must

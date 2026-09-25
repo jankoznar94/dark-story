@@ -19,6 +19,14 @@ const GameData := preload("res://scripts/data/game_data.gd")
 const EQUIP_SLOTS := ["weapon", "armor", "helmet", "shield", "ring1", "ring2",
 	"amulet", "belt", "gloves", "boots"]
 
+## Types that never come out COMMON, however the roll lands. `rollQuality` returns
+## `normal` ~75 % of the time and jewellery carries no base stats — no defense, no damage,
+## no belt rows — so a normal ring or amulet is an item with a white name and NOTHING
+## under it. The PWA's `generateLootItem` promotes the roll to magic for exactly these two
+## types ("Common itemy jen pro zbroj a zbraně (jako Diablo 2)"), and every other entry
+## point — the shop, the gamble, the chest — has to obey the same rule.
+const COMMON_FORBIDDEN_TYPES := ["ring", "amulet"]
+
 ## Every affix-rolled stat an item can carry. The PWA initialised these to 0 on the
 ## generated item so that `item.stat += roll` never produced NaN; keeping the full
 ## list means a missing key is a bug rather than a silent 0.
@@ -128,6 +136,11 @@ func generate(base_item: Dictionary, quality: String, monster_level: int,
 		hero_level: int, rng: RandomNumberGenerator) -> Dictionary:
 	var ilvl: int = mini(monster_level, hero_level)
 
+	# Common jewellery does not exist — the PWA promotes the roll before anything else
+	# happens ("Common itemy jen pro zbroj a zbraně (jako Diablo 2)").
+	if quality == "normal" and str(base_item.get("type", "")) in COMMON_FORBIDDEN_TYPES:
+		quality = "magic"
+
 	var candidates: Array = []
 	for a in _data.affixes():
 		if int(a.get("minIlvl", 0)) <= ilvl and base_item.get("type", "") in a.get("types", []):
@@ -226,6 +239,22 @@ func generate(base_item: Dictionary, quality: String, monster_level: int,
 		for stat in a.get("stats", {}):
 			var value: Variant = a["stats"][stat]
 			if stat == "swingMs":
+				item[stat] = int(item.get(stat, 0)) + roll_stat(rng, value)
+			elif stat == "critChance":
+				# ⚠️  critChance is a BASE stat on a weapon and the PWA folds the affix
+				# straight into it (`lootItem.critChance += rollStat(val)`), which is what
+				# lets the weapon's own `Crit: N% (x2.0)` line and `dealPlayerDamage`'s
+				# crit roll see it. Writing it as a mod would leave it displayed and inert.
+				# ⚠️  ...but the same is TRUE in the PWA and is a PWA BUG: the mod row is
+				# gated on `if (item.critChance)` too, so a crit affix prints TWICE, once in
+				# grey and once in blue. `build_text` prints the base crit only for a WEAPON
+				# (where the type block already reads it) and the blue row for everything
+				# else, so the port shows it once in both cases.
+				item["critChance"] = int(item.get("critChance", 0)) + roll_stat(rng, value)
+			elif stat == "castSpeed":
+				# castSpeed has no consumer in either game — the PWA adds it to the affix
+				# total, prints it, and nothing reads it. Kept and displayed rather than
+				# hidden so the item is honest about what it carries.
 				item[stat] = int(item.get(stat, 0)) + roll_stat(rng, value)
 			elif stat == "allRes":
 				# allRes spreads onto all four resists rather than staying its own stat.

@@ -304,6 +304,33 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ARENA_SMOOTHNESS_ALL_PASS=true"
 
+      # The item-info panel (`#invItemOverlay`), which is where Jan's three reports lived:
+      # a looted amulet with a WHITE name and no stats at all, stat rows that looked
+      # "weirdly right-aligned", and a close button too small to press.
+      #
+      # All three are asserted, and the two content ones run in CI:
+      #   * a COMMON ring/amulet must not exist (no base stats + a white name = an empty
+      #     item); the PWA promoted the roll to magic and `ItemGen.generate` now does too,
+      #     so every entry point — drop, shop, gamble, chest — obeys it;
+      #   * every stat key in the AFFIX TABLE must appear in `ItemDetail._mod_stat_order()`,
+      #     because `build_text` walks that array and nothing else. `critChance`,
+      #     `castSpeed` and `poisonDur` were missing, and critChance was the WHOLE payload
+      #     of three affixes. `test_items.gd` asserts this as a set comparison.
+      #
+      # ⚠️  The GEOMETRY half (the row's two ends at the row's own edges with a 12px gap,
+      # the 24px close circle with a 44px touch target) needs a real renderer: measured
+      # under `--headless`, the panel sits at a bogus position (the close hit area came
+      # back at x=532 on a 390px canvas), so a geometry assertion there measures the
+      # harness. This step runs headless and takes the content half; it prints
+      # `geometry=skipped`, and the full check is `tools/test_item_overlay.gd` with
+      # `--rendering-driver opengl3`.
+      - name: Item info overlay test (content; geometry needs a renderer)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_item_overlay.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ITEM_OVERLAY_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
