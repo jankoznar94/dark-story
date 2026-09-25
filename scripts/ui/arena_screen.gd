@@ -122,6 +122,16 @@ const C_MANA_BORDER := "#3a3a6a"
 const C_MANA_FILL := "#4a6ad4"
 const C_HERO_RING := "#4a7dff"
 
+## `.mb-potion-btn { width:36px; height:36px; border:2px solid #4a4a4a; border-radius:6px;
+## background:#000 }` with `.empty { border-color:#3a3a3a }`. `box-sizing:border-box` in
+## the PWA means the 36 INCLUDES the border, and Godot draws a stylebox border OUTSIDE
+## `custom_minimum_size` — so the content box is 36 - 2 - 2 and the tile ships 36 wide.
+const POTION_TILE := 36.0
+const POTION_BORDER_W := 2
+const POTION_RADIUS := 6
+## `.mb-potion-btn { border:2px solid #4a4a4a }`, and `.empty { border-color:#3a3a3a }`.
+const POTION_BORDER := "#4a4a4a"
+const POTION_EMPTY_BORDER := "#3a3a3a"
 ## Hero placement in the arena — the PWA's HERO_X_START / HERO_X_NEAR, HERO_Y_FAR /
 ## HERO_Y_NEAR and HERO_SCALE_FAR, as fractions. The hero starts at the arena's centre
 ## (bottom) at maximum separation and walks in SIDEWAYS to stand beside the monster at
@@ -939,6 +949,17 @@ func _flat_style(bg: String, border: String, radius: int) -> StyleBoxFlat:
 	return style
 
 
+## An invisible stylebox for every Button state — the equivalent of `flat = true` that
+## `test_portrait_visual` can still SEE. ⚠️  NEVER `button.flat = true` in this file: a flat
+## Button draws no stylebox at all, the gate that enforces the border contract cannot see
+## it, and it silently loses its border. Used by the potion tiles, whose visible plate is a
+## sibling PanelContainer and whose Button is only a hit area.
+func _blank_style(button: Button) -> void:
+	var blank := StyleBoxEmpty.new()
+	for state_name in ["normal", "hover", "focus", "pressed", "disabled"]:
+		button.add_theme_stylebox_override(state_name, blank)
+
+
 func _label(text: String, size: int, colour: Color, align: int = HORIZONTAL_ALIGNMENT_LEFT,
 		bold: bool = false) -> Label:
 	var l := Label.new()
@@ -1741,14 +1762,40 @@ func cast_spell(spell_id: String) -> Dictionary:
 	return result
 
 
-## One button per potion type in the belt, with the count. Tapping drinks one.
+## The potion belt row in the arena: ONE slot per potion TYPE, each a 36x36 tile with the
+## potion's own icon and a gold count badge — the PWA's `.mb-potion-btn`.
+##
+## ⚠️  This used to build a TEXT BUTTON per potion (`"Light Healing Potion x3"`, 110x32),
+## which is what Jan reported: "the slot is drawn as text". The PWA's own markup is a
+## `<div class="mb-potion-btn">` holding `renderItemIcon(pot, 0)` plus a
+## `<span class="potion-stack-count">`, styled:
+##
+##   .mb-potion-buttons { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px }
+##   .mb-potion-btn { width:36px; height:36px; border:2px solid #4a4a4a; border-radius:6px;
+##                    background:#000; display:flex; align-items:center; justify-content:center;
+##                    position:relative }
+##   .mb-potion-btn img { width:100%; height:100%; object-fit:cover; border-radius:4px }
+##   .mb-potion-btn .potion-stack-count { position:absolute; bottom:1px; right:2px;
+##                    font-size:9px; color:#f1c40f; background:rgba(0,0,0,0.7);
+##                    padding:0 3px; border-radius:3px; font-weight:bold; line-height:14px }
+##   .mb-potion-btn.empty { opacity:0.25; border-style:dashed; pointer-events:none }
+##
+## ⚠️  THE SLOT COUNT IS FIXED, NOT THE NUMBER OF FILLED TYPES. The PWA rendered the whole
+## belt and padded the rest with `.empty` tiles, and its own comment says why: "so the arena
+## does not shift when the potions run out (the row's height stays constant)". Rendering
+## only the filled ones makes the row grow and shrink mid-fight and moves the bars under it.
+##
+## ⚠️  `box-sizing:border-box` — the PWA's 36px INCLUDES the 2px border, and a Godot
+## stylebox border is drawn OUTSIDE `custom_minimum_size`. The tile's minimum is therefore
+## 36 - 2 - 2 = 32, or every slot ships 40px wide.
 func _refresh_potions() -> void:
 	for child in _potion_row.get_children():
 		_potion_row.remove_child(child)
 		child.queue_free()
 
 	var counts := {}
-	for pid in _state.equip().get("beltPotionSlots", []):
+	var belt: Array = _state.equip().get("beltPotionSlots", [])
+	for pid in belt:
 		if pid == null:
 			continue
 		var item: Dictionary = _find_item.call(pid)
@@ -1760,14 +1807,99 @@ func _refresh_potions() -> void:
 	# the same order so a belt full of mixed potions reads the same way every fight.
 	var order := ["healingPotion", "healingPotion2", "healingPotion3", "healingPotion4", "healingPotion5",
 		"manaPotion", "manaPotion2", "manaPotion3", "manaPotion4", "manaPotion5"]
+
+	var filled: Array = []
 	for potion_id in order:
 		if not counts.has(potion_id):
 			continue
-		var item: Dictionary = _find_item.call(potion_id)
-		var button := _make_button("%s x%d" % [str(item.get("name", potion_id)), int(counts[potion_id])])
-		button.custom_minimum_size = Vector2(110, 32)
-		button.pressed.connect(func(): use_potion(potion_id))
-		_potion_row.add_child(button)
+		filled.append({"id": potion_id, "count": int(counts[potion_id])})
+
+	# One tile per EQUIPPED belt slot, not per potion type: a belt with eight free slots
+	# draws eight empty tiles, which is what keeps the row's height constant.
+	var total: int = maxi(_state.total_potion_slots(_find_item), filled.size())
+	for i in total:
+		if i < filled.size():
+			var entry: Dictionary = filled[i]
+			_potion_row.add_child(_potion_slot(str(entry["id"]), int(entry["count"])))
+		else:
+			_potion_row.add_child(_empty_potion_slot())
+
+
+## One `.mb-potion-btn`: the potion's own icon, a gold stack count, and a tap that drinks it.
+func _potion_slot(potion_id: String, count: int) -> Control:
+	var item: Dictionary = _find_item.call(potion_id)
+	var holder := _potion_tile(false)
+	var icon := TextureRect.new()
+	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	# `.mb-potion-btn img { object-fit:cover }` — the tile is filled edge to edge, so the
+	# icon never leaves a ring of the black background showing.
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	icon.texture = _load(ItemStats.icon_path(item))
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(icon)
+
+	# `.potion-stack-count` — 9px gold, bottom-right, on its own dark pill. Only shown
+	# when there is more than one: the PWA always rendered it, and a belt with one potion
+	# of a type then reads "1" instead of a bare icon. Kept unconditional to match.
+	var badge := _label(str(count), 9, Color(C_GOLD), HORIZONTAL_ALIGNMENT_CENTER, true)
+	badge.add_theme_stylebox_override("normal", _badge_style())
+	badge.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	badge.offset_left = -14
+	badge.offset_top = -13
+	badge.offset_right = -2
+	badge.offset_bottom = -1
+	holder.add_child(badge)
+
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_NONE
+	_blank_style(button)
+	button.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var pid := potion_id
+	button.pressed.connect(func(): use_potion(pid))
+	holder.add_child(button)
+	return holder
+
+
+## `.mb-potion-btn.empty` — a dashed, 25 %-opacity tile that occupies the belt's free
+## slots and accepts no taps.
+func _empty_potion_slot() -> Control:
+	var holder := _potion_tile(true)
+	# `.empty { opacity:0.25 }` — CSS opacity is inherited by the whole box, so the tile's
+	# border and background both dim. On a Control that is `modulate`.
+	holder.modulate = Color(1, 1, 1, 0.25)
+	return holder
+
+
+## The 32x32 content box of a `.mb-potion-btn`, with the PWA's own border and radius.
+## `dashed` is a stylebox Godot cannot draw; the empty tile gets the PWA's darker border
+## colour instead, which is the part a player actually reads at 36px.
+func _potion_tile(is_empty: bool) -> Control:
+	var holder := Control.new()
+	# 36 total minus the 2 + 2 border the stylebox draws outside the content box.
+	holder.custom_minimum_size = Vector2(POTION_TILE - POTION_BORDER_W * 2, POTION_TILE - POTION_BORDER_W * 2)
+
+	var plate := PanelContainer.new()
+	plate.set_anchors_preset(Control.PRESET_FULL_RECT)
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := _flat_style("#000000", POTION_EMPTY_BORDER if is_empty else POTION_BORDER,
+		POTION_RADIUS)
+	style.set_border_width_all(POTION_BORDER_W)
+	style.set_content_margin_all(0)
+	plate.add_theme_stylebox_override("panel", style)
+	holder.add_child(plate)
+	return holder
+
+
+## `.potion-stack-count { background:rgba(0,0,0,0.7); border-radius:3px }`.
+func _badge_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.7)
+	style.set_corner_radius_all(3)
+	style.set_content_margin_all(0)
+	style.content_margin_left = 3
+	style.content_margin_right = 3
+	return style
 
 
 ## Drink one potion from the belt: remove it, apply its effect to the LIVE fight state,

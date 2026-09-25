@@ -1000,8 +1000,13 @@ func player_attack(state, find_item: Callable) -> Dictionary:
 	if weapon.is_empty():
 		weapon = find_item.call("fists")
 
-	var mult := 0.6 if is_offhand else 1.0
-	var ar_mult := 1.0
+	# The off-hand penalty is NOT a constant here: it is `spec.offHandMult`, which rises
+	# from 0.5 to 1.0 as One-Hand Specialization is invested. Hardcoding 0.6 made the
+	# talent's own off-hand clause unread — the same class of bug as the crit bonus.
+	var spec := Talents.swing_bonus(state, weapon, is_offhand,
+		Talents.shield_spec_dmg_mult(state))
+	var mult: float = float(spec["handMult"])
+	var ar_mult: float = 1.0
 	var queued_frenzy := false
 	# The queued spells apply to the MAIN hand only — an off-hand swing is not the hit
 	# the player queued.
@@ -1012,6 +1017,11 @@ func player_attack(state, find_item: Callable) -> Dictionary:
 		queued_frenzy = bool(queued["frenzy"])
 	if battle_shout_dmg_pct > 0.0:
 		mult *= 1.0 + battle_shout_dmg_pct / 100.0
+	# The weapon specialisation's damage and attack-rating multipliers, straight from the
+	# talent. `ar_mult` starts at the queued spells' value and compounds with it, exactly
+	# as the PWA multiplied `spec.arMult * arMultOverride`.
+	mult *= float(spec["dmgMult"])
+	ar_mult *= float(spec["arMult"])
 
 	var result := _resolve_player_hit(state, find_item, weapon, mult, is_offhand, ar_mult)
 	# The enemy's Thorn Shield returns a flat 5-10 to whoever hits it. The PWA rolled
@@ -1074,7 +1084,10 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 	dmg += float(rng.randi_range(-1, 1))
 	dmg = maxf(1.0, round(dmg))
 
-	var crit_chance := float(weapon.get("critChance", 0))
+	# The crit roll: the weapon's own base crit PLUS the weapon-specialisation bonus.
+	# Reading `weapon.critChance` alone is what left the whole One-Hand/Two-Hand
+	# Specialization crit clause inert in the fight while the stat panel showed it.
+	var crit_chance := float(Talents.swing_crit_chance(state, weapon))
 	var is_crit := false
 	if crit_chance > 0.0 and rng.randf() * 100.0 < crit_chance:
 		dmg = round(dmg * 2.0)

@@ -397,13 +397,14 @@ func _refresh_details(hero: Dictionary, equip: Dictionary) -> void:
 	var weapon: Dictionary = _find_item.call(equip.get("weapon"))
 	if weapon.is_empty():
 		weapon = _data.item("fists")
-	var spec := _talents.weapon_spec(_state, weapon)
 	var dmg: Dictionary = Progression.hero_dmg(hero, equip, _find_item,
 		_talents.shield_spec_dmg_mult(_state))
 	var total_def := _talents.total_defense(_state, _find_item)
 	var attrs := _gen.equip_attr_sum(equip, _find_item, ["dex"])
 	var dex := int(hero.get("attrDex", 0)) + int(attrs["dex"])
-	var crit := int(weapon.get("critChance", 0)) + int(spec["critBonus"])
+	# The SAME function the arena's damage path rolls against — a stat panel that computes
+	# crit its own way is how the port came to display a bonus the fight never applied.
+	var crit := _talents.swing_crit_chance(_state, weapon)
 	var block := _talents.player_block_chance(_state, _find_item, _gen)
 	var max_hp := _gen.hero_max_hp(hero, equip, _find_item)
 	var max_mana := _gen.hero_max_mana(hero, equip, str(_state.data.get("heroClass", "")),

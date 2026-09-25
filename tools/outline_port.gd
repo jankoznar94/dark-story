@@ -11,15 +11,23 @@ class_name OutlinePort
 ##   godot4 --rendering-driver opengl3 --path . --script res://tools/outline_port.gd -- \
 ##       --screen chest --out /tmp/port_outline.txt
 ##
+## `--screen shop --tab sell` presses the shop's own tab button first, and `--bag a,b,c`
+## seeds the hero's inventory, so the BAG-rendering screens can be outlined with a real
+## loadout instead of an empty list.
+##
 ## A modal tab is `character@inventory|skills|stats`, the same vocabulary capture_screen
 ## uses.
 
 var _main: Node = null
 var _screen := ""
 var _out := "/tmp/port_outline.txt"
+var _tab := ""
+var _bag := ""
 var _frames := 0
 var _started := false
 var _lines: Array = []
+var _last_sig := ""
+var _stable := 0
 
 
 func _initialize() -> void:
@@ -31,6 +39,10 @@ func _initialize() -> void:
 				_screen = args[i + 1]
 			"--out":
 				_out = args[i + 1]
+			"--tab":
+				_tab = args[i + 1]
+			"--bag":
+				_bag = args[i + 1]
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -41,15 +53,60 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
+		if _bag != "":
+			_main.state.data["hero"]["inventory"] = []
+			for id in _bag.split(","):
+				var clean := id.strip_edges()
+				if clean != "":
+					_main.state.data["hero"]["inventory"].append(clean)
+			_main.state.data["hero"]["gold"] = 5000
 		_entry()
 		return false
 	_frames += 1
 	# Layout needs a couple of frames to settle: containers resolve their sizes on the
-	# frame AFTER the children are added.
-	if _frames < 12:
+	# frame AFTER the children are added — and a screen whose content is REBUILT after the
+	# entry (the shop's tab press calls `refresh()`, which frees every row and adds new
+	# ones) needs its own wait on top. Waiting a fixed 12 frames from the entry dumped a
+	# tree of nodes that had been freed and replaced, with every rect at 0: a measurement
+	# that looks like \"the layout is broken\" and is really \"the tool read too early\".
+	#
+	# So wait for the tree to be STABLE and non-degenerate instead of counting frames: the
+	# same signal, and it cannot be fooled by a screen that rebuilds itself.
+	if _frames < 8:
+		return false
+	var sig := _signature()
+	if sig == _last_sig:
+		_stable += 1
+	else:
+		_stable = 0
+		_last_sig = sig
+	if _stable < 4 or _frames > 400:
 		return false
 	_dump()
 	return true
+
+
+## A cheap fingerprint of the laid-out tree: every visible Control's global rect, rounded.
+## Two consecutive identical readings mean the layout has stopped moving.
+func _signature() -> String:
+	var parts: Array = []
+	_collect_sig(_main._screens.get(_screen, null), parts, 0)
+	return "|".join(parts)
+
+
+func _collect_sig(node: Node, parts: Array, depth: int) -> void:
+	if node == null or depth > 9:
+		return
+	for child in node.get_children():
+		if not (child is Control):
+			continue
+		var c: Control = child
+		if not c.visible:
+			continue
+		var r := c.get_global_rect()
+		parts.append("%d:%d:%d:%d:%d" % [depth, int(r.position.x), int(r.position.y),
+			int(r.size.x), int(r.size.y)])
+		_collect_sig(c, parts, depth + 1)
 
 
 func _entry() -> void:
@@ -62,10 +119,25 @@ func _entry() -> void:
 		_main.open_modal(tab)
 		return
 	if _screen == "arena":
-		_main._on_wilderness()
-		_main.show_screen("arena")
+		_main._on_stop_selected(0, 0)
+	elif _screen == "result":
+		pass
 	else:
 		_main.show_screen(_screen)
+	_apply_tab()
+
+
+## Press the screen's own tab button, so `--tab sell` measures the tab a PLAYER taps into.
+func _apply_tab() -> void:
+	if _tab == "":
+		return
+	var screen = _main._screens.get(_screen, null)
+	if screen == null or not ("_tab_buttons" in screen):
+		return
+	var buttons: Array = screen._tab_buttons
+	var index := 0 if _tab == "buy" else 1
+	if index < buttons.size():
+		buttons[index].emit_signal("pressed")
 
 
 func _dump() -> void:

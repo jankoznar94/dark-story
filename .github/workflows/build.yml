@@ -331,6 +331,48 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ITEM_OVERLAY_ALL_PASS=true"
 
+      # The weapon specialisation's THREE clauses (Jan's report: "critChance u itemů" did
+      # nothing). `Talents.weapon_spec()` was written correctly and called from exactly ONE
+      # place — the hero's stat panel — so the fight never read it: the tree SHOWED a crit
+      # bonus the arena never rolled, and the off-hand penalty was a hardcoded 0.6 in
+      # `player_attack`. A test that asserts the multiplier's VALUE cannot see that, so this
+      # one drives real swings and measures: crits must actually land, damage must rise, and
+      # the off-hand/main-hand damage RATIO must equal `offHandMult` (0.50 -> 1.00).
+      - name: Weapon specialisation test (crits that land, off-hand penalty)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_weapon_spec.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "WEAPON_SPEC_ALL_PASS=true"
+
+      # The shop screen, which carried three of Jan's reports at once: the SELL tab's content
+      # running off the screen, a "strange border" around the item stats, and too-small text
+      # with no line spacing. All three were LAYOUT, and none of them was visible to
+      # `test_shop_and_craft` (which asserts the RULES: gates, prices, stock).
+      #
+      # What it pins:
+      #   * no control's MINIMUM width exceeds the 390px canvas on either tab — a 240px
+      #     `item_tooltip` minimum inside an `HBoxContainer` is honoured by the container, and
+      #     that is precisely how the sell row ran off the screen;
+      #   * BOTH tabs come out of one card builder, and a sell card is 149 tall like the
+      #     PWA's `.shop-item`;
+      #   * the potion box is `#shopList`'s FIRST CHILD on Misc only, a bordered `#111` panel
+      #     — the port had a bare label ABOVE the category strip;
+      #   * a stat row is 12px, on one line, and NOT inside a `PanelContainer`.
+      #
+      # ⚠️  It asserts STRUCTURE and MINIMUMS only. A `SceneTree` script's root window is not
+      # the game's 390x844 canvas (measured: a card came back 158x259 with a real renderer),
+      # so absolute rects are a `tools/outline_port.gd` probe and the test prints
+      # `geometry=probe-only`. The two halves were verified by mutation: restoring the
+      # `item_tooltip` in the sell row turns the overwide check red, and removing the
+      # `autowrap` fix turns the potion box 49px.
+      - name: Shop layout test (structure, minimums)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_shop_layout.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SHOP_LAYOUT_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

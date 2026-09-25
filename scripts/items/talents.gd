@@ -88,7 +88,12 @@ func icon_path(key: String) -> String:
 
 # --- levels -----------------------------------------------------------------
 
-func talent_level(state, key: String) -> int:
+## getTalentLv — the invested level. STATIC so the damage path can reach it: `battle.gd`
+## holds no `Talents` instance (the class needs `_data` to build its skill map, and the
+## battle is constructed before any screen), and a non-static reader is a parse error when
+## called from the class directly — which also takes out every script that preloads this
+## one. It reads nothing but the save, so there is nothing instance-bound about it.
+static func talent_level(state, key: String) -> int:
 	var levels: Dictionary = state.data.get("talentLevels", {})
 	return int(levels.get(key, 0))
 
@@ -244,7 +249,12 @@ func spend_attr(state, attr: String, find_item: Callable, gen: ItemGen) -> Dicti
 ## getWeaponSpecBonus — weapon specialisation: +10% damage, +10% attack rating and
 ## +1% crit per level. Only barbarians have it, and a two-handed weapon reads the
 ## two-hand tree. Off-hand attacks are penalised 50%, less 10% per one-hand level.
-func weapon_spec(state, weapon: Dictionary, is_offhand: bool = false) -> Dictionary:
+##
+## STATIC because the DAMAGE PATH calls it: `battle.gd` has no `Talents` instance, and
+## the whole point of this function is that the fight and the stat panel read the same
+## numbers. An INSTANCE version here is what let the port display a crit bonus the fight
+## never applied.
+static func weapon_spec(state, weapon: Dictionary, is_offhand: bool = false) -> Dictionary:
 	const ONE_HAND := "barbarian_oneHandSpec"
 	const TWO_HAND := "barbarian_twoHandSpec"
 	var hero_class := str(state.data.get("heroClass", ""))
@@ -264,9 +274,49 @@ func weapon_spec(state, weapon: Dictionary, is_offhand: bool = false) -> Diction
 	}
 
 
+## The three numbers the DAMAGE PATH reads off a weapon specialization, as floats.
+##
+## ⚠️  `weapon_spec` is easy to write and easy to leave INERT: it existed here for a whole
+## session with exactly one caller (the hero stat panel), so the port DISPLAYED a crit
+## bonus from One-Hand/Two-Hand Specialization that the fight never applied. The PWA
+## computed `(weapon.critChance || 0) + spec.critBonus` INSIDE `dealPlayerDamage`, and its
+## `spec.dmgMult` / `spec.offHandMult` multiplied the same swing — three numbers, one
+## expression, no second source of truth. This is that expression, and `battle.gd` calls it
+## so the arena and the stat panel cannot drift apart again.
+##
+## A `Dictionary` of ints comes back deliberately: `Variant` arithmetic in GDScript is
+## where a silent `1` instead of `1.0` would truncate a roll.
+static func swing_bonus(state, weapon: Dictionary, is_offhand: bool,
+		shield_mult: float) -> Dictionary:
+	var spec := weapon_spec(state, weapon, is_offhand)
+	# The off-hand penalty is the same slot the PWA scaled: an off-hand swing reads
+	# `offHandMult` (0.5, rising to 1.0 at One-Hand Spec 5) and a MAIN-hand swing reads
+	# Shield Specialization's +20 %/level. `weapon_spec` returns `offHandMult` for both.
+	var hand_mult := float(spec["offHandMult"]) if is_offhand else shield_mult
+	return {
+		"dmgMult": float(spec["dmgMult"]),
+		"arMult": float(spec["arMult"]),
+		"critBonus": int(spec["critBonus"]),
+		"handMult": hand_mult,
+	}
+
+
+## The crit chance one swing rolls against, as an integer PERCENT: the weapon's own base
+## crit (which is where a crit affix lands, see `ItemGen`) plus the specialization bonus.
+## A shared function because the arena, the stat panel and any future tooltip must print
+## the same number the fight rolls.
+static func swing_crit_chance(state, weapon: Dictionary) -> int:
+	if weapon.is_empty():
+		return 0
+	return int(weapon.get("critChance", 0)) + int(weapon_spec(state, weapon)["critBonus"])
+
+
 ## Shield Specialization: +20% main-hand damage and +5% block per level. It lives on
 ## the shield tree, so it is read by both the damage path and the block path.
-func shield_spec_dmg_mult(state) -> float:
+##
+## STATIC for the same reason as `weapon_spec`: the arena's damage path needs it and has
+## no `Talents` instance.
+static func shield_spec_dmg_mult(state) -> float:
 	return 1.0 + 0.20 * float(talent_level(state, "barbarian_shieldSpec"))
 
 

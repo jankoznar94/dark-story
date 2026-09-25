@@ -286,7 +286,7 @@ func _rebuild_workbench() -> void:
 	if not preview.is_empty():
 		_result_box.add_child(UIKit.label(ItemStats.socket_name(preview), 15,
 			ItemStats.quality_color(preview).to_html(false)))
-		_result_box.add_child(UIKit.item_tooltip(preview, _data, 420.0))
+		_result_box.add_child(UIKit.stat_panel(preview, _data))
 
 	_craft_button.visible = not preview.is_empty() and not _recipe.get("isGemUpgrade", false)
 	if _recipe.get("isGemUpgrade", false):

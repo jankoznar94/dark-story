@@ -21,6 +21,14 @@ var _screen := ""
 var _fight_ticks := 0
 ## `--result lose` captures the DEFEAT page rather than the victory one.
 var _result_lose := false
+## `--tab sell` presses the screen's OWN tab button after entering (the shop's Buy/Sell
+## strip). Driving the button rather than writing `_tab` follows the route a tap takes —
+## a hand-written field would pass against broken wiring.
+var _tab := ""
+## `--bag a,b,c` seeds the hero's inventory before the capture, so a screen that renders the
+## BAG (the shop's sell list) has something in it. Without it a fresh save shows an empty
+## list, and an empty list is a frame that proves nothing about the card that overflows.
+var _bag := ""
 var _started := false
 
 
@@ -39,9 +47,28 @@ func _initialize() -> void:
 				_fight_ticks = int(args[i + 1])
 			"--result":
 				_result_lose = args[i + 1] == "lose"
+			"--tab":
+				_tab = args[i + 1]
+			"--bag":
+				_bag = args[i + 1]
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
+
+
+## Write the `--bag` list into the hero's inventory before entering. The shop's SELL tab
+## renders the BAG, and a fresh save has none — so without this the capture is an empty list
+## and proves nothing about the card Jan reported running off the screen.
+func _seed_bag() -> void:
+	if _bag == "":
+		return
+	var state = _main.state
+	state.data["hero"]["inventory"] = []
+	for id in _bag.split(","):
+		var clean := id.strip_edges()
+		if clean != "":
+			state.data["hero"]["inventory"].append(clean)
+	state.data["hero"]["gold"] = 5000
 
 
 func _process(_delta: float) -> bool:
@@ -60,6 +87,7 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
+		_seed_bag()
 		_entry()
 		return false
 
@@ -163,6 +191,43 @@ func _entry() -> void:
 		while t < _fight_ticks and arena.battle != null and not arena.battle.ended:
 			arena.step()
 			t += 1
+	_apply_tab()
+
+
+## Press the screen's OWN tab button (`--tab sell`). The shop's Buy/Sell strip is the only
+## one today. Driving the button is what makes this follow the route a tap takes: a helper
+## that wrote `_tab` directly would pass against broken wiring, and the failure being hunted
+## here (the sell card running off the canvas) is a layout consequence of that branch.
+##
+## It STOPS when the tab did not move, for the same reason `--screen` does: a capture that
+## writes a real frame of the Buy tab under the name `shop_sell.png` is a file name lying
+## about its contents.
+func _apply_tab() -> void:
+	if _tab == "":
+		return
+	var screen = _main._screens.get(_screen, null)
+	if screen == null:
+		return
+	if not ("_tab_buttons" in screen):
+		print("capture: WARN screen '%s' has no tabs, --tab ignored" % _screen)
+		return
+	var buttons: Array = screen._tab_buttons
+	if buttons.is_empty():
+		print("capture: WARN screen '%s' built no tab buttons" % _screen)
+		return
+	var index := 0 if _tab == "buy" else 1
+	if index >= buttons.size():
+		print("capture: FAIL no tab '%s' on '%s'" % [_tab, _screen])
+		quit(2)
+		return
+	# Emit the signal the button is wired to, exactly as a press does.
+	buttons[index].emit_signal("pressed")
+	if str(screen._tab) != _tab:
+		print("capture: FAIL asked for tab '%s' on '%s', the screen is on '%s'"
+			% [_tab, _screen, str(screen._tab)])
+		quit(2)
+		return
+	print("capture: tab=%s" % str(screen._tab))
 
 
 func _capture() -> void:

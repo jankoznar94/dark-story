@@ -45,6 +45,20 @@ const CELL_DIM_BORDER := "#e74c3c"
 const CELL_OPACITY_EMPTY := 0.25
 const CELL_OPACITY_DIMMED := 0.35
 
+## `.stat-row` — the item stat block, shared by the shop, chest and craft screens and the
+## item-info overlay. `.stat-row { display:flex; justify-content:space-between; gap:12px;
+## padding:2px 0; border-bottom:1px solid #1a1a1a }` with the block's own
+## `font-size:12px; line-height:1.7`.
+##
+## `line-height:1.7` at 12px is 20.4px, and a Godot `Label` reports only its font's 15px
+## line box — so the height is asserted through `custom_minimum_size.y`. Measured against
+## the live PWA: 25.4px per row (2 + 20.4 + 2 padding, plus the 1px rule); the port then
+## comes out at 25.
+const STAT_ROW_GAP := 12
+const STAT_ROW_MIN_HEIGHT := 20.0
+const STAT_ROW_PAD_V := 2
+const STAT_ROW_RULE := "#1a1a1a"
+
 ## `.container { padding: 16px 16px 70px 16px }` — the 70px bottom is where the PWA's
 ## fixed `.nav-bar` sits. Without it every screen hides its last row behind the nav.
 const CONTAINER_PAD := 16.0
@@ -405,8 +419,15 @@ static func page_header(icon_path: String, title: String, subtitle: String = "",
 	style.border_color = Color("#444444")
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(10)
-	style.content_margin_left = 20
-	style.content_margin_right = 20
+	# `.page-header { padding:16px 20px; border:1px solid #444; box-sizing:border-box }`.
+	# `box-sizing:border-box` means the 20px padding is measured from INSIDE the border, so
+	# the PWA's icon sits at x = 16 (container) + 1 (border) + 20 (padding) = 37. In Godot a
+	# PanelContainer's stylebox border is drawn inside the panel's own rect, so a content
+	# margin of 20 puts the icon at 36 — one pixel left of the reference on all four screens
+	# that use this header. The top/bottom margin already carries the +1 (17); the sides must
+	# carry it too.
+	style.content_margin_left = 21
+	style.content_margin_right = 21
 	style.content_margin_top = 17
 	style.content_margin_bottom = 17
 	panel.add_theme_stylebox_override("panel", style)
@@ -455,6 +476,74 @@ static func page_header(icon_path: String, title: String, subtitle: String = "",
 	return {"root": panel, "right": right, "title": title_label, "subtitle": sub_label}
 
 
+## `.btn.btn-shop-buy` — the item card's price button. NOT a `.btn`: it is
+## `display:inline-flex; width:fit-content; padding:8px 16px; border:1px solid #555;
+## border-radius:6px; background:#333; font-size:14px; line-height:1`, holding a 16px coin
+## icon and a bold 14px price with a 6px gap.
+##
+## Measured on the live PWA: **69x34** for the price `15`. The port hardcoded 130x40 — the
+## button is right-aligned, so the extra 61px is invisible against the card's right edge
+## until the price is short, and the 6px of extra height pushed the card's bottom down.
+## `can_afford` is the PWA's `opacity:0.5` on the whole button, applied here as a dimmed
+## fill rather than an opacity so the price's own colour survives.
+static func shop_buy_button(cost: int, can_afford: bool, font_size: int = 14) -> Button:
+	var coin := load_texture("res://assets/items/coin_gold.png")
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	# `.btn { margin:6px 0 }` — carried by the caller's `margin_box`, so only the vertical
+	# size is set here. The width follows the content, as `fit-content` does.
+	b.custom_minimum_size = Vector2(0, 34)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_END
+
+	# The icon and the price as two children of an HBoxContainer, because a Godot Button
+	# cannot put a texture and a label side by side with a gap on its own.
+	var inner := HBoxContainer.new()
+	inner.add_theme_constant_override("separation", 6)
+	inner.alignment = BoxContainer.ALIGNMENT_CENTER
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# A padding of 8/16 around the content, exactly the CSS.
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_left", 16)
+	pad.add_theme_constant_override("margin_right", 16)
+	pad.add_theme_constant_override("margin_top", 8)
+	pad.add_theme_constant_override("margin_bottom", 8)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.set_anchors_preset(Control.PRESET_FULL_RECT)
+	inner.add_child(pad)
+
+	if coin != null:
+		var icon := TextureRect.new()
+		icon.texture = coin
+		icon.custom_minimum_size = Vector2(16, 16)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pad.add_child(icon)
+
+	var price := label("%d" % cost, font_size, GOLD, HORIZONTAL_ALIGNMENT_LEFT, true)
+	price.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	price.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_child(price)
+	b.add_child(inner)
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#333333") if can_afford else Color("#333333", 0.5)
+	style.border_color = Color("#555555")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(6)
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		b.add_theme_stylebox_override(state_name, style)
+	var pressed := style.duplicate()
+	pressed.bg_color = Color("#444444")
+	b.add_theme_stylebox_override("pressed", pressed)
+	# `.btn-shop-buy { color:#eee }` — the text lives in child Labels, so the theme colour
+	# does not reach them; the price keeps its own `#f1c40f`.
+	if not can_afford:
+		price.modulate = Color(1, 1, 1, 0.5)
+	return b
+
+
 ## A vertical gap of exactly `height` pixels. CSS gives every card and button its own
 ## margin; a container gives all children the same separation, so the difference is added
 ## explicitly at the one place the measurement says it belongs.
@@ -463,6 +552,44 @@ static func gap(height: float) -> Control:
 	spacer.custom_minimum_size = Vector2(0, height)
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return spacer
+
+
+## A wrapper that adds `top` / `bottom` pixels OUTSIDE its child, so one element can carry
+## its own CSS margin inside a container that has a single separation for every child.
+##
+## `.shop-item-header { margin-bottom:6px }` is the case that needs it: the card's box uses
+## `separation = 6`, which applies BETWEEN children, so the gap under the LAST child (the
+## header, when the item has no stats) has to be added rather than inherited.
+##
+## The inner box reports `child + top + bottom` as its minimum and fits the child into the
+## box minus those margins — the one shape Godot calls for both.
+static func margin_box(child: Control, top: float, bottom: float) -> Control:
+	var box := MarginBox.new()
+	box.setup(child, top, bottom)
+	return box
+
+
+class MarginBox extends Container:
+	var _child: Control = null
+	var _top := 0.0
+	var _bottom := 0.0
+
+	func setup(c: Control, t: float, b: float) -> void:
+		_child = c
+		_top = t
+		_bottom = b
+		add_child(c)
+
+	func _get_minimum_size() -> Vector2:
+		if _child == null:
+			return Vector2.ZERO
+		var m := _child.get_combined_minimum_size()
+		return Vector2(m.x, m.y + _top + _bottom)
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_SORT_CHILDREN and _child != null:
+			fit_child_in_rect(_child, Rect2(Vector2(0, _top), Vector2(size.x,
+				maxf(0.0, size.y - _top - _bottom))))
 
 
 ## `.shop-tabs` / `.shop-tab` — equal-width tabs, 10px padding, 8px radius, the active one
@@ -475,7 +602,10 @@ static func tab_row(tabs: Array, active_index: int, active_colour: String = MOD_
 	for i in tabs.size():
 		var b := Button.new()
 		b.text = str(tabs[i])
-		b.custom_minimum_size = Vector2(0, 40)
+		# `.shop-tab / .craft-tab { padding:10px; font-size:14px; border:1px }` measures 38px
+		# in the live PWA, not 40 — 10 + 10 + a 14px line box + the 1px borders, and the
+		# port's extra 2px pushed the whole list below it down.
+		b.custom_minimum_size = Vector2(0, 38)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.focus_mode = Control.FOCUS_NONE
 		var style := StyleBoxFlat.new()
@@ -539,6 +669,155 @@ static func item_tooltip(item: Dictionary, data: Node, width: float = 380.0) -> 
 		else:
 			column.add_child(label(line, 13, TEXT))
 	return box
+
+
+## The item STAT BLOCK, as the PWA's `.stat-row` list — the shared renderer for the shop,
+## the chest and the craft screen.
+##
+## ⚠️  This is NOT `item_tooltip`. The PWA's `.shop-item-stats` is a bare block of rows with
+## NO border, no background and no padding:
+##
+##   .shop-item .shop-item-stats { font-size:12px; color:#ccc; line-height:1.7;
+##                                 text-align:left; width:100% }
+##   .stat-row { display:flex; justify-content:space-between; gap:12px;
+##               padding:2px 0; border-bottom:1px solid #1a1a1a }
+##   .stat-label { color:#888 }  .stat-value { color:#e8e0e8 }
+##   .stat-value.mod, .stat-label.mod { color:#4169E1 }
+##
+## The port used `item_tooltip` here, which is a `PanelContainer` with `panel_style()` —
+## i.e. a black box with a 1px `#333` border around the whole block, plus 13px text and a
+## 1px separation between lines. That container border IS Jan's "a strange border around
+## them", and the 13px-vs-12px with no line box is the "too-small text, no line spacing".
+##
+## `size` defaults to the PWA's own 12px, and each row carries `line-height:1.7`'s 20.4px
+## line box, which a Godot Label does NOT report on its own (measured: 15px).
+static func stat_block(item: Dictionary, data: Node, size: int = 12) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if item.is_empty():
+		return box
+	var text := ItemDetail.build_text(item, data, false)
+	for raw in text.split("\n"):
+		var line := str(raw)
+		if line == "":
+			continue
+		var is_mod := line.begins_with(ItemDetail.MOD_PREFIX)
+		if is_mod:
+			line = line.substr(ItemDetail.MOD_PREFIX.length())
+		box.add_child(stat_row(line, is_mod, size))
+	return box
+
+
+## `.craft-result-stats { background:#141414; border:1px solid #3a3a3a; border-radius:8px;
+## padding:10px; font-size:12px; color:#ccc; line-height:1.7; width:100%;
+## box-sizing:border-box }` with `.stat-row:last-child { border-bottom:none }`.
+##
+## ⚠️  ITS OWN WRAPPER, and the difference from `stat_block` is not decoration: the craft
+## result genuinely has a `#141414` plate, while the SHOP's `.shop-item-stats` has none.
+## A port that gives the shop the bordered box is the one Jan reported ("a strange border
+## around them"); a port that gives the craft none loses the plate the reference has.
+##
+## ⚠️  The width is `100%` + `box-sizing:border-box`, so the box never exceeds its parent —
+## `item_tooltip`'s `custom_minimum_size.x` is a MINIMUM a container must honour, and 420
+## of them on a 390px canvas is what pushed this block off the screen.
+static func stat_panel(item: Dictionary, data: Node, size: int = 12) -> Control:
+	var panel := PanelContainer.new()
+	var style := panel_style("#3a3a3a")
+	style.bg_color = Color("#141414")
+	style.set_corner_radius_all(8)
+	style.content_margin_left = 10
+	style.content_margin_right = 10
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", style)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	panel.add_child(box)
+	if item.is_empty():
+		return panel
+	var text := ItemDetail.build_text(item, data, false)
+	var lines: Array = []
+	for raw in text.split("\n"):
+		var line := str(raw)
+		if line != "":
+			lines.append(line)
+	for i in lines.size():
+		var line := str(lines[i])
+		var is_mod := line.begins_with(ItemDetail.MOD_PREFIX)
+		if is_mod:
+			line = line.substr(ItemDetail.MOD_PREFIX.length())
+		# `.stat-row:last-child { border-bottom:none }`
+		box.add_child(stat_row(line, is_mod, size, i < lines.size() - 1))
+	return panel
+
+
+## `.stat-row { padding:2px 0; border-bottom:1px solid #1a1a1a }` — the rule spans the row's
+## full width, so it is drawn as a wrapper. `show_rule` is false for the LAST row of the
+## item-info overlay, whose CSS has `.stat-row:last-child { border-bottom:none }`; the
+## shop's block has no such exclusion and keeps every rule.
+static func stat_row(line: String, is_mod: bool, size: int = 12,
+		show_rule: bool = true) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", STAT_ROW_GAP)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# The PWA emitted a label and a value as two SPANS. `ItemDetail` renders one string per
+	# row, so the split is recovered here: on ": " when the type block used one, else on the
+	# last " +" for a mod line ("Fire Resist +11%"). A flag row with no magnitude
+	# ("Knockback") stays a single label, which is the honest rendering.
+	var label_text := line
+	var value_text := ""
+	var split := line.find(": ")
+	if split > 0:
+		label_text = line.substr(0, split)
+		value_text = line.substr(split + 2)
+	else:
+		var plus := line.rfind(" +")
+		if plus > 0:
+			label_text = line.substr(0, plus)
+			value_text = line.substr(plus + 1)
+
+	row.add_child(stat_cell(label_text, MOD_BLUE if is_mod else "#888888", size, true))
+	if value_text != "":
+		row.add_child(stat_cell(value_text, MOD_BLUE if is_mod else "#e8e0e8", size, false))
+
+	var padded := MarginContainer.new()
+	padded.add_theme_constant_override("margin_top", STAT_ROW_PAD_V)
+	padded.add_theme_constant_override("margin_bottom", STAT_ROW_PAD_V)
+	padded.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	padded.add_child(row)
+	if not show_rule:
+		return padded
+
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", 0)
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.add_child(padded)
+	var rule := ColorRect.new()
+	rule.color = Color(STAT_ROW_RULE)
+	rule.custom_minimum_size = Vector2(0, 1)
+	wrap.add_child(rule)
+	return wrap
+
+
+## One end of a `space-between` row.
+##
+## ⚠️  AUTOWRAP OFF ON BOTH ENDS, and the row's own minimum is the proof: with wrap left on,
+## a `FlexLabel`'s minimum width is its widest word, its minimum HEIGHT then assumes the text
+## breaks across that width, and `.stat-row` came back **105px** tall for a one-line stat.
+## In the PWA a `.stat-label` is a flex item sized by its content, so there is nothing to wrap
+## against — that is what `line-height:1.7`'s single 20.4px line box assumes. Same trap as the
+## potion box's spans.
+static func stat_cell(text: String, colour: String, size: int, expands: bool) -> Label:
+	var l := label(text, size, colour)
+	l.custom_minimum_size = Vector2(0, STAT_ROW_MIN_HEIGHT)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	if expands:
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return l
 
 
 ## One grid cell holding an item icon, matching the PWA's `.chest-cell`.
