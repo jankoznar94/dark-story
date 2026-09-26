@@ -45,6 +45,9 @@ var _current := ""
 ## The PWA's `musicToggle`. The port muted the Master bus rather than stopping the
 ## stream, so the toggle works whether or not anything is playing yet.
 var _music_off := false
+## The PWA's `switchBGM` — one object owns every track, its volume and its loop flag.
+## See `scripts/audio/music.gd`; this only decides WHICH mode a screen means.
+var _music
 var _socket_rng_source: RandomNumberGenerator = null
 ## The last message a screen emitted, shown as a one-line status strip. The PWA used a
 ## toast; a plain label above the nav bar is enough and cannot cover the buttons.
@@ -84,6 +87,12 @@ func _ready() -> void:
 		state.save()
 	_build_screens()
 	_build_nav()
+	# The PWA's `switchBGM`. Built before the first `show_screen`, because the town is the
+	# overworld track and a game that starts silent reads as "the music does not work".
+	_music = Music.new()
+	_music.name = "Music"
+	_music.mode_provider = Callable(self, "_music_mode_for_current_screen")
+	add_child(_music)
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
 	# The data report on boot is what makes a DEPLOYED build checkable from outside:
@@ -168,6 +177,7 @@ func _build_screens() -> void:
 	arena.visible = false
 	arena.leave_requested.connect(func(): show_screen("town"))
 	arena.another_fight_requested.connect(_on_another_fight)
+	arena.levelled_up.connect(_on_levelled_up)
 	# The result page's own destinations. They are NOT the arena's: the PWA's victory page
 	# offers the MAP (after a cleared stop), the town, a town portal and the hero modal, and
 	# a page tap that went to town after a cleared stop is exactly what left the player with
@@ -263,6 +273,7 @@ func show_screen(name: String) -> void:
 	if _nav_bar != null:
 		_nav_bar.visible = not (name in NAV_HIDDEN)
 		_nav_bar.set_active(name)
+	_update_music()
 	match name:
 		"town":
 			# Entering town heals and refreshes the shop — the behaviour lives in the
@@ -298,6 +309,20 @@ const MODAL_TABS := {
 	"talents": "skills",
 	"hero": "stats",
 }
+
+
+## `levelled_up` — when the arena pays out a new level. Two things happen, both from the PWA:
+##
+##   1. the music DUCKS to 30 % for 750 ms so the fanfare stands out, then comes back
+##      (`duckBgm(0.3, 750)` in `applyLevelUp`), without restarting the track;
+##   2. a short fanfare plays over it.
+##
+## The fanfare itself is the SFX system's job and is not written yet; the duck is real and
+## is wired here, because it belongs to the music and a level-up you cannot HEAR over the
+## battle track is the whole point of it.
+func _on_levelled_up(_level: int) -> void:
+	if _music != null:
+		_music.duck(0.3, 750.0)
 
 
 func _on_nav_selected(key: String) -> void:
@@ -387,9 +412,49 @@ func _close_modal() -> void:
 
 func _toggle_music() -> void:
 	_music_off = not _music_off
-	var bus := AudioServer.get_bus_index("Master")
-	AudioServer.set_bus_mute(bus, _music_off)
+	# The PWA's `toggleMusic` zeroes every TRACK's volume and leaves it playing; it never
+	# touches the Master bus. Muting the bus (what this used to do) would silence every
+	# sound effect with it, which is a different button.
+	if _music != null:
+		_music.set_muted(_music_off)
 	_set_status("Hudba vypnuta." if _music_off else "Hudba zapnuta.")
+
+
+## The PWA's `showScreen()` BGM block, verbatim:
+##
+##   if (name === 'map') switchBGM('battle');
+##   else if (name !== 'mapBattle' && name !== 'battle' && name !== 'result') switchBGM('overworld');
+##
+## The map IS the wilderness and the PWA gave the wilderness the BATTLE collection, so
+## entering it starts a fight track. `arena` and `result` are excluded on purpose — the
+## battle's own music is started by the fight (`_enter_arena`, `_finish_fight`) and the
+## result page deliberately changes nothing ("Victory/Lose/boj hudbu nemění").
+func _update_music() -> void:
+	if _music == null:
+		return
+	if _current == "map":
+		_music.switch_mode("battle")
+	elif _current != "arena" and _current != "result":
+		_music.switch_mode("overworld")
+
+
+## Which mode the current screen means, asked when the window comes back into focus. The
+## PWA re-derives it from the active screen on `visibilitychange` — and that is the ONLY
+## route by which the defeat and victory tracks are ever reached.
+func _music_mode_for_current_screen() -> String:
+	if _current == "map":
+		return "battle"
+	if _current == "arena":
+		var arena = _screens.get("arena", null)
+		if arena != null and arena.battle != null:
+			return "boss" if arena.battle.is_boss else "battle"
+		return "battle"
+	if _current == "result":
+		var arena2 = _screens.get("arena", null)
+		if arena2 != null and arena2.battle != null:
+			return "win" if arena2.battle.won else "defeat"
+		return "overworld"
+	return "overworld"
 
 
 func _clear_save() -> void:
@@ -463,12 +528,23 @@ func _enter_arena(act_id: int) -> void:
 	if not arena.start(state, _resolve):
 		_set_status("Arena: zadny souboj pro akt %d" % act_id)
 		show_screen("town")
+		return
+	# The PWA calls `switchBGM('battle')` in `setupMapBattleInput` and lets `switchBGM` pick
+	# the boss track itself (`if (mb.isBoss) … 'boss'`). A boss fight therefore sounds
+	# different from the ten fights that lead to it.
+	if _music != null:
+		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
 
 
 func _on_another_fight() -> void:
 	var arena = _screens["arena"]
 	if not arena.another_fight():
 		show_screen("town")
+		return
+	# A new fight in the same act can be a different KIND of fight — 10/10 is the boss — so
+	# the mode is re-derived rather than inherited from the fight that just ended.
+	if _music != null:
+		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
 
 
 ## Town portal: only offered while a return position is stored. Returning rewinds to

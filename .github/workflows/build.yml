@@ -373,6 +373,31 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SHOP_LAYOUT_ALL_PASS=true"
 
+      # The MUSIC. The port had NONE: `assets/audio/` shipped thirty tracks and the only code
+      # that touched them was a `_toggle_music()` that muted the Master bus — which silences
+      # every sound effect too and is not what the PWA's button does.
+      #
+      # A missing feature is invisible to every other gate (nothing errors, nothing renders
+      # wrong), so this pins the four things the PWA's `switchBGM` actually specifies:
+      #   * an UNCHANGED mode returns early, so the shop does not restart the town's music
+      #     (asserted with a SWITCH COUNTER — `playing == true` is true after a restart too);
+      #   * the battle collection does NOT loop, it chains (the PWA sets `loop = false` on all
+      #     three and picks the next one from an `ended` handler);
+      #   * the mode comes from the SCREEN and the map is `battle` (the PWA's own
+      #     `if (name === 'map') switchBGM('battle')`), while the arena and the result page are
+      #     excluded from any switch of their own;
+      #   * the level-up duck changes the VOLUME only — a `play()` there would restart the
+      #     music at the moment the player earns a level.
+      #
+      # ⚠️  A headless run has no audio device, so nothing here claims sound is audible. What is
+      # pinned is the state: which file, which volume, which loop flag, how many switches.
+      - name: Music test (modes, loop flags, duck, focus resume)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_music.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "MUSIC_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

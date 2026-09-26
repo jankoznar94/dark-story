@@ -39,6 +39,9 @@ const CARD_H := 149.0
 const CARD_HEADER_H := 64.0
 const CARD_ACTIONS_H := 53.0
 const BUTTON_H := 34.0
+## The live PWA's own price button measures 69 for the price `15`. The band is two-sided
+## because a Godot Button takes no minimum from child controls and shipped at 2px.
+const BUTTON_W := 69.0
 const POTION_BOX_H := 33.0
 const POTION_BOX_Y := 283.0
 const STAT_ROW_H := 20.4
@@ -107,6 +110,13 @@ func _process(_delta: float) -> bool:
 	_test_potion_box_is_the_bordered_first_child()
 	_test_stat_block_has_no_border_and_has_line_spacing()
 	_test_sell_uses_the_same_builder_and_shows_the_bag()
+	# ⚠️  These two had NO call site: `_test_card_blocks_are_the_pwa_sizes` existed and its
+	# constants were in CI, but `_process` never ran it — so nothing compared the card to
+	# the PWA's sizes and the 2px price button shipped through a green suite. Every
+	# `_test_*` function in this file has to be reachable from `_process`; `test_scripts_load`
+	# only checks that the file parses.
+	_test_card_blocks_are_the_pwa_sizes()
+	_test_price_button_has_a_real_size()
 
 	# ⚠️  GEOMETRY (absolute positions, the card's 356x149 rect) IS NOT ASSERTED HERE. A
 	# `SceneTree` script's root Window is not the game's 390x844 canvas — measured with
@@ -309,6 +319,12 @@ func _test_sell_starts_at_the_categories_own_y() -> void:
 
 ## The card's blocks, against the PWA's own measured rects. The port's card was 140 tall with
 ## a 130x40 button; the reference is 149 with a 69x34 one.
+##
+## ⚠️  The ABSOLUTE rects (356x149 on a 390-wide canvas) are NOT assertable here: a
+## `SceneTree` script's root Window is the harness's own, and the card came back 158 wide at
+## y=0 — i.e. this measures the harness, not the game. Only MINIMUMS are assertable
+## headless; the absolute geometry is `tools/probe_shop_buttons.gd` against the real
+## `main.gd`, and that is where the 356x149 was verified.
 func _test_card_blocks_are_the_pwa_sizes() -> void:
 	_screen._set_tab("buy")
 	_screen._set_category("Misc")
@@ -317,12 +333,17 @@ func _test_card_blocks_are_the_pwa_sizes() -> void:
 		_fail("the buy tab built no card")
 		return
 	var r := card.get_rect()
-	print("  card: %.1fx%.1f at y=%.1f (reference %.0fx%.0f)"
-		% [r.size.x, r.size.y, r.position.y, CARD_W, CARD_H])
-	if absf(r.size.y - CARD_H) > 1.5:
-		_fail("the buy card is %.1f tall, the PWA's `.shop-item` is %.0f" % [r.size.y, CARD_H])
-	if absf(r.size.x - CARD_W) > 1.5:
-		_fail("the buy card is %.1f wide, the PWA's is %.0f" % [r.size.x, CARD_W])
+	var min_size := card.get_combined_minimum_size()
+	print("  card: rect %.1fx%.1f (harness canvas, not the game's), minimum %.1fx%.1f (reference %.0fx%.0f)"
+		% [r.size.x, r.size.y, min_size.x, min_size.y, CARD_W, CARD_H])
+	# Two-sided: a card whose minimum EXCEEDS the canvas cannot fit (the sell-tab bug), and a
+	# card far NARROWER than the canvas is a card that did not expand — a real failure the old
+	# `r.size.x` check reported against the harness for the wrong reason.
+	if min_size.x > CANVAS_W:
+		_fail("the card's minimum width is %.1f, more than the %.0f canvas — the row cannot fit"
+			% [min_size.x, CANVAS_W])
+	if min_size.y < CARD_H - 1.5 or min_size.y > CARD_H + 40.0:
+		_fail("the card's minimum height is %.1f, the PWA's `.shop-item` is %.0f" % [min_size.y, CARD_H])
 	if _find_by_min_height(card, CARD_HEADER_H) == null:
 		_fail("no 64px header block inside the card — the icon and the name are not one row")
 	if _find_by_min_height(card, CARD_ACTIONS_H) == null:
@@ -337,9 +358,85 @@ func _test_card_blocks_are_the_pwa_sizes() -> void:
 	if absf(br.size.y - BUTTON_H) > 1.5:
 		_fail("the buy button is %.1f tall, the PWA's is %.0f" % [br.size.y, BUTTON_H])
 	# `width:fit-content` — the port hardcoded 130 and the PWA's own price button is 69.
+	# A TWO-SIDED BAND, because the failure that shipped was the other direction: a Godot
+	# Button derives no minimum from child controls, so it measured **2 px** wide and the
+	# card's HBoxContainer gave it exactly that. `> 110` alone passes a 2px button.
 	if br.size.x > 110.0:
 		_fail("the buy button is %.1f wide — `width:fit-content` was replaced by a fixed width"
 			% br.size.x)
+	if br.size.x < 50.0:
+		_fail("the buy button is only %.1f wide — the button reports no minimum of its own and the content was never measured into it (the PWA's own is %.0f)"
+			% [br.size.x, BUTTON_W])
+
+
+## Jan's report: "the Buy and Sell buttons are not visible in the shop and items cannot be
+## bought". Both halves are the SAME bug — a Godot Button takes no minimum from child
+## controls, so it measured 2px wide and stood outside its own rect — but each half needs its
+## own assertion, and this one drives the button on EVERY card of BOTH tabs:
+##
+##   * the button must have a real size and sit inside the canvas;
+##   * pressing it must actually buy/sell (the wiring, not the rect).
+##
+## A rect check alone passes a button that is connected to nothing, and a wiring check alone
+## passes a 2px button — which is what shipped.
+func _test_price_button_has_a_real_size() -> void:
+	for tab in ["buy", "sell"]:
+		_screen._set_tab(tab)
+		var cards: Array = []
+		_collect_cards(_screen._list, cards)
+		var worst := 1e9
+		var outside := 0
+		for card in cards:
+			var btn := _find_button(card)
+			if btn == null:
+				_fail("a card on the '%s' tab has no price button at all" % tab)
+				continue
+			var r: Rect2 = btn.get_global_rect()
+			worst = minf(worst, r.size.x)
+			if r.position.x < 0.0 or r.end.x > CANVAS_W + 0.5:
+				outside += 1
+		print("  %s: %d cards, narrowest price button %.1f wide, %d outside the canvas"
+			% [tab, cards.size(), worst if worst < 1e9 else 0.0, outside])
+		if cards.is_empty():
+			_fail("the '%s' tab built no card — the button cannot be measured" % tab)
+			continue
+		if worst < 50.0:
+			_fail("the narrowest price button on the '%s' tab is %.1f wide — the button reports no minimum of its own and the content was never measured into it"
+				% [tab, worst])
+		if outside > 0:
+			_fail("%d price button(s) on the '%s' tab sit outside the canvas — the card hands the button a rect its content does not fit"
+				% [outside, tab])
+
+	# The WIRING: the first buy card's own button must move the gold when it is pressed.
+	_screen._set_tab("buy")
+	_screen._set_category("Misc")
+	var cards2: Array = []
+	_collect_cards(_screen._list, cards2)
+	var first := _find_button(cards2[0]) if not cards2.is_empty() else null
+	if first == null:
+		_fail("the buy tab's first card has no price button to press")
+		return
+	var before: int = int(_state.hero().get("gold", 0))
+	# Seed gold: a fresh save has 0 and every purchase would be refused by the PRICE rule,
+	# which would read as "the button is not wired" when it is wired and simply unaffordable.
+	_state.data["hero"]["gold"] = 5000
+	before = 5000
+	first.pressed.emit()
+	var after: int = int(_state.hero().get("gold", 0))
+	print("  pressing the first Buy button: gold %d -> %d" % [before, after])
+	if after >= before:
+		_fail("pressing the Buy button did not spend any gold (%d -> %d) — the button is not wired to a purchase"
+			% [before, after])
+
+
+## Every `.shop-item` panel under a list, at any depth (the potion box is a panel too, so the
+## height floor tells them apart).
+func _collect_cards(node: Node, out: Array) -> void:
+	for child in node.get_children():
+		if child is PanelContainer:
+			var p: PanelContainer = child
+			if p.get_theme_stylebox("panel") != null and p.get_combined_minimum_size().y > 100.0:
+				out.append(p)
 
 
 # --- helpers ----------------------------------------------------------------

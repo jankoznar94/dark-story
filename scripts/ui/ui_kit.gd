@@ -491,8 +491,7 @@ static func shop_buy_button(cost: int, can_afford: bool, font_size: int = 14) ->
 	var b := Button.new()
 	b.focus_mode = Control.FOCUS_NONE
 	# `.btn { margin:6px 0 }` — carried by the caller's `margin_box`, so only the vertical
-	# size is set here. The width follows the content, as `fit-content` does.
-	b.custom_minimum_size = Vector2(0, 34)
+	# size is stated here. The WIDTH is set at the end, from the content.
 	b.size_flags_horizontal = Control.SIZE_SHRINK_END
 
 	# The icon and the price as two children of an HBoxContainer, because a Godot Button
@@ -502,15 +501,6 @@ static func shop_buy_button(cost: int, can_afford: bool, font_size: int = 14) ->
 	inner.alignment = BoxContainer.ALIGNMENT_CENTER
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	inner.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# A padding of 8/16 around the content, exactly the CSS.
-	var pad := MarginContainer.new()
-	pad.add_theme_constant_override("margin_left", 16)
-	pad.add_theme_constant_override("margin_right", 16)
-	pad.add_theme_constant_override("margin_top", 8)
-	pad.add_theme_constant_override("margin_bottom", 8)
-	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.set_anchors_preset(Control.PRESET_FULL_RECT)
-	inner.add_child(pad)
 
 	if coin != null:
 		var icon := TextureRect.new()
@@ -519,13 +509,31 @@ static func shop_buy_button(cost: int, can_afford: bool, font_size: int = 14) ->
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pad.add_child(icon)
+		inner.add_child(icon)
 
 	var price := label("%d" % cost, font_size, GOLD, HORIZONTAL_ALIGNMENT_LEFT, true)
 	price.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	price.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	pad.add_child(price)
+	inner.add_child(price)
 	b.add_child(inner)
+
+	# ⚠️  `width:fit-content`, and a Godot Button derives its minimum from its own `text` and
+	# `icon` only, NEVER from child CONTROLS: measured, this button reported a minimum of
+	# **2x34** (2 = the stylebox's two 1px borders) whatever was inside it, and the card's
+	# `HBoxContainer` handed it exactly that — every Buy and every Sell button was laid out
+	# **2 px wide at x=359**, with the coin and the price drawn outside its own rect and past
+	# the card's right edge. Jan's report was "the Buy and Sell buttons are not in the shop
+	# at all", and a 2px button IS that.
+	#
+	# A `MarginContainer` cannot carry the CSS `padding:8px 16px` either — measured, it
+	# reported `min=(19, 23)` for a 19px label, i.e. it does not add its own margins into the
+	# minimum at all. So the padding is added to the measured CONTENT here and the content is
+	# centred inside the box: 16 on each side, exactly what the CSS padding does.
+	#
+	# Read AFTER the children are in — a container's combined minimum counts its children
+	# only once they are added. Measured 15+16+6+16+16 = 69 for the price `15`, which is the
+	# PWA's own button width to the pixel.
+	b.custom_minimum_size = Vector2(inner.get_combined_minimum_size().x + 32.0, 34)
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color("#333333") if can_afford else Color("#333333", 0.5)

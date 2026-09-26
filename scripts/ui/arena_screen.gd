@@ -64,6 +64,10 @@ const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 
 signal fight_over(won: bool)
+## A level was gained. The PWA's `applyLevelUp` ducks the music (`duckBgm(0.3, 750)`) and
+## plays a short fanfare over it; the duck belongs to the music system and the fanfare to
+## the SFX one, so the arena only reports the event.
+signal levelled_up(level: int)
 signal leave_requested()
 signal another_fight_requested()
 ## The result page's own destinations, which are NOT the in-fight ones: the PWA's victory
@@ -2454,6 +2458,7 @@ func apply_levels() -> void:
 		levelled = true
 	if levelled:
 		_float_message("Novy level: %d" % int(hero["level"]))
+		levelled_up.emit(int(hero["level"]))
 
 
 ## Advance the stop when the zone is finished, then start the next fight.
