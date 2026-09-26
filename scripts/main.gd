@@ -20,6 +20,7 @@ const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const GameState := preload("res://scripts/state/game_state.gd")
+const Battle := preload("res://scripts/combat/battle.gd")
 const EquipLogic := preload("res://scripts/items/equip_logic.gd")
 const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
 const TownScreen := preload("res://scripts/ui/town_screen.gd")
@@ -32,6 +33,7 @@ const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
 const CharacterModal := preload("res://scripts/ui/character_modal.gd")
 const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
 const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
+const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Socketing := preload("res://scripts/items/socketing.gd")
 
@@ -58,6 +60,10 @@ var _nav_bar      # UIKit.NavBar
 var _modal_layer: CanvasLayer = null
 ## The screen that stays visible UNDER the open dialog, because the PWA never hid it.
 var _modal_under := ""
+## The PWA's `#transitionScreen`. Its layer is ABOVE the modal's (20) and the nav bar's (5),
+## because the PWA's z-index is 9999 against the modal's 1000 — the overlay covers the town,
+## the dialog and the bar alike.
+var _transition: TransitionScreen = null
 
 
 func _ready() -> void:
@@ -93,6 +99,16 @@ func _ready() -> void:
 	_music.name = "Music"
 	_music.mode_provider = Callable(self, "_music_mode_for_current_screen")
 	add_child(_music)
+	# The transition overlay, on its own layer above everything. Built BEFORE the first
+	# `show_screen`, because the nav bar's town entry and the town's own tiles both go
+	# through it.
+	_transition = TransitionScreen.new()
+	_transition.name = "Transition"
+	var transition_layer := CanvasLayer.new()
+	transition_layer.name = "TransitionLayer"
+	transition_layer.layer = 30
+	add_child(transition_layer)
+	transition_layer.add_child(_transition)
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
 	# The data report on boot is what makes a DEPLOYED build checkable from outside:
@@ -128,12 +144,19 @@ func _build_screens() -> void:
 	town.tile_selected.connect(_on_town_tile)
 	# The wilderness tile opens the MAP, as the PWA's `enterCurrentAct()` did — not a
 	# fight. Which stop to fight is the player's choice on the map.
-	town.stop_requested.connect(func(_act, _stop): show_screen("map"))
+	# The wilderness tile does NOT go straight to the map: the PWA's `enterCurrentAct` runs
+	# `showTransition('wilderness', …)` first, and it is the one tile whose destination is a
+	# different screen rather than a shop-style pane.
+	town.stop_requested.connect(func(_act, _stop):
+		_transition_to(TransitionScreen.WILDERNESS_ART, func(): show_screen("map")))
 	_add_screen("town", town)
 
 	var map_screen := MapScreen.new(data, state, _resolve)
 	map_screen.visible = false
-	map_screen.back_pressed.connect(func(): show_screen("town"))
+	# The map's "Walk to Town" is the PWA's `walkToTown()` — it resets the stop's fight counter
+	# and runs `showTransition('town', …)`. That progress reset is why this is not a plain
+	# `show_screen("town")`.
+	map_screen.back_pressed.connect(_on_walk_to_town)
 	map_screen.portal_requested.connect(_on_town_portal)
 	map_screen.difficulty_selected.connect(_on_difficulty_selected)
 	map_screen.enter_stop.connect(_on_stop_selected)
@@ -182,6 +205,10 @@ func _build_screens() -> void:
 	# offers the MAP (after a cleared stop), the town, a town portal and the hero modal, and
 	# a page tap that went to town after a cleared stop is exactly what left the player with
 	# no way to pick the next stop.
+	#
+	# ⚠️  The map tile is a PLAIN switch in the PWA (`openMapFromResult` is just
+	# `showScreen('map')`), unlike the town tile, which walks. So only one of these two is
+	# routed through the transition.
 	arena.map_requested.connect(func(): show_screen("map"))
 	arena.portal_requested.connect(_on_result_portal)
 	arena.hero_requested.connect(func(): open_modal("stats"))
@@ -355,7 +382,7 @@ func _on_nav_selected(key: String) -> void:
 
 	if not _screens.has(key):
 		return
-	show_screen(key)
+	_nav_to(key, func(): show_screen(key))
 
 
 ## The PWA's `openModal()` — one dialog, three tabs, always entered on a named tab.
@@ -486,6 +513,45 @@ func _process(_delta: float) -> void:
 			_status.text = ""
 
 
+## The PWA's `showTransition(type, actId, callback)` — an overlay over everything, held for
+## 1800 ms and then faded out over 0.4 s, with the callback run UNDER the still-opaque
+## overlay so the next screen is already built when it is uncovered.
+##
+## ⚠️  This is NOT a wrapper around every `show_screen` call. The PWA routes only FIVE moves
+## through it (grepped: `showTransition` appears at 12 call sites, all of them one of these),
+## and the screens the player taps between — the shop, the chest, the craft, the bestiary —
+## are plain and instant:
+##
+##   town        the nav bar's town entry (if not already in town), `walkToTown`,
+##               `walkToTownFromResult`
+##   wilderness  `enterCurrentAct`, i.e. the town's Divocina tile
+##   portal      `useTownPortal` (from the town's portal card) and both
+##               `useTownPortalScroll*` (from the map and from the result page)
+##   stop        `enterStop` and `confirmTownPortalReset`
+##
+## Adding it to a screen the PWA switched instantly would be inventing a 2.2 s delay.
+func _transition_to(art: String, target: Callable) -> void:
+	if _transition == null:
+		target.call()
+		return
+	_transition.play(art, target)
+
+
+## `_currentActOnMap` — the act the player is working on, which decides the WILDERNESS art's
+## glow colour in the PWA and, here, nothing but is still the value the nav bar's town entry
+## passes along. `renderMap` computes it as the first act whose boss is not defeated.
+func _current_act_on_map() -> int:
+	var diffs: Array = state.data.get("bossesDefeated", [])
+	var diff := int(state.data.get("difficulty", 0))
+	if diff < 0 or diff >= diffs.size():
+		return 0
+	var row: Array = diffs[diff]
+	for i in row.size():
+		if not bool(row[i]):
+			return i
+	return 0
+
+
 func _on_town_tile(key: String) -> void:
 	if key == "portal":
 		_on_town_portal()
@@ -493,14 +559,58 @@ func _on_town_tile(key: String) -> void:
 	show_screen(key)
 
 
+## The nav bar's TOWN entry. The PWA routes this one through a transition too:
+##
+##   if (a.dataset.screen === 'town') {
+##     if (_currentScreen !== 'town') showTransition('town', …)
+##   }
+##
+## and it is the ONLY nav entry that gets one — the map, the shop, the inventory and the rest
+## are plain switches, which is why `_nav_to` is not applied to all of them. The
+## "already in town" guard is the PWA's too: tapping the entry you are standing on must not
+## put a 2.2 s overlay in front of you.
+func _nav_to(key: String, show: Callable) -> void:
+	if key == "town" and _current != "town":
+		_transition_to(TransitionScreen.TOWN_ART, show)
+		return
+	show.call()
+
+
 ## A stop was tapped on the map: wind the act's progress to that stop and start fighting
-## there. This is the PWA's `enterStop(actId, stop)` -> `startLocation(actId, stop, 0)`,
-## including its fight counter reset — walking onto a stop always begins at 0/10.
+## there. This is the PWA's `enterStop(actId, stop)` -> `showTransition('stop', …)` ->
+## `startLocation(actId, stop, 0)`, including its fight counter reset — walking onto a stop
+## always begins at 0/10.
+##
+## The transition's art is the STOP's own (Jan's "obrázek dané zastávky"), so the overlay is a
+## preview of where the player is going.
 func _on_stop_selected(act_id: int, stop: int) -> void:
 	state.set_progress(act_id, stop)
 	state.data["areaFightProgress"][act_id] = 0
 	state.save()
-	_enter_arena(act_id)
+	_transition_to(TransitionScreen.stop_art_path(act_id, stop),
+		func(): _enter_arena(act_id))
+
+
+## The PWA's `walkToTown()` and `walkToTownFromResult()`, which are the same rule: walking to
+## town RESETS the current stop's fight counter (a stop that was cleared at 10/10 advances to
+## the next one), and then the move runs through the town transition.
+##
+## ⚠️  The reset is the point, not decoration. A plain `show_screen("town")` here would leave
+## `areaFightProgress` where it was, so the player could walk out, walk back and resume at
+## fight 9/10 — which is not what the PWA's walk does. (Coming back through the TOWN PORTAL is
+## the move that keeps the progress; that is what the stored return position is for.)
+func _on_walk_to_town() -> void:
+	var act_id := _current_act_on_map()
+	var zones: int = int(data.act_by_id(act_id).get("zones", 10))
+	var progress := int(state.data["locationProgress"][act_id])
+	if int(state.data["areaFightProgress"][act_id]) >= Battle.FIGHTS_PER_ZONE \
+			and progress < zones - 1:
+		state.set_progress(act_id, progress + 1)
+		state.data["areaFightProgress"][act_id] = 0
+	else:
+		state.data["areaFightProgress"][act_id] = 0
+	state.save()
+	_transition_to(TransitionScreen.TOWN_ART, func(): show_screen("town"))
 
 
 ## The map's difficulty selector. Switching does NOT touch progress: each difficulty has
@@ -559,6 +669,8 @@ func _on_town_portal() -> void:
 	state.data["areaFightProgress"][int(p.get("actId", 0))] = int(p.get("areaFight", 0))
 	state.data["townPortalReturn"] = null
 	state.save()
+	# `useTownPortal()` spent its transition on the way here (the town's portal card), so
+	# returning is a plain entry — the PWA calls `startLocation` directly.
 	_enter_arena(int(p.get("actId", 0)))
 
 
@@ -580,7 +692,8 @@ func _on_result_portal() -> void:
 	}
 	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
 	state.save()
-	show_screen("town")
+	# `useTownPortalScrollFromResult()` — the scroll's own transition on the way out.
+	_transition_to(TransitionScreen.PORTAL_ART, func(): show_screen("town"))
 
 
 ## A bag cell was tapped. The PWA does NOT equip here — it opens `#invItemOverlay` and

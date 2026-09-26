@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## Probe the PORT's arena the way `tools/import/probe_arena.py` probes the PWA.
 ##
 ## The two output the same columns on purpose: "the hero has the wrong HP / no mana /
@@ -30,7 +32,7 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena = _main._screens["arena"]
 		# The screen's own _process() pumps step() as well, so without this the probe
 		# advances the fight TWICE per row and every printed millisecond is really two.

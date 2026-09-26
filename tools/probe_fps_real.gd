@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## tools/probe_fps_real.gd — the arena's FRAME TIME, measured the way Jan plays it.
 ##
 ## `probe_fps.gd` builds an arena standalone and measured 145 fps headless, which proved
@@ -45,7 +47,7 @@ func _process(_delta: float) -> bool:
 		# The real route a tap takes: a stop on the map. This is `_on_stop_selected`, so
 		# `_enter_arena` -> `arena.start()` runs exactly as it does in play.
 		var act := 0
-		_main._on_stop_selected(act, 0)
+		ToolHelpers.enter_arena(_main, act, 0)
 		print("screen=%s  arena visible=%s  battle=%s  hero level=%d" % [
 			_main._current,
 			str(_main._screens["arena"].visible),

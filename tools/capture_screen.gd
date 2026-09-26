@@ -1,5 +1,6 @@
 extends SceneTree
 class_name CaptureScreen
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## CaptureScreen — boot the game, optionally jump to one screen, save a PNG.
 ##
 ## Why this exists: the port is judged against the PWA screenshots, and "the arena looks
@@ -157,11 +158,11 @@ func _entry() -> void:
 		# Entering through the REAL route: a stop on the map winds progress forward and
 		# starts the fight. `_on_wilderness()` used to exist and was deleted with the
 		# map rebuild, which silently broke every arena capture after that.
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 	elif key == "result":
 		# The result PAGE, which only exists at the end of a fight — so the fight has to
 		# actually end. `--result lose` kills the hero instead of the enemy.
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena = _main._screens["arena"]
 		if arena.battle != null:
 			if _result_lose:

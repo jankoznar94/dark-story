@@ -1,5 +1,6 @@
 extends SceneTree
 class_name OutlinePort
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## OutlinePort — dump the PORT's own Control tree with real geometry, to compare against
 ## `tools/import/outline_pwa.py`.
 ##
@@ -119,7 +120,7 @@ func _entry() -> void:
 		_main.open_modal(tab)
 		return
 	if _screen == "arena":
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 	elif _screen == "result":
 		pass
 	else:

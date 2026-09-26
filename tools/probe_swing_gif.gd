@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## tools/probe_swing_gif.gd — shoot the real arena frame by frame, so the swing can be SEEN.
 ##
 ## Jan's report was visual ("the swing is not smooth, it stutters"), so the evidence for the
@@ -50,7 +52,7 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena = _main._screens["arena"]
 		arena.battle.enemy_max_hp = 1000000.0
 		arena.battle.enemy_hp = arena.battle.enemy_max_hp

@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## tools/probe_loot_rows.gd — what is a victory-page loot row actually made of?
 ##
 ## The screenshot shows grey bars with no text, and a PNG cannot say whether the Label is
@@ -23,7 +25,7 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena = _main._screens["arena"]
 		if arena.battle != null:
 			arena.battle.enemy_hp = 0.0

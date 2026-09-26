@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## Print the result page's own geometry — the rects the layout settled on.
 ##
 ## `capture_screen.gd --screen result` writes a PNG, and a PNG cannot say WHY a block
@@ -31,7 +33,7 @@ func _process(_delta: float) -> bool:
 		if not _main._screens.has("town") or _main._nav_bar == null:
 			return false
 		_started = true
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena = _main._screens["arena"]
 		if arena.battle != null:
 			if _lose:

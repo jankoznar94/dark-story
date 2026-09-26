@@ -25,6 +25,7 @@ extends SceneTree
 ## switches. `is_playing()` is checked only where a real stream exists.
 
 const Main := preload("res://scripts/main.gd")
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 
 var _main: Node = null
 var _started := false
@@ -91,7 +92,7 @@ func _run() -> void:
 
 	# --- 4. the boss mode, and the arena keeping its own music -----------------------------
 	_main.show_screen("town")
-	_main._on_stop_selected(0, 0)
+	ToolHelpers.enter_arena(_main, 0, 0)
 	print("  arena (stop 0/0): mode=%s track=%s" % [music.mode(), music.track_path()])
 	if music.mode() != "battle":
 		_fail("entering a normal fight gave mode '%s', not 'battle'" % music.mode())
@@ -104,7 +105,7 @@ func _run() -> void:
 	var arena = _main._screens["arena"]
 	var zones: int = _main.data.act_by_id(0).get("zones", 10)
 	_main.state.set_progress(0, zones - 1)
-	_main._on_stop_selected(0, zones - 1)
+	ToolHelpers.enter_arena(_main, 0, zones - 1)
 	print("  boss zone %d/%d: is_boss=%s mode=%s track=%s"
 		% [zones - 1, zones, str(arena.battle.is_boss), music.mode(), music.track_path()])
 	if arena.battle == null or not arena.battle.is_boss:
@@ -198,7 +199,7 @@ func _run() -> void:
 	# to decide this — `_show_result_page` does that — and nothing else moves the route, so a
 	# test that skipped this line would measure `arena` and report the battle track as a wrong
 	# answer about a route that was never taken.
-	_main._on_stop_selected(0, 0)
+	ToolHelpers.enter_arena(_main, 0, 0)
 	var arena2 = _main._screens["arena"]
 	var guard := 0
 	if arena2.battle != null and not arena2.battle.ended:
@@ -221,7 +222,7 @@ func _run() -> void:
 
 		# The defeat half. `battle.won` decides which of the two, and a defeat is reached by
 		# the hero dying — the same shape the result-page probe uses.
-		_main._on_stop_selected(0, 0)
+		ToolHelpers.enter_arena(_main, 0, 0)
 		var arena3 = _main._screens["arena"]
 		if arena3.battle != null:
 			arena3.battle.hero_max_hp = 1.0
@@ -256,7 +257,7 @@ func _run() -> void:
 	# While paused, move the game somewhere else — which is exactly the case the re-derivation
 	# exists for: the player backgrounds the tab in town and returns to a boss fight.
 	_main.state.set_progress(0, _main.data.act_by_id(0).get("zones", 10) - 1)
-	_main._on_stop_selected(0, _main.data.act_by_id(0).get("zones", 10) - 1)
+	ToolHelpers.enter_arena(_main, 0, _main.data.act_by_id(0).get("zones", 10) - 1)
 	music._resume_for_focus()
 	print("  after focus resume on a boss screen: mode=%s track=%s" % [music.mode(), music.track_path()])
 	if music.mode() != "boss":

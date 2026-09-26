@@ -1,4 +1,6 @@
 extends SceneTree
+
+const ToolHelpers := preload("res://tools/tool_helpers.gd")
 ## Debug: where does the arena actually put things? Positions, not eyeballing.
 func _initialize() -> void:
 	var main = load("res://scripts/main.gd").new()
@@ -9,7 +11,7 @@ func _initialize() -> void:
 func _go(main) -> void:
 	await process_frame
 	await process_frame
-	main._on_stop_selected(0, 0)
+	ToolHelpers.enter_arena(main, 0, 0)
 	var arena = main._screens["arena"]
 	for _i in 40:
 		arena.step()
