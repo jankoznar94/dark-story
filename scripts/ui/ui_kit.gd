@@ -58,6 +58,13 @@ const STAT_ROW_GAP := 12
 const STAT_ROW_MIN_HEIGHT := 20.0
 const STAT_ROW_PAD_V := 2
 const STAT_ROW_RULE := "#1a1a1a"
+## `.talents-reset-wrap { border-top:1px solid #2a2a2a }` — the same 1px rule the stats rows
+## use, at the PWA's own colour for this block.
+const RULE_DARK := "#2a2a2a"
+## `.tree-tab { border:1px solid #333; background:#111 }` and `.tree-tab.active
+## { border-color:#f1c40f; background:#1a1a1a }`.
+const ROW_BORDER := "#333333"
+const ROW_BG := "#1a1a1a"
 
 ## `.container { padding: 16px 16px 70px 16px }` — the 70px bottom is where the PWA's
 ## fixed `.nav-bar` sits. Without it every screen hides its last row behind the nav.

@@ -73,6 +73,9 @@ func _run() -> void:
 	_test_equip_slot_tap_shows_info_then_unequips()
 	_test_empty_slot_opens_nothing()
 	_test_belt_wraps_into_four_columns()
+	_test_talents_has_no_invented_tier_labels()
+	_test_talents_reset_is_the_bottom_block()
+	_test_talents_tabs_are_content_sized()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -488,3 +491,154 @@ func _test_belt_wraps_into_four_columns() -> void:
 			% row.get_combined_minimum_size().y)
 	if not row.size_flags_horizontal == Control.SIZE_SHRINK_CENTER:
 		_fail("the potion grid is not centred — the PWA's `justify-content:center`")
+
+
+## The Skills pane's three INVENTED children, and the block that was in the wrong place.
+##
+## Measured against the live pane (`tools/import/probe_pane_pwa.py talents`): the pane's
+## content box holds exactly THREE children — `.flex-between`, `.talent-schools`,
+## `.talents-reset-wrap`. The port had SIX things the PWA does not draw:
+##
+##   1. a "Tier N" / "Tier N - odemkne se na levelu M" LABEL above every tier row. The PWA
+##      has none: `.talent-tier-label { display:none }` and `renderTalents()` builds only
+##      `<div class="talent-tier-row">` per tier. Three invented labels pushed the tree down
+##      by 3 x (label + gap) and read as a different screen.
+##   2. the reset button INSIDE the header. The PWA's `.flex-between` has the point line as
+##      its only child and the button lives in `.talents-reset-wrap` at the BOTTOM, full
+##      width, under a `border-top:1px solid #2a2a2a`. Measured: the port's head was
+##      `min=202x34` against the PWA's 340x35, and the button 167 wide against 340.
+##   3. the skill-info panel VISIBLE at zero height when nothing is selected; the PWA's
+##      markup ships it `class="hidden"` and `renderTalents()` re-adds `hidden`.
+##
+## ⚠️  A test that only asked "is the tree rendered" passes all of these, which is why this
+## asserts the CHILD COUNT and the child CLASSES rather than presence.
+func _test_talents_has_no_invented_tier_labels() -> void:
+	var pane = _pane_node("skills")
+	if pane == null:
+		return
+	var grid: Control = pane._talent_grid
+	if grid == null:
+		_fail("the skills panel has no talent grid")
+		return
+	var labels := 0
+	for child in grid.get_children():
+		if child is Label:
+			labels += 1
+	if labels > 0:
+		_fail("the talent grid holds %d Label(s) — the PWA has no tier labels at all "
+			% labels + "(`.talent-tier-label { display:none }`)")
+	# Every direct child must be a tier ROW (a GridContainer of 3 columns), not a wrapper.
+	for child in grid.get_children():
+		if child is GridContainer and (child as GridContainer).columns == 3:
+			continue
+		# The "no class" message is allowed and is a Label — counted above.
+		if child is Label:
+			continue
+		_fail("a talent grid child is %s, not a 3-column tier row — the PWA's "
+			% child.get_class() + "`.talent-tree-content` holds the rows directly")
+
+
+## `.talents-reset-wrap { margin-top:auto; padding:8px 0 0; border-top:1px solid #2a2a2a }`
+## with `.btn { width:100% }` inside — the reset action is the pane's LAST block, full width.
+## Measured on the live PWA: the wrap is 63 tall (6 margin + 8 padding + 1 rule + 42 button
+## + 6 margin) and its button spans the full 340.
+func _test_talents_reset_is_the_bottom_block() -> void:
+	var pane = _pane_node("skills")
+	if pane == null:
+		return
+	var button: Button = pane._reset_button
+	if button == null:
+		_fail("the skills panel has no reset button")
+		return
+	# ⚠️  ORDER, not y-coordinates. No layout pass runs in a `SceneTree` test, so a box's
+	# rect here is the harness's (measured: the reset block came back at y=46 against the
+	# tree's bottom at 418, which is `geometry=probe-only` territory and NOT evidence of a
+	# layout bug — `tools/probe_talents.gd` measures the real one under a renderer). What is
+	# assertable headless is the STRUCTURE: the reset block is the pane column's LAST child.
+	var column: Control = pane.get_child(0)
+	if column == null or column.get_child_count() < 3:
+		_fail("the skills column has %d children, the PWA's pane has three blocks"
+			% (column.get_child_count() if column != null else 0))
+		return
+	var wrap: Control = button.get_parent().get_parent()
+	var last: Control = column.get_child(column.get_child_count() - 1)
+	if wrap != last:
+		_fail("the reset block is not the pane column's LAST child — the PWA pins "
+			+ "`.talents-reset-wrap { margin-top:auto }` to the BOTTOM")
+	if column.get_child(0) == wrap:
+		_fail("the reset block is the column's FIRST child — it belongs at the bottom")
+	# `.talents-reset-wrap .btn { width:100% }` — the button expands, it is not sized by
+	# its text.
+	if button.size_flags_horizontal != Control.SIZE_EXPAND_FILL:
+		_fail("the reset button does not expand — `.talents-reset-wrap .btn { width:100% }`")
+	var button_min := button.get_combined_minimum_size()
+	if not is_equal_approx(button_min.y, 42.0):
+		_fail("the reset button is %.0f tall, `.btn { padding:12px; font-size:15px }` measures 42"
+			% button_min.y)
+	if button.get_theme_font_size("font_size") != 15:
+		_fail("the reset button is %dpx, the PWA's `.btn` is 15"
+			% button.get_theme_font_size("font_size"))
+	if pane._reset_rule == null:
+		_fail("the reset block has no `border-top` rule — `.talents-reset-wrap` declares one")
+
+
+## `.tree-tab { padding:6px 12px; font-size:13px }` sized by its CONTENT and centred
+## (`justify-content:center`) — measured 93/83/92 wide on the live pane, NOT three equal
+## thirds. The port's `SIZE_EXPAND_FILL` made all three 111 and the strip `min=177` against
+## the PWA's 268, which put the tree 6px high.
+##
+## ⚠️  The widths cannot be exact here — the emoji the PWA puts in front of each tree name
+## are NOT ported (Jan's no-emoji rule), so the port's labels are genuinely shorter. What is
+## asserted is the SHAPE: content-sized (unequal) and centred, never expanded.
+func _test_talents_tabs_are_content_sized() -> void:
+	var pane = _pane_node("skills")
+	if pane == null:
+		return
+	var row: HBoxContainer = pane._tree_row
+	if row == null or row.get_child_count() < 2:
+		_fail("the tree-tab strip is missing or has fewer than two tabs")
+		return
+	if row.alignment != BoxContainer.ALIGNMENT_CENTER:
+		_fail("the tree-tab strip is not centred — `.talent-tree-tabs { justify-content:center }`")
+	var widths := []
+	for child in row.get_children():
+		var c: Control = child
+		if c.size_flags_horizontal == Control.SIZE_EXPAND_FILL:
+			_fail("a tree tab is SIZE_EXPAND_FILL — the PWA sizes it by its content "
+				+ "(`padding:6px 12px`), so the tabs must not be equal thirds")
+		widths.append(roundf(c.get_combined_minimum_size().x))
+	# All equal means the strip was flattened into thirds by something else.
+	var all_same := true
+	for w in widths:
+		if absf(w - widths[0]) > 0.5:
+			all_same = false
+	if all_same and widths.size() > 1:
+		_fail("all %d tree tabs are the same width (%.0f) — content-sized tabs differ"
+			% [widths.size(), widths[0]])
+
+
+## The `SkillsPanel` inside the pane's padding wrapper, found by its script so a change in
+## the wrapper's depth does not silently turn these checks into no-ops.
+func _pane_node(key: String):
+	var modal = _main._screens.get("character")
+	if modal == null:
+		_fail("no character modal")
+		return null
+	var wrap = modal._panes.get(key)
+	if wrap == null:
+		_fail("the modal has no '%s' pane" % key)
+		return null
+	for _i in 5:
+		if wrap == null:
+			break
+		if wrap.get_script() != null \
+				and wrap.get_script().resource_path.ends_with("skills_panel.gd"):
+			return wrap
+		var nxt = null
+		for child in wrap.get_children():
+			if child is Control:
+				nxt = child
+				break
+		wrap = nxt
+	_fail("the skills panel was not found under the '%s' pane wrapper" % key)
+	return null
