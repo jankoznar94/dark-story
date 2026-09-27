@@ -288,6 +288,25 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ARENA_PACING_ALL_PASS=true"
 
+      # Leaving a fight, BOTH ways (Jan's rule for the world): a Town Portal scroll returns
+      # the player to the exact fight he left and is SPENT doing so; walking to town costs the
+      # zone's progress, so carrying a scroll is a real choice.
+      #
+      # Its own file rather than a case in `test_arena_pacing`, because the wiring lives on
+      # `main.gd` and main is NOT built during a `SceneTree` script's `_initialize()` — a case
+      # there could only skip, and a skipped test that prints PASS is worse than none.
+      #
+      # The verdict is `PORTAL_RETURN_ALL_PASS=true`, derived from the GATE's name. Do not
+      # rename one without the other: a grep whose string no test prints finds nothing,
+      # `set -e` kills the step, and every later step (export, artifacts, gh-pages publish)
+      # is silently skipped — which has happened here once already.
+      - name: Portal return test (scroll spends and returns, walking costs the zone)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_portal_return.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "PORTAL_RETURN_ALL_PASS=true"
+
       # The arena's OTHER clock. `test_arena_pacing` above measures the RULES' pace and was
       # green the whole time the player was reporting "it runs at 5 FPS": `render()` ran from
       # `step()`, i.e. ten times a second, so the swing ring, the HP bar and the walk-in
