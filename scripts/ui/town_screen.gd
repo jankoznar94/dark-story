@@ -38,6 +38,11 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 
 signal tile_selected(screen_key: String)
 signal stop_requested(act_id: int, stop: int)
+## The town's town-portal card. Its OWN signal rather than a key through `tile_selected`,
+## because the key vocabulary is "a screen to open" and this is an ACTION (return to the
+## stored fight). `_on_town_tile` routing a magic string to a handler is how the map's button
+## ended up wired to the return — two different things behind one name.
+signal town_portal_requested()
 
 ## `.town-tile { aspect-ratio: 4/3 }` inside a 2-column grid with a 10px gap and the PWA's
 ## 16px container padding. 390 - 32 = 358; (358 - 10) / 2 = 174 wide, 174 * 3/4 = 130.5.
@@ -68,6 +73,10 @@ var _find_item: Callable
 var _wilderness_button: Button
 var _portal_row: Control
 var _portal_label: Label
+## The card's own Button. Held so a test can drive the TAP rather than call main's handler —
+## the wiring between the two is what broke on the map's button, and a test that calls the
+## handler directly cannot see it.
+var _portal_card_button: Button
 
 
 func _init(game_data: Node, gen: ItemGen, state, find_item: Callable) -> void:
@@ -147,7 +156,8 @@ func _build() -> void:
 	_portal_row.add_theme_constant_override("margin_bottom", 16)
 	column.add_child(_portal_row)
 	var portal_card := _make_action_card()
-	portal_card["button"].pressed.connect(func(): tile_selected.emit("portal"))
+	_portal_card_button = portal_card["button"]
+	_portal_card_button.pressed.connect(func(): town_portal_requested.emit())
 	_portal_row.add_child(portal_card["root"])
 	_portal_label = portal_card["label"]
 

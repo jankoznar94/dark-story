@@ -12,7 +12,7 @@ extends SceneTree
 ##   the inventory      `useTownPortalScroll`            (PWA only — see below)
 ##   the town's card    `useTownPortal`                  RETURNS to the stored position, free
 ##
-## ⚠️  `map_screen._portal_button.visible` was set only in `_build()`, i.e. once, to `false` —
+## ⚠️  `map_screen._map_portal_button.visible` was set only in `_build()`, i.e. once, to `false` —
 ## nothing ever raised it. The map's second use was unreachable code with a dead button on top
 ## of it, and no existing test could see it: `test_portal_return` drives the RESULT page's tile
 ## and asserts the position and the count, both of which are correct. A button that is never
@@ -101,6 +101,7 @@ func _run() -> void:
 	_test_the_map_button_appears_only_when_a_scroll_is_carried()
 	_test_the_map_button_spends_a_scroll_and_stores_the_fight()
 	_test_the_town_card_returns_for_free()
+	_test_the_town_card_is_wired_to_the_return()
 	_test_the_inventory_does_not_offer_a_scroll()
 	_test_using_the_portal_does_not_move_the_player()
 
@@ -109,7 +110,7 @@ func _run() -> void:
 func _test_the_map_button_appears_only_when_a_scroll_is_carried() -> void:
 	_seed(0)
 	_main.show_screen("map")
-	var button: Button = _main._screens["map"]._portal_button
+	var button: Button = _main._screens["map"]._map_portal_button
 	if button == null:
 		_fail("the map has no portal button at all")
 		return
@@ -133,7 +134,7 @@ func _test_the_map_button_spends_a_scroll_and_stores_the_fight() -> void:
 	_main.show_screen("map")
 	# Drive the BUTTON's own handler, not `_refresh_actions` — the wiring is what a player
 	# touches, and a test that calls the function directly passes against a dead button.
-	var button: Button = _main._screens["map"]._portal_button
+	var button: Button = _main._screens["map"]._map_portal_button
 	button.pressed.emit()
 	var before := int(_main.state.data["townPortalCount"])
 	if before != 1:
@@ -155,12 +156,12 @@ func _test_the_map_button_spends_a_scroll_and_stores_the_fight() -> void:
 func _test_the_town_card_returns_for_free() -> void:
 	_seed(1)
 	_main.show_screen("map")
-	_main._screens["map"]._portal_button.pressed.emit()
+	_main._screens["map"]._map_portal_button.pressed.emit()
 	var spent := int(_main.state.data["townPortalCount"])
 	# Walking to town is what a player does after taking the portal; the zone's fights reset,
 	# and the RETURN is what has to put him back.
 	_main._on_walk_to_town()
-	_main._on_town_portal()
+	_main._on_town_portal_return()
 	if int(_main.state.data["areaFightProgress"][0]) != 6:
 		_fail("the town's return did not restore the fight (%d, wanted 6)"
 			% int(_main.state.data["areaFightProgress"][0]))
@@ -169,6 +170,33 @@ func _test_the_town_card_returns_for_free() -> void:
 			% [spent, int(_main.state.data["townPortalCount"])])
 	if _main.state.data.get("townPortalReturn") != null:
 		_fail("the stored position survived the return - the town's card stays up forever")
+
+
+## --- 3b. the town's card is reachable BY TAP, through its own signal ---------------------
+func _test_the_town_card_is_wired_to_the_return() -> void:
+	# The card used to send a magic `"portal"` STRING through `tile_selected`, a signal whose
+	# vocabulary is "a screen to open", and `_on_town_tile` routed it to the return. That is the
+	# same shape as the map's button being wired to the return: two different things behind one
+	# name. It has its own signal now, and this drives the CARD's own button — calling
+	# `_on_town_portal_return` directly would pass against a card wired to nothing.
+	_seed(1)
+	_main.show_screen("map")
+	_main._screens["map"]._map_portal_button.pressed.emit()
+	var spent := int(_main.state.data["townPortalCount"])
+	_main._on_walk_to_town()
+	_main.show_screen("town")
+	var card: Button = _main._screens["town"]._portal_card_button
+	if card == null:
+		_fail("the town has no portal card button to drive")
+		return
+	if not _main._screens["town"]._portal_row.visible:
+		_fail("the town hides the portal card while a return position is stored")
+	card.pressed.emit()
+	if int(_main.state.data["areaFightProgress"][0]) != 6:
+		_fail("the town's portal card did nothing when tapped (fight %d, wanted 6)"
+			% int(_main.state.data["areaFightProgress"][0]))
+	if int(_main.state.data["townPortalCount"]) != spent:
+		_fail("the town's portal card spent a scroll - returning is free")
 
 
 ## --- 4. the third place does NOT exist here, on purpose ----------------------------------
@@ -191,6 +219,6 @@ func _test_the_inventory_does_not_offer_a_scroll() -> void:
 func _test_using_the_portal_does_not_move_the_player() -> void:
 	_seed(1)
 	_main.show_screen("map")
-	_main._screens["map"]._portal_button.pressed.emit()
+	_main._screens["map"]._map_portal_button.pressed.emit()
 	if int(_main.state.data["areaFightProgress"][0]) != 6:
 		_fail("taking the portal moved the player's own position before he returned")

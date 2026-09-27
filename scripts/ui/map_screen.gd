@@ -45,7 +45,7 @@ signal difficulty_selected(difficulty: int)
 signal enter_stop(act_id: int, stop: int)
 ## `.map-actions`' second button — the PWA's "Town Portal", shown only when the hero
 ## actually carries a scroll.
-signal portal_requested()
+signal map_portal_requested()
 
 ## 390 - 32 = 358 wide. `.stop-card` is a square, so the art is 358 tall; the label sits
 ## over the bottom of it.
@@ -58,7 +58,7 @@ var _find_item: Callable
 var _list: VBoxContainer
 var _difficulty_row: HBoxContainer
 var _actions: HBoxContainer
-var _portal_button: Button
+var _map_portal_button: Button
 ## Which act's stop path is open. The PWA kept this on the save (`_expandedAct`) and
 ## initialised it to -1: on first open the map shows the act CARDS ONLY, collapsed, and
 ## the stop path appears when the player taps one. The port used to auto-expand the first
@@ -150,12 +150,12 @@ func _build() -> void:
 	walk.pressed.connect(func(): back_pressed.emit())
 	_actions.add_child(walk)
 
-	_portal_button = UIKit.secondary_button("Town Portal", 30)
-	_portal_button.add_theme_font_size_override("font_size", 12)
-	_portal_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_portal_button.visible = false
-	_portal_button.pressed.connect(func(): portal_requested.emit())
-	_actions.add_child(_portal_button)
+	_map_portal_button = UIKit.secondary_button("Town Portal", 30)
+	_map_portal_button.add_theme_font_size_override("font_size", 12)
+	_map_portal_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_map_portal_button.visible = false
+	_map_portal_button.pressed.connect(func(): map_portal_requested.emit())
+	_actions.add_child(_map_portal_button)
 
 
 func refresh() -> void:
@@ -247,8 +247,8 @@ func _refresh_difficulty() -> void:
 
 ## `.map-actions` — the SECOND use of a scroll, and the only one on the map.
 ##
-## ⚠️  `_portal_button.visible` was set ONLY in `_build()`, i.e. ONCE, to `false`. Nothing ever
-## raised it again: the button was never shown in any game state and `portal_requested` had a
+## ⚠️  `_map_portal_button.visible` was set ONLY in `_build()`, i.e. ONCE, to `false`. Nothing ever
+## raised it again: the button was never shown in any game state and `map_portal_requested` had a
 ## single reachable source, the result page. On the map a carried scroll therefore had no way
 ## to be used — Jan: "ještě musí být někde možnost portal scroll použít".
 ##
@@ -260,10 +260,10 @@ func _refresh_difficulty() -> void:
 ## position and spends the scroll — while the town's own card calls `useTownPortal`, which
 ## only RETURNS and spends nothing. Two different rules on two screens.
 func _refresh_actions() -> void:
-	if _portal_button == null:
+	if _map_portal_button == null:
 		return
 	var carrying := int(_state.data.get("townPortalCount", 0)) > 0
-	_portal_button.visible = carrying and _state.first_uncompleted_act() >= 0
+	_map_portal_button.visible = carrying and _state.first_uncompleted_act() >= 0
 
 
 ## `setDifficulty` in the PWA resets `_expandedAct` to -1 before re-rendering the map, so

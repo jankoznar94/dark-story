@@ -75,7 +75,7 @@ signal another_fight_requested()
 ## page offers Map (after a cleared stop), Walk to Town, Town Portal (only while a scroll is
 ## carried) and Hero (opens the character modal) — a different set from "leave the arena".
 signal map_requested()
-signal portal_requested()
+signal result_portal_requested()
 signal hero_requested()
 
 ## One rendered frame is one fight tick. A fixed step rather than the frame's real delta
@@ -661,7 +661,7 @@ func _rebuild_result_actions(won: bool, stop_complete: bool, has_portal: bool) -
 		func(): _on_leave_pressed()))
 	if has_portal:
 		_result_actions.add_child(_make_action_tile("assets/items/town_portal_scroll.png",
-			"Portal", func(): _on_portal_pressed()))
+			"Portal", func(): _on_result_portal_pressed()))
 	_result_actions.add_child(_make_action_tile(_hero_face_path(), "Hrdina",
 		func(): _on_hero_pressed()))
 
@@ -2495,10 +2495,10 @@ func _on_map_pressed() -> void:
 	map_requested.emit()
 
 
-func _on_portal_pressed() -> void:
+func _on_result_portal_pressed() -> void:
 	if _button_lock_ms > 0:
 		return
-	portal_requested.emit()
+	result_portal_requested.emit()
 
 
 func _on_hero_pressed() -> void:

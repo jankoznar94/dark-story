@@ -6,7 +6,8 @@ extends SceneTree
 ##   * walking to town costs the zone's progress, so the scroll is worth carrying.
 ##
 ## Why this is its own file rather than a case in `test_arena_pacing.gd`: the wiring lives on
-## `main.gd` (`arena.portal_requested` -> `_on_result_portal`, and `_on_town_portal` /
+## `main.gd` (`arena.result_portal_requested` -> `_on_result_portal_used`, and
+## `_on_town_portal_return` /
 ## `_on_walk_to_town`), and main is NOT built during a `SceneTree` script's `_initialize()` —
 ## the tree does not exist yet. A test that ran there would have to skip, and a skipped test
 ## that prints PASS is worse than no test. So this one waits in `_process` for main to be built
@@ -142,7 +143,7 @@ func _run() -> void:
 		return
 
 	# Drive the tile the way a tap does: the tile's own handler, which emits
-	# `portal_requested` into main's connection.
+	# `result_portal_requested` into main's connection.
 	# The result page is built when the fight SETTLES (`_finish_fight`), and it is that call
 	# which decides whether the Portal tile exists — a scroll carried is the condition. Kill
 	# through the rules so the win, the loot roll and the page are all real.
@@ -170,7 +171,7 @@ func _run() -> void:
 	if before_spend <= 0:
 		_fail("test setup: no scroll to spend after the fight (the tile should not be offered)")
 		return
-	arena._on_portal_pressed()
+	arena._on_result_portal_pressed()
 	stored = _main.state.data.get("townPortalReturn")
 	if stored == null:
 		_fail("the Portal tile did not store a return position - the scroll would be lost")
@@ -205,7 +206,7 @@ func _run() -> void:
 	if _main.state.data.get("townPortalReturn") == null:
 		_fail("walking to town destroyed the stored return position - the scroll is wasted")
 		return
-	_main._on_town_portal()
+	_main._on_town_portal_return()
 	if int(_main.state.data["areaFightProgress"][0]) != FIGHT \
 			or int(_main.state.data["locationProgress"][0]) != ZONE:
 		_fail("the return did not restore the fight: zone %d fight %d, wanted %d/%d"

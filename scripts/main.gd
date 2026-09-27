@@ -150,6 +150,7 @@ func _build_screens() -> void:
 	var town := TownScreen.new(data, gen, state, _resolve)
 	town.visible = false
 	town.tile_selected.connect(_on_town_tile)
+	town.town_portal_requested.connect(_on_town_portal_return)
 	# The wilderness tile opens the MAP, as the PWA's `enterCurrentAct()` did — not a
 	# fight. Which stop to fight is the player's choice on the map.
 	# The wilderness tile does NOT go straight to the map: the PWA's `enterCurrentAct` runs
@@ -165,12 +166,12 @@ func _build_screens() -> void:
 	# and runs `showTransition('town', …)`. That progress reset is why this is not a plain
 	# `show_screen("town")`.
 	map_screen.back_pressed.connect(_on_walk_to_town)
-	# ⚠️  NOT `_on_town_portal` — that is the RETURN and it spends nothing. The map's button is
+	# ⚠️  NOT `_on_town_portal_return` — that is the RETURN and it spends nothing. The map's button is
 	# `useTownPortalScrollFromMap`: it STORES the position and SPENDS a scroll, exactly like the
 	# result page's tile. Wiring it to the return made the map's button a no-op (there is no
 	# stored position yet) while the scroll stayed in the bag — the button looked alive and did
 	# nothing, which is worse than a dead button.
-	map_screen.portal_requested.connect(_on_map_portal)
+	map_screen.map_portal_requested.connect(_on_map_portal_used)
 	map_screen.difficulty_selected.connect(_on_difficulty_selected)
 	map_screen.enter_stop.connect(_on_stop_selected)
 	_add_screen("map", map_screen)
@@ -223,7 +224,7 @@ func _build_screens() -> void:
 	# `showScreen('map')`), unlike the town tile, which walks. So only one of these two is
 	# routed through the transition.
 	arena.map_requested.connect(func(): show_screen("map"))
-	arena.portal_requested.connect(_on_result_portal)
+	arena.result_portal_requested.connect(_on_result_portal_used)
 	arena.hero_requested.connect(func(): open_modal("stats"))
 	_add_screen("arena", arena)
 
@@ -621,9 +622,6 @@ func _current_act_on_map() -> int:
 
 
 func _on_town_tile(key: String) -> void:
-	if key == "portal":
-		_on_town_portal()
-		return
 	show_screen(key)
 
 
@@ -725,14 +723,24 @@ func _on_another_fight() -> void:
 		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
 
 
+## The rules, so the three names cannot be read as one thing again:
+##
+##   _on_map_portal_used     the MAP's Town Portal button   spends a scroll, stores the position
+##   _on_result_portal_used  the RESULT page's Portal tile  spends a scroll, stores the position
+##   _on_town_portal_return  the TOWN's portal card         RETURNS to the stored position, free
+##
+## A name says WHERE the tap came from and WHAT it costs; `_on_town_portal` used to name the
+## return and the map's button was wired to it, which read as "the town's card" at the call site
+## and made the map's button a silent no-op.
+##
 ## The MAP's Town Portal button. The PWA's `useTownPortalScrollFromMap()`: store where the
 ## hero is standing, spend one scroll, and move to town through the scroll's own transition.
 ##
-## It is deliberately a near-twin of `_on_result_portal` — both are "spend the scroll on the way
+## It is deliberately a near-twin of `_on_result_portal_used` — both are "spend the scroll on the way
 ## OUT", and the only difference is where the position comes from. The act CANNOT be read off a
 ## battle here (there is none on the map), so it is `_current_act_on_map()`, the same value the
 ## PWA reads.
-func _on_map_portal() -> void:
+func _on_map_portal_used() -> void:
 	if int(state.data.get("townPortalCount", 0)) <= 0:
 		return
 	var act_id := _current_act_on_map()
@@ -749,7 +757,7 @@ func _on_map_portal() -> void:
 ## Town portal: only offered while a return position is stored. Returning rewinds to
 ## the stored act/zone/fight and consumes nothing — the scroll was spent on the way
 ## out, which is how the PWA did it.
-func _on_town_portal() -> void:
+func _on_town_portal_return() -> void:
 	var portal: Variant = state.data.get("townPortalReturn")
 	if portal == null:
 		return
@@ -767,7 +775,7 @@ func _on_town_portal() -> void:
 ## scroll on the way OUT (`useTownPortalScrollFromResult`), so coming back is free and the
 ## tile has to exist only while a scroll is carried — which is what the arena checks before
 ## offering it. A scroll spent here is what the stored position is FOR.
-func _on_result_portal() -> void:
+func _on_result_portal_used() -> void:
 	if int(state.data.get("townPortalCount", 0)) <= 0:
 		return
 	var arena = _screens["arena"]

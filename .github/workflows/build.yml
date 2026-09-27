@@ -309,7 +309,7 @@ jobs:
 
       # WHERE a scroll can be USED. `test_portal_return` above asserts what the result page's
       # tile does — and it was green the whole time the MAP's button could not be used at all:
-      # `_portal_button.visible` was set once, in `_build()`, to `false`, and its signal was
+      # `_map_portal_button.visible` was set once, in `_build()`, to `false`, and its signal was
       # wired to the RETURN (which needs a stored position and is a no-op without one). So a
       # carried scroll had one reachable use, and the map's was unreachable code under a dead
       # button. A test about what a tap DOES cannot see a button that is never shown, which is

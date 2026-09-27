@@ -265,13 +265,13 @@ func _test_the_five_moves_go_through_it(tr) -> void:
 	#
 	# ⚠️  The guard is `button_lock_ms`, which runs on the PLAYER's clock and is set when a fight
 	# ends. A `SceneTree` test has no frames between the kill and the tap, so the lock is still
-	# armed and `_on_portal_pressed` ignores the tap — the PWA's own "a tap right after the kill
+	# armed and `_on_result_portal_pressed` ignores the tap — the PWA's own "a tap right after the kill
 	# must not fire". Cleared here so the WIRING is what is under test, with the lock covered by
 	# `test_arena_pacing` where frames exist.
 	_main.state.data["townPortalCount"] = 1
 	_main._on_stop_selected(0, 0)
 	# ⚠️  The arena is built by the transition's CALLBACK, so the overlay has to be run past its
-	# hold or `arena.battle` is still null and `_on_result_portal` returns at its own null guard
+	# hold or `arena.battle` is still null and `_on_result_portal_used` returns at its own null guard
 	# without a word — which is exactly how this came back as "the tile did not start a
 	# transition". Drive it here, the way a frame eventually would.
 	tr._process(tr.HOLD_MS / 1000.0 + 0.01)
@@ -287,7 +287,7 @@ func _test_the_five_moves_go_through_it(tr) -> void:
 		guard += 1
 	arena._button_lock_ms = 0.0
 	_reset(tr)
-	arena.portal_requested.emit()
+	arena.result_portal_requested.emit()
 	_expect(tr, "the result page's Town Portal tile", tr.PORTAL_ART)
 
 
