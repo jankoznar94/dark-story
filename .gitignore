@@ -15,3 +15,7 @@ tools/reference/band/
 
 # Godot writes a .uid next to every script; they are how the editor tracks a
 # script across a rename and are meant to be committed. Kept, deliberately.
+
+# Python bytecode from the tooling — regenerated on every run.
+__pycache__/
+*.pyc

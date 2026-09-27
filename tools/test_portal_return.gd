@@ -117,6 +117,14 @@ func _run() -> void:
 	# seed. Doing it the other way round is what made this read 0/10.
 	_main._on_stop_selected(0, ZONE)
 	_drive_transition()
+	# The stop's transition opens the wilderness road (Jan: "Po vstupu do oblasti se přepne
+	# obrazovka"), and the fight is entered from the road's own tap — the route a player takes.
+	var world = _main._screens["world"]
+	if world == null:
+		_fail("the stop's transition did not open the wilderness road")
+		return
+	world.next_fight_requested.emit()
+	_drive_transition()
 	_main.state.data["locationProgress"][0] = ZONE
 	_main.state.data["areaFightProgress"][0] = FIGHT
 	if not _enter_arena_now():

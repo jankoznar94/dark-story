@@ -34,6 +34,15 @@ static func enter_arena(main, act: int, stop: int):
 	if tr != null and tr.is_transitioning():
 		# One step past the hold: `_process` calls the callback and starts the fade.
 		tr._process(tr.HOLD_MS / 1000.0 + 0.01)
+	# ⚠️  A tap on a stop no longer reaches the arena. Jan: "Po vstupu do oblasti se přepne
+	# obrazovka" — the stop's transition opens the WILDERNESS road, and the arena is entered
+	# from the road's own tap, which is the route a player takes. A helper that stops at the
+	# road hands back an arena whose `battle` is still null, which every caller then reads as
+	# `'is_boss' on a base object of type 'Nil'`.
+	if main._current == "world":
+		var world = main._screens.get("world")
+		if world != null:
+			world.next_fight_requested.emit()
 	if not main._screens.has("arena"):
 		return null
 	return main._screens["arena"]

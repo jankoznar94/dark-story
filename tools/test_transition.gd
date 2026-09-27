@@ -270,10 +270,16 @@ func _test_the_five_moves_go_through_it(tr) -> void:
 	# `test_arena_pacing` where frames exist.
 	_main.state.data["townPortalCount"] = 1
 	_main._on_stop_selected(0, 0)
-	# ⚠️  The arena is built by the transition's CALLBACK, so the overlay has to be run past its
-	# hold or `arena.battle` is still null and `_on_result_portal_used` returns at its own null guard
-	# without a word — which is exactly how this came back as "the tile did not start a
-	# transition". Drive it here, the way a frame eventually would.
+	# ⚠️  A tap on a stop now opens the WILDERNESS, not the arena (Jan: "Po vstupu do oblasti se
+	# přepne obrazovka"), so reaching the arena means walking the route the player walks: drive the
+	# stop's transition, then the road's own `next_fight_requested`. The overlay has to be run past
+	# its hold at each step — the destination screen is built by the transition's CALLBACK, so a
+	# caller that does not drive it gets a screen whose `battle` is still null.
+	tr._process(tr.HOLD_MS / 1000.0 + 0.01)
+	if _main._screens["world"] == null:
+		_fail("the stop's transition did not open the wilderness road")
+		return
+	_main._screens["world"].next_fight_requested.emit()
 	tr._process(tr.HOLD_MS / 1000.0 + 0.01)
 	var arena = _main._screens["arena"]
 	if arena.battle == null:

@@ -25,6 +25,7 @@ const EquipLogic := preload("res://scripts/items/equip_logic.gd")
 const InventoryScreen := preload("res://scripts/ui/inventory_screen.gd")
 const TownScreen := preload("res://scripts/ui/town_screen.gd")
 const MapScreen := preload("res://scripts/ui/map_screen.gd")
+const WorldScreen := preload("res://scripts/ui/world_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
@@ -159,6 +160,18 @@ func _build_screens() -> void:
 	town.stop_requested.connect(func(_act, _stop):
 		_transition_to(TransitionScreen.WILDERNESS_ART, func(): show_screen("map")))
 	_add_screen("town", town)
+
+	# The wilderness: the road the hero walks between the ten fights of an area, and the way
+	# home. Jan's three decisions are all here — entering a stop opens THIS, not the arena; the
+	# way home is its own road with its price on it; no waypoints.
+	var world := WorldScreen.new(data, state, _resolve)
+	world.visible = false
+	world.next_fight_requested.connect(_on_world_next_fight)
+	world.walk_home_requested.connect(_on_walk_to_town)
+	# The same handler the MAP's button uses: store the position and SPEND the scroll. One rule,
+	# two places it can be taken from.
+	world.portal_requested.connect(_on_map_portal_used)
+	_add_screen("world", world)
 
 	var map_screen := MapScreen.new(data, state, _resolve)
 	map_screen.visible = false
@@ -322,6 +335,10 @@ func show_screen(name: String) -> void:
 			_screens["town"].enter(_reset_shop_cache)
 		"map":
 			_screens["map"].refresh()
+		"world":
+			# Every entry recomputes the header, the buttons and where the hero is standing —
+			# so coming back from a fight shows the road already advanced.
+			_screens["world"].refresh()
 		"chest":
 			_screens["chest"].refresh()
 		"shop":
@@ -528,7 +545,9 @@ func _toggle_music() -> void:
 func _update_music() -> void:
 	if _music == null:
 		return
-	if _current == "map":
+	if _current == "map" or _current == "world":
+		# The wilderness. The PWA's `showScreen` mapped `map` to 'battle'; the road IS the
+		# wilderness, so it shares that mode rather than inventing a track.
 		_music.switch_mode("battle")
 	elif _current != "arena" and _current != "result":
 		_music.switch_mode("overworld")
@@ -538,7 +557,7 @@ func _update_music() -> void:
 ## PWA re-derives it from the active screen on `visibilitychange` — and that is the ONLY
 ## route by which the defeat and victory tracks are ever reached.
 func _music_mode_for_current_screen() -> String:
-	if _current == "map":
+	if _current == "map" or _current == "world":
 		return "battle"
 	if _current == "arena":
 		var arena = _screens.get("arena", null)
@@ -653,8 +672,12 @@ func _on_stop_selected(act_id: int, stop: int) -> void:
 	state.set_progress(act_id, stop)
 	state.data["areaFightProgress"][act_id] = 0
 	state.save()
+	# ⚠️  This used to go straight to `_enter_arena`, i.e. tapping a stop on the map dropped the
+	# player into fight 1 without ever showing him the area. Jan's decision: "Po vstupu do
+	# oblasti se přepne obrazovka" — the stop opens the ROAD, and the arena is where a fight is
+	# fought and ENDS.
 	_transition_to(TransitionScreen.stop_art_path(act_id, stop),
-		func(): _enter_arena(act_id))
+		func(): show_world(act_id))
 
 
 ## The PWA's `walkToTown()` and `walkToTownFromResult()`, which are the same rule: walking to
@@ -712,15 +735,31 @@ func _enter_arena(act_id: int) -> void:
 		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
 
 
+## The one way into the wilderness screen. `_currentAct` is what the world reads to know which
+## area's road it is drawing, and it is written HERE so the road and the save can never disagree.
+func show_world(act_id: int) -> void:
+	state.data["_currentAct"] = act_id
+	show_screen("world")
+
+
+## A node on the road was tapped: fight the CURRENT fight. No rules here — which fight is next is
+## the save's (`areaFightProgress`), and `arena.start` reads it.
+func _on_world_next_fight() -> void:
+	_enter_arena(int(state.data.get("_currentAct", 0)))
+
+
+## "Další souboj" was tapped on the victory page. The battle advances the stop through its own
+## rule (`advance_stop`), and then the player is put back ON THE ROAD rather than into the next
+## fight — the road is the thing he walks, and it is what shows him where he is.
+##
+## A cleared area (`another_fight()` false) still goes to town, as it did: there is no next fight
+## to walk to inside it.
 func _on_another_fight() -> void:
 	var arena = _screens["arena"]
 	if not arena.another_fight():
 		show_screen("town")
 		return
-	# A new fight in the same act can be a different KIND of fight — 10/10 is the boss — so
-	# the mode is re-derived rather than inherited from the fight that just ended.
-	if _music != null:
-		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
+	show_world(int(state.data.get("_currentAct", 0)))
 
 
 ## The rules, so the three names cannot be read as one thing again:

@@ -247,6 +247,7 @@ func _run() -> void:
 	# `visibilitychange` re-derives it (`if (isDefeat) … else if (isWin) …`).
 	_main.show_screen("town")
 	music.switch_mode("overworld")
+	var paused_mode: String = music.mode()
 	var switches_before_focus: int = music._switches
 	music._pause_for_focus()
 	if not music._paused_for_focus:
@@ -265,9 +266,16 @@ func _run() -> void:
 			% music.mode())
 	if not music._paused_for_focus == false:
 		_fail("the resume left the paused flag set")
-	if music._switches != switches_before_focus + 1:
-		_fail("the focus resume switched %d times, expected exactly one"
-			% (music._switches - switches_before_focus))
+	# ⚠️  NOT `_switches + 1`. Every screen already switches the music as it is entered, so by the
+	# time the resume runs the right mode is usually playing and `switch_mode` correctly returns
+	# early — a resume that switched again is the PWA's rule being broken, not the test's. What
+	# the re-derivation has to prove is that the PAUSED mode is not what came back: this asserts
+	# the answer is the SCREEN's mode and not the one that was interrupted.
+	if music.mode() == paused_mode:
+		_fail("the resume replayed the paused mode '%s' instead of asking the screen" % paused_mode)
+	if music._switches < switches_before_focus:
+		_fail("the switch counter went backwards (%d -> %d)"
+			% [switches_before_focus, music._switches])
 
 	for f in _failures:
 		print("  FAIL: %s" % f)

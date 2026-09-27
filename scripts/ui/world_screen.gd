@@ -1,0 +1,416 @@
+class_name WorldScreen
+extends Control
+## WorldScreen — Jan's "putování": the road HOME, drawn as a road, with a WALKING hero on it.
+##
+## Three decisions from Jan, in his own words, and each one shapes a piece of this file:
+##
+##   1. "Po vstupu do oblasti se přepne obrazovka." — entering a stop on the map does NOT open
+##      the arena any more. It opens this screen, at fight 1 of 10. The player taps the road to
+##      start each fight, and the arena is where a fight ENDS.
+##   2. "Vlastní cesta." — the way home is its OWN road, not a stretch of the fight road. The
+##      walk home button lives here (it used to be a flat `.map-actions` button on the map) and
+##      it wears its price, because losing the zone's fights is the decision.
+##   3. "Nechat bez nich." — no waypoints. The PWA deleted them ("waypointy zrušeny") and the
+##      art in `assets/waypoints/` is left unused on purpose.
+##
+## ⚠️  NO RULES LIVE HERE. Which fight is current is the SAVE's (`locationProgress` +
+## `areaFightProgress`), walked by `Battle.advance_stop`. The screen reads it, projects it, and
+## emits a signal when the player taps the next node — exactly as `arena_screen` does not own
+## the fight it draws. A screen that advanced the save itself would be a second source of truth
+## for progression, and nothing could test it without a viewport.
+##
+## The ground is the area's own art (`assets/stops/stop_actN_M.webp`) — the same file the arena
+## uses as its backdrop, so the world and the fight agree about where the hero is standing.
+
+const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
+const Battle := preload("res://scripts/combat/battle.gd")
+
+signal next_fight_requested()
+signal walk_home_requested()
+signal portal_requested()
+
+const BG := Color("#121212")
+const ROAD := Color("#3a2f23")
+const ROAD_EDGE := Color("#564636")
+const GOLD := Color(UIKit.GOLD)
+const DIM := Color("#666666")
+const NODE_DONE := Color("#5a5a5a")
+const NODE_NEXT := Color("#8a8a8a")
+
+## The road runs DOWN the screen, as the shipped map's stop path does (stop 1 at the top), so the
+## two screens agree about which way the journey runs.
+const ROAD_LEFT := 0.20
+const ROAD_RIGHT := 0.80
+## Where the first and last fight sit, as a fraction of the screen height. The band is clear of
+## the header and of the bottom actions.
+const ROAD_TOP := 0.30
+const ROAD_BOTTOM := 0.72
+## Amplitude of the meander, as a fraction of the width. The PWA's own requirement was "not too
+## big" so five to ten dots fit a phone screen.
+const MEANDER := 0.30
+
+var _state
+var _data: Node
+var _find_item: Callable
+
+var _header_act: Label
+var _header_fight: Label
+var _walk_button: Button
+var _portal_button: Button
+## The road itself. A plain Control with its own `_draw()` rather than a container: everything
+## here is positioned by hand from `NODES`, and a container would overwrite those rects (the trap
+## that cost the result page its layout twice).
+var _canvas: Control
+## The hero is a NODE, not a `draw_texture_rect` call. Measured: drawing an RGBA sprite through
+## `CanvasItem.draw_texture_rect` in this screen's `_draw()` rendered its transparent area as
+## SOLID WHITE (a 96x96 block over the road), while the arena — which uses a `TextureRect` with
+## `STRETCH_KEEP_ASPECT_CENTERED` — shows the same file correctly. The node is also what lets the
+## walk be an eased position instead of a redraw per frame.
+var _hero: TextureRect
+## The area's own art, loaded OUTSIDE the draw. `_draw_ground()` used to call `_stop_art()` from
+## inside `_draw()`, and that combination renders the texture WHITE: measured, the shipped
+## `_draw_ground(390, 844)` alone on a bare canvas came out a flat (0.3176,0.3176,0.3216) —
+## 81 % of the whole frame in one colour — while the same three draw calls with the texture
+## loaded beforehand gave the art's real dark reading (0.078/0.106 at the same pixels). Loading
+## a texture and drawing it in the same `_draw()` is the trap; the file, alpha and destination
+## were never wrong. Cached in `refresh()` (and once in `_build()` so the first draw has it).
+var _ground_tex: Texture2D
+
+## Where the hero is, in NODES. -1 is "at the very start, not on a node" — which only happens on
+## a fresh zone, so the first thing the player sees is the hero walking INTO the road.
+var _walk_from := -1
+var _walk_progress := 1.0
+const WALK_SPEED := 1.6  # nodes per second
+
+
+func _init(game_data: Node, state, find_item: Callable) -> void:
+	_data = game_data
+	_state = state
+	_find_item = find_item
+
+
+func _ready() -> void:
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_build()
+
+
+## Every entry into the screen goes through here. `show_screen` calls it, so the header, the
+## buttons and the start position can never disagree with the save.
+func refresh() -> void:
+	_walk_from = _current_fight() - 1
+	_walk_progress = 1.0
+	# The ground's texture is resolved HERE, once per entry, and never from inside `_draw()`.
+	_ground_tex = _stop_art()
+	if _header_act != null:
+		_header_act.text = _zone_name()
+		_header_fight.text = "souboj %d/%d" % [_current_fight(), _total_fights()]
+	_refresh_actions()
+	_place_hero()
+	if _canvas != null:
+		_canvas.queue_redraw()
+
+
+func _current_fight() -> int:
+	return int(_state.data["areaFightProgress"][_act_id()])
+
+
+func _total_fights() -> int:
+	return int(Battle.FIGHTS_PER_ZONE)
+
+
+func _act_id() -> int:
+	return int(_state.data.get("_currentAct", 0))
+
+
+## The heading is the STOP's own name ("Meadow"), which is the area the road runs through — the
+## same table and the same lookup the map uses for its stop cards, so the two screens name the
+## place identically. The STOP_NAMES table is keyed by act id, each act holding its stops.
+func _zone_name() -> String:
+	var names: Dictionary = _data.table("STOP_NAMES_EN", {})
+	var per_act: Variant = names.get(str(_act_id()), null)
+	var stop := int(_state.data["locationProgress"][_act_id()])
+	if per_act is Array and stop < (per_act as Array).size():
+		return str((per_act as Array)[stop])
+	return "Oblast %d" % (_act_id() + 1)
+
+
+## `.map-actions`' two buttons, now on the road where they belong. Both are conditional and the
+## conditions are DIFFERENT — that is the whole point of the naming work on the handlers:
+##
+##   * "Jít domů" is always there: the walk is what costs the zone's fights, and a player must be
+##     able to take it at any time.
+##   * "Town Portal" only while a scroll is carried; it STORES the position and spends the
+##     scroll (`_on_map_portal_used` in main), so the return is free.
+func _refresh_actions() -> void:
+	if _portal_button == null:
+		return
+	_portal_button.visible = int(_state.data.get("townPortalCount", 0)) > 0
+
+
+func _process(delta: float) -> void:
+	if _canvas == null:
+		return
+	_place_hero()
+	if _walk_progress >= 1.0:
+		return
+	var target := float(_current_fight() - 1)
+	var span := target - float(_walk_from)
+	if is_zero_approx(span):
+		_walk_progress = 1.0
+		return
+	_walk_progress = minf(1.0, _walk_progress + delta * WALK_SPEED / absf(span))
+	_canvas.queue_redraw()
+
+
+# ============================================================================ build
+
+func _build() -> void:
+	var bg := ColorRect.new()
+	bg.color = BG
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+
+	_canvas = Control.new()
+	_canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.draw.connect(_draw_road)
+	add_child(_canvas)
+
+	_hero = TextureRect.new()
+	_hero.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_hero.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hero.texture = UIKit.load_texture("assets/monsters/hero_body_%s.png"
+		% str(_state.data.get("heroClass", "barbarian")))
+	# ⚠️  The size is set ONCE, here, and never from inside `_draw_road`. Measured: assigning a
+	# Control's `size` during another node's `_draw()` did not stick — the hero node stayed 0x0 and
+	# drew nothing at all, while the same `TextureRect` works in the arena. Position is cheap and
+	# changes every frame; size is a constant.
+	_hero.size = Vector2(HERO_SIZE, HERO_SIZE)
+	add_child(_hero)
+
+	# The very first draw happens before any `refresh()`, so the ground's texture is resolved here
+	# too — same reason as in `refresh()`, and the same rule: never load a texture from `_draw()`.
+	_ground_tex = _stop_art()
+
+	_build_header()
+	_build_actions()
+
+
+## `.battle-header`'s shape: the place on the left, the fight counter as its second line. No
+## invented stat lines — the map's own lesson was that invented state is the biggest visual diff.
+func _build_header() -> void:
+	var head := VBoxContainer.new()
+	head.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	head.offset_top = 18
+	head.offset_left = 16
+	head.offset_right = -16
+	head.add_theme_constant_override("separation", 2)
+	add_child(head)
+
+	_header_act = Label.new()
+	_header_act.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_header_act.add_theme_font_size_override("font_size", 17)
+	_header_act.add_theme_color_override("font_color", Color(UIKit.TEXT))
+	head.add_child(_header_act)
+
+	_header_fight = Label.new()
+	_header_fight.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_header_fight.add_theme_font_size_override("font_size", 12)
+	_header_fight.add_theme_color_override("font_color", GOLD)
+	head.add_child(_header_fight)
+
+
+func _build_actions() -> void:
+	var row := HBoxContainer.new()
+	row.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	row.offset_bottom = -UIKit.NAV_RESERVE + 8
+	row.offset_top = row.offset_bottom - 30
+	row.offset_left = 12
+	row.offset_right = -12
+	row.add_theme_constant_override("separation", 8)
+	add_child(row)
+
+	_walk_button = UIKit.secondary_button("Jít domů", 30)
+	_walk_button.add_theme_font_size_override("font_size", 12)
+	_walk_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_walk_button.pressed.connect(func(): walk_home_requested.emit())
+	row.add_child(_walk_button)
+
+	_portal_button = UIKit.secondary_button("Town Portal", 30)
+	_portal_button.add_theme_font_size_override("font_size", 12)
+	_portal_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_portal_button.visible = false
+	_portal_button.pressed.connect(func(): portal_requested.emit())
+	row.add_child(_portal_button)
+
+
+# ============================================================================ geometry
+
+## The meander is a SINE of the node index, so it is pure arithmetic: no random seed, no drifting
+## between a redraw and a tap. The nodes' own rects are read back from this by the hit test, which
+## is what keeps a tap landing on the node the player aimed at.
+func node_pos(index: int) -> Vector2:
+	var total := _total_fights()
+	if total <= 1:
+		return size * 0.5
+	var t := float(index) / float(total - 1)
+	var mid := (ROAD_LEFT + ROAD_RIGHT) * 0.5
+	var amp := (ROAD_RIGHT - ROAD_LEFT) * 0.5
+	var x := size.x * (mid + amp * sin(t * 3.35 + 0.35) * (MEANDER / amp))
+	var y := size.y * (ROAD_TOP + t * (ROAD_BOTTOM - ROAD_TOP))
+	return Vector2(clampf(x, 34.0, size.x - 34.0), y)
+
+
+const NODE_R := 16.0
+## The hero's drawn height. Constant, so it is set once in `_build()`.
+const HERO_SIZE := 96.0
+
+
+## Which node a point is on, or -1. Taps are resolved against the DRAWN positions, so the drawing
+## and the hit test cannot drift apart.
+func node_at(point: Vector2) -> int:
+	for i in _total_fights():
+		var p := node_pos(i)
+		if absf(point.x - p.x) <= 26.0 and absf(point.y - p.y) <= 26.0:
+			return i
+	return -1
+
+
+# ============================================================================ drawing
+
+func _draw_road() -> void:
+	var w := size.x
+	var h := size.y
+	_draw_ground(w, h)
+	var total := _total_fights()
+
+	# The road: a thick meandering band, drawn segment by segment so it follows the nodes.
+	var left: Array[Vector2] = []
+	var right: Array[Vector2] = []
+	for i in total:
+		var p := node_pos(i)
+		left.append(Vector2(p.x - 17.0, p.y))
+		right.append(Vector2(p.x + 17.0, p.y))
+	_canvas.draw_polyline(_pairs(left), ROAD, 30.0)
+	_canvas.draw_polyline(_pairs(left), ROAD_EDGE, 2.0)
+	_canvas.draw_polyline(_pairs(right), ROAD_EDGE, 2.0)
+
+	# The way HOME: a branch off node 0 going up and out of the road. Jan's "vlastní cesta" — it
+	# is its own road, and it is the ONLY thing on this screen that is not a fight.
+	var home := node_pos(0)
+	var gate := Vector2(w * 0.5, 74.0)
+	_canvas.draw_line(home, gate, ROAD, 18.0)
+	_canvas.draw_line(home, gate, ROAD_EDGE, 2.0)
+	_draw_home(gate)
+
+	# The hero's shadow goes on the canvas (under his feet); the figure itself is the node above,
+	# positioned by `_place_hero()` — see the size note in `_build()`.
+	var anchor := _hero_anchor()
+	_canvas.draw_circle(Vector2(anchor.x, anchor.y + 2.0), 16.0, Color(0, 0, 0, 0.5))
+
+	for i in total:
+		_draw_node(i, node_pos(i))
+
+
+## The area's own art, dimmed, as the ground — cover-fitted so the portrait screen is filled.
+func _draw_ground(w: float, h: float) -> void:
+	var tex := _ground_tex
+	if tex == null:
+		return
+	var tex_size := tex.get_size()
+	if tex_size.x <= 0.0 or tex_size.y <= 0.0:
+		return
+	var scale_factor := maxf(w / tex_size.x, h / tex_size.y)
+	var drawn := tex_size * scale_factor
+	var origin := Vector2((w - drawn.x) * 0.5, (h - drawn.y) * 0.5)
+	_canvas.draw_texture_rect(tex, Rect2(origin, drawn), false, Color(1, 1, 1, 0.42))
+	# A veil over the whole thing, so the road and the labels read against the painting. Flat
+	# toning, no glow — Jan's standing rule.
+	_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(w, h)), Color(0.05, 0.05, 0.06, 0.35))
+
+
+func _draw_home(gate: Vector2) -> void:
+	_canvas.draw_circle(gate, 22.0, Color("#1a1a1a"))
+	_canvas.draw_arc(gate, 22.0, 0.0, TAU, 40, Color("#8a7a4a"), 2.0)
+	var house := UIKit.load_texture("assets/menu-icons/mesto.png")
+	if house != null:
+		_canvas.draw_texture_rect(house, Rect2(gate - Vector2(15, 15), Vector2(30, 30)), false)
+	var font := UIFonts.get_font(10)
+	if font != null:
+		# Centred ON the road, which is where the eye already is. The full sentence is on the
+		# button that takes the decision ("Jít domů"), so this is a label, not a warning.
+		_canvas.draw_string(font, gate + Vector2(-90, 40), "domů",
+			HORIZONTAL_ALIGNMENT_CENTER, 180.0, 10, Color("#9a9a9a"))
+
+
+## Four states, and an empty state is a STYLE rather than a hidden node: done (a tick), current
+## (gold, the fight the player is on), next (tappable), locked (dim).
+func _draw_node(index: int, p: Vector2) -> void:
+	var fight := index + 1
+	var current := _current_fight()
+	var done := fight < current
+	var is_current := fight == current
+	var is_next := fight == current + 1
+
+	var fill := Color("#141414")
+	var border := DIM
+	if done:
+		border = NODE_DONE
+	elif is_next:
+		border = NODE_NEXT
+		fill = Color("#1c1c1c")
+	_canvas.draw_circle(p, NODE_R, fill)
+	if is_current:
+		_canvas.draw_arc(p, NODE_R + 5.0, 0.0, TAU, 48, GOLD, 3.0)
+		border = GOLD
+	_canvas.draw_arc(p, NODE_R, 0.0, TAU, 40, border, 2.0)
+
+	var font := UIFonts.get_font(14)
+	if font == null:
+		return
+	if done:
+		# A tick, drawn rather than a glyph: DejaVu has no emoji and the game forbids them.
+		_canvas.draw_line(p + Vector2(-6, 0), p + Vector2(-2, 5), NODE_DONE, 2.0)
+		_canvas.draw_line(p + Vector2(-2, 5), p + Vector2(7, -6), NODE_DONE, 2.0)
+	else:
+		var colour := GOLD if is_current else (Color(UIKit.TEXT) if is_next else DIM)
+		_canvas.draw_string(font, p + Vector2(0, 5), str(fight), HORIZONTAL_ALIGNMENT_CENTER,
+			NODE_R * 2.0, 14, colour)
+
+
+## The hero between two nodes while he walks, on a node while he waits. Jan's "vizuální pohyb":
+## the same body sprite the arena uses, so it is one character across both screens.
+func _hero_anchor() -> Vector2:
+	var to := _current_fight() - 1
+	if _walk_from < 0:
+		return node_pos(0) + Vector2(0, 26)
+	if _walk_from == to:
+		return node_pos(to)
+	return node_pos(_walk_from).lerp(node_pos(to), _walk_progress)
+
+
+func _place_hero() -> void:
+	if _hero == null:
+		return
+	var anchor := _hero_anchor()
+	_hero.position = Vector2(anchor.x - HERO_SIZE * 0.5, anchor.y - HERO_SIZE + 14.0)
+
+
+func _pairs(points: Array[Vector2]) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p in points:
+		out.append(p)
+	return out
+
+
+func _stop_art() -> Texture2D:
+	var act := _act_id()
+	var stop := int(_state.data["locationProgress"][act])
+	var path := "assets/stops/stop_act%d_%d.webp" % [act, stop]
+	var tex := UIKit.load_texture(path)
+	if tex == null:
+		tex = UIKit.load_texture("assets/stops/placeholder_act%d.png" % act)
+	return tex
