@@ -23,6 +23,7 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
+const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
 
 var _data: Node
 var _gen: ItemGen
@@ -42,6 +43,7 @@ func _initialize() -> void:
 	_test_the_bar_refreshes_when_a_cooldown_expires()
 	_test_buttons_survive_a_render_tick()
 	_test_the_result_tiles_come_down_on_the_tap_clock()
+	_test_backdrop_is_the_stop_being_fought()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -293,3 +295,78 @@ func _test_the_result_tiles_come_down_on_the_tap_clock() -> void:
 		fresh.step()
 	if fresh._button_lock_ms != before:
 		_fail("step() moved the tap guard: it is still counted in FIGHT ticks")
+
+
+## The fight has to happen where the hero is standing, so the arena carries the STOP's own
+## art behind it. Three things are asserted, and the third is the one that has bitten this
+## project before: the art is the stop the BATTLE names (not the one the caller passed), the
+## veil that keeps the HUD readable is present, and the backdrop sits UNDER the HUD in draw
+## order — a backdrop added after the content is a backdrop nobody sees, which reads as
+## "the background does not work" rather than as a z-order bug.
+func _test_backdrop_is_the_stop_being_fought() -> void:
+	var state = _new_state()
+	var screen := _arena(state)
+	var art: TextureRect = screen._hero_backdrop
+	if art == null:
+		_fail("the arena has no backdrop node at all")
+		return
+
+	# 1. The art is the one the battle's own act/zone resolves to.
+	var act_id := int(screen.battle.act_id)
+	var stop := int(screen.battle.progress)
+	var want := TransitionScreen.stop_art_path(act_id, stop)
+	if want == "":
+		_fail("the stop the fight is in has no art path at all")
+		return
+	if art.texture == null:
+		_fail("the backdrop has no texture - the stop art did not load")
+		return
+	# A wrong-but-loadable texture is the failure this catches: the placeholder is a valid
+	# image, so "it loaded" is not evidence that it loaded the RIGHT place.
+	var want_tex: Texture2D = load(want)
+	if want_tex == null:
+		_fail("the stop art at %s does not load" % want)
+		return
+	if art.texture.get_width() != want_tex.get_width() \
+			or art.texture.get_size() != want_tex.get_size():
+		_fail("the backdrop is not the stop's art (got %sx%s, want %sx%s)" % [
+			art.texture.get_width(), art.texture.get_height(),
+			want_tex.get_width(), want_tex.get_height()])
+		return
+	if art.stretch_mode != TextureRect.STRETCH_KEEP_ASPECT_COVERED:
+		_fail("the backdrop must COVER: the art is square and the viewport is portrait")
+
+	# 2. The veil exists, so the HUD is not drawn straight onto a mid-tone painting.
+	var holder: Control = art.get_parent()
+	if holder == null:
+		_fail("the backdrop has no holder")
+		return
+	var veil := holder.get_node_or_null("BackdropVeil")
+	if veil == null:
+		_fail("the backdrop has no veil - dark labels on a painting are unreadable")
+		return
+	if not veil.draw.is_connected(screen._draw_backdrop_veil):
+		_fail("the veil never connects its draw - it would be an invisible node")
+
+	# 3. DRAW ORDER. The HUD is added after the backdrop, so the backdrop must come first
+	#    among the screen's own children or it paints over the fight.
+	var holder_index := holder.get_index()
+	for child in screen.get_children():
+		if child == holder:
+			continue
+		# Non-Control children (the sfx player) do not paint anything.
+		if child is Control and child.get_index() < holder_index:
+			_fail("a Control (%s) is added BEFORE the backdrop - it would be painted under it"
+				% child.name)
+			return
+	if holder_index != 0:
+		_fail("the backdrop is not the first child (index %d)" % holder_index)
+
+
+func _new_state():
+	# Built the way the other arena tests build it: bind the data, pick a class, then let
+	# `battle.setup()` read the real act/zone off the save.
+	var st = GameState.new()
+	st.bind_data(_data)
+	st.set_class("barbarian")
+	return st

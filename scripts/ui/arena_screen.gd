@@ -108,8 +108,28 @@ var _cast_this_frame := false
 ## text trail any more, so there is no `LOG_LINES`, no `_log_box` and no `_log_lines`:
 ## a leftover field would only invite the log back.
 
-## PWA colours, verbatim from public/style.css.
+## The arena's backdrop is the STOP's own art — the place the hero walked into — not a flat
+## panel. Jan's call: in the world the enemy and the land are both visible, so the fight has
+## to happen where he is standing.
+##
+## `cover` here, deliberately, and the reason is measured rather than taste: the viewport is
+## 390x844 (portrait) while the stop art is 512x512, so a `cover` fit scales it 1.65x and
+## shows the middle 46 % of the width. `contain` would instead letterbox a square into a
+## 390x844 box and leave most of the screen black, which is the flat panel we are replacing.
 const C_BG := "#121212"
+## The backdrop is darkened with a `multiply`-style scale rather than an overlay, so the
+## fight's rings keep the light ground the reference has. Measured against the PWA's own
+## arena: the backdrop is present but never competes with the fight.
+const ARENA_BG_DIM := 0.55
+## Top-to-bottom veil over the backdrop. The HUD (header, rings, bars, buttons) sits on top
+## of the art, and dark text on a mid-tone painting is unreadable without it. 0.62 at the
+## very top fades to fully transparent above the rings, then the bottom band comes back
+## under the action buttons for the same reason.
+const ARENA_BG_VEIL_TOP := 0.62
+const ARENA_BG_VEIL_BOTTOM := 0.45
+## Where the bottom band starts, as a fraction of the viewport height. The action buttons
+## live in the bottom ~22 % of a 844px screen, so the band covers that and stops.
+const ARENA_BG_VEIL_BOTTOM_FROM := 0.74
 const C_GOLD := "#f1c40f"
 ## The icon on the result page's GOLD row — a real image, because the game has no emoji, and
 ## drawn by `tools/import/make_coin.py` so it is reproducible.
@@ -194,6 +214,9 @@ var _enemy_name: Label
 var _location_label: Label
 var _enemy_hp_label: Label
 var _hero_sprite: TextureRect
+## The stop's own art behind the fight (see `_background()`). Held so `start()` can point it
+## at the place the battle is actually in.
+var _hero_backdrop: TextureRect
 var _pack_row: HBoxContainer
 ## Which pack member the screen is currently showing, so a hand-over is noticed.
 var _pack_displayed := 0
@@ -701,12 +724,85 @@ func _build_confirm() -> void:
 	row.add_child(yes_button)
 
 
+## The arena's own backdrop: the stop's art, dimmed, with a veil top and bottom so the HUD
+## stays readable on top of it. The flat panel is kept as the FALLBACK — a stop whose art is
+## missing must not render as an empty screen, and the placeholder path already covers that.
+##
+## The art is chosen from the battle's own `act_id`/`progress`, i.e. from the SAME stop the
+## map sent the player to, so the arena can never show a different place than the one the
+## transition announced.
 func _background() -> Control:
+	var holder := Control.new()
+	holder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 	var bg := ColorRect.new()
+	bg.name = "BackdropFlat"
 	bg.color = Color(C_BG)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return bg
+	holder.add_child(bg)
+
+	var art := TextureRect.new()
+	art.name = "BackdropArt"
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	# `cover`, not `contain`: see ARENA_BG_DIM's note — the art is square and the viewport
+	# is portrait, so `contain` would letterbox it into mostly black.
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.texture = null
+	# Dim the painting rather than painting a black rectangle over it: a `modulate` SCALES
+	# the channels, which keeps the art's own contrast, where an overlay would flatten it.
+	art.modulate = Color(ARENA_BG_DIM, ARENA_BG_DIM, ARENA_BG_DIM, 1.0)
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(art)
+	_hero_backdrop = art
+
+	var veil := Control.new()
+	veil.name = "BackdropVeil"
+	veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veil.draw.connect(_draw_backdrop_veil.bind(veil))
+	holder.add_child(veil)
+	return holder
+
+
+## The veil, drawn against the veil node's own rect. Top band: ARENA_BG_VEIL_TOP fading to
+## nothing just above the rings. Bottom band: ARENA_BG_VEIL_BOTTOM under the action buttons.
+## Drawn rather than two ColorRects with a gradient shader, because the fade is the only
+## thing needed and a shader for it would be a material per screen for one soft edge.
+func _draw_backdrop_veil(veil: Control) -> void:
+	var h := veil.size.y
+	if h <= 1.0:
+		return
+	var rows := 48
+	var split := h * 0.34
+	for i in rows:
+		var t := float(i) / float(rows)
+		var y := t * split
+		var alpha := ARENA_BG_VEIL_TOP * (1.0 - t)
+		if alpha <= 0.0:
+			continue
+		veil.draw_rect(Rect2(0.0, y, veil.size.x, split / float(rows) + 1.0),
+			Color(0, 0, 0, alpha))
+	var band_top := h * ARENA_BG_VEIL_BOTTOM_FROM
+	var band_h := h - band_top
+	for i in rows:
+		var t := float(i) / float(rows)
+		var alpha := ARENA_BG_VEIL_BOTTOM * smoothstep(0.0, 1.0, t)
+		if alpha <= 0.0:
+			continue
+		veil.draw_rect(Rect2(0.0, band_top + t * band_h, veil.size.x, band_h / float(rows) + 1.0),
+			Color(0, 0, 0, alpha))
+
+
+## Point the backdrop at the stop being fought. Called from `start()` once the battle exists
+## and knows its act/zone. A missing art leaves the flat panel, never an empty frame.
+func _apply_backdrop(act_id: int, stop: int) -> void:
+	if _hero_backdrop == null:
+		return
+	var path := TransitionScreen.stop_art_path(act_id, stop)
+	_hero_backdrop.texture = _load(path) if path != "" else null
 
 
 ## `.battle-header` — enemy name on the left, location on the right, 6px/12px padding.
@@ -1133,6 +1229,9 @@ func start(state, find_item: Callable) -> bool:
 	_monster_seen = battle.monster_seen()
 	if not ok:
 		return false
+	# The backdrop is the stop the map sent the player to, read off the BATTLE rather than
+	# from the caller, so the two can never disagree.
+	_apply_backdrop(int(battle.act_id), int(battle.progress))
 	battle.apply_swing_timers(state, find_item)
 
 	# Every eased number starts where the RULES are. Without this the first frame of a fight
