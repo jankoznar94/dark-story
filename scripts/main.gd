@@ -165,7 +165,12 @@ func _build_screens() -> void:
 	# and runs `showTransition('town', …)`. That progress reset is why this is not a plain
 	# `show_screen("town")`.
 	map_screen.back_pressed.connect(_on_walk_to_town)
-	map_screen.portal_requested.connect(_on_town_portal)
+	# ⚠️  NOT `_on_town_portal` — that is the RETURN and it spends nothing. The map's button is
+	# `useTownPortalScrollFromMap`: it STORES the position and SPENDS a scroll, exactly like the
+	# result page's tile. Wiring it to the return made the map's button a no-op (there is no
+	# stored position yet) while the scroll stayed in the bag — the button looked alive and did
+	# nothing, which is worse than a dead button.
+	map_screen.portal_requested.connect(_on_map_portal)
 	map_screen.difficulty_selected.connect(_on_difficulty_selected)
 	map_screen.enter_stop.connect(_on_stop_selected)
 	_add_screen("map", map_screen)
@@ -718,6 +723,27 @@ func _on_another_fight() -> void:
 	# the mode is re-derived rather than inherited from the fight that just ended.
 	if _music != null:
 		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
+
+
+## The MAP's Town Portal button. The PWA's `useTownPortalScrollFromMap()`: store where the
+## hero is standing, spend one scroll, and move to town through the scroll's own transition.
+##
+## It is deliberately a near-twin of `_on_result_portal` — both are "spend the scroll on the way
+## OUT", and the only difference is where the position comes from. The act CANNOT be read off a
+## battle here (there is none on the map), so it is `_current_act_on_map()`, the same value the
+## PWA reads.
+func _on_map_portal() -> void:
+	if int(state.data.get("townPortalCount", 0)) <= 0:
+		return
+	var act_id := _current_act_on_map()
+	state.data["townPortalReturn"] = {
+		"actId": act_id,
+		"zoneId": int(state.data["locationProgress"][act_id]),
+		"areaFight": int(state.data["areaFightProgress"][act_id]),
+	}
+	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	state.save()
+	_transition_to(TransitionScreen.PORTAL_ART, func(): show_screen("town"))
 
 
 ## Town portal: only offered while a return position is stored. Returning rewinds to

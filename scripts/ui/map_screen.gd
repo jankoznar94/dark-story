@@ -173,6 +173,7 @@ func refresh() -> void:
 ## (y 83) is empty, and those the 47px are just `margin-bottom:10px` plus the scroll's
 ## 20px top padding and an 8px gap.
 func _refresh_difficulty() -> void:
+	_refresh_actions()
 	_clear(_difficulty_row)
 	var diffs: Array = _data.difficulties()
 	var current := int(_state.data.get("difficulty", 0))
@@ -242,6 +243,27 @@ func _refresh_difficulty() -> void:
 			var index := i
 			button.pressed.connect(func(): select_difficulty(index))
 		_difficulty_row.add_child(button)
+
+
+## `.map-actions` — the SECOND use of a scroll, and the only one on the map.
+##
+## ⚠️  `_portal_button.visible` was set ONLY in `_build()`, i.e. ONCE, to `false`. Nothing ever
+## raised it again: the button was never shown in any game state and `portal_requested` had a
+## single reachable source, the result page. On the map a carried scroll therefore had no way
+## to be used — Jan: "ještě musí být někde možnost portal scroll použít".
+##
+## The PWA shows it when the hero CARRIES a scroll and there is a current act
+## (`hasScroll && state._currentActOnMap >= 0`), and both halves matter: without the second
+## the map would offer a portal out of a campaign whose acts are all finished.
+##
+## It calls `useTownPortalScrollFromMap`, which behaves like the result tile — it STORES the
+## position and spends the scroll — while the town's own card calls `useTownPortal`, which
+## only RETURNS and spends nothing. Two different rules on two screens.
+func _refresh_actions() -> void:
+	if _portal_button == null:
+		return
+	var carrying := int(_state.data.get("townPortalCount", 0)) > 0
+	_portal_button.visible = carrying and _state.first_uncompleted_act() >= 0
 
 
 ## `setDifficulty` in the PWA resets `_expandedAct` to -1 before re-rendering the map, so
