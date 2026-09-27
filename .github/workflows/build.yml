@@ -304,6 +304,26 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ARENA_SMOOTHNESS_ALL_PASS=true"
 
+      # The fight's SOUND. Jan's report was "the music works, the combat sounds do not" —
+      # and the reason is that the port had NO combat sound system at all: every file was
+      # in the tree and the only reader was `music.gd`.
+      #
+      # Audibility is not assertable headlessly (there is no device and a headless
+      # `play()` never advances its position), so this pins the DECISION layer, which is
+      # where every bug in this kind of system lives: which cue each event raises, which
+      # FILE each cue resolves to (fists vs blunt vs staff vs blade is four noises), that
+      # every referenced asset really exists (magic bytes, not the import cache), that two
+      # cues in ONE tick both survive (a single-field design drops one), and that the
+      # drain CLEARS the queue. Verified by mutation: un-clearing the drain, collapsing the
+      # queue to one field, flattening the weapon map and removing the swing/miss cues each
+      # turn exactly one assertion red.
+      - name: SFX test (the fight's sound cues and their files)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_sfx.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SFX_ALL_PASS=true"
+
       # The item-info panel (`#invItemOverlay`), which is where Jan's three reports lived:
       # a looted amulet with a WHITE name and no stats at all, stat rows that looked
       # "weirdly right-aligned", and a close button too small to press.

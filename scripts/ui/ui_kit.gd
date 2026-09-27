@@ -860,6 +860,9 @@ static func stat_cell(text: String, colour: String, size: int, expands: bool) ->
 static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 		placeholder: String = "") -> Button:
 	var cell := Button.new()
+	# `.inv-slot` / `.bag-cell` / `.chest-cell` are all `<div onclick=…>` in the PWA — a slot
+	# has no click sound there. See `Main._install_click_sfx`.
+	cell.add_to_group("no_click_sfx")
 	cell.custom_minimum_size = Vector2(size, size)
 	cell.focus_mode = Control.FOCUS_NONE
 	var is_empty := item.is_empty()

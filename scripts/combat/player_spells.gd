@@ -30,6 +30,7 @@ class_name PlayerSpells
 
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 ## Spells whose effect this module actually applies. The rest exist in the data and are
 ## refused with a reason rather than being pretended at — the same rule the enemy
 ## spells follow in battle.gd.
@@ -255,6 +256,9 @@ static func _apply(battle, spell_id: String, lv: int, state, find_item: Callable
 			var dmg_pct := 5.0 + float(lv) * 5.0
 			battle.battle_shout_dmg_pct = dmg_pct
 			battle.battle_shout_ms = SHOUT_MS
+			# `castClassSpell` -> `playSFX(shoutSfx)` for EVERY shout, in the same branch that
+			# spawns the coloured rings. All three of the barbarian's shouts use it.
+			battle.sound(Sfx.CUE_SHOUT)
 			return _ok(spell_id, "Battle Shout: +%d%% poskozeni" % int(dmg_pct), 0)
 
 		"defensiveShout":
@@ -263,6 +267,7 @@ static func _apply(battle, spell_id: String, lv: int, state, find_item: Callable
 			var armor_pct: float = float(table[clampi(lv - 1, 0, 4)])
 			battle.defensive_shout_armor_pct = armor_pct
 			battle.defensive_shout_ms = SHOUT_MS
+			battle.sound(Sfx.CUE_SHOUT)
 			return _ok(spell_id, "Defensive Shout: +%d%% obrany" % int(armor_pct), 0)
 
 	return {"ok": false, "message": "Kouzlo nema efekt", "damage": 0, "spell": spell_id}
@@ -291,6 +296,8 @@ static func _double_swing(battle, lv: int, state, find_item: Callable, data: Nod
 	if not battle.roll_player_hit(state, find_item, ar_mult):
 		battle.player_swing_elapsed = 0.0
 		battle.spell_cooldowns["doubleSwing"] = maxi(battle.player_swing_ms, battle.offhand_swing_ms)
+		# The PWA plays the dodge sound on a missed Double Swing, the same as any other whiff.
+		battle.sound(Sfx.CUE_DODGE)
 		return _ok("doubleSwing", "Double Swing: MISS", 0)
 
 	var dmg_mult := 1.0 + float(25 * lv) / 100.0
@@ -301,6 +308,8 @@ static func _double_swing(battle, lv: int, state, find_item: Callable, data: Nod
 
 	battle.enemy_hp -= float(total)
 	battle.note("DOUBLE SWING", total, false)
+	# Two weapons at once, so the MAIN hand's own hit sound — `getHitSfx()` with no override.
+	battle.sound(Sfx.cue_for_weapon(weapon, false))
 	# Both swings were spent, and the cooldown is the slower of the two weapons.
 	battle.player_swing_elapsed = 0.0
 	battle.offhand_swing_elapsed = 0.0
@@ -327,6 +336,7 @@ static func _thunder_clap(battle, lv: int, state, find_item: Callable, data: Nod
 	var slow_ms := (1 + lv) * 1000
 	battle.apply_enemy_slow(slow_pct, slow_ms)
 	battle.note("THUNDER CLAP", dmg, false)
+	battle.sound(Sfx.CUE_THUNDER_CLAP)
 	if battle.enemy_hp <= 0.0:
 		battle.mark_enemy_dead(state, find_item)
 	return _ok("thunderClap", "Thunder Clap: %d, slow na %d s" % [dmg, 1 + lv], dmg)
@@ -348,6 +358,7 @@ static func _thunder_bolt(battle, lv: int, state, find_item: Callable, data: Nod
 	battle.enemy_stun_ms = int(round((3.0 + float(lv - 1) * 0.5) * 1000.0))
 	battle.enemy_swing_elapsed = 0.0
 	battle.note("THUNDER BOLT", dmg, false)
+	battle.sound(Sfx.CUE_THUNDER_BOLT)
 	if battle.enemy_hp <= 0.0:
 		battle.mark_enemy_dead(state, find_item)
 	return _ok("thunderBolt", "Thunder Bolt: %d, omraceni" % dmg, dmg)
@@ -388,6 +399,10 @@ static func _pummel(battle, lv: int, state, find_item: Callable) -> Dictionary:
 		battle.enemy_swing_elapsed = 0.0
 	battle.enemy_cast_blocked_ms = block_ms
 	battle.note("PUMMEL" + (" INTERRUPT" if interrupted else ""), 0, false)
+	# Only a successful INTERRUPT has a sound in the PWA; a Pummel that lands on a monster
+	# which is not casting is silent there, so it is silent here.
+	if interrupted:
+		battle.sound(Sfx.CUE_DODGE)
 	return _ok("pummel", "Pummel: blok kouzleni na %d s" % (2 + lv), 0)
 
 
@@ -421,6 +436,10 @@ static func _spell_reflect(battle, lv: int, state, find_item: Callable, data: No
 			battle.mark_enemy_dead(state, find_item)
 	else:
 		battle.note("REFLECT %s (neofenzivni)" % incoming, 0, false)
+	# ⚠️  The shout is played on BOTH branches of the PWA's reflect — an offensive cast thrown
+	# back and a non-offensive one merely cancelled get the same rings and the same sound. The
+	# port had no sound on either.
+	battle.sound(Sfx.CUE_SHOUT)
 	return _ok("spellReflect", "Spell Reflect: odrazeno %d" % dmg, dmg)
 
 

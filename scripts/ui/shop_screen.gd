@@ -460,12 +460,17 @@ func _on_buy(item: Dictionary) -> void:
 	message.emit(str(result["message"]))
 	_rebuild_categories()
 	refresh()
+	# `buyItem` — `playSFX(shopSfx)`, the shop's own chime on every completed purchase.
+	Sfx.play_global(Sfx.CUE_SHOP)
 
 
 func _on_sell(item_id: String) -> void:
 	var result := ShopStock.sell(_state, item_id, _find_item)
 	message.emit(str(result["message"]))
 	refresh()
+	# `sellItem` — the same `shopSfx`. The PWA's global button-click listener EXCLUDES
+	# `.shop-item-actions`, so this chime is the only sound a Buy or a Sell makes.
+	Sfx.play_global(Sfx.CUE_SHOP)
 
 
 ## A fresh RNG per stock generation: the shop is meant to differ every visit, and a

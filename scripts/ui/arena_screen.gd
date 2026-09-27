@@ -60,6 +60,7 @@ class_name ArenaScreen
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 
@@ -113,6 +114,10 @@ const C_GOLD := "#f1c40f"
 ## The icon on the result page's GOLD row — a real image, because the game has no emoji, and
 ## drawn by `tools/import/make_coin.py` so it is reproducible.
 const COIN_ICON := "assets/items/coin_gold.png"
+## The two cues the SCREEN raises itself, because no rule can: a potion drunk from the belt
+## and a level-up. Both are the PWA's own sound at the PWA's own moment.
+const CUE_POTION := "potion"
+const CUE_LEVELUP := "levelup"
 const C_ENEMY_TIMER := "#e67e22"
 const C_DIVIDER := "#9a9a9a"
 const C_ENEMY_HP := "#e74c3c"
@@ -211,6 +216,10 @@ var _mana_fill: ColorRect
 var _mana_label: Label
 var _xp_fill: ColorRect
 var _xp_label: Label
+
+## The fight's sound mixer (see `scripts/audio/sfx.gd`). Owned by the screen because it
+## needs the SceneTree; fed by `battle.take_sfx_cues()`.
+var _sfx: Sfx
 
 var _potion_row: HBoxContainer
 ## One button per learned class spell, rebuilt whenever the fight state changes.
@@ -372,6 +381,12 @@ func _init(game_data: Node, gen: ItemGen, loot, state, find_item: Callable) -> v
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# The fight's sound mixer. A NODE, not a field on the battle: `battle` is a RefCounted
+	# and never enters the tree, so it cannot own an `AudioStreamPlayer`, and the rules must
+	# stay playable headlessly (a `--script` test has no audio device at all).
+	_sfx = Sfx.new()
+	_sfx.name = "Sfx"
+	add_child(_sfx)
 	_build()
 
 
@@ -556,6 +571,8 @@ func _tile_size() -> float:
 ## the art's bottom in a 60 % black plate.
 func _make_action_tile(icon_path: String, label_text: String, on_press: Callable) -> Button:
 	var tile := Button.new()
+	# `.result-tile` is a `<div onclick=…>` in the PWA.
+	tile.add_to_group("no_click_sfx")
 	tile.custom_minimum_size = Vector2(RESULT_TILE, RESULT_TILE)
 	tile.focus_mode = Control.FOCUS_NONE
 	# `.result-bottom { align-items:center }` + `.result-tile { aspect-ratio:1 }` — a tile is
@@ -613,7 +630,7 @@ func _rebuild_result_actions(won: bool, stop_complete: bool, has_portal: bool) -
 	var act_id := battle.act_id
 	if stop_complete:
 		_result_actions.add_child(_make_action_tile("assets/map.webp", "Mapa",
-			func(): map_requested.emit()))
+			func(): _on_map_pressed()))
 	else:
 		_result_actions.add_child(_make_action_tile("assets/items/weapon_broad_sword.png",
 			"Dalsi souboj", func(): _on_next_pressed()))
@@ -1009,6 +1026,8 @@ func _make_bar(track_colour: String, fill_colour: String, border_colour: String 
 
 func _make_button(text: String) -> Button:
 	var b := Button.new()
+	# `.result-tile` is a `<div onclick=…>` in the PWA — the victory page's tiles are silent.
+	b.add_to_group("no_click_sfx")
 	b.text = text
 	b.custom_minimum_size = Vector2(150, 40)
 	b.focus_mode = Control.FOCUS_NONE
@@ -1187,6 +1206,14 @@ func _process(delta: float) -> void:
 		step()
 		if battle == null or battle.ended:
 			break
+	# The fight's SOUNDS are drained here, on the frame, not inside `step()`.
+	#
+	# `battle.sound()` queues a cue per RULE EVENT and a single tick can raise two of them
+	# (Double Swing lands two blows at once), so draining at the end of `step()` would keep
+	# only the last one. It also has to run even when the fight has just ENDED: the killing
+	# blow's sound belongs to the blow.
+	if battle != null:
+		_play_cues()
 	if steps > 0 and _tick_accumulator > float(TICK_MS):
 		# A stall longer than MAX_STEPS_PER_FRAME worth of steps (the phone woke up, the
 		# browser tab was backgrounded) leaves time nobody can spend: the cap is what stops
@@ -1201,6 +1228,27 @@ func _process(delta: float) -> void:
 	_apply_centring()
 	_animate(delta)
 	_smooth_update()
+
+
+## Play everything the fight raised since the last frame. `Sfx` is a child node created in
+## `_ready()`; the screen never touches an audio file itself, it just feeds the mixer the
+## cues the rules produced.
+func _play_cues() -> void:
+	if _sfx == null:
+		return
+	if battle == null:
+		return
+	for cue in battle.take_sfx_cues():
+		_sfx.play(str(cue))
+
+
+## Play one cue directly, for the taps the BATTLE cannot know about (a potion, a loot grab).
+## Named `_play` rather than `_sfx.play(...)` at each site so a screen with no mixer built
+## yet — a `SceneTree` test that never ran `_ready()` — is a no-op rather than a null crash.
+func _play(cue: String) -> void:
+	if _sfx == null:
+		return
+	_sfx.play(cue)
 
 
 func _drain_log() -> void:
@@ -1688,6 +1736,8 @@ func _refresh_spells() -> void:
 		# `.arena-class-spell-btn` — 48x42, radius 8, black, orange border when usable,
 		# gold when queued. The icon is the spell's own image; the port forbids emoji.
 		var button := Button.new()
+		# `.mb-spells` is on the PWA's own click-exclusion list — a spell has its own sound.
+		button.add_to_group("no_click_sfx")
 		button.custom_minimum_size = Vector2(48, 42)
 		button.focus_mode = Control.FOCUS_NONE
 		button.tooltip_text = str(entry["name"])
@@ -1856,6 +1906,9 @@ func _potion_slot(potion_id: String, count: int) -> Control:
 	holder.add_child(badge)
 
 	var button := Button.new()
+	# `<div class="mb-potion-btn" onclick=…>` in the PWA — the POTION has its own sound
+	# (`use_potion` plays it) and the click listener explicitly skips `.mb-potion-buttons`.
+	button.add_to_group("no_click_sfx")
 	button.focus_mode = Control.FOCUS_NONE
 	_blank_style(button)
 	button.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1929,6 +1982,9 @@ func use_potion(potion_id: String) -> Dictionary:
 	_state.save()
 	_refresh_potions()
 	render()
+	# The belt tile's tap. The PWA's global button-click SFX skips `.mb-potion-buttons`,
+	# so the potion's own sound is the only one this tap makes.
+	_play(CUE_POTION)
 	return {"ok": true, "message": "Vypito"}
 
 
@@ -1948,6 +2004,20 @@ func _finish_fight() -> void:
 	var stop_complete := int(_state.data["areaFightProgress"][battle.act_id]) >= Battle.FIGHTS_PER_ZONE
 	if battle.won:
 		award_loot()
+		# The PWA's fight-ending jingle, and it depends on WHAT was beaten: a boss gets
+		# `sfxBossDefeat` (a four-tone ascension) and an ordinary kill `sfxSuccess` (three
+		# tones). Both are SYNTHESISED in the PWA — `playTone` oscillators, no file — so
+		# they come out of the mixer's tone table, not out of `assets/`.
+		#
+		# ⚠️  A DEFEAT gets no jingle of its own: the PWA's loss path plays nothing here
+		# (its `sfxPlayerHit` belongs to the training minigame). Adding a sad noise would
+		# be inventing an element.
+		_play(Sfx.CUE_BOSS_DEFEAT if battle.is_boss else Sfx.CUE_VICTORY)
+		# The PWA's victory page plays the TREASURE fanfare as it comes up
+		# (`endMapBattle` -> `playSFX(treasureSfx)`) and then the shop's chime on top of it
+		# when the loot popup opens. Both are the page's own sound, not the loot's.
+		_play(Sfx.CUE_TREASURE)
+		_play(Sfx.CUE_SHOP)
 	else:
 		# A defeat drops nothing (the PWA clears the list), and the consolation gold the
 		# battle paid is not a DROP — it must not appear as a loot row either.
@@ -2308,9 +2378,22 @@ func _on_result_clicked() -> void:
 	if _button_lock_ms > 0 or not _result_built:
 		return
 	if _result_tap_goes_to_map:
-		map_requested.emit()
+		_on_map_pressed()
 	else:
 		leave_requested.emit()
+
+
+## Leaving a CLEARED stop for the map. This is the port's `showMapWithUnlock`, and the PWA
+## plays its `treasureSfx` on exactly this move — clearing a stop is what reveals the next
+## one, and the map that comes up with nothing to hear reads as "nothing happened".
+##
+## It is also the destination of the page tap (`_result_tap_goes_to_map`), so the sound
+## lives here rather than in the tile, and both routes get it.
+func _on_map_pressed() -> void:
+	if _button_lock_ms > 0:
+		return
+	_play(Sfx.CUE_ACT_UNLOCK)
+	map_requested.emit()
 
 
 func _on_portal_pressed() -> void:
@@ -2458,6 +2541,9 @@ func apply_levels() -> void:
 		levelled = true
 	if levelled:
 		_float_message("Novy level: %d" % int(hero["level"]))
+		# The PWA plays the fanfare from `applyLevelUp` and DUCKS the music under it
+		# (`duckBgm(0.3, 750)`) — the duck is on `main`, the fanfare is here.
+		_play(CUE_LEVELUP)
 		levelled_up.emit(int(hero["level"]))
 
 

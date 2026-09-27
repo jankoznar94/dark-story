@@ -298,6 +298,8 @@ func _build_acts() -> void:
 func _act_card(act_id: int, act: Dictionary, theme: Dictionary, unlocked: bool,
 		completed: bool) -> Control:
 	var card := Button.new()
+	# `.map-location` is a `<div onclick=…>` in the PWA, so no click sound.
+	card.add_to_group("no_click_sfx")
 	card.custom_minimum_size = Vector2(0, 119)  # aspect-ratio 3/1 at 358 wide
 	card.focus_mode = Control.FOCUS_NONE
 	var border := Color(str(theme.get("border", "#666666")))
@@ -495,6 +497,8 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 			box.add_child(_stop_arrow(theme, boss_defeated or stop <= reached))
 
 		var card := Button.new()
+		# `.map-loc-dot` — the stop row — is a `<div onclick=…>` in the PWA.
+		card.add_to_group("no_click_sfx")
 		card.custom_minimum_size = STOP_CARD
 		card.focus_mode = Control.FOCUS_NONE
 		var border := Color(str(theme.get("border", "#888888")))

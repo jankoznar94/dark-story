@@ -36,6 +36,7 @@ const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
 const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Socketing := preload("res://scripts/items/socketing.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 var data: Node
 var gen: ItemGen
@@ -99,6 +100,13 @@ func _ready() -> void:
 	_music.name = "Music"
 	_music.mode_provider = Callable(self, "_music_mode_for_current_screen")
 	add_child(_music)
+	# The screens' own sound mixer. Every screen that owns none (the town, the shop, the map)
+	# plays through this one via `Sfx.play_global()`, and it is also what makes the global
+	# button-click sound possible — see `_install_click_sfx`.
+	var sfx := Sfx.new()
+	sfx.name = "Sfx"
+	add_child(sfx)
+	_install_click_sfx()
 	# The transition overlay, on its own layer above everything. Built BEFORE the first
 	# `show_screen`, because the nav bar's town entry and the town's own tiles both go
 	# through it.
@@ -431,6 +439,61 @@ func _modal():
 	return _screens["character"]
 
 
+## The PWA's global button-click SFX, installed once instead of wired per screen.
+##
+## ⚠️  IT IS THE PORT'S EXCLUSIONS THAT NEED CARE, not its inclusions. The PWA's listener is
+## `e.target.closest('button')` — it fires on a real `<button>` element and on NOTHING else.
+## But the port draws far more with `Button` than the PWA ever did, because a Godot `Button`
+## is the natural way to make something tappable and there is no `onclick` on a `Control`.
+##
+## Grepped against the PWA's own markup, these are `<div>` there and therefore SILENT:
+##
+##   `.town-tile` (chest / gamble / shop / craft / wilderness), `.town-action-card`,
+##   `.map-location`, `.map-loc-dot` (the stop row), `.result-tile`, `.mb-potion-btn`,
+##   the inventory slots and bag cells (`.inv-slot`, `.bag-cell`), and the arena's
+##   `.mb-spells` / `.arena-surrender-btn` — the last two on the PWA's own exclusion list.
+##
+## Playing a click on any of them would be the port inventing sound, which is what this
+## whole mixer exists to stop. So a screen adds such a button to `EXCLUDED_CLICK_GROUP` and
+## everything else — the PWA's genuine buttons: nav entries, tab strips, category tabs,
+## Back / Close, Buy / Sell, Craft, the overlay buttons, `Pridat bod`, the reset — clicks.
+##
+## The group is checked at PRESS time, not at connect time, because a screen adds its buttons
+## to the group as it builds them.
+##
+## ⚠️  Wired with `node_added`, NOT by walking the tree once: the arena's spell bar, the
+## shop's list and the town's rows are all REBUILT on every refresh, so a one-time walk
+## would miss almost everything that matters.
+const EXCLUDED_CLICK_GROUP := "no_click_sfx"
+
+
+func _install_click_sfx() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	# Buttons already in the tree (built by `_build_screens` and `_build_nav`).
+	_wire_click_sfx(tree.root)
+	# And every button added later.
+	tree.node_added.connect(_wire_one_click_sfx)
+
+
+func _wire_click_sfx(node: Node) -> void:
+	if node is Button:
+		_wire_one_click_sfx(node)
+	for child in node.get_children():
+		_wire_click_sfx(child)
+
+
+func _wire_one_click_sfx(node: Node) -> void:
+	if not (node is Button):
+		return
+	var button := node as Button
+	button.pressed.connect(func():
+		if is_instance_valid(button) and button.is_in_group(EXCLUDED_CLICK_GROUP):
+			return
+		Sfx.play_global(Sfx.CUE_CLICK))
+
+
 func _close_modal() -> void:
 	# Back to whatever was showing under the dialog — the PWA leaves that screen up the
 	# whole time, so closing simply uncovers it. `_modal_under` is set by `open_modal`.
@@ -752,6 +815,10 @@ func _on_overlay_action(action_key: String, slot: String) -> void:
 		state.save()
 		inventory.close_item_info()
 		_modal().refresh()
+		# The PWA's `equipSfx` — the SAME sound for equipping and unequipping: its
+		# `equipItem`, `equipItemToSlot`, both drag handlers and `unequipSlot` all call
+		# `playSFX(equipSfx)`.
+		Sfx.play_global(Sfx.CUE_EQUIP)
 		_set_status("Nasazeno" if action_key != "unequip" else "Sundano")
 	else:
 		_set_status(_reason_text(str(result["reason"])))
@@ -781,6 +848,7 @@ func _on_equip_slot_tapped(slot: String) -> void:
 	if result["ok"]:
 		state.save()
 		_modal().inventory().refresh()
+		Sfx.play_global(Sfx.CUE_EQUIP)
 	else:
 		_set_status("Sundani odmitnuto: %s" % _reason_text(str(result["reason"])))
 

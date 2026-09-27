@@ -26,6 +26,7 @@ class_name StatsPanel
 
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Talents := preload("res://scripts/items/talents.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
 
@@ -439,3 +440,7 @@ func _on_attr(attr: String) -> void:
 	var result := _talents.spend_attr(_state, attr, _find_item, _gen)
 	message.emit(str(result["message"]))
 	refresh()
+	# `upgradeAttr` — the same `levelupSfx` FILE as a talent point. The PWA's `hero-attr-btn`
+	# is a real `<button>`, so the global click chime plays too; this is the extra one.
+	if bool(result.get("ok", false)):
+		Sfx.play_global(Sfx.CUE_POINT_SPENT)

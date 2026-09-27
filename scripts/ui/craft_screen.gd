@@ -19,6 +19,7 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const CraftSystem := preload("res://scripts/items/craft.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 signal back_pressed()
 signal message(text: String)
@@ -412,6 +413,9 @@ func _on_craft() -> void:
 	_result = result["item"]
 	_slots = {}
 	_rebuild_workbench()
+	# `craftDo` — `playSFX(shopSfx)` on a completed craft. The PWA's `craftDoBtn` is a real
+	# `<button>`, so its global click chime is NOT excluded; the craft sound sits on top of it.
+	Sfx.play_global(Sfx.CUE_SHOP)
 
 
 func _clear(node: Node) -> void:

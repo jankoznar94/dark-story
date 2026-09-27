@@ -21,6 +21,7 @@ const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
 const PlayerSpells := preload("res://scripts/combat/player_spells.gd")
 const Talents := preload("res://scripts/items/talents.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 ## How many fights a zone takes before it is complete (the PWA's `af >= 10`).
 const FIGHTS_PER_ZONE := 10
@@ -34,6 +35,39 @@ const ELITE_PACK_FIGHT := 9
 ## The last `minArea` a monster needs to be able to appear is the zone index.
 var _data: Node
 var prog: Progression
+
+## --- sound cues ---------------------------------------------------------------
+## What the fight SOUNDED like, decided by the RULES and played by the screen.
+##
+## The PWA called `playSFX(...)` inline from its 900-line combat loop. This port keeps the
+## rules free of the audio device (a headless test has none), so a rule raises a CUE and
+## the arena drains it once per rendered frame. Same split as `log` / `drain_history`.
+##
+## A QUEUE, not one field: a Double Swing lands two blows on one tick, and one field would
+## silently drop the second. Each cue names a file in `scripts/audio/sfx.gd`. `sfx_cue` is
+## kept alongside as the LAST cue of the tick, so a test can ask "what did that blow sound
+## like" without draining.
+var sfx_cues: Array = []
+var sfx_cue := ""
+
+
+## Raise a cue. Called by the rules; nothing here touches audio.
+func sound(cue: String) -> void:
+	if cue == "" or not Sfx.is_known(cue):
+		push_error("Battle: unknown sfx cue '%s'" % cue)
+		return
+	sfx_cues.append(cue)
+	sfx_cue = cue
+
+
+## What was played since the last drain, and clear it. The screen calls this; a test can
+## too, and gets the same list the screen did.
+func take_sfx_cues() -> Array:
+	var out := sfx_cues
+	sfx_cues = []
+	sfx_cue = ""
+	return out
+
 
 ## --- encounter definition, built once per fight -----------------------------
 
@@ -942,13 +976,19 @@ func _resolve_cast(state, find_item: Callable) -> void:
 			var heal := int(round(enemy_max_hp * 0.3))
 			enemy_hp = minf(enemy_max_hp, enemy_hp + float(heal))
 			_note("ENEMY HEAL", heal, false)
+			# ⚠️  NO SOUND HERE, and that is the PWA's own behaviour, not an omission: its
+			# `heal` branch in `executeEnemySpell` restores the HP and spawns a floating
+			# text with no `playSFX` call. (An earlier revision of this port played a heal
+			# sound here — an invented element, removed.)
 		# The monster's own buffs. 60 fps ticks in the PWA: 8 s = 480 ticks.
 		"defensive_shout":
 			enemy_defensive_shout_ms = 8000
 			_note("ENEMY DEFENSIVE SHOUT", 0, false)
+			sound(Sfx.CUE_SHOUT)
 		"battle_shout":
 			enemy_battle_shout_ms = 8000
 			_note("ENEMY BATTLE SHOUT", 0, false)
+			sound(Sfx.CUE_SHOUT)
 		"thorn_shield":
 			enemy_thorn_shield_ms = 10000
 			_note("ENEMY THORN SHIELD", 0, false)
@@ -1051,16 +1091,22 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 		var chance := prog.hit_chance(ar, enemy_defense, int(hero.get("level", 1)), monster_level_value)
 		if rng.randf() * 100.0 >= chance:
 			_note("MISS", 0, false)
+			# The PWA plays the DODGE sound on a MISS too — its own `playSFX(dodgeSfx)`
+			# in the attack-table branch. A whiff and a dodge are the same noise there,
+			# so they are the same cue here.
+			sound(Sfx.CUE_DODGE)
 			return {"hit": false, "reason": "miss"}
 
 	if enemy_block_chance > 0.0 and rng.randf() * 100.0 < enemy_block_chance:
 		_note("BLOCK", 0, false)
+		sound(Sfx.CUE_BLOCK)
 		return {"hit": false, "reason": "block"}
 
 	# The enemy's own Evasion: 30 % of the hero's swings miss outright while it lasts.
 	# This is the mirror of the hero's dodge and the only thing the spell does.
 	if enemy_evasion_ms > 0 and rng.randf() < 0.3:
 		_note("ENEMY EVASION DODGE", 0, false)
+		sound(Sfx.CUE_DODGE)
 		return {"hit": false, "reason": "evasion"}
 
 	var base_dmg := 0.0
@@ -1095,6 +1141,15 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 
 	enemy_hp -= dmg
 	_note(("CRIT" if is_crit else "HIT") + (" offhand" if is_offhand else ""), int(dmg), false)
+	# The sound of the blow, chosen by the WEAPON's own type — the PWA's `getHitSfx` /
+	# `getCritSfx`, which the off hand passes its own weapon's type into. A bare fist, a
+	# club and a staff are three different noises on purpose.
+	#
+	# ⚠️  The PWA passes `isOffhand ? weapon.weaponType : undefined`, i.e. the type is given
+	# ONLY for the off hand and a main-hand swing falls back to `getWeaponType()`, which reads
+	# the weapon SLOT. Here the main hand's weapon IS the one passed in, so the two agree; a
+	# spell that swings a weapon of its own (Double Swing) has to say so explicitly.
+	sound(hit_cue_for_weapon(weapon, is_crit))
 
 	_apply_weapon_on_hit(state, weapon)
 	if enemy_hp <= 0.0:
@@ -1138,6 +1193,7 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 	# does not get to hit anyway, and the PWA started a fresh swing.
 	if _roll_hero_dodge(state, find_item):
 		_note("DODGE", 0, true)
+		sound(Sfx.CUE_DODGE)
 		return {"hit": false, "reason": "dodge"}
 	if enemy_attack_type == "caster" and enemy_first_swing_done:
 		var chosen := _choose_spell()
@@ -1148,6 +1204,10 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 			cast_time = float(spell.get("castTime", 1200))
 			cast_elapsed = 0.0
 			_note("ENEMY CAST %s" % chosen, 0, true)
+			# The PWA plays the school's sound from inside the spell's projectile
+			# animation. The port draws no projectile, so the cue belongs to the WIND-UP
+			# — the moment the cast icon appears over the monster.
+			sound(Sfx.CUE_ENEMY_CAST)
 			return {"hit": false, "reason": "cast"}
 	# The first swing of a caster is still a melee hit — the PWA's decision about
 	# casting only starts from the second swing on.
@@ -1192,6 +1252,12 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 		state.hero()["mana"] = maxi(0, int(state.hero().get("mana", 0)) - mana_steal)
 		_note("ENEMY MANA STEAL", mana_steal, true)
 	_note("ENEMY HIT", dmg, true)
+	# ⚠️  TWO sounds here, exactly as the PWA's `onAutoEnemyAttack` has them: it plays
+	# `getHitSfx()` and then `getHurtSfx()`. The first is the ENEMY's own — `getHitSfx()` with
+	# NO override reads `getWeaponType()`, which for a monster is its `weaponType`, so a
+	# skeleton knight lands with a blade and a bear's paw is a fist.
+	sound(hit_cue_for_weapon({"weaponType": str(enemy_attack_type)}, false))
+	sound(Sfx.CUE_HURT)
 	if hero_hp <= 0.0:
 		_finish(false, state, find_item)
 	return {"hit": true, "damage": dmg}
@@ -1559,6 +1625,13 @@ func advance_stop(state) -> bool:
 ## truth for the balance.
 func note(kind: String, amount: int, on_player: bool) -> void:
 	_note(kind, amount, on_player)
+
+
+## The weapon-type -> cue mapping lives on the MIXER (`Sfx.cue_for_weapon`), not here:
+## `player_spells.gd` needs it too, and a preload cycle between the two rules modules is a
+## parse error. This forwards so the arena keeps one name for it.
+static func hit_cue_for_weapon(weapon: Dictionary, is_crit: bool) -> String:
+	return Sfx.cue_for_weapon(weapon, is_crit)
 
 
 func equip_attr(state, find_item: Callable, stat: String) -> int:

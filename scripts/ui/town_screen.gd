@@ -222,6 +222,9 @@ func _build_banner() -> Control:
 ## previous port's town look like a menu rather than the PWA's grid.
 func _make_tile(icon_path: String, label_text: String) -> Button:
 	var button := Button.new()
+	# `.town-tile` is a `<div onclick=…>` in the PWA, so it has NO click sound — see
+	# `Main._install_click_sfx`. Same for the action card below.
+	button.add_to_group("no_click_sfx")
 	button.custom_minimum_size = TILE_SIZE
 	button.focus_mode = Control.FOCUS_NONE
 	button.tooltip_text = label_text
@@ -261,6 +264,7 @@ func _make_tile(icon_path: String, label_text: String) -> Button:
 ## `.town-action-card` — a full-width black row with a 44px icon slot and a label.
 func _make_action_card() -> Dictionary:
 	var button := Button.new()
+	button.add_to_group("no_click_sfx")
 	button.custom_minimum_size = Vector2(0, 68)
 	button.focus_mode = Control.FOCUS_NONE
 	var style := StyleBoxFlat.new()

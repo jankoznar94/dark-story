@@ -17,6 +17,9 @@ const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const ShopStock := preload("res://scripts/items/shop_stock.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
+## `buyGambleItem` — the PWA plays `shopSfx`, and its global click listener skips
+## `.shop-item-actions`, so the gamble is silent without this.
 
 signal back_pressed()
 signal message(text: String)
@@ -261,12 +264,16 @@ func _on_buy(entry: Dictionary) -> void:
 	var result := ShopStock.buy_gamble(_state, entry, _gen, _data, _find_item, _rng())
 	message.emit(str(result["message"]))
 	refresh()
+	Sfx.play_global(Sfx.CUE_SHOP)
 
 
 func _on_sell(item_id: String) -> void:
 	var result := ShopStock.sell(_state, item_id, _find_item)
 	message.emit(str(result["message"]))
 	refresh()
+	# The gamble screen's sell tab is the SAME `sellItem` as the shop's, so it takes the same
+	# chime. (The PWA's `sellItem` plays `shopSfx` for both screens.)
+	Sfx.play_global(Sfx.CUE_SHOP)
 
 
 func _rng() -> RandomNumberGenerator:

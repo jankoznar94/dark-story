@@ -21,6 +21,7 @@ class_name SkillsPanel
 
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Talents := preload("res://scripts/items/talents.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 signal message(text: String)
 
@@ -425,6 +426,10 @@ func _on_invest() -> void:
 	var result := _talents.invest(_state, _selected_key)
 	message.emit(str(result["message"]))
 	_refresh_talents()
+	# `investTalent` — the PWA's point-spending sound, which is the levelup.mp3 FILE and NOT
+	# the oscillator fanfare a level-up plays. See the note above `Sfx.CUE_LEVELUP`.
+	if bool(result.get("ok", false)):
+		Sfx.play_global(Sfx.CUE_POINT_SPENT)
 
 
 ## `.talent-btn`-style helper: the PWA's `resetTalents()` sets the button's TEXT from
