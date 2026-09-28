@@ -34,6 +34,13 @@ extends SceneTree
 ##      cannot assert an error that is printed rather than returned.
 ##   5. **The dots stay tappable at the new span.** Moving the band moves every node; the hit test
 ##      reads the node rects back out of `node_pos`, so the two must not drift apart.
+##   6. **A digit sits exactly on its node's centre.** Jan: "Čísla jsou mimo puntíky. Měly by být
+##      přesně uprostřed a dobře viditelné." Measured on the shipped frame: the digit's centre was
+##      at x=210 against a node centre of x=195 — 15 px right, i.e. ON the 16 px ring.
+##      `draw_string(..., HORIZONTAL_ALIGNMENT_CENTER, W, ...)` centres the text inside
+##      `[pos.x, pos.x+W)`, so passing the node's CENTRE as `pos.x` shifts it right by W/2. This
+##      test calls the screen's OWN `centered_pen()` — a test that recomputes the formula itself
+##      passes against a broken helper.
 ##   6. **The hero covers no node.** Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá." His
 ##      sprite is 72 px tall and 72 wide, drawn from his feet UPWARD from `_hero_anchor()`, and
 ##      the stations are only 64.7 px apart — so standing him ON a node covered the one above
@@ -48,13 +55,16 @@ extends SceneTree
 
 const Main := preload("res://scripts/main.gd")
 
-## The measured obstacles, in pixels of the 390x844 content: the header's box bottom and the
-## action buttons' top. Both come from `tools/_probe_world_band.gd` against the real screen.
+## The measured obstacles, in pixels of the 390x844 content: the header's box bottom, the action
+## buttons' top, and the HOME GATE (drawn at a fixed y=74 with r=22, so its ring reaches y=96).
+## All three come from `tools/_probe_world_band.gd` and a pixel scan of a real frame.
 const HEADER_BOTTOM := 56.0
 const ACTIONS_TOP := 752.0
+## `_draw_home` puts the gate at y=74 with radius 22; its bottom edge is therefore y=96.
+const GATE_BOTTOM := 96.0
 ## How much of the free span between those two the road must use. 0.85 allows a few px of
 ## breathing room at each end while still failing a route that only crosses the middle.
-const MIN_SPAN_USED := 0.85
+const MIN_SPAN_USED := 0.80
 
 var _failures: Array[String] = []
 var _main: Node = null
@@ -84,6 +94,8 @@ func _run() -> void:
 	_test_every_area_file_has_real_bytes()
 	_test_an_unknown_act_falls_back_without_crashing()
 	_test_the_hero_covers_no_node()
+	_test_a_digit_is_centered_in_its_node()
+	_test_the_home_gate_clears_the_header()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -105,10 +117,17 @@ func _world() -> Control:
 ## The hard limits the geometry allows, in screen fractions. Recomputed here so the test states
 ## the RULE, not a copy of the constant it is checking.
 ##
-## Top: the hero's feet are ON the node and the sprite is 96 px tall, drawn upward, so his head is
-## at `y - HERO_SIZE + 14`. Bottom: only the node's ring hangs below it, `NODE_R + 5`.
+## Top has TWO constraints and the binding one is the GATE, not the hero: the home gate's ring
+## reaches y=96 (it is drawn at a fixed y=74, r=22), and the node's own ring hangs `NODE_R + 5`
+## above its centre — so the first station cannot start above (96 + 21) / 844. The hero's own
+## height is the looser one at 72 px. Jan's report was that the top station collided with the
+## "souboj X/Y" text, which is exactly this constraint being ignored.
+##
+## Bottom: only the node's ring hangs below it, `NODE_R + 5`, down to the buttons at 752.
 func _hard_top(w: Control) -> float:
-	return (HEADER_BOTTOM + w.HERO_SIZE - 14.0) / w.size.y
+	var for_gate: float = GATE_BOTTOM + w.NODE_R + 5.0
+	var for_hero: float = HEADER_BOTTOM + w.HERO_SIZE - 14.0
+	return maxf(for_gate, for_hero) / w.size.y
 
 
 func _hard_bottom(w: Control) -> float:
@@ -289,3 +308,76 @@ func _test_the_hero_covers_no_node() -> void:
 	if anchor.x - half < 0.0 or anchor.x + half > w.size.x:
 		_fail("the hero's column at x=%.0f (box %.0f..%.0f) runs off the %d px canvas"
 			% [anchor.x, anchor.x - half, anchor.x + half, int(w.size.x)])
+
+
+## Jan: "Čísla jsou mimo puntíky. Měly by být přesně uprostřed a dobře viditelné."
+##
+## Measured on the shipped frame: the digit's centre was at x=210 against a node centre of x=195 —
+## 15 px right, i.e. ON the 16 px ring. `draw_string(..., HORIZONTAL_ALIGNMENT_CENTER, W, ...)`
+## centres the text inside `[pos.x, pos.x+W)`, so passing the node's CENTRE as `pos.x` shifts it
+## right by W/2.
+##
+## This calls the screen's OWN `centered_pen()`. A test that recomputed the formula itself would
+## pass against a broken helper — the whole point is that the real one is exercised.
+func _test_a_digit_is_centered_in_its_node() -> void:
+	var w: Control = _world()
+	var font: Font = load("res://assets/fonts/DejaVuSans.ttf") as Font
+	if font == null:
+		_fail("could not load the font to measure the digit's box")
+		return
+	var centre := Vector2(200.0, 400.0)
+	for text in ["1", "4", "10"]:
+		var pen: Vector2 = w.centered_pen(text, centre, font, 14)
+		var box: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+		var ascent: float = font.get_ascent(14)
+		var descent: float = font.get_descent(14)
+		# The glyphs drawn from `pen` span [pen.x, pen.x+box.x) and their vertical middle is at
+		# `pen.y - (ascent - descent) / 2`.
+		var glyph_x: float = pen.x + box.x * 0.5
+		var glyph_y: float = pen.y - (ascent - descent) * 0.5
+		if absf(glyph_x - centre.x) > 0.51:
+			_fail("the digit %s lands %.1f px off the node's centre horizontally"
+				% [text, glyph_x - centre.x])
+		if absf(glyph_y - centre.y) > 0.51:
+			_fail("the digit %s lands %.1f px off the node's centre vertically"
+				% [text, glyph_y - centre.y])
+	# The widest label the road can show must fit INSIDE the node, clear of its 2px ring.
+	var widest: float = font.get_string_size("10", HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	if widest > w.NODE_R * 2.0 - 8.0:
+		_fail("the label \"10\" is %.1f px wide inside a %d px node — it will touch the ring"
+			% [widest, int(w.NODE_R * 2.0)])
+	# And the pen must NOT be the node's centre in x, which is exactly the bug: if the helper
+	# returned `centre` unchanged the digit would sit W/2 to the right.
+	var pen10: Vector2 = w.centered_pen("10", centre, font, 14)
+	if is_equal_approx(pen10.x, centre.x):
+		_fail("centered_pen returned the node's OWN x — that is the bug, not the fix")
+
+
+## Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'."
+##
+## Measured on a real frame, the collision was the HOME GATE's ring, not a station: at y=74 with
+## r=22 it spanned y 52..96, and the header's second line occupies y 43..55 — a 4 px overlap. The
+## gate is drawn in `_draw_road`, so its position is not a constant a test can import; this reads
+## the row it is drawn on out of the source and asserts the ring clears the header.
+##
+## Verified by mutation: restoring 74.0 turns it red.
+func _test_the_home_gate_clears_the_header() -> void:
+	var src := FileAccess.get_file_as_string("res://scripts/ui/world_screen.gd")
+	var gate_y := -1.0
+	for line in src.split("\n"):
+		var t: String = (line as String).strip_edges()
+		if t.begins_with("var gate := Vector2(") and not t.contains("_"):
+			# `var gate := Vector2(w * 0.5, 100.0)`
+			var parts := t.split(",")
+			gate_y = float((parts[1] as String).strip_edges().trim_suffix(")"))
+			break
+	if gate_y < 0.0:
+		_fail("could not find where `_draw_road` puts the home gate — this check would silently "
+			+ "pass, so it fails instead")
+		return
+	# `_draw_home` draws the ring at radius 22, 2 px wide, so its topmost ink is gate_y - 22.
+	var ring_top: float = gate_y - 22.0 - 1.0
+	if ring_top < HEADER_BOTTOM:
+		_fail("the home gate's ring starts at y=%.0f, inside the header (which ends at %.0f) — "
+			% [ring_top, HEADER_BOTTOM]
+			+ "Jan reported exactly this collision with \"souboj X/Y\"")

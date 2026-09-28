@@ -47,12 +47,19 @@ const NODE_NEXT := Color("#8a8a8a")
 ## the header's box ends at y=56, the two action buttons start at y=752 and the nav bar at 783.
 ## The hard limits follow from those, and the two ENDS are not symmetric:
 ##
-##   * the TOP node is the dangerous one, because the hero sprite is drawn UPWARD from his node
-##     (96 px tall, his feet ON the node, so his head is `y - HERO_SIZE + 14`). The hard limit is
-##     0.1635, where his head touches the header exactly; 0.17 leaves 5 px.
+##   * the TOP node is the dangerous one, for TWO reasons, and the second was Jan's report
+##     ("Horní puntík by neměl kolidovat s textem 'souboj X/Y'"):
+##       1. the hero sprite is drawn UPWARD from his node (72 px tall, his feet ON the node, so
+##          his head is `y - HERO_SIZE + 14`). The hard limit from that alone is 0.118.
+##       2. the HOME GATE is drawn at a fixed y=74 with radius 22, so its ring spans y 52..96 —
+##          and the header's "souboj" line is measured at y 43..55. This is the BINDING constraint:
+##          the gate's bottom (96) plus the node's own ring (21) puts the first station no higher
+##          than 0.1386. 0.145 = y 122 leaves 5 px, the same breathing room as the bottom end.
+##          (The hero's own height would allow 0.118, but nothing is drawn above him, so the gate
+##          is what actually binds.)
 ##   * the BOTTOM node has no sprite hanging off it, only its ring (NODE_R + 5 = 21 px). Its hard
 ##     limit is 0.866, where the ring touches the buttons; 0.86 leaves 5 px.
-const ROAD_TOP := 0.17
+const ROAD_TOP := 0.145
 const ROAD_BOTTOM := 0.86
 ## How far the route drifts either side of centre, as a fraction of the width. A "lehká
 ## serpentina": one sine period at 0.10 swings 78 px of 390 (20 %) across the ten stations.
@@ -350,7 +357,12 @@ func _draw_road() -> void:
 	# it is its own direction, and it is the ONLY thing on this screen that is not a fight. It
 	# keeps a thin line because it is not a station and has to be visibly a different thing.
 	var home := node_pos(0)
-	var gate := Vector2(w * 0.5, 74.0)
+	# ⚠️  y=100, NOT 74. Measured on a real frame: the gate's ring at y=74 (r=22) spans y 52..96,
+	# while the header's "souboj X/Y" line occupies y 43..55 — so the ring's top left 4 px of
+	# overlap with the text. Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'." At 100
+	# the ring spans 78..122, i.e. 23 px clear of the header, and the first station at 0.145
+	# (y=122) still has 12 px of air above its own ring.
+	var gate := Vector2(w * 0.5, 100.0)
 	_canvas.draw_line(home, gate, Color(0.30, 0.26, 0.20, 0.85), 10.0)
 	_draw_home(gate)
 
@@ -363,7 +375,33 @@ func _draw_road() -> void:
 		_draw_node(i, node_pos(i))
 
 
-## The area's own art, as the ground — cover-fitted so the portrait screen is filled.
+## ⚠️  `draw_string` does NOT centre a string in a box the way the eye expects, and it has no
+## vertical-alignment argument at all. Two measured consequences, both of which Jan reported:
+##
+##   * `HORIZONTAL_ALIGNMENT_CENTER` with a width W places the text centred inside `[pos.x, pos.x+W)`
+##     — so `pos.x` is the BOX'S LEFT EDGE, not the text's centre. Passing the node's centre as
+##     `pos.x` with a width of `NODE_R * 2` drew every digit about 15 px to the right, which put it
+##     ON the ring (node radius 16). Measured on the shipped frame: digit centre x = 210 against a
+##     node centre of 195.
+##   * `pos.y` is the BASELINE. The optical centre is roughly `baseline - (ascent - descent) / 2`.
+##
+## One helper for both axes, so a digit, a tick and a label all sit where they are aimed.
+##
+## ⚠️  The ARITHMETIC lives in `centered_pen()`, a static function, so a test can call the REAL
+## thing — a test that recomputes the formula itself passes against a broken helper.
+static func centered_pen(text: String, centre: Vector2, font: Font, size: int) -> Vector2:
+	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var ascent := font.get_ascent(size)
+	var descent := font.get_descent(size)
+	return Vector2(centre.x - width * 0.5, centre.y + (ascent - descent) * 0.5)
+
+
+func _draw_centered(text: String, centre: Vector2, font: Font, size: int, colour: Color) -> void:
+	_canvas.draw_string(font, centered_pen(text, centre, font, size),
+		text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, colour)
+
+
+## The area's art, as the ground — cover-fitted so the portrait screen is filled.
 ##
 ## ⚠️  Jan's design, and all three parts matter:
 ##
@@ -431,10 +469,11 @@ func _draw_home(gate: Vector2) -> void:
 		_canvas.draw_texture_rect(house, Rect2(gate - Vector2(15, 15), Vector2(30, 30)), false)
 	var font := UIFonts.get_font(10)
 	if font != null:
-		# Centred ON the road, which is where the eye already is. The full sentence is on the
+		# Centred BELOW the gate, which is where the eye already is. The full sentence is on the
 		# button that takes the decision ("Jít domů"), so this is a label, not a warning.
-		_canvas.draw_string(font, gate + Vector2(-90, 40), "domů",
-			HORIZONTAL_ALIGNMENT_CENTER, 180.0, 10, Color("#9a9a9a"))
+		# ⚠️  `_draw_centered`, not `draw_string` with `gate.x` as `pos.x` — that would have put
+		# the box's left edge on the centre and pushed the label half its width to the right.
+		_draw_centered("domů", Vector2(gate.x, gate.y + 40.0), font, 10, Color("#9a9a9a"))
 
 
 ## Four states, and an empty state is a STYLE rather than a hidden node: done (a tick), current
@@ -468,8 +507,9 @@ func _draw_node(index: int, p: Vector2) -> void:
 		_canvas.draw_line(p + Vector2(-2, 5), p + Vector2(7, -6), NODE_DONE, 2.0)
 	else:
 		var colour := GOLD if is_current else (Color(UIKit.TEXT) if is_next else DIM)
-		_canvas.draw_string(font, p + Vector2(0, 5), str(fight), HORIZONTAL_ALIGNMENT_CENTER,
-			NODE_R * 2.0, 14, colour)
+		# ⚠️  Through `_draw_centered`, NOT `draw_string` with the node centre as `pos.x` — the
+		# latter drew the digit ~15 px right, i.e. on the ring. See the helper's note.
+		_draw_centered(str(fight), p, font, 14, colour)
 
 
 ## The hero's position. He stands BESIDE the road, in his own column, and never on a node — so he
