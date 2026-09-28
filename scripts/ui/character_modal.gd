@@ -40,6 +40,19 @@ const TABS := [
 	["stats", "Staty"],
 ]
 
+## ⚠️  WHAT THE DIALOG OPENS ON, AND IT IS NOT "WHATEVER WAS UP LAST".
+##
+## `openModal()` in the PWA ignores the name it is given and always starts on Inventory:
+## `// Vždy otevřít na záložce Inventory` + `const activeTab = 'inventory'`. Jan: "u modal okna
+## s informacemi o hrdinovi, skillech a inventáři budeme vždy jako výchozí kartu otevírat
+## inventář."
+##
+## The port kept `_active` from the previous time the dialog was opened, so entering from the
+## arena's Hrdina button (which asks for `stats`) left the NEXT open — from the nav bar's
+## Predmety — on Stats as well. The screen that ASKS for a tab still gets it; this is the
+## default a FRESH open falls back to.
+const DEFAULT_TAB := "inventory"
+
 ## `.modal-content { width:98%; max-width:800px; min-height:85vh; max-height:90vh;
 ##   border-radius:14px; border:1px solid #333; background:#000 }` on a 390px canvas:
 ## 98% of 390 is 382, so the max-width never binds. The HEIGHT is 85vh — measured on the
@@ -448,6 +461,19 @@ func set_tab(key: String) -> void:
 	refresh()
 	# The dialog's height follows its content, so switching tab re-clamps it.
 	_apply_panel_height()
+
+
+## A FRESH open: the dialog's default tab, not the one left over from last time.
+##
+## `main.open_modal()` calls this with the pane it wants; anything that opens the dialog WITHOUT
+## a tab (the modal being raised as a screen, a capture, the next session) comes through here so
+## the PWA's "Vždy otevřít na záložce Inventory" holds.
+##
+## ⚠️  Assert on a fresh instance would be enough if `_active` were only ever written by
+## `set_tab`, and it is — but the field is not the point: the point is that a caller which does
+## not NAME a tab cannot inherit one.
+func open_default_tab() -> void:
+	set_tab(DEFAULT_TAB)
 
 
 ## `.modal-content { height:auto; min-height:85vh; max-height:90vh }`.

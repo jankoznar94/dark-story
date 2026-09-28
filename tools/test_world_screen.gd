@@ -95,6 +95,7 @@ func _run() -> void:
 	_test_a_digit_is_centered_in_its_node()
 	_test_every_station_carries_its_own_number()
 	_test_the_home_gate_clears_the_header()
+	_test_a_finished_station_wears_a_green_tick()
 	_test_the_hero_is_gone()
 	_test_the_road_can_be_tapped()
 
@@ -396,6 +397,95 @@ func _test_every_station_carries_its_own_number() -> void:
 			+ "inside `_draw()` renders as a flat blob on this screen's own history")
 	if src.contains("var lock := UIKit.load_texture(\"assets/menu-icons/lock.png\")"):
 		_fail("`_draw_node` loads the padlock texture again — that is the flat-square bug")
+
+
+## Jan: "splněné souboje by měli mít zelené kolečko s zelenou fajfkou. Teď nemají."
+##
+## A won station was drawn identically to an unopened one except for a `#5a5a5a` ring on a dark
+## painting — i.e. not distinguishable at all. Three things have to hold, and only the third is
+## visible from a headless test that never renders:
+##
+##   1. the RING is the PWA's own done colour (`#2ecc71`, `.stop-badge-done`), not a grey;
+##   2. a won station shows NO number — the tick replaces it;
+##   3. the tick's texture exists, is the right colour, and is loaded OUTSIDE `_draw()`.
+##
+## Verified by mutation: restoring `NODE_DONE` to `#5a5a5a` turns assertion 1 red; deleting the
+## `done` branch in `_draw_node` turns 2 red; moving the load into `_draw()` turns 3 red.
+func _test_a_finished_station_wears_a_green_tick() -> void:
+	var w: Control = _world()
+	# 1. The colour, read off the screen's own constant rather than recomputed here.
+	var green := Color("#2ecc71")
+	if not w.NODE_DONE.is_equal_approx(green):
+		_fail("a finished station's ring is %s, the PWA's `.stop-badge-done` says #2ecc71" % str(w.NODE_DONE))
+	# A grey ring is the bug itself, so assert it is NOT the old value either.
+	if w.NODE_DONE.is_equal_approx(Color("#5a5a5a")):
+		_fail("NODE_DONE is back to #5a5a5a — a grey ring on a dark painting is what Jan reported")
+
+	# 2. A won station carries no number: `_draw_node` returns before the digit branch, so the
+	#    tick is what the player sees. `node_mark()` still names every station (that is its own
+	#    rule and `_test_every_station_carries_its_own_number` pins it) — what changed is that the
+	#    drawing no longer reaches it for a finished one.
+	var src := FileAccess.get_file_as_string("res://scripts/ui/world_screen.gd")
+	# ⚠️  A SOURCE check, because the symptom ("the number is still there") only exists in a real
+	# `_draw()`, which a headless test never runs. The test cannot import a local `var done`.
+	# The `done` branch must exist, must draw the tick, and must RETURN before the digit.
+	var fn_at := src.find("func _draw_node")
+	var done_at := src.find("if done:", fn_at)
+	var tick_at := src.find("var tick := _check_tex", fn_at)
+	var digit_at := src.find("_draw_centered(node_mark(index, fight, _tap_index)", fn_at)
+	if fn_at < 0 or done_at < 0:
+		_fail("`_draw_node` has no `if done:` branch — a won station would still paint its number")
+	elif tick_at < 0 or tick_at < done_at:
+		_fail("`_draw_node` never draws the cached tick (`_check_tex`) inside its `done` branch — "
+			+ "a won station would be a plain green circle, which is close to the state Jan reported")
+	elif digit_at >= 0 and tick_at > digit_at:
+		_fail("the tick is drawn AFTER the digit in `_draw_node` — the number would paint over it")
+	elif digit_at < 0:
+		_fail("`_draw_node` no longer paints `node_mark(...)` anywhere — the numbering rule is "
+			+ "unreachable, which is the off-by-one bug's other half")
+	# The tick must come BEFORE the `var font` line: a null font returns early and the tick, which
+	# is an image and needs no font at all, would disappear with it.
+	var font_at := src.find("var font := UIFonts.get_font(14)", fn_at)
+	if font_at >= 0 and tick_at > font_at:
+		_fail("the tick is drawn AFTER `var font := ...` in `_draw_node`, so a null font returns "
+			+ "before it and the tick disappears")
+	# And it must be the CACHE: a texture resolved inside `_draw()` renders as a flat blob on this
+	# screen (the padlock already paid for it, and `_draw_ground` before that).
+	if src.contains("UIKit.load_texture(\"assets/icons/check.png\")") \
+			and src.find("UIKit.load_texture(\"assets/icons/check.png\")") > src.find("func _draw_node"):
+		_fail("`assets/icons/check.png` is loaded from inside `_draw()` — that renders as a flat blob")
+	if src.count("UIKit.load_texture(\"assets/icons/check.png\")") < 2:
+		_fail("the tick texture is resolved in fewer than two places — it must be cached in BOTH "
+			+ "`_build()` (before the first draw) and `refresh()`")
+
+	# 3. The texture itself: it exists, it is a real PNG, and its ink is the same green as the ring.
+	if w._check_tex == null:
+		_fail("`_check_tex` is null — the tick would not be drawn at all")
+		return
+	var img: Image = w._check_tex.get_image()
+	if img == null:
+		_fail("the tick texture has no image — the file failed to import")
+		return
+	var ink := 0
+	var wrong := 0
+	var brightest := Color(0, 0, 0, 0)
+	for y in range(0, img.get_height(), 2):
+		for x in range(0, img.get_width(), 2):
+			var c := img.get_pixelv(Vector2i(x, y))
+			if c.a < 0.5:
+				continue
+			ink += 1
+			if absf(c.r - green.r) > 0.06 or absf(c.g - green.g) > 0.06 or absf(c.b - green.b) > 0.06:
+				wrong += 1
+	if ink < 200:
+		_fail("the tick's image has only %d opaque samples — that is not a readable glyph" % ink)
+	if wrong > 0:
+		_fail("%d of %d tick pixels are not #2ecc71 — the tick and its ring must be the SAME green "
+			% [wrong, ink] + "Jan asked for one green circle with one green tick")
+	# A green that is bright enough to read on the dark plate the node paints (#0f2418).
+	var lum := (green.r + green.g + green.b) / 3.0
+	if lum < 0.35:
+		_fail("the tick's green is too dark (lum %.2f) to read on the station's own fill" % lum)
 
 
 ## Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'."

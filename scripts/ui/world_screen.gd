@@ -33,8 +33,22 @@ signal portal_requested()
 const BG := Color("#121212")
 const GOLD := Color(UIKit.GOLD)
 const DIM := Color("#666666")
-const NODE_DONE := Color("#5a5a5a")
+## A station BEHIND the player is FINISHED, and a finished fight wears a green tick.
+##
+## ⚠️  IT HAD NO CHECK MARK AT ALL. `done` only changed the ring's colour to `#5a5a5a` — a grey
+## edge at 16px radius is invisible against a dark painting, so the player could not tell a won
+## station from an unopened one except by counting the padlocks. Jan: "splněné souboje by měli
+## mít zelené kolečko s zelenou fajfkou."
+##
+## The PWA's own marker is `✓` in `#2ecc71` (`.stop-badge-done { color:#2ecc71;
+## border-color:#2ecc71 }`), so the colour is taken from there rather than invented. The glyph is
+## the generated `assets/icons/check.png` — the game forbids emoji and a `✓` codepoint would be
+## a font-dependent gamble on a phone.
+const NODE_DONE := Color("#2ecc71")
 const NODE_NEXT := Color("#8a8a8a")
+## The finished station's own fill. `#141414` (the unopened one) under a green ring reads as
+## "still locked, green"; a green-tinted dark plate reads as WON.
+const NODE_DONE_FILL := Color("#0f2418")
 
 ## The road runs DOWN the screen, as the shipped map's stop path does (stop 1 at the top), so the
 ## two screens agree about which way the journey runs.
@@ -102,6 +116,10 @@ var _ground_tex: Texture2D
 ## flat (0.3176,0.3176,0.3216)"). `_draw_node` called `UIKit.load_texture()` per draw, so every
 ## padlocked station the player saw was a solid 18x18 white square instead of a padlock.
 var _lock_tex: Texture2D
+## The green tick a FINISHED station wears. Loaded once per entry, never from inside `_draw()` —
+## the same rule the padlock already paid for (a texture resolved in `_draw()` renders as a flat
+## white blob on this screen).
+var _check_tex: Texture2D
 
 
 func _init(game_data: Node, state, find_item: Callable) -> void:
@@ -157,6 +175,8 @@ func refresh() -> void:
 	_ground_tex = _area_art()
 	# Same rule for the padlock: resolved once per entry, never per draw.
 	_lock_tex = UIKit.load_texture("assets/menu-icons/lock.png")
+	# And the finished station's green tick, same rule again.
+	_check_tex = UIKit.load_texture("assets/icons/check.png")
 	# ⚠️  THE FIXES FIRST, THE HEADER SECOND. `_refresh_actions` computes the playable index and
 	# the header prints `souboj n/10` FROM it, so a header written before it would show the wrong
 	# fight after the 10th win of a stop (`areaFightProgress` 10 draws no fight at all).
@@ -258,6 +278,8 @@ func _build() -> void:
 	_ground_tex = _area_art()
 	# Same rule for the padlock the unopened stations draw.
 	_lock_tex = UIKit.load_texture("assets/menu-icons/lock.png")
+	# And the green tick a finished station draws.
+	_check_tex = UIKit.load_texture("assets/icons/check.png")
 
 	_build_header()
 	_build_actions()
@@ -525,7 +547,12 @@ func _draw_node(index: int, p: Vector2) -> void:
 	var fill := Color("#141414")
 	var border := DIM
 	if done:
+		# ⚠️  A FINISHED STATION IS GREEN AND CARRIES A TICK. Before this it differed from an
+		# unopened one only by a `#5a5a5a` ring — invisible on a dark painting, which is why Jan
+		# asked for "zelené kolečko s zelenou fajfkou". Colour from the PWA's own
+		# `.stop-badge-done { color:#2ecc71 }`.
 		border = NODE_DONE
+		fill = NODE_DONE_FILL
 	elif is_next:
 		border = NODE_NEXT
 		fill = Color("#1c1c1c")
@@ -534,6 +561,17 @@ func _draw_node(index: int, p: Vector2) -> void:
 		_canvas.draw_arc(p, NODE_R + 5.0, 0.0, TAU, 48, GOLD, 3.0)
 		border = GOLD
 	_canvas.draw_arc(p, NODE_R, 0.0, TAU, 40, border, 2.0)
+
+	# The tick goes UNDER the digit branch, because a finished station shows the tick INSTEAD of
+	# its number: the number is what the player walks towards, and a won fight is not that any
+	# more. Drawn before the early returns below so a null font cannot swallow it — the tick is
+	# an image and needs no font at all.
+	if done:
+		# Cached texture, never `UIKit.load_texture()` here — see `_check_tex`.
+		var tick := _check_tex
+		if tick != null:
+			_canvas.draw_texture_rect(tick, Rect2(p - Vector2(9, 9), Vector2(18, 18)), false)
+		return
 
 	var font := UIFonts.get_font(14)
 	if font == null:

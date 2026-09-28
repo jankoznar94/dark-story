@@ -58,6 +58,7 @@ func _process(_delta: float) -> bool:
 func _run() -> void:
 	_test_the_old_three_screens_are_gone()
 	_test_open_modal_keeps_the_screen_underneath()
+	_test_default_tab_is_inventory()
 	_test_each_tab_shows_its_own_pane()
 	_test_nav_keys_map_to_distinct_panes()
 	_test_nav_bar_is_drawn_under_the_modal_not_hidden()
@@ -131,6 +132,65 @@ func _test_open_modal_keeps_the_screen_underneath() -> void:
 		if _main._nav_bar != null and _main._modal_layer.layer <= 5:
 			_fail("the modal layer (%d) is not above the nav bar's layer (5)"
 				% _main._modal_layer.layer)
+
+
+## Jan: "u modal okna s informacemi o hrdinovi, skillech a inventáři budeme vždy jako výchozí
+## kartu otevírat inventář. Teď se otevírají staty."
+##
+## The PWA's `openModal()` ignores the name it is given — `// Vždy otevřít na záložce Inventory`
+## and `const activeTab = 'inventory'`. The port instead kept `_active` between opens, so after
+## a visit to Stats (the arena's Hrdina button asks for `stats`) EVERY later open started on
+## Stats, including the nav bar's Predmety which asks for `inventory` explicitly.
+##
+## ⚠️  The realistic failure here is not "the wrong default" but "the wrong LIFETIME": a fresh
+## instance is always right, so asserting on one passes against the bug. `_active` only ever
+## changes through `set_tab`, so the assertion has to drive a tab change FIRST and then open
+## without naming one.
+##
+## Verified by mutation: replacing `open_default_tab()` with a no-op turns this red (the dialog
+## stays on whatever the last `set_tab` left it on).
+func _test_default_tab_is_inventory() -> void:
+	var modal = _main._screens["character"]
+	if str(modal.DEFAULT_TAB) != "inventory":
+		_fail("the modal's default tab is '%s', the PWA always opens on Inventory"
+			% str(modal.DEFAULT_TAB))
+
+	# Walk the route that CAUSES the bug: open on Stats (the arena's Hrdina button does), then
+	# open without naming a tab.
+	_main.open_modal("stats")
+	if str(modal._active) != "stats":
+		_fail("open_modal('stats') left the modal on '%s'" % str(modal._active))
+		return
+	modal.open_default_tab()
+	if str(modal._active) != "inventory":
+		_fail("after a visit to Stats the next unnamed open is on '%s' — the tab survives "
+			% str(modal._active) + "between opens; Jan opens the modal and gets his stats")
+	var shown: Array[String] = []
+	for pane_key in modal._panes:
+		if (modal._panes[pane_key] as Control).visible:
+			shown.append(str(pane_key))
+	if shown != ["inventory"]:
+		_fail("the default open shows %s, expected exactly ['inventory']" % str(shown))
+
+	# A caller that NAMES a tab still gets it — the default is a fallback, not an override.
+	_main.open_modal("skills")
+	if str(modal._active) != "skills":
+		_fail("open_modal('skills') left the modal on '%s' — the default tab overrode the request"
+			% str(modal._active))
+
+	# ⚠️  AND THE DEFAULT MUST BE REACHABLE, or it is dead code. `open_modal` always names a pane,
+	# so the only route that does NOT is the dialog being raised as a SCREEN — that is where
+	# `show_screen` has to apply it. Drive the real call, not the handler.
+	_main.show_screen("town")
+	_main._on_nav_selected("hero")
+	if str(modal._active) != "stats":
+		_fail("the dialog did not reach Stats before the wiring check (on '%s')" % str(modal._active))
+		return
+	_main.show_screen("character")
+	if str(modal._active) != "inventory":
+		_fail("raising the dialog as a SCREEN left it on '%s' — `show_screen` must apply the "
+			% str(modal._active) + "PWA's Inventory default; nothing else calls it, so the "
+			+ "default is unreachable dead code")
 
 
 ## Failure #2: three tabs, one pane. Assert each tab shows a DIFFERENT pane.

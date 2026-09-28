@@ -394,6 +394,12 @@ func show_screen(name: String) -> void:
 			_screens["bestiary"].refresh()
 		"spellbook":
 			_screens["spellbook"].refresh()
+		"character":
+			# ⚠️  THE DIALOG IS ALSO REACHABLE AS A SCREEN, and this is the ONE route that names
+			# no tab at all — so it is where the PWA's "Vždy otevřít na záložce Inventory" has to
+			# be enforced. `open_modal()` always passes a pane, so without this branch the default
+			# would be unreachable and the next reader would be right to call it dead code.
+			_screens["character"].open_default_tab()
 		"arena":
 			# Nothing to set up: _enter_arena already started the fight.
 			pass
