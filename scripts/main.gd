@@ -35,6 +35,8 @@ const CharacterModal := preload("res://scripts/ui/character_modal.gd")
 const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
 const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
 const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
+const Juice := preload("res://scripts/ui/juice.gd")
+const HitStop := preload("res://scripts/ui/hit_stop.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Socketing := preload("res://scripts/items/socketing.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
@@ -107,6 +109,17 @@ func _ready() -> void:
 	var sfx := Sfx.new()
 	sfx.name = "Sfx"
 	add_child(sfx)
+	# The feel layer, in the same shape as the mixer: ONE node, so every screen reaches the
+	# same press animation and the same buzz decision, and a headless test that never builds
+	# the game simply gets the static no-ops.
+	var juice := Juice.new()
+	juice.name = "Juice"
+	add_child(juice)
+	# The hit-stop writes `Engine.time_scale`, which is GLOBAL — it has to be one node in the
+	# tree, and this is that node.
+	var hit_stop := HitStop.new()
+	hit_stop.name = "HitStop"
+	add_child(hit_stop)
 	_install_click_sfx()
 	# The transition overlay, on its own layer above everything. Built BEFORE the first
 	# `show_screen`, because the nav bar's town entry and the town's own tiles both go
@@ -321,8 +334,28 @@ func show_screen(name: String) -> void:
 	if not _screens.has(name):
 		push_error("Main: no screen named %s" % name)
 		return
+	if name != _current:
+		# The screen coming up gets a 110 ms settle. The port had NO transition at all —
+		# `visible` flipped and the frame was a cut, which is most of why navigation read as
+		# a slideshow rather than as a game. It is a small, short settle on purpose: a slide
+		# or a crossfade would fight the PWA's own `position:fixed` full-screen pages, and
+		# the rule this has to respect is that no decoration may move a control's RECT.
+		#
+		# ⚠️  It runs BEFORE `visible = true`, because `enter()` reads `size` to set the
+		# pivot — a hidden full-rect Control has not been laid out yet and pivoting on a zero
+		# rect puts the shrink in the top-left corner instead of the middle.
+		var incoming := _screens[name] as Control
+		Juice.enter(incoming)
+		incoming.visible = true
 	for key in _screens:
-		(_screens[key] as Control).visible = key == name
+		if str(key) == name:
+			continue
+		var outgoing := _screens[key] as Control
+		# A screen going away must NOT be left mid-settle with a residue on its scale:
+		# `inventory_ui` and the modal are reused, so the residue would show as a permanently
+		# 94 %-sized window. Reset it on the way out, not on the way in.
+		Juice.reset(outgoing)
+		outgoing.visible = false
 	_current = name
 	if _nav_bar != null:
 		_nav_bar.visible = not (name in NAV_HIDDEN)
@@ -514,7 +547,13 @@ func _wire_one_click_sfx(node: Node) -> void:
 	button.pressed.connect(func():
 		if is_instance_valid(button) and button.is_in_group(EXCLUDED_CLICK_GROUP):
 			return
-		Sfx.play_global(Sfx.CUE_CLICK))
+		# A tap is FELT, not just heard: the buzz is 8 ms, which is the shortest thing a
+		# phone's motor can do and reads as a tick under the finger rather than as a shake.
+		# Paired with the sound deliberately — `Input.vibrate_handheld` is a no-op on desktop
+		# and returns false where the platform has no motor (iOS Safari has no vibration API
+		# at all), so a haptic with nothing else would be silence on exactly those devices.
+		Sfx.play_global(Sfx.CUE_CLICK)
+		Juice.haptic_tap())
 
 
 func _close_modal() -> void:

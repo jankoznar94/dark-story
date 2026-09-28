@@ -63,6 +63,8 @@ const Battle := preload("res://scripts/combat/battle.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
 const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
+const Juice := preload("res://scripts/ui/juice.gd")
+const HitStop := preload("res://scripts/ui/hit_stop.gd")
 
 signal fight_over(won: bool)
 ## A level was gained. The PWA's `applyLevelUp` ducks the music (`duckBgm(0.3, 750)`) and
@@ -360,9 +362,44 @@ const EASE_HIT_SECONDS := 0.9
 const HIT_TINT := Color(1.0, 0.35, 0.3)
 const HIT_TINT_STRENGTH := 0.55
 
+## How long the IMPACT lasts: the screen thump, the HP ring's swell and its hot colour all
+## ride this one number. 110 ms is under the eye's "that was an event" threshold and over the
+## "was that a dropped frame" one.
+const IMPACT_SECONDS := 0.11
+## The screen thump's ceiling in pixels. See the note on `_impact` for why it is this small.
+const IMPACT_SHAKE_PX := 2.0
+## `.enemy-hp-ring` swells by this much on the blow and settles. A ring that only changes
+## COLOUR reads as a readout; one that moves is the largest element on screen saying it felt
+## something.
+const HP_RING_SWELL := 1.06
+## The ring's hot colour at full impact. `C_ENEMY_HP` lerped toward white — NOT a new palette
+## entry, so the ring stays the same red the PWA specifies and only brightens for 110 ms.
+const HP_RING_HOT := Color(1.0, 0.55, 0.5)
+
 ## A hit's wash, 1.0 on the blow and decayed in `_animate`. The monster's shake rides on it.
 var _hero_flash := 0.0
 var _monster_flash := 0.0
+
+## THE IMPACT. The wash says WHERE the blow landed; this says how HARD, and it is the only
+## thing on this screen that moves the whole frame rather than one figure. 1.0 on a landed
+## blow, decayed in `_animate` over ~110 ms.
+##
+## It shakes the SCREEN ROOT (this Control) rather than `_arena`: `_arena` is inside a
+## `VBoxContainer`, and a container re-sorts its children's rects, so a position written
+## there lasts until the next re-sort and then snaps back. The screen root is a direct child
+## of a `CanvasLayer` with a full-rect anchor and nobody writes its position, so this is the
+## one surface where a shake sticks.
+##
+## Ceiling is 2 px, deliberately. Jan's astigmatism brief is about large, calm, desaturated
+## shapes, and a big camera shake is the opposite of that — this has to read as a thump under
+## the thumb, not as the screen falling over.
+var _impact := 0.0
+## The enemy HP ring's own reaction, driven by `_impact`: it swells 6 % and goes hot for the
+## same 110 ms. The ring is the largest single element on the screen, so it is what the eye
+## is already on when a blow lands.
+var _hp_ring_flash := 0.0
+## The last time `_animate` ran, on the WALL clock. See the decay note inside `_animate`.
+var _last_wall_ms := 0
 
 ## One home for every eased number: id -> {value, src, target, elapsed, duration}. A screen
 ## that eases one bar and snaps the next is the bug this exists to prevent.
@@ -1220,6 +1257,12 @@ func start(state, find_item: Callable) -> bool:
 	_hero_flinch = 0.0
 	_hero_flash = 0.0
 	_monster_flash = 0.0
+	# The IMPACT is per-fight like every other reaction here: carried over it would thump the
+	# new fight with the old one's last blow.
+	_impact = 0.0
+	_hp_ring_flash = 0.0
+	_apply_impact_shake()
+	_last_wall_ms = Time.get_ticks_msec()
 	_clear_floats()
 
 	var seed_value := int(Time.get_ticks_usec()) & 0x7fffffff
@@ -1370,19 +1413,73 @@ func _drain_log() -> void:
 		# The test is "is this a blow that landed on the hero", not the literal kind
 		# "ENEMY HIT": a monster's melee, bolt, crit, drain and poison all carry their own
 		# kind, and matching only the one name left the monster's spells with no reaction at
-		# all. `_damage_taken` is what the arena's history shows the player already lost.
-		if not on_player and kind.begins_with("HIT"):
+		# all.
+		#
+		# ⚠️  `onPlayer` IS ABOUT WHO THE ENTRY DESCRIBES, NOT ABOUT WHO GOT HURT. Read it the
+		# other way round and the whole screen reacts to the wrong side: the hero's OWN swing
+		# carries `onPlayer: false` (`_note("HIT", dmg, false)` in `battle.gd`) and the
+		# monster's blow the hero took carries `true`. So `not on_player` is "the hero's own
+		# attack", and this is the one branch that reads it.
+		#
+		# The guard stays NARROW (`HIT` / `CRIT`, both with and without the ` offhand` suffix)
+		# rather than "anything not onPlayer": that set also holds the enemy's self-buffs
+		# (`ENEMY HEAL`, `ENEMY EVASION`, `ENEMY LIFESTEAL`) and `FRENZY n/5`, and a thump on
+		# any of those would be the screen reacting to a monster healing itself.
+		#
+		# MISS and BLOCK are `false` too but their kinds are their own words, so they fall
+		# through here AND through `is_player_blow` below — which is the point: a whiff must
+		# never thump the screen, because that would tell the player he landed one. The
+		# deliberate misses are the whole design of the combat.
+		if not on_player and (kind.begins_with("HIT") or kind.begins_with("CRIT")):
 			_hero_lunge = 1.0
 			_monster_flash = 1.0
-		elif is_player_blow(kind, amount, on_player):
-			# The MONSTER does not lunge. Its own 20px dip-and-return on being hit read as
-			# a twitch of its picture and Jan asked for it gone; the HIT wash is what says
-			# the blow landed on it now. Only the hero lunges (his own attack) and flinches
-			# (being hit).
-			_hero_flinch = 1.0
-			if amount > 0:
+			_felt_blow(kind.begins_with("CRIT"), kind.begins_with("CRIT"))
+		else:
+			# ⚠️  THE HALF REACTION, and it has to be here rather than nested inside the
+			# branch below. The hero TWITCHES at every swing he takes — landed, missed or
+			# blocked, they are all his own attack and they all read as a swing — but only a
+			# blow that CONNECTED may wash, thump or buzz. `_hero_flinch` for the whiff and
+			# `_felt_blow` for the hit used to sit in the same `if amount > 0`, so a MISS got
+			# no reaction at all and the hero stood perfectly still through his own swing.
+			if not on_player:
+				_hero_flinch = 1.0
+			elif is_player_blow(kind, amount, on_player) and amount > 0:
+				# The MONSTER does not lunge. Its own 20px dip-and-return on being hit read as
+				# a twitch of its picture and Jan asked for it gone; the HIT wash is what says
+				# the blow landed on it now. Only the hero lunges (his own attack) and flinches
+				# (being hit).
+				#
+				# ⚠️  `amount > 0` is load-bearing. `is_player_blow` is a "did the monster act
+				# against the hero" test, so it is TRUE for `ENEMY SLOW`, `ENEMY FAERIE FIRE`,
+				# `ENEMY THORN SHIELD` and the rest — status effects that deal nothing. Thumping
+				# on those is the screen shaking because a monster slowed the hero.
+				_hero_flinch = 1.0
 				_hero_flash = 1.0
+				_felt_blow(kind.begins_with("CRIT"), kind.begins_with("ENEMY CRIT"))
 	battle.log.clear()
+
+
+## The frame's reaction to a landed blow: haptics, a screen thump, the HP ring's swell, and
+## a hit-stop on anything worth stopping for.
+##
+## It exists as one function so the four effects cannot drift apart — the failure this
+## prevents is a screen that shakes on a crit and buzzes on a normal hit, which reads as the
+## crit being a different EVENT rather than a bigger one.
+##
+## The two `crit` flags are the two SIDES of the swing and they are not the same word: the hero
+## crits with a kind that starts `CRIT`, the monster with one that starts `ENEMY CRIT`. They are
+## passed in rather than inferred here because the battle's own `is_crit` never reaches the
+## screen, and the log's kind is the only place the suffix ` offhand` is visible as part of the
+## same swing.
+func _felt_blow(crit: bool, enemy_crit: bool = false) -> void:
+	_impact = 1.0
+	_hp_ring_flash = 1.0
+	if crit or enemy_crit:
+		Juice.haptic_crit()
+		HitStop.freeze(HitStop.CRIT_MS)
+	else:
+		Juice.haptic_hit()
+		HitStop.freeze(HitStop.HIT_MS)
 
 
 ## Is this log entry a blow the MONSTER landed on the hero? The battle writes its own kind
@@ -1509,6 +1606,19 @@ func _animate(delta: float) -> void:
 	_hero_flinch = maxf(0.0, _hero_flinch - delta * 5.0)
 	_hero_flash = maxf(0.0, _hero_flash - delta / EASE_HIT_SECONDS)
 	_monster_flash = maxf(0.0, _monster_flash - delta / EASE_HIT_SECONDS)
+	# ⚠️  Decayed on `Time.get_ticks_msec()`, never on `delta` — this is what the whole
+	# hit-stop rests on. `delta` is scaled by `Engine.time_scale`, so a 50 ms freeze stretched
+	# by 20x would hold the shake for a full second and the screen would appear to seize. The
+	# WALL clock runs through the freeze, so the shake and the ring settle on schedule while
+	# the WORLD is the thing standing still — which is exactly the effect being bought.
+	var wall_delta := float(Time.get_ticks_msec() - _last_wall_ms) / 1000.0
+	_last_wall_ms = Time.get_ticks_msec()
+	wall_delta = clampf(wall_delta, 0.0, 0.1)
+	# 110 ms end to end, and it is a DECAY rather than a tween: it is read every frame by the
+	# shake, the ring's swell and the ring's colour, so one number drives all three.
+	_impact = maxf(0.0, _impact - wall_delta / IMPACT_SECONDS)
+	_hp_ring_flash = maxf(0.0, _hp_ring_flash - wall_delta / IMPACT_SECONDS)
+	_apply_impact_shake()
 	if is_instance_valid(_hero_sprite):
 		var lift := 14.0 * _hero_lunge - 10.0 * _hero_flinch
 		_place_hero(lift)
@@ -1563,6 +1673,28 @@ func _place_hero(lift: float, gap: float = -1.0) -> void:
 	_hero_sprite.position = Vector2(
 		round(_arena.size.x * fx - size * 0.5),
 		round(arena_h * fy - size * 0.5 + lift))
+
+
+## The whole-frame thump. Two pixels on a sine, decaying with `_impact`, and RESTORED to zero
+## the moment the impact is over.
+##
+## ⚠️  The restore is not cosmetic. `position` is also written by `_apply_centring` for the
+## centred controls and by `layout_now`, so a shake that left a residue would walk the whole
+## screen 2 px sideways and keep it — a defect that reads as "the UI is off-centre after a
+## fight", sits in the same class as the container-resort trap, and is invisible in any single
+## frame. Zeroing it is the fix, not a tidy-up.
+##
+## `sin` on the wall clock rather than a Tween: this runs every frame for 110 ms and is read
+## together with the ring's swell, so one decay drives both. The y uses a different frequency
+## so the motion is a shove rather than a straight diagonal, which the eye reads as a slide.
+func _apply_impact_shake() -> void:
+	if _impact <= 0.0:
+		if position != Vector2.ZERO:
+			position = Vector2.ZERO
+		return
+	var amp := IMPACT_SHAKE_PX * _impact
+	var phase := float(Time.get_ticks_msec()) * 0.09
+	position = Vector2(round(amp * sin(phase)), round(amp * 0.6 * sin(phase * 1.7)))
 
 
 ## The battle's distance, as the RULES have it. With no battle yet the PWA's own default is
@@ -1706,6 +1838,25 @@ func _smooth_update() -> void:
 
 	var enemy_ratio := clampf(_enemy_hp_shown / maxf(_enemy_hp_max_shown, 1.0), 0.0, 1.0)
 	_arc_enemy_hp.set_value_ratio(enemy_ratio)
+	# The ring's reaction to a blow. It is the largest element on the screen, so it is where
+	# the eye already is — and this is what stops the impact being a figure-only event.
+	#
+	# ⚠️  Colour through `modulate`, NEVER `self_modulate`: `modulate` multiplies into the
+	# arc's own drawn colour, so the ring stays the PWA's red and only brightens; a
+	# `self_modulate` on a `_draw()`-based Control is a different channel with different
+	# parenting rules. And the SWELL is written on the same node `_apply_centring` positions —
+	# the scale is a transform, the centring writes the rect, so the two do not fight.
+	#
+	# Snapped to 1.0 when the impact is over, for the same reason the screen thump is: a
+	# residue here is a ring permanently 6 % too big.
+	if _hp_ring_flash > 0.0:
+		_arc_enemy_hp.modulate = Color.WHITE.lerp(HP_RING_HOT, _hp_ring_flash)
+		var swell := 1.0 + (HP_RING_SWELL - 1.0) * _hp_ring_flash
+		_arc_enemy_hp.pivot_offset = _arc_enemy_hp.size * 0.5
+		_arc_enemy_hp.scale = Vector2(swell, swell)
+	else:
+		_arc_enemy_hp.modulate = Color.WHITE
+		_arc_enemy_hp.scale = Vector2.ONE
 	if not battle.enemy_spells.is_empty():
 		_arc_enemy_mana.set_value_ratio(clampf(
 			battle.enemy_resource_cur / maxf(battle.enemy_max_resource, 1.0), 0.0, 1.0))
@@ -2643,6 +2794,10 @@ func apply_levels() -> void:
 		# The PWA plays the fanfare from `applyLevelUp` and DUCKS the music under it
 		# (`duckBgm(0.3, 750)`) — the duck is on `main`, the fanfare is here.
 		_play(CUE_LEVELUP)
+		# A level is the one event in the game that is about the PLAYER rather than about the
+		# fight, so it gets the long buzz and a freeze long enough to feel like a held breath.
+		Juice.haptic_level()
+		HitStop.freeze(HitStop.BIG_MS)
 		levelled_up.emit(int(hero["level"]))
 
 

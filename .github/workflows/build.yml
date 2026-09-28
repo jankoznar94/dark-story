@@ -376,6 +376,32 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SFX_ALL_PASS=true"
 
+      # The FEEL layer: haptics, the screen thump, the hit-stop and the two presses.
+      #
+      # Same split as the SFX gate and for the same reason — a headless run has no motor and no
+      # compositor, so what is pinned is the DECISION layer, where every bug of this shape lives:
+      # which event asked for a crit buzz (the four durations must ascend tap < hit < crit <
+      # level), that a second buzz inside the gap is swallowed but still COUNTED, that a MISS or
+      # a BLOCK never thumps the screen (a shake on a whiff tells the player he landed one, and
+      # the deliberate misses are the whole design of the combat), that the hero still FLINCHES
+      # on his own whiff, that a zero-damage monster status entry (`ENEMY SLOW`) does not thump,
+      # and that no effect leaves a residue on a scale or a position.
+      #
+      # ⚠️  It also pins the one thing here that can break in a way nothing else would show:
+      # `HitStop` writes `Engine.time_scale`, a PROCESS-WIDE global. A release path that never
+      # runs leaves the whole game at 5 % speed with nothing on screen saying why.
+      #
+      # Verified by mutation: removing the zero-damage guard turns the three `ENEMY <status>`
+      # assertions red, and dropping the `Engine.time_scale` restore turns the freeze assertion
+      # red. The verdict must be `JUICE_ALL_PASS=true` — the test prints it with the failures
+      # listed above it.
+      - name: Juice test (haptics, screen thump, hit-stop, presses)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_juice.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "JUICE_ALL_PASS=true"
+
       # The item-info panel (`#invItemOverlay`), which is where Jan's three reports lived:
       # a looted amulet with a WHITE name and no stats at all, stat rows that looked
       # "weirdly right-aligned", and a close button too small to press.

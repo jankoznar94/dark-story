@@ -18,6 +18,7 @@ class_name UIKit
 const ItemDetail := preload("res://scripts/items/item_detail.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
+const Juice := preload("res://scripts/ui/juice.gd")
 
 const BG := "#000000"
 const BORDER := "#333333"
@@ -203,6 +204,11 @@ static func flat_button(text: String, width: float = 160.0, height: float = 44.0
 	b.add_theme_color_override("font_color", Color(TEXT))
 	b.add_theme_color_override("font_pressed_color", Color("#ffffff"))
 	b.add_theme_font_size_override("font_size", font_size)
+	# A tap that only changes colour is a tap the phone barely registers. `Juice.press_on` puts
+	# a 0.97 shove under the finger for 60 ms and returns — it is not a hover and it is not a
+	# focus ring, which is the distinction Jan's rule draws. Wired HERE, in the factory, so
+	# every button the game builds gets the same feel and a new screen cannot forget it.
+	Juice.press_on(b)
 	return b
 
 
@@ -234,6 +240,7 @@ static func secondary_button(text: String, height: float = 42.0) -> Button:
 	b.add_theme_color_override("font_color", Color("#e0e0e0"))
 	b.add_theme_color_override("font_pressed_color", Color("#ffffff"))
 	b.add_theme_font_size_override("font_size", 15)
+	Juice.press_on(b)
 	return b
 
 
@@ -556,6 +563,7 @@ static func shop_buy_button(cost: int, can_afford: bool, font_size: int = 14) ->
 	# does not reach them; the price keeps its own `#f1c40f`.
 	if not can_afford:
 		price.modulate = Color(1, 1, 1, 0.5)
+	Juice.press_on(b)
 	return b
 
 
@@ -639,6 +647,7 @@ static func tab_row(tabs: Array, active_index: int, active_colour: String = MOD_
 		b.add_theme_stylebox_override("pressed", pressed)
 		b.add_theme_color_override("font_color", Color("#ffffff") if active else Color("#cccccc"))
 		b.add_theme_font_size_override("font_size", 14)
+		Juice.press_on(b)
 		row.add_child(b)
 		buttons.append(b)
 	return {"root": row, "buttons": buttons}

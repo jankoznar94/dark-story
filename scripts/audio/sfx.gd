@@ -363,6 +363,12 @@ func _start_stream(stream: AudioStream, volume: float) -> void:
 	_next = (_next + 1) % _pool.size()
 	player.stream = stream
 	player.volume_db = SILENT_DB if volume <= 0.0 else linear_to_db(volume)
+	# ±2 semitones of pitch jitter, so a fight's forty identical swings stop sounding like
+	# one file on a loop. The PWA has no variation at all — it re-plays one `Audio` element —
+	# and a repeated cue is the cheapest, most audible place to buy "alive". Only a FILE gets
+	# it: a synthesised jingle (`TONES`) carries its own intended pitch and is a fanfare, not
+	# a repeated blow.
+	player.pitch_scale = _rng.randf_range(0.89, 1.12)
 	player.play()
 
 
