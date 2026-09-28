@@ -36,6 +36,10 @@ const Juice := preload("res://scripts/ui/juice.gd")
 const HitStop := preload("res://scripts/ui/hit_stop.gd")
 
 var _failures: Array[String] = []
+## The shortest vibrate a phone's motor (and Chrome's `navigator.vibrate`) resolves rather than
+## swallowing. Not Godot's number — the platform's — so it is written here as a fact about the
+## hardware, measured against the symptom Jan reported ("no vibration at all" at 8 ms).
+const HARDWARE_FLOOR_MS := 15
 var _data: Node
 var _gen: ItemGen
 var _loot: LootSystem
@@ -208,6 +212,15 @@ func _test_the_buzz_table() -> void:
 		and Juice.HAPTIC_HIT_MS < Juice.HAPTIC_CRIT_MS
 		and Juice.HAPTIC_CRIT_MS < Juice.HAPTIC_LEVEL_MS,
 		"the buzz durations must ascend tap < hit < crit < level")
+	# ⚠️  Jan: "Žádné vibrace ani haptiku jsem nepostřehl." The durations were 8/18/30/45 ms and
+	# the DECISION layer was correct the whole time — a phone's motor and Chrome's
+	# `navigator.vibrate` both treat anything under ~15 ms as a no-op, so the shortest buzzes
+	# existed only in the log. Anything a call site can ask for must be at or above that floor,
+	# or the table is a table of numbers nobody can feel. Verified by mutation: restoring the
+	# 8 ms tap turns this red.
+	_check(Juice.HAPTIC_TAP_MS >= HARDWARE_FLOOR_MS,
+		"the tap buzz is %d ms, under the ~%d ms a phone's motor can resolve — Jan felt nothing"
+			% [Juice.HAPTIC_TAP_MS, HARDWARE_FLOOR_MS])
 
 
 ## Two rules can land in one 100 ms tick (Double Swing). The second buzz inside the gap is

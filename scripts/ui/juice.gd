@@ -20,16 +20,23 @@ static var instance: Juice = null
 ## has no vibration API at all, so the call returns false on exactly the device family Jan
 ## may be holding. That is why every haptic call site pairs it with something VISIBLE: the
 ## buzz is a bonus, never the message.
-const HAPTIC_TAP_MS := 8
-## A landed blow under the hero's own thumb. Deliberately short — a 40 ms buzz on a fast
-## weapon reads as a rattle, not as impact.
-const HAPTIC_HIT_MS := 18
-const HAPTIC_CRIT_MS := 30
-const HAPTIC_LEVEL_MS := 45
+## ⚠️  THE DURATIONS ARE THE OTHER HALF OF "I FELT NOTHING", and they are set against what a
+## phone's motor can actually resolve rather than for how they read in a log. Android's
+## `Vibrator` and Chrome's `navigator.vibrate` both treat anything under ~15 ms as a no-op or as
+## a single tick the hand cannot resolve, so the shipped 8 ms tap was never going to be felt on
+## a real device — the DECISION layer was right and the number was below the hardware's floor.
+## Every value here is now at or above it: 20 ms is the shortest tap a phone can show.
+const HAPTIC_TAP_MS := 20
+## A landed blow under the hero's own thumb. Still the shortest of the fight's buzzes — a 40 ms
+## buzz on a fast weapon reads as a rattle, not as impact.
+const HAPTIC_HIT_MS := 35
+const HAPTIC_CRIT_MS := 55
+const HAPTIC_LEVEL_MS := 80
 ## Two rules can land in one 100 ms tick (Double Swing), and a buzz is a platform syscall.
 ## Anything inside this window is swallowed — dropped, never queued, because a queued buzz
-## arrives after the moment it was describing.
-const HAPTIC_MIN_GAP_MS := 40
+## arrives after the moment it was describing. It is twice the TAP buzz on purpose: a platform
+## asked twice in 25 ms is exactly how a real device drops a buzz.
+const HAPTIC_MIN_GAP_MS := 60
 
 ## A tap's press animation: 0.97 over 60 ms and BACK to 1.0. Returning is the point — Jan's
 ## standing rule is that a phone has no hover, so a control shows state only while it IS

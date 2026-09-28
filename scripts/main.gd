@@ -800,11 +800,16 @@ func _on_world_next_fight() -> void:
 ## rule (`advance_stop`), and then the player is put back ON THE ROAD rather than into the next
 ## fight — the road is the thing he walks, and it is what shows him where he is.
 ##
-## A cleared area (`another_fight()` false) still goes to town, as it did: there is no next fight
+## ⚠️  NOTHING IS STARTED HERE ANY MORE, and that was Jan's report: "když na vítězné obrazovce
+## hráč klikne na Další souboj, hra ho přesměruje na mapu a na pozadí zároveň rovnou odstartuje
+## souboj ... slyšíš zvuky souboje." The arena's old `another_fight()` built AND started the next
+## fight, so a live battle kept ticking and playing behind the road.
+##
+## A cleared zone (`advance_stop()` false) still goes to town, as it did: there is no next fight
 ## to walk to inside it.
 func _on_another_fight() -> void:
 	var arena = _screens["arena"]
-	if not arena.another_fight():
+	if not arena.advance_stop():
 		show_screen("town")
 		return
 	show_world(int(state.data.get("_currentAct", 0)))

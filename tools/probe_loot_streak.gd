@@ -69,6 +69,9 @@ func _streak() -> void:
 		print("fight %d: ticks=%d won=%s rows=%d %s | bag=%d gold=%d" % [
 			fight, guard, str(screen.battle.won), screen._result_loot_rows.size(),
 			str(names), s.inventory().size(), int(s.hero().get("gold", 0))])
-		# Leave the result page the way the "Dalsi souboj" tile does.
-		screen.another_fight()
+		# Leave the result page the way the "Dalsi souboj" tile does: settle the stop and let
+		# the NEXT fight come from `start()` again, which is the route a tap on the road takes.
+		# The screen no longer starts the next fight itself (`main._on_another_fight` sends the
+		# player back to the road) - a live battle behind another screen is what Jan could hear.
+		screen.advance_stop()
 	print("total rows over 12 fights = %d" % bag_rows)

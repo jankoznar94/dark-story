@@ -485,16 +485,25 @@ func _draw_home(gate: Vector2) -> void:
 		_draw_centered("domů", Vector2(gate.x, gate.y + 40.0), font, 10, Color("#9a9a9a"))
 
 
-## The node states, and the numbering follows `areaFightProgress` — the count of fights ALREADY
-## WON on this stop (0..10), because that is the index `Battle.setup` reads as `area_fight`.
+## The station states, and the NUMBER ON A STATION is the fight's own 1-based number.
 ##
-## ⚠️  TWO BUGS LIVED IN THE THREE LINES BELOW, and they are the same off-by-one Jan can see:
+## ⚠️  THE LABEL USED TO BE `str(fight)` — the count of fights ALREADY WON — and that is the
+## off-by-one Jan reported as "všechny souboje na cestě (puntíky) mají číslo 0": on a fresh stop
+## that counter is 0, so BOTH the live station and the one after it read "0" (after three wins
+## they both read "3"). `areaFightProgress` stays the INDEX the screen resolves taps against
+## (`_tap_index`) — it is just not what a station is CALLED. `node_mark()` owns the naming rule
+## and is static, so a test calls the real thing instead of recomputing it.
 ##
-##   * the fight the player is ABOUT TO FIGHT is the node at index `fight` (0-based), NOT at
-##     `fight + 1`. The header read "souboj 0/10" on a fresh stop while this drew node 1 as gold;
-##   * a node only becomes DONE once its fight is behind the player, i.e. `index < fight`. The
-##     old rule (`fight < current`) marked the node the player was STANDING ON as finished, so a
-##     fresh stop showed a tick on a fight nobody had fought.
+## Three states, unchanged in meaning:
+##
+##   * a station BEHIND the player keeps its number in the dim grey (`NODE_DONE` edge);
+##   * the LIVE one is gold, with the extra gold ring — the only tappable station;
+##   * one that has not OPENED yet wears the padlock icon instead of a number, and its tap is
+##     refused by `_gui_input`.
+static func node_mark(index: int, fight: int, tap_index: int) -> String:
+	if index > fight and not (index == fight + 1 and tap_index >= 0):
+		return ""
+	return str(index + 1)
 func _draw_node(index: int, p: Vector2) -> void:
 	var fight := _current_fight()
 	var done := index < fight
@@ -519,11 +528,7 @@ func _draw_node(index: int, p: Vector2) -> void:
 	var font := UIFonts.get_font(14)
 	if font == null:
 		return
-	if done:
-		# A tick, drawn rather than a glyph: DejaVu has no emoji and the game forbids them.
-		_canvas.draw_line(p + Vector2(-6, 0), p + Vector2(-2, 5), NODE_DONE, 2.0)
-		_canvas.draw_line(p + Vector2(-2, 5), p + Vector2(7, -6), NODE_DONE, 2.0)
-	elif index > fight and not is_next:
+	if index > fight and not is_next:
 		# ⚠️  A fight that has not OPENED yet wears a padlock, so "what am I walking towards" is
 		# legible at a glance. The game forbids emoji, so it is the generated lock icon the map's
 		# stop badges already use — and the tap guard in `_gui_input` already refuses it.
@@ -533,10 +538,17 @@ func _draw_node(index: int, p: Vector2) -> void:
 		else:
 			_draw_centered(str(index + 1), p, font, 14, DIM)
 	else:
-		var colour := GOLD if is_current else (Color(UIKit.TEXT) if is_next else DIM)
+		var colour := DIM
+		if is_current:
+			colour = GOLD
+		elif is_next:
+			colour = Color(UIKit.TEXT)
+		elif index < fight:
+			colour = NODE_DONE
 		# ⚠️  Through `_draw_centered`, NOT `draw_string` with the node centre as `pos.x` — the
 		# latter drew the digit ~15 px right, i.e. on the ring. See the helper's note.
-		_draw_centered(str(fight), p, font, 14, colour)
+		# ⚠️  And the string is the station's OWN 1-based number (`node_mark`), NEVER `str(fight)`.
+		_draw_centered(node_mark(index, fight, _tap_index), p, font, 14, colour)
 
 
 ## ⚠️  The hero is GONE — `_hero`, `_hero_anchor()`, `_place_hero()`, `HERO_SIZE`, `HERO_X`,

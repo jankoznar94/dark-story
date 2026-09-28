@@ -376,6 +376,30 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SFX_ALL_PASS=true"
 
+      # "Další souboj" must WALK, not fight behind the road.
+      #
+      # Jan: "když na vítězné obrazovce hráč klikne na Další souboj, tak ho hra přesměruje na mapu
+      # a na pozadí zároveň rovnou odstartuje souboj. Hráč tedy vidí cestu, ale slyšíš zvuky
+      # souboje." Two independent defects, one test each:
+      #   * the arena's `another_fight()` advanced the stop AND called its own `start()`, so the
+      #     tile both walked the player out and began a fight nobody could see. Asserted on
+      #     `battle.ended` — `battle != null` cannot see it, because the bug builds a real battle
+      #     into the very same field;
+      #   * `_process` had no visibility guard, so a hidden arena kept ticking AND kept feeding
+      #     cues to the mixer. That half is asserted with the mixer's own `played_count`, because
+      #     the thing Jan perceived was a NOISE, not a rule.
+      #
+      # Verified by mutation, one at a time: restoring the `start()` turns the first assertion
+      # red, and removing the `if not visible` guard turns the other two red.
+      #
+      # The verdict is derived from the GATE's name; rename one and the other must follow.
+      - name: Next fight test (the tile walks, a hidden arena is silent)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_next_fight.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "NEXT_FIGHT_ALL_PASS=true"
+
       # The FEEL layer: haptics, the screen thump, the hit-stop and the two presses.
       #
       # Same split as the SFX gate and for the same reason — a headless run has no motor and no

@@ -22,6 +22,10 @@ var _screen := ""
 var _fight_ticks := 0
 ## `--result lose` captures the DEFEAT page rather than the victory one.
 var _result_lose := false
+## `--nodes N` sets the road's `areaFightProgress` before the shot, so a capture can show a stop
+## that is part way through (some dots ticked, the current one live, the rest locked) instead of
+## only the fresh-stop case Jan kept seeing as "every dot says 0".
+var _node_states := ""
 ## `--tab sell` presses the screen's OWN tab button after entering (the shop's Buy/Sell
 ## strip). Driving the button rather than writing `_tab` follows the route a tap takes —
 ## a hand-written field would pass against broken wiring.
@@ -31,6 +35,8 @@ var _tab := ""
 ## list, and an empty list is a frame that proves nothing about the card that overflows.
 var _bag := ""
 var _started := false
+## The stop the `world` capture enters. Act 0, stop 0 — the first one a player sees.
+const STOP_FOR_CAPTURE := 0
 
 
 func _initialize() -> void:
@@ -52,6 +58,8 @@ func _initialize() -> void:
 				_tab = args[i + 1]
 			"--bag":
 				_bag = args[i + 1]
+			"--nodes":
+				_node_states = args[i + 1]
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -154,7 +162,23 @@ func _entry() -> void:
 			quit(2)
 			return
 		return
-	if key == "arena":
+	if key == "world":
+		# Through the REAL route: a stop on the map winds the act's progress and opens the road,
+		# which is also what writes `_currentAct` (`_on_stop_selected` -> the stop's transition
+		# -> `show_world`). One step past the hold runs that callback, exactly as 1.8 s of
+		# frames would — the same driving `ToolHelpers.enter_arena` does.
+		_main._on_stop_selected(0, STOP_FOR_CAPTURE)
+		var tr = _main._transition
+		if tr != null and tr.is_transitioning():
+			tr._process(tr.HOLD_MS / 1000.0 + 0.01)
+		# A fresh stop unless `--nodes` asked for a road with fights already won. This is the
+		# case Jan reported as "every dot says 0": on a fresh stop that IS what the road shows
+		# (dot 1 live, the other nine behind padlocks), so the capture has to be able to ask
+		# for a stop that is part way through.
+		if _node_states != "":
+			_main.state.data["areaFightProgress"][0] = int(_node_states)
+			_main.show_world(0)
+	elif key == "arena":
 		# Entering through the REAL route: a stop on the map winds progress forward and
 		# starts the fight. `_on_wilderness()` used to exist and was deleted with the
 		# map rebuild, which silently broke every arena capture after that.

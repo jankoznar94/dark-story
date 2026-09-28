@@ -93,6 +93,7 @@ func _run() -> void:
 	_test_every_area_file_has_real_bytes()
 	_test_an_unknown_act_falls_back_without_crashing()
 	_test_a_digit_is_centered_in_its_node()
+	_test_every_station_carries_its_own_number()
 	_test_the_home_gate_clears_the_header()
 	_test_the_hero_is_gone()
 	_test_the_road_can_be_tapped()
@@ -332,6 +333,58 @@ func _test_a_digit_is_centered_in_its_node() -> void:
 	var pen10: Vector2 = w.centered_pen("10", centre, font, 14)
 	if is_equal_approx(pen10.x, centre.x):
 		_fail("centered_pen returned the node's OWN x — that is the bug, not the fix")
+
+
+## Jan: "Všechny souboje na cestě (puntíky) mají číslo 0."
+##
+## `_draw_node` labelled EVERY drawn digit with `str(fight)` — the count of fights ALREADY WON,
+## which is 0 on a fresh stop. So both the live station and the one after it read "0", and after
+## three wins they both read "3": the number said where the PLAYER was, never which fight the
+## station IS. The rule now lives in `node_mark()`, and this calls the real function — a test that
+## recomputed `index + 1` itself would pass against the bug.
+##
+## Verified by mutation: putting `str(fight)` back inside `node_mark` turns it red.
+func _test_every_station_carries_its_own_number() -> void:
+	var w: Control = _world()
+	var total: int = w._total_fights()
+	for fight in [0, 1, 4]:
+		var marks := PackedStringArray()
+		# `tap_index` = fight is the live game's own value: the station the player may start IS
+		# the one at `areaFightProgress`, so it is that station and the one after it that carry a
+		# number while the rest wear padlocks.
+		for i in total:
+			marks.append(w.node_mark(i, fight, fight))
+		for i in total:
+			var expected := str(i + 1)
+			if i > fight + 1:
+				expected = ""
+			if marks[i] != expected:
+				_fail("at %d/10 station %d is labelled '%s', expected '%s' — every station must " %
+					[fight, i + 1, marks[i], expected]
+					+ "carry its OWN fight number, not the count of fights won")
+		# And the two stations the old code gave the same string must now differ.
+		if fight < total - 1 and marks[fight] == marks[fight + 1]:
+			_fail("station %d and station %d both read '%s' — the off-by-one Jan saw"
+				% [fight + 1, fight + 2, marks[fight]])
+
+	# ⚠️  And the DRAWING must actually go through it. A test of `node_mark()` alone passes even
+	# with `_draw_node` still painting `str(fight)`, which is the exact shape of the bug — so the
+	# call site is read out of the SOURCE, and the old expression is asserted GONE.
+	# Verified by mutation: putting `_draw_centered(str(fight), p, font, 14, colour)` back turns
+	# this red while every assertion above stays green.
+	var src := FileAccess.get_file_as_string("res://scripts/ui/world_screen.gd")
+	if not src.contains("_draw_centered(node_mark(index, fight, _tap_index)"):
+		_fail("_draw_node does not paint `node_mark(...)` — the station's own number is not what "
+			+ "reaches the canvas")
+	if src.contains("_draw_centered(str(fight)"):
+		_fail("`_draw_centered(str(fight)` is back in the file: every station would label itself "
+			+ "with the count of fights WON, i.e. 0 on a fresh stop (Jan's report)")
+
+	# And the rule itself, read the way the drawing reads it: on a fresh stop the live station is
+	# "1" and the one after it is "2", never two zeros.
+	if w.node_mark(0, 0, 0) != "1" or w.node_mark(1, 0, 0) != "2":
+		_fail("a fresh stop labels its first two stations '%s' and '%s', expected '1' and '2'"
+			% [w.node_mark(0, 0, 0), w.node_mark(1, 0, 0)])
 
 
 ## Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'."

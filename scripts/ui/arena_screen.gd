@@ -1333,6 +1333,15 @@ func step() -> void:
 ## feels. The remainder carries to the next frame instead of being rounded away, which is
 ## what stops a fast frame from shortening a swing.
 func _process(delta: float) -> void:
+	# ⚠️  A HIDDEN SCREEN MUST NOT TICK AND MUST NOT SPEAK. The router hides the arena the moment
+	# it shows another screen, and this override used to keep running — so any battle that was
+	# live when the player left went on swinging, and its sound cues kept reaching the mixer,
+	# behind whatever screen was up. That is the second half of Jan's report ("přesměruje ho na
+	# mapu a na pozadí zároveň rovnou odstartuje souboj ... slyšíš zvuky souboje"); the first half
+	# is that no fight is started behind the road at all any more (`advance_stop`). This guard is
+	# what makes the symptom impossible even if a caller ever leaves a live battle behind.
+	if not visible:
+		return
 	_cast_this_frame = false
 	_frame_delta = maxf(delta, 0.0001)
 	# The tap guard runs on REAL time and on every frame, because once the fight is over
@@ -2801,13 +2810,25 @@ func apply_levels() -> void:
 		levelled_up.emit(int(hero["level"]))
 
 
-## Advance the stop when the zone is finished, then start the next fight.
-func another_fight() -> bool:
+## Settle the stop's progress after a won fight and report whether the stop still HAS a fight in
+## it. IT DELIBERATELY STARTS NOTHING.
+##
+## ⚠️  It used to `start()` the next fight here, and that is the bug Jan hit: "když na vítězné
+## obrazovce hráč klikne na Další souboj, hra ho přesměruje na mapu a na pozadí zároveň rovnou
+## odstartuje souboj ... slyšíš zvuky souboje." A started battle is a LIVE battle: `_process`
+## keeps ticking it and the mixer keeps playing its cues, so the next fight was being fought (and
+## heard) behind the road. The fight starts where every other one does — on the station's own tap
+## (`main._on_world_next_fight` -> `_enter_arena` -> `start()`).
+##
+## The mid-zone case needs nothing here at all: the WIN already incremented `areaFightProgress`
+## (`battle.gd`'s `_finish`), and `advance_stop` on the battle only handles the 10/10 rollover to
+## the next zone of the act.
+func advance_stop() -> bool:
 	if battle == null:
 		return false
 	battle.advance_stop(_state)
 	_state.save()
-	return start(_state, _find_item)
+	return int(_state.data["areaFightProgress"][battle.act_id]) < Battle.FIGHTS_PER_ZONE
 
 
 func _load(path: String) -> Texture2D:
