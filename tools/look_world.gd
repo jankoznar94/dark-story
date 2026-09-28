@@ -62,10 +62,14 @@ func _process(_delta: float) -> bool:
 	if _frames < SETTLE:
 		return false
 	var w = _main._screens["world"]
-	print("PROBE hero pos=%s size=%s visible=%s tex=%s anchor=%s" % [str(w._hero.position), str(w._hero.size), str(w._hero.visible), str(w._hero.texture != null), str(w._hero_anchor())])
-	print("PROBE world size=%s canvas=%s" % [str(w.size), str(w._canvas.size)])
-	var gr = w._hero.get_global_rect()
-	print("PROBE hero global_rect=%s visible_in_tree=%s" % [str(gr), str(w._hero.is_visible_in_tree())])
+	print("PROBE world size=%s canvas=%s nodes=%d" % [str(w.size), str(w._canvas.size),
+		w._total_fights()])
+	# ⚠️  The hero was removed from this screen (Jan: "Dejme tělo hrdiny úplně pryč"), so there is
+	# no `w._hero` to report any more. Printing its position here crashed the tool with a null
+	# access and the frame was never captured — the same class of silent breakage as a tool that
+	# writes a real frame under a wrong name.
+	print("PROBE band top=%s bottom=%s centre=%s amp=%s" % [str(w.ROAD_TOP),
+		str(w.ROAD_BOTTOM), str(w.SERPENTINE_CENTER), str(w.SERPENTINE_AMP)])
 	_capture()
 	return false
 

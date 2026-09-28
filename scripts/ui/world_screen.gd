@@ -47,29 +47,25 @@ const NODE_NEXT := Color("#8a8a8a")
 ## the header's box ends at y=56, the two action buttons start at y=752 and the nav bar at 783.
 ## The hard limits follow from those, and the two ENDS are not symmetric:
 ##
-##   * the TOP node is the dangerous one, for TWO reasons, and the second was Jan's report
-##     ("Horní puntík by neměl kolidovat s textem 'souboj X/Y'"):
-##       1. the hero sprite is drawn UPWARD from his node (72 px tall, his feet ON the node, so
-##          his head is `y - HERO_SIZE + 14`). The hard limit from that alone is 0.118.
-##       2. the HOME GATE is drawn at a fixed y=74 with radius 22, so its ring spans y 52..96 —
-##          and the header's "souboj" line is measured at y 43..55. This is the BINDING constraint:
-##          the gate's bottom (96) plus the node's own ring (21) puts the first station no higher
-##          than 0.1386. 0.145 = y 122 leaves 5 px, the same breathing room as the bottom end.
-##          (The hero's own height would allow 0.118, but nothing is drawn above him, so the gate
-##          is what actually binds.)
+##   * the TOP node is the dangerous one, and its constraint is the HOME GATE: it is drawn at a
+##     fixed y=100 with radius 22, so its ring spans y 78..122 — and the header's "souboj" line is
+##     measured at y 43..55. The gate's bottom (122) plus the node's own ring (21) puts the first
+##     station no higher than 0.1694; 0.18 = y 152 leaves 9 px.
+##
+##     ⚠️  This USED to be derived from the hero sprite, which was drawn upward from his node. The
+##     hero is gone (see the note further down), so the gate is now the only thing up here — but
+##     do NOT lower this back toward 0.10 without checking the gate again.
 ##   * the BOTTOM node has no sprite hanging off it, only its ring (NODE_R + 5 = 21 px). Its hard
 ##     limit is 0.866, where the ring touches the buttons; 0.86 leaves 5 px.
-const ROAD_TOP := 0.145
+const ROAD_TOP := 0.18
 const ROAD_BOTTOM := 0.86
 ## How far the route drifts either side of centre, as a fraction of the width. A "lehká
 ## serpentina": one sine period at 0.10 swings 78 px of 390 (20 %) across the ten stations.
 ##
-## ⚠️  The route is NOT centred any more, and that is what makes room for the hero. Jan: "Hrdina
-## ... musí být bokem tak, ať nic nepřekrývá." With the centre at 0.42 the nodes span
-## 125..203 px, so the hero's column can own the right of the screen and never touch a node —
-## see `HERO_X`. Centring them would have forced the hero either on top of the road or off the
-## edge of a 390 px canvas.
-const SERPENTINE_CENTER := 0.42
+## ⚠️  This was 0.42 while the route had to leave the right of the screen free for the hero's
+## column. The hero is gone, so the offset has no reason left and the route is centred again —
+## 0.50 puts the stations at x 156..234, balanced on the 390 px canvas.
+const SERPENTINE_CENTER := 0.50
 const SERPENTINE_AMP := 0.10
 
 var _state
@@ -84,12 +80,6 @@ var _portal_button: Button
 ## here is positioned by hand from `NODES`, and a container would overwrite those rects (the trap
 ## that cost the result page its layout twice).
 var _canvas: Control
-## The hero is a NODE, not a `draw_texture_rect` call. Measured: drawing an RGBA sprite through
-## `CanvasItem.draw_texture_rect` in this screen's `_draw()` rendered its transparent area as
-## SOLID WHITE (a 96x96 block over the road), while the arena — which uses a `TextureRect` with
-## `STRETCH_KEEP_ASPECT_CENTERED` — shows the same file correctly. The node is also what lets the
-## walk be an eased position instead of a redraw per frame.
-var _hero: TextureRect
 ## The area's own art, loaded OUTSIDE the draw. `_draw_ground()` used to call `_stop_art()` from
 ## inside `_draw()`, and that combination renders the texture WHITE: measured, the shipped
 ## `_draw_ground(390, 844)` alone on a bare canvas came out a flat (0.3176,0.3176,0.3216) —
@@ -98,12 +88,6 @@ var _hero: TextureRect
 ## a texture and drawing it in the same `_draw()` is the trap; the file, alpha and destination
 ## were never wrong. Cached in `refresh()` (and once in `_build()` so the first draw has it).
 var _ground_tex: Texture2D
-
-## Where the hero is, in NODES. -1 is "at the very start, not on a node" — which only happens on
-## a fresh zone, so the first thing the player sees is the hero walking INTO the road.
-var _walk_from := -1
-var _walk_progress := 1.0
-const WALK_SPEED := 1.6  # nodes per second
 
 
 func _init(game_data: Node, state, find_item: Callable) -> void:
@@ -120,15 +104,12 @@ func _ready() -> void:
 ## Every entry into the screen goes through here. `show_screen` calls it, so the header, the
 ## buttons and the start position can never disagree with the save.
 func refresh() -> void:
-	_walk_from = _current_fight() - 1
-	_walk_progress = 1.0
 	# The ground's texture is resolved HERE, once per entry, and never from inside `_draw()`.
 	_ground_tex = _area_art()
 	if _header_act != null:
 		_header_act.text = _zone_name()
 		_header_fight.text = "souboj %d/%d" % [_current_fight(), _total_fights()]
 	_refresh_actions()
-	_place_hero()
 	if _canvas != null:
 		_canvas.queue_redraw()
 
@@ -185,19 +166,11 @@ func _refresh_actions() -> void:
 	_portal_button.visible = int(_state.data.get("townPortalCount", 0)) > 0
 
 
-func _process(delta: float) -> void:
-	if _canvas == null:
-		return
-	_place_hero()
-	if _walk_progress >= 1.0:
-		return
-	var target := float(_current_fight() - 1)
-	var span := target - float(_walk_from)
-	if is_zero_approx(span):
-		_walk_progress = 1.0
-		return
-	_walk_progress = minf(1.0, _walk_progress + delta * WALK_SPEED / absf(span))
-	_canvas.queue_redraw()
+## ⚠️  There is no `_process()` any more, and that is the point: the ONLY thing that needed a
+## per-frame tick was the hero's walk, and Jan removed the hero ("Dejme tělo hrdiny úplně pryč").
+## An empty `_process` would be a per-frame callback that does nothing, so the whole override is
+## gone rather than left as a stub — a screen that reports which node is current through the drawn
+## nodes needs no clock at all.
 
 
 # ============================================================================ build
@@ -214,19 +187,6 @@ func _build() -> void:
 	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_canvas.draw.connect(_draw_road)
 	add_child(_canvas)
-
-	_hero = TextureRect.new()
-	_hero.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_hero.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hero.texture = UIKit.load_texture("assets/monsters/hero_body_%s.png"
-		% str(_state.data.get("heroClass", "barbarian")))
-	# ⚠️  The size is set ONCE, here, and never from inside `_draw_road`. Measured: assigning a
-	# Control's `size` during another node's `_draw()` did not stick — the hero node stayed 0x0 and
-	# drew nothing at all, while the same `TextureRect` works in the arena. Position is cheap and
-	# changes every frame; size is a constant.
-	_hero.size = Vector2(HERO_SIZE, HERO_SIZE)
-	add_child(_hero)
 
 	# The very first draw happens before any `refresh()`, so the ground's texture is resolved here
 	# too — same reason as in `refresh()`, and the same rule: never load a texture from `_draw()`.
@@ -312,22 +272,6 @@ func node_pos(index: int) -> Vector2:
 
 
 const NODE_R := 16.0
-## The hero's drawn height. Constant, so it is set once in `_build()`.
-##
-## ⚠️  96 was too tall for a road whose stations are 64.7 px apart — his head covered the node
-## ABOVE the one he stood on (measured: 1.3 nodes' worth). Jan's instruction was that he must not
-## cover anything, so this is a second, independent lever from `HERO_X`: at 72 px he is still a
-## readable figure and no longer reaches the node above.
-const HERO_SIZE := 72.0
-
-## Where the hero stands, as a fraction of the width — BESIDE the road, never on it. Jan: "Hrdina
-## ... musí být bokem tak, ať nic nepřekrývá."
-##
-## The nodes are centred on `SERPENTINE_CENTER` 0.42, and with the clamp at 34 px the rightmost
-## node can only ever reach x = 0.58 * 390 = 226. The hero is drawn `HERO_SIZE` wide around this
-## anchor, so 0.87 puts his left edge at 0.87 * 390 - 36 = 303 and every node stays 77 px clear of
-## him. Measured across all ten stations, not assumed — pinned by `test_world_screen`.
-const HERO_X := 0.87
 
 
 ## Which node a point is on, or -1. Taps are resolved against the DRAWN positions, so the drawing
@@ -365,11 +309,6 @@ func _draw_road() -> void:
 	var gate := Vector2(w * 0.5, 100.0)
 	_canvas.draw_line(home, gate, Color(0.30, 0.26, 0.20, 0.85), 10.0)
 	_draw_home(gate)
-
-	# The hero's shadow goes on the canvas (under his feet); the figure itself is the node above,
-	# positioned by `_place_hero()` — see the size note in `_build()`.
-	var anchor := _hero_anchor()
-	_canvas.draw_circle(Vector2(anchor.x, anchor.y + 2.0), 16.0, Color(0, 0, 0, 0.5))
 
 	for i in total:
 		_draw_node(i, node_pos(i))
@@ -512,30 +451,18 @@ func _draw_node(index: int, p: Vector2) -> void:
 		_draw_centered(str(fight), p, font, 14, colour)
 
 
-## The hero's position. He stands BESIDE the road, in his own column, and never on a node — so he
-## cannot cover one. Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá."
+## ⚠️  The hero is GONE — `_hero`, `_hero_anchor()`, `_place_hero()`, `HERO_SIZE`, `HERO_X`,
+## `_walk_from`, `_walk_progress`, `WALK_SPEED` and the `_process()` that drove the walk are all
+## deleted. Jan: "Dejme tělo hrdiny úplně pryč."
 ##
-## His Y still follows the journey (he walks down from the station he came from), which is what
-## keeps him reading as the player's position on the road; his X is the constant `HERO_X` column.
-## That split is deliberate: the Y is state, the X is layout.
+## He was first moved beside the road (Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá"),
+## and that worked, but he was still a second figure competing with the stations for attention.
+## The stations already say where the player is — the CURRENT one wears the gold ring and the ones
+## before it wear ticks — so the sprite was carrying no information the screen did not already show.
 ##
-## Jan's "vizuální pohyb" is preserved — the same body sprite the arena uses, one character across
-## both screens — and the walk is still an eased Y through `_process`.
-func _hero_anchor() -> Vector2:
-	var column := size.x * HERO_X
-	var to := _current_fight() - 1
-	if _walk_from < 0:
-		return Vector2(column, node_pos(0).y + 26.0)
-	if _walk_from == to:
-		return Vector2(column, node_pos(to).y)
-	return Vector2(column, lerpf(node_pos(_walk_from).y, node_pos(to).y, _walk_progress))
-
-
-func _place_hero() -> void:
-	if _hero == null:
-		return
-	var anchor := _hero_anchor()
-	_hero.position = Vector2(anchor.x - HERO_SIZE * 0.5, anchor.y - HERO_SIZE + 14.0)
+## Do NOT reintroduce a walk animation here without a tick source: the eased `_process` was the only
+## reason this screen had a clock at all. Note the arena still draws the hero's body, which is where
+## "which class am I playing" genuinely belongs.
 
 
 ## The area's own art. There is NO stop-by-stop art for every act yet (`assets/stops/` covers acts

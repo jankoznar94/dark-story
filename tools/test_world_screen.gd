@@ -26,12 +26,11 @@ extends SceneTree
 ##      `visible` TextureRect with a NULL texture. Godot sniffs CONTENT, so the check is the magic
 ##      bytes, never the extension.
 ##   4. **An out-of-range act id reads DEFENSIVELY rather than spamming the log.** Measured: the
-##      screen indexed the save's progress arrays directly, and because `_place_hero()` ->
-##      `_hero_anchor()` -> `_current_fight()` runs from `_process`, an act id no table covers
-##      logged `Invalid access of index '99' on a base object of type: 'Array'` EVERY FRAME. The
-##      save is a JSON file that can hold such an id. This test asserts the screen survives it;
-##      the logged line itself is verified by `tools/_probe_stop_art_range.gd`, because a test
-##      cannot assert an error that is printed rather than returned.
+##      screen indexed the save's progress arrays directly, and because `_current_fight()` is read
+##      from the render path, an act id no table covers logged `Invalid access of index '99' on a
+##      base object of type: 'Array'` EVERY FRAME. The save is a JSON file that can hold such an id.
+##      This test asserts the screen survives it; the logged line itself is verified by a probe,
+##      because a test cannot assert an error that is printed rather than returned.
 ##   5. **The dots stay tappable at the new span.** Moving the band moves every node; the hit test
 ##      reads the node rects back out of `node_pos`, so the two must not drift apart.
 ##   6. **A digit sits exactly on its node's centre.** Jan: "Čísla jsou mimo puntíky. Měly by být
@@ -41,11 +40,11 @@ extends SceneTree
 ##      `[pos.x, pos.x+W)`, so passing the node's CENTRE as `pos.x` shifts it right by W/2. This
 ##      test calls the screen's OWN `centered_pen()` — a test that recomputes the formula itself
 ##      passes against a broken helper.
-##   6. **The hero covers no node.** Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá." His
-##      sprite is 72 px tall and 72 wide, drawn from his feet UPWARD from `_hero_anchor()`, and
-##      the stations are only 64.7 px apart — so standing him ON a node covered the one above
-##      (measured: 1.3 nodes' worth). This asserts the RECTANGLES do not intersect, for every
-##      fight on the road and mid-walk too, which is the assertion that would have caught it.
+##   6. **The hero is GONE, and stays gone.** Jan: "Dejme tělo hrdiny úplně pryč." He was a second
+##      figure competing with the stations, and the gold ring already says where the player is. This
+##      asserts the screen exposes no hero API and no `_process()` — a screen with a per-frame
+##      override that animates nothing is a clock nobody needs, and a re-added sprite would silently
+##      bring back the collision the previous version of this test was written to catch.
 ##
 ## Assertions are deferred to `_process` because `Main._ready()` builds the data, the state and
 ## every screen while `_initialize()` has already run.
@@ -93,9 +92,9 @@ func _run() -> void:
 	_test_the_area_art_is_its_own_file_per_act()
 	_test_every_area_file_has_real_bytes()
 	_test_an_unknown_act_falls_back_without_crashing()
-	_test_the_hero_covers_no_node()
 	_test_a_digit_is_centered_in_its_node()
 	_test_the_home_gate_clears_the_header()
+	_test_the_hero_is_gone()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -117,17 +116,14 @@ func _world() -> Control:
 ## The hard limits the geometry allows, in screen fractions. Recomputed here so the test states
 ## the RULE, not a copy of the constant it is checking.
 ##
-## Top has TWO constraints and the binding one is the GATE, not the hero: the home gate's ring
-## reaches y=96 (it is drawn at a fixed y=74, r=22), and the node's own ring hangs `NODE_R + 5`
-## above its centre — so the first station cannot start above (96 + 21) / 844. The hero's own
-## height is the looser one at 72 px. Jan's report was that the top station collided with the
-## "souboj X/Y" text, which is exactly this constraint being ignored.
+## Top has ONE constraint now that the hero is gone: the HOME GATE. Its ring reaches y=122 (it is
+## drawn at a fixed y=100, r=22), and the node's own ring hangs `NODE_R + 5` above its centre — so
+## the first station cannot start above (122 + 21) / 844. Jan's report was that the top station
+## collided with the "souboj X/Y" text, and the gate is what actually did it.
 ##
 ## Bottom: only the node's ring hangs below it, `NODE_R + 5`, down to the buttons at 752.
 func _hard_top(w: Control) -> float:
-	var for_gate: float = GATE_BOTTOM + w.NODE_R + 5.0
-	var for_hero: float = HEADER_BOTTOM + w.HERO_SIZE - 14.0
-	return maxf(for_gate, for_hero) / w.size.y
+	return (GATE_BOTTOM + w.NODE_R + 5.0) / w.size.y
 
 
 func _hard_bottom(w: Control) -> float:
@@ -148,10 +144,10 @@ func _test_the_road_spans_the_picture() -> void:
 
 	# 1. It must not run into the header, nor into the buttons.
 	if top < _hard_top(w):
-		_fail("the road starts at %.4f of the height, above the hard limit %.4f — the hero on "
+		_fail("the road starts at %.4f of the height, above the hard limit %.4f — the top node's "
 			% [top, _hard_top(w)]
-			+ "the top node would reach y=%.0f, inside the header (ends at %.0f)"
-			% [h * top - w.HERO_SIZE + 14.0, HEADER_BOTTOM])
+			+ "ring would reach y=%.0f, inside the home gate (which ends at %.0f)"
+			% [h * top - w.NODE_R - 5.0, GATE_BOTTOM])
 	if bottom > _hard_bottom(w):
 		_fail("the road ends at %.4f of the height, past the hard limit %.4f — the bottom node's "
 			% [bottom, _hard_bottom(w)]
@@ -257,57 +253,38 @@ func _test_an_unknown_act_falls_back_without_crashing() -> void:
 			% tex.resource_path)
 
 
-## Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá." RECTANGLE intersection, not a centre
-## distance: the sprite is a box, not a point, and it is drawn UPWARD from his feet.
+## Jan: "Dejme tělo hrdiny úplně pryč."
 ##
-## Checked for EVERY fight, standing and mid-walk, because the walk moves him through the column
-## the nodes live in. A test that only checked the resting pose would pass a walk that cuts
-## straight through a node.
+## The screen used to carry a hero sprite with an eased walk, driven by `_process`. Removing him is
+## not cosmetic: the `_process` override existed ONLY for that walk, so it goes too — a per-frame
+## callback that animates nothing is a clock nobody needs. And a re-added sprite would silently
+## bring back the collision the older version of this test was written to catch (his head covered
+## the station above the one he stood on, measured at 1.3 nodes' worth).
 ##
-## ⚠️  `size` here is the SceneTree harness's own 844x844, not the game's 390x844 — the documented
-## trap. That does NOT weaken this particular check: `node_pos()` and `_hero_anchor()` both
-## derive their X as a FRACTION of `size.x`, and the horizontal clamp is a fixed 34 px, so the
-## clearance is near-constant in proportion. Verified as a mutation (hero moved to the route's
-## own centre 0.42 -> 419 intersecting poses), NOT assumed.
-func _test_the_hero_covers_no_node() -> void:
+## So assert BOTH halves: no hero API, and no `_process`.
+func _test_the_hero_is_gone() -> void:
 	var w: Control = _world()
-	var saved_act: int = int(_main.state.data.get("_currentAct", 0))
-	var saved_prog: int = int(_main.state.data["areaFightProgress"][0])
-	var half: float = w.HERO_SIZE * 0.5
-
-	var collisions := 0
-	# `_walk_from = -1` is the "just arrived, walking in" state; then every pair of stations.
-	var walks: Array = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8]
-	for fight in range(1, w._total_fights() + 1):
-		_main.state.data["areaFightProgress"][0] = fight
-		for walk_from in walks:
-			w._walk_from = walk_from
-			# Sample the whole walk, not just its ends.
-			for step in [0.0, 0.25, 0.5, 0.75, 1.0]:
-				w._walk_progress = step
-				var a: Vector2 = w._hero_anchor()
-				var hero := Rect2(a.x - half, a.y - w.HERO_SIZE + 14.0, w.HERO_SIZE, w.HERO_SIZE)
-				for i in w._total_fights():
-					var p: Vector2 = w.node_pos(i)
-					var ring: float = w.NODE_R + 5.0  # the gold ring is the widest a node gets
-					var node := Rect2(p.x - ring, p.y - ring, ring * 2.0, ring * 2.0)
-					if hero.intersects(node):
-						collisions += 1
-
-	w._walk_from = 0
-	w._walk_progress = 1.0
-	_main.state.data["_currentAct"] = saved_act
-	_main.state.data["areaFightProgress"][0] = saved_prog
-
-	if collisions > 0:
-		_fail("the hero's box intersects a node's ring in %d of the sampled poses — he must "
-			% collisions + "stand clear of every station, not cover one")
-
-	# And he must stay ON the canvas: a column too far right would be clipped by the edge.
-	var anchor: Vector2 = w._hero_anchor()
-	if anchor.x - half < 0.0 or anchor.x + half > w.size.x:
-		_fail("the hero's column at x=%.0f (box %.0f..%.0f) runs off the %d px canvas"
-			% [anchor.x, anchor.x - half, anchor.x + half, int(w.size.x)])
+	for name in ["_hero", "_walk_from", "_walk_progress", "HERO_SIZE", "HERO_X"]:
+		if name in w:
+			_fail("the world screen still exposes `%s` — the hero was removed on Jan's "
+				% name + "instruction (\"Dejme tělo hrdiny úplně pryč\")")
+	# `_process` is an engine override, so it is not visible in the script's own property list.
+	# Read the SOURCE: a class that inherits Control always HAS `_process` as a method, so the
+	# check is whether this script declares one.
+	var src := FileAccess.get_file_as_string("res://scripts/ui/world_screen.gd")
+	var declares_process := false
+	for line in src.split("\n"):
+		var t: String = (line as String).strip_edges()
+		if t.begins_with("func _process("):
+			declares_process = true
+			break
+	if declares_process:
+		_fail("the world screen declares `_process()` again — it existed only to drive the hero's "
+			+ "walk, and the hero is gone. An override that animates nothing is a per-frame "
+			+ "callback nobody needs.")
+	# And the sprite file must not be loaded here any more.
+	if src.contains("hero_body_"):
+		_fail("the world screen still loads `hero_body_*` — the hero belongs to the arena now")
 
 
 ## Jan: "Čísla jsou mimo puntíky. Měly by být přesně uprostřed a dobře viditelné."
@@ -319,6 +296,9 @@ func _test_the_hero_covers_no_node() -> void:
 ##
 ## This calls the screen's OWN `centered_pen()`. A test that recomputed the formula itself would
 ## pass against a broken helper — the whole point is that the real one is exercised.
+##
+## Verified by mutation: making `centered_pen` return `centre` unchanged turns it red (four
+## assertions: ±4.5 px in x and y).
 func _test_a_digit_is_centered_in_its_node() -> void:
 	var w: Control = _world()
 	var font: Font = load("res://assets/fonts/DejaVuSans.ttf") as Font
@@ -355,10 +335,10 @@ func _test_a_digit_is_centered_in_its_node() -> void:
 
 ## Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'."
 ##
-## Measured on a real frame, the collision was the HOME GATE's ring, not a station: at y=74 with
-## r=22 it spanned y 52..96, and the header's second line occupies y 43..55 — a 4 px overlap. The
-## gate is drawn in `_draw_road`, so its position is not a constant a test can import; this reads
-## the row it is drawn on out of the source and asserts the ring clears the header.
+## Measured on a real frame, the collision was the HOME GATE's ring, not a station: at its original
+## y=74 with r=22 it spanned y 52..96, and the header's second line occupies y 43..55 — a 4 px
+## overlap. The gate is drawn in `_draw_road`, so its position is not a constant a test can import;
+## this reads the row it is drawn on out of the source and asserts the ring clears the header.
 ##
 ## Verified by mutation: restoring 74.0 turns it red.
 func _test_the_home_gate_clears_the_header() -> void:
