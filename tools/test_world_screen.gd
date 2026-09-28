@@ -379,12 +379,23 @@ func _test_every_station_carries_its_own_number() -> void:
 	if src.contains("_draw_centered(str(fight)"):
 		_fail("`_draw_centered(str(fight)` is back in the file: every station would label itself "
 			+ "with the count of fights WON, i.e. 0 on a fresh stop (Jan's report)")
-
 	# And the rule itself, read the way the drawing reads it: on a fresh stop the live station is
 	# "1" and the one after it is "2", never two zeros.
 	if w.node_mark(0, 0, 0) != "1" or w.node_mark(1, 0, 0) != "2":
 		_fail("a fresh stop labels its first two stations '%s' and '%s', expected '1' and '2'"
 			% [w.node_mark(0, 0, 0), w.node_mark(1, 0, 0)])
+
+	# ⚠️  AND THE PADLOCK MUST NOT BE LOADED FROM INSIDE `_draw()`. This screen has already paid
+	# for that mistake once — the floor resolved its texture in `_draw()` and rendered as a flat
+	# white field, 67 % of the frame in one colour — and the padlock was doing the same thing, so
+	# every unopened station was a solid 18x18 white square instead of a lock (found by sampling
+	# the drawn frame). The rule is a SOURCE check because the symptom only exists inside a real
+	# `_draw()`, which a headless test never runs.
+	if not src.contains("var lock := _lock_tex"):
+		_fail("`_draw_node` does not read the cached padlock (`_lock_tex`) — a texture resolved "
+			+ "inside `_draw()` renders as a flat blob on this screen's own history")
+	if src.contains("var lock := UIKit.load_texture(\"assets/menu-icons/lock.png\")"):
+		_fail("`_draw_node` loads the padlock texture again — that is the flat-square bug")
 
 
 ## Jan: "Horní puntík by neměl kolidovat s textem 'souboj X/Y'."

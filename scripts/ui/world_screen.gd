@@ -96,6 +96,12 @@ var _canvas: Control
 ## a texture and drawing it in the same `_draw()` is the trap; the file, alpha and destination
 ## were never wrong. Cached in `refresh()` (and once in `_build()` so the first draw has it).
 var _ground_tex: Texture2D
+## The padlock the unopened stations wear. Cached HERE for the same reason `_ground_tex` is: a
+## texture resolved from inside `_draw()` renders as a flat blob — the lesson the road's own floor
+## already paid for once ("the shipped `_draw_ground(390, 844)` alone on a bare canvas came out a
+## flat (0.3176,0.3176,0.3216)"). `_draw_node` called `UIKit.load_texture()` per draw, so every
+## padlocked station the player saw was a solid 18x18 white square instead of a padlock.
+var _lock_tex: Texture2D
 
 
 func _init(game_data: Node, state, find_item: Callable) -> void:
@@ -149,6 +155,8 @@ func _gui_input(event: InputEvent) -> void:
 func refresh() -> void:
 	# The ground's texture is resolved HERE, once per entry, and never from inside `_draw()`.
 	_ground_tex = _area_art()
+	# Same rule for the padlock: resolved once per entry, never per draw.
+	_lock_tex = UIKit.load_texture("assets/menu-icons/lock.png")
 	# ⚠️  THE FIXES FIRST, THE HEADER SECOND. `_refresh_actions` computes the playable index and
 	# the header prints `souboj n/10` FROM it, so a header written before it would show the wrong
 	# fight after the 10th win of a stop (`areaFightProgress` 10 draws no fight at all).
@@ -248,6 +256,8 @@ func _build() -> void:
 	# The very first draw happens before any `refresh()`, so the ground's texture is resolved here
 	# too — same reason as in `refresh()`, and the same rule: never load a texture from `_draw()`.
 	_ground_tex = _area_art()
+	# Same rule for the padlock the unopened stations draw.
+	_lock_tex = UIKit.load_texture("assets/menu-icons/lock.png")
 
 	_build_header()
 	_build_actions()
@@ -532,7 +542,9 @@ func _draw_node(index: int, p: Vector2) -> void:
 		# ⚠️  A fight that has not OPENED yet wears a padlock, so "what am I walking towards" is
 		# legible at a glance. The game forbids emoji, so it is the generated lock icon the map's
 		# stop badges already use — and the tap guard in `_gui_input` already refuses it.
-		var lock := UIKit.load_texture("assets/menu-icons/lock.png")
+		# ⚠️  The CACHE, never `UIKit.load_texture()` here: resolving a texture from inside
+		# `_draw()` is what made this a solid white square (see `_lock_tex`).
+		var lock := _lock_tex
 		if lock != null:
 			_canvas.draw_texture_rect(lock, Rect2(p - Vector2(9, 9), Vector2(18, 18)), false)
 		else:
