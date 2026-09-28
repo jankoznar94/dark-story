@@ -55,8 +55,15 @@ const NODE_NEXT := Color("#8a8a8a")
 const ROAD_TOP := 0.17
 const ROAD_BOTTOM := 0.86
 ## How far the route drifts either side of centre, as a fraction of the width. A "lehká
-## serpentina": one sine period at 0.12 swings 92 px of 390 (23.5 %) across the ten stations.
-const SERPENTINE_AMP := 0.12
+## serpentina": one sine period at 0.10 swings 78 px of 390 (20 %) across the ten stations.
+##
+## ⚠️  The route is NOT centred any more, and that is what makes room for the hero. Jan: "Hrdina
+## ... musí být bokem tak, ať nic nepřekrývá." With the centre at 0.42 the nodes span
+## 125..203 px, so the hero's column can own the right of the screen and never touch a node —
+## see `HERO_X`. Centring them would have forced the hero either on top of the road or off the
+## edge of a 390 px canvas.
+const SERPENTINE_CENTER := 0.42
+const SERPENTINE_AMP := 0.10
 
 var _state
 var _data: Node
@@ -292,14 +299,28 @@ func node_pos(index: int) -> Vector2:
 		return size * 0.5
 	var t := float(index) / float(total - 1)
 	# One full period across the ten stations: right, back through the middle, and out again.
-	var x := size.x * (0.5 + SERPENTINE_AMP * sin(t * TAU - 0.6))
+	var x := size.x * (SERPENTINE_CENTER + SERPENTINE_AMP * sin(t * TAU - 0.6))
 	var y := size.y * (ROAD_TOP + t * (ROAD_BOTTOM - ROAD_TOP))
 	return Vector2(clampf(x, 34.0, size.x - 34.0), y)
 
 
 const NODE_R := 16.0
 ## The hero's drawn height. Constant, so it is set once in `_build()`.
-const HERO_SIZE := 96.0
+##
+## ⚠️  96 was too tall for a road whose stations are 64.7 px apart — his head covered the node
+## ABOVE the one he stood on (measured: 1.3 nodes' worth). Jan's instruction was that he must not
+## cover anything, so this is a second, independent lever from `HERO_X`: at 72 px he is still a
+## readable figure and no longer reaches the node above.
+const HERO_SIZE := 72.0
+
+## Where the hero stands, as a fraction of the width — BESIDE the road, never on it. Jan: "Hrdina
+## ... musí být bokem tak, ať nic nepřekrývá."
+##
+## The nodes are centred on `SERPENTINE_CENTER` 0.42, and with the clamp at 34 px the rightmost
+## node can only ever reach x = 0.58 * 390 = 226. The hero is drawn `HERO_SIZE` wide around this
+## anchor, so 0.87 puts his left edge at 0.87 * 390 - 36 = 303 and every node stays 77 px clear of
+## him. Measured across all ten stations, not assumed — pinned by `test_world_screen`.
+const HERO_X := 0.87
 
 
 ## Which node a point is on, or -1. Taps are resolved against the DRAWN positions, so the drawing
@@ -451,15 +472,23 @@ func _draw_node(index: int, p: Vector2) -> void:
 			NODE_R * 2.0, 14, colour)
 
 
-## The hero between two nodes while he walks, on a node while he waits. Jan's "vizuální pohyb":
-## the same body sprite the arena uses, so it is one character across both screens.
+## The hero's position. He stands BESIDE the road, in his own column, and never on a node — so he
+## cannot cover one. Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá."
+##
+## His Y still follows the journey (he walks down from the station he came from), which is what
+## keeps him reading as the player's position on the road; his X is the constant `HERO_X` column.
+## That split is deliberate: the Y is state, the X is layout.
+##
+## Jan's "vizuální pohyb" is preserved — the same body sprite the arena uses, one character across
+## both screens — and the walk is still an eased Y through `_process`.
 func _hero_anchor() -> Vector2:
+	var column := size.x * HERO_X
 	var to := _current_fight() - 1
 	if _walk_from < 0:
-		return node_pos(0) + Vector2(0, 26)
+		return Vector2(column, node_pos(0).y + 26.0)
 	if _walk_from == to:
-		return node_pos(to)
-	return node_pos(_walk_from).lerp(node_pos(to), _walk_progress)
+		return Vector2(column, node_pos(to).y)
+	return Vector2(column, lerpf(node_pos(_walk_from).y, node_pos(to).y, _walk_progress))
 
 
 func _place_hero() -> void:

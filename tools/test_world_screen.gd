@@ -34,6 +34,11 @@ extends SceneTree
 ##      cannot assert an error that is printed rather than returned.
 ##   5. **The dots stay tappable at the new span.** Moving the band moves every node; the hit test
 ##      reads the node rects back out of `node_pos`, so the two must not drift apart.
+##   6. **The hero covers no node.** Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá." His
+##      sprite is 72 px tall and 72 wide, drawn from his feet UPWARD from `_hero_anchor()`, and
+##      the stations are only 64.7 px apart — so standing him ON a node covered the one above
+##      (measured: 1.3 nodes' worth). This asserts the RECTANGLES do not intersect, for every
+##      fight on the road and mid-walk too, which is the assertion that would have caught it.
 ##
 ## Assertions are deferred to `_process` because `Main._ready()` builds the data, the state and
 ## every screen while `_initialize()` has already run.
@@ -78,6 +83,7 @@ func _run() -> void:
 	_test_the_area_art_is_its_own_file_per_act()
 	_test_every_area_file_has_real_bytes()
 	_test_an_unknown_act_falls_back_without_crashing()
+	_test_the_hero_covers_no_node()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -230,3 +236,56 @@ func _test_an_unknown_act_falls_back_without_crashing() -> void:
 	if tex != null and tex.resource_path.contains("assets/areas/"):
 		_fail("act 99 resolved an area file (%s) — there is none, so the fallback was skipped"
 			% tex.resource_path)
+
+
+## Jan: "Hrdina ... musí být bokem tak, ať nic nepřekrývá." RECTANGLE intersection, not a centre
+## distance: the sprite is a box, not a point, and it is drawn UPWARD from his feet.
+##
+## Checked for EVERY fight, standing and mid-walk, because the walk moves him through the column
+## the nodes live in. A test that only checked the resting pose would pass a walk that cuts
+## straight through a node.
+##
+## ⚠️  `size` here is the SceneTree harness's own 844x844, not the game's 390x844 — the documented
+## trap. That does NOT weaken this particular check: `node_pos()` and `_hero_anchor()` both
+## derive their X as a FRACTION of `size.x`, and the horizontal clamp is a fixed 34 px, so the
+## clearance is near-constant in proportion. Verified as a mutation (hero moved to the route's
+## own centre 0.42 -> 419 intersecting poses), NOT assumed.
+func _test_the_hero_covers_no_node() -> void:
+	var w: Control = _world()
+	var saved_act: int = int(_main.state.data.get("_currentAct", 0))
+	var saved_prog: int = int(_main.state.data["areaFightProgress"][0])
+	var half: float = w.HERO_SIZE * 0.5
+
+	var collisions := 0
+	# `_walk_from = -1` is the "just arrived, walking in" state; then every pair of stations.
+	var walks: Array = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+	for fight in range(1, w._total_fights() + 1):
+		_main.state.data["areaFightProgress"][0] = fight
+		for walk_from in walks:
+			w._walk_from = walk_from
+			# Sample the whole walk, not just its ends.
+			for step in [0.0, 0.25, 0.5, 0.75, 1.0]:
+				w._walk_progress = step
+				var a: Vector2 = w._hero_anchor()
+				var hero := Rect2(a.x - half, a.y - w.HERO_SIZE + 14.0, w.HERO_SIZE, w.HERO_SIZE)
+				for i in w._total_fights():
+					var p: Vector2 = w.node_pos(i)
+					var ring: float = w.NODE_R + 5.0  # the gold ring is the widest a node gets
+					var node := Rect2(p.x - ring, p.y - ring, ring * 2.0, ring * 2.0)
+					if hero.intersects(node):
+						collisions += 1
+
+	w._walk_from = 0
+	w._walk_progress = 1.0
+	_main.state.data["_currentAct"] = saved_act
+	_main.state.data["areaFightProgress"][0] = saved_prog
+
+	if collisions > 0:
+		_fail("the hero's box intersects a node's ring in %d of the sampled poses — he must "
+			% collisions + "stand clear of every station, not cover one")
+
+	# And he must stay ON the canvas: a column too far right would be clipped by the edge.
+	var anchor: Vector2 = w._hero_anchor()
+	if anchor.x - half < 0.0 or anchor.x + half > w.size.x:
+		_fail("the hero's column at x=%.0f (box %.0f..%.0f) runs off the %d px canvas"
+			% [anchor.x, anchor.x - half, anchor.x + half, int(w.size.x)])
