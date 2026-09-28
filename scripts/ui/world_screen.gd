@@ -31,8 +31,6 @@ signal walk_home_requested()
 signal portal_requested()
 
 const BG := Color("#121212")
-const ROAD := Color("#3a2f23")
-const ROAD_EDGE := Color("#564636")
 const GOLD := Color(UIKit.GOLD)
 const DIM := Color("#666666")
 const NODE_DONE := Color("#5a5a5a")
@@ -40,15 +38,25 @@ const NODE_NEXT := Color("#8a8a8a")
 
 ## The road runs DOWN the screen, as the shipped map's stop path does (stop 1 at the top), so the
 ## two screens agree about which way the journey runs.
-const ROAD_LEFT := 0.20
-const ROAD_RIGHT := 0.80
-## Where the first and last fight sit, as a fraction of the screen height. The band is clear of
-## the header and of the bottom actions.
-const ROAD_TOP := 0.30
-const ROAD_BOTTOM := 0.72
-## Amplitude of the meander, as a fraction of the width. The PWA's own requirement was "not too
-## big" so five to ten dots fit a phone screen.
-const MEANDER := 0.30
+##
+## ⚠️  `ROAD_LEFT`/`ROAD_RIGHT`/`MEANDER` are GONE. They sized a drawn band; there is no band any
+## more, only the dots. `SERPENTINE_AMP` is the whole of the route's shape now.
+##
+## Jan: "puntíky by měly být tak nějak od horní hrany obrázku ke spodní. Aby cesta vedla přes
+## celý obrázek." Measured against the real screen (390x844 content, `_probe_world_band.gd`):
+## the header's box ends at y=56, the two action buttons start at y=752 and the nav bar at 783.
+## The hard limits follow from those, and the two ENDS are not symmetric:
+##
+##   * the TOP node is the dangerous one, because the hero sprite is drawn UPWARD from his node
+##     (96 px tall, his feet ON the node, so his head is `y - HERO_SIZE + 14`). The hard limit is
+##     0.1635, where his head touches the header exactly; 0.17 leaves 5 px.
+##   * the BOTTOM node has no sprite hanging off it, only its ring (NODE_R + 5 = 21 px). Its hard
+##     limit is 0.866, where the ring touches the buttons; 0.86 leaves 5 px.
+const ROAD_TOP := 0.17
+const ROAD_BOTTOM := 0.86
+## How far the route drifts either side of centre, as a fraction of the width. A "lehká
+## serpentina": one sine period at 0.12 swings 92 px of 390 (23.5 %) across the ten stations.
+const SERPENTINE_AMP := 0.12
 
 var _state
 var _data: Node
@@ -101,7 +109,7 @@ func refresh() -> void:
 	_walk_from = _current_fight() - 1
 	_walk_progress = 1.0
 	# The ground's texture is resolved HERE, once per entry, and never from inside `_draw()`.
-	_ground_tex = _stop_art()
+	_ground_tex = _area_art()
 	if _header_act != null:
 		_header_act.text = _zone_name()
 		_header_fight.text = "souboj %d/%d" % [_current_fight(), _total_fights()]
@@ -111,8 +119,23 @@ func refresh() -> void:
 		_canvas.queue_redraw()
 
 
+## ⚠️  Every read of a progress table goes through `_progress()`, which is RANGE-CHECKED. Measured:
+## both `_current_fight()` and `_zone_name()` indexed the save's arrays directly with the act id, so
+## an act id no table covers produced `Invalid access of index '99' on a base object of type:
+## 'Array'` — and because `_place_hero()` -> `_hero_anchor()` -> `_current_fight()` runs from
+## `_process`, that error was logged EVERY FRAME. The save is a JSON file that can hold an act id
+## the tables do not, so the screen must read it defensively rather than die (or spam) on it.
+##
+## A test cannot assert a logged error, so this one is verified by a probe instead:
+## `tools/_probe_stop_art_range.gd` with act 99 must print NO `SCRIPT ERROR` line.
+func _progress(table: String) -> int:
+	var list: Array = _state.data.get(table, [])
+	var act := _act_id()
+	return int(list[act]) if act >= 0 and act < list.size() else 0
+
+
 func _current_fight() -> int:
-	return int(_state.data["areaFightProgress"][_act_id()])
+	return _progress("areaFightProgress")
 
 
 func _total_fights() -> int:
@@ -129,7 +152,7 @@ func _act_id() -> int:
 func _zone_name() -> String:
 	var names: Dictionary = _data.table("STOP_NAMES_EN", {})
 	var per_act: Variant = names.get(str(_act_id()), null)
-	var stop := int(_state.data["locationProgress"][_act_id()])
+	var stop := _progress("locationProgress")
 	if per_act is Array and stop < (per_act as Array).size():
 		return str((per_act as Array)[stop])
 	return "Oblast %d" % (_act_id() + 1)
@@ -193,7 +216,7 @@ func _build() -> void:
 
 	# The very first draw happens before any `refresh()`, so the ground's texture is resolved here
 	# too — same reason as in `refresh()`, and the same rule: never load a texture from `_draw()`.
-	_ground_tex = _stop_art()
+	_ground_tex = _area_art()
 
 	_build_header()
 	_build_actions()
@@ -249,17 +272,27 @@ func _build_actions() -> void:
 
 # ============================================================================ geometry
 
-## The meander is a SINE of the node index, so it is pure arithmetic: no random seed, no drifting
+## The route is a LIGHT SERPENTINE, and it is pure arithmetic: no random seed, no drifting
 ## between a redraw and a tap. The nodes' own rects are read back from this by the hit test, which
 ## is what keeps a tap landing on the node the player aimed at.
+##
+## Jan: "Nech jen puntíky. V nějakém takovém tvaru pomyslné cesty. Třeba lehká serpentina."
+## So the curve is expressed by the NODE POSITIONS alone — there is no road under them — and a
+## gentle S is all it should be. Measured against the previous sine-of-index meander, which
+## swung 30 % of the width and read as a strong zigzag; this one drifts within 13 %.
+##
+## Two sines of different periods, so the S is not a single symmetric wave: the first gives the
+## main swing, the second bends its ends back.
+## ⚠️  Those two sines together made THREE direction changes — a zigzag, not a serpentine.
+## Measured, ten nodes: `[1,1,-1,1,1,-1,-1,-1,-1]`. A light S is ONE sine period, which gives two
+## gentle turns: `A 0.12, phase -0.6` -> 92 px of swing (23.5 %) and exactly two turns.
 func node_pos(index: int) -> Vector2:
 	var total := _total_fights()
 	if total <= 1:
 		return size * 0.5
 	var t := float(index) / float(total - 1)
-	var mid := (ROAD_LEFT + ROAD_RIGHT) * 0.5
-	var amp := (ROAD_RIGHT - ROAD_LEFT) * 0.5
-	var x := size.x * (mid + amp * sin(t * 3.35 + 0.35) * (MEANDER / amp))
+	# One full period across the ten stations: right, back through the middle, and out again.
+	var x := size.x * (0.5 + SERPENTINE_AMP * sin(t * TAU - 0.6))
 	var y := size.y * (ROAD_TOP + t * (ROAD_BOTTOM - ROAD_TOP))
 	return Vector2(clampf(x, 34.0, size.x - 34.0), y)
 
@@ -287,23 +320,17 @@ func _draw_road() -> void:
 	_draw_ground(w, h)
 	var total := _total_fights()
 
-	# The road: a thick meandering band, drawn segment by segment so it follows the nodes.
-	var left: Array[Vector2] = []
-	var right: Array[Vector2] = []
-	for i in total:
-		var p := node_pos(i)
-		left.append(Vector2(p.x - 17.0, p.y))
-		right.append(Vector2(p.x + 17.0, p.y))
-	_canvas.draw_polyline(_pairs(left), ROAD, 30.0)
-	_canvas.draw_polyline(_pairs(left), ROAD_EDGE, 2.0)
-	_canvas.draw_polyline(_pairs(right), ROAD_EDGE, 2.0)
-
-	# The way HOME: a branch off node 0 going up and out of the road. Jan's "vlastní cesta" — it
-	# is its own road, and it is the ONLY thing on this screen that is not a fight.
+	# ⚠️  NO ROAD IS DRAWN. Jan: "Nekresli tam ale už tu hnědou cestu navíc... Nech jen
+	# puntíky." The route is the CHAIN OF NODES itself — an earlier version laid a 30 px brown
+	# band under them, which read as a second, competing road next to the one painted in the
+	# background. What carries the eye now is the serpentine the node positions make.
+	#
+	# The way HOME: a branch off node 0 going up and out of the chain. Jan's "vlastní cesta" —
+	# it is its own direction, and it is the ONLY thing on this screen that is not a fight. It
+	# keeps a thin line because it is not a station and has to be visibly a different thing.
 	var home := node_pos(0)
 	var gate := Vector2(w * 0.5, 74.0)
-	_canvas.draw_line(home, gate, ROAD, 18.0)
-	_canvas.draw_line(home, gate, ROAD_EDGE, 2.0)
+	_canvas.draw_line(home, gate, Color(0.30, 0.26, 0.20, 0.85), 10.0)
 	_draw_home(gate)
 
 	# The hero's shadow goes on the canvas (under his feet); the figure itself is the node above,
@@ -315,7 +342,49 @@ func _draw_road() -> void:
 		_draw_node(i, node_pos(i))
 
 
-## The area's own art, dimmed, as the ground — cover-fitted so the portrait screen is filled.
+## The area's own art, as the ground — cover-fitted so the portrait screen is filled.
+##
+## ⚠️  Jan's design, and all three parts matter:
+##
+##   1. "Obrázek bude jen pozadí, pro efekt." The painting is scenery. NOTHING is placed
+##      according to its composition — an earlier attempt painted ten milestone stones into the
+##      art and then added ten more on top, which put a second, conflicting set beside the ones
+##      the model had invented by itself.
+##   2. "Cesta bude normálně interaktivní" — the route is the DOTS, and the dots are the taps.
+##      Jan re-stated it after seeing the new art: a dirt road IS painted into the picture now
+##      ("Cesta bude vidět na obrázku, ale jen jako vizuální prvek"), and it still has NOTHING
+##      to do with the interactive route. Do not place a node on it. The dots follow their own
+##      serpentine across the whole screen; the painted road is what makes the landscape read as
+##      a place the hero is travelling through.
+##   3. "Tento filtr můžeme udělat přímo ve hře. Nemusí to generovat flux." So the dimming is a
+##      layer here, not baked into the file: `DARK_FILTER` is tunable without regenerating art.
+##
+## `DARK_FILTER` was 0.22 and is now 0.12, chosen by measuring the painting's luminance AT THE
+## DOTS (which is what decides whether they read): seed 33 gives 71.7 at 0.12 against 65.4 at
+## 0.22. Vision's verdict on the 0.22 preview was that the top nodes "nearly dissolve into the
+## silhouette" and that the filter cost the upper half of the image; at 0.12 the road, the trees
+## and the mist all still read while the top nodes hold. Jan's earlier rejection of 0.62 ("už je
+## moc") is the other end of the same scale.
+const DARK_FILTER := 0.12
+
+## The painting under the road, one per ACT — `assets/areas/area_<act>.webp`, a view of the area
+## with a path winding through it, generated at 512x768 (the largest portrait non-square this
+## Flux backend accepts; large SQUARES crash it).
+##
+## ⚠️  This is NOT the arena's art. `assets/stops/stop_actN_M.webp` is the stop-by-stop backdrop
+## the FIGHT uses — the same file the arena shows behind the duel, so the world and the fight
+## agree about where the hero stands. This one is a DIFFERENT VIEW of the same area, entered
+## whenever the player steps into the area.
+##
+## Falls back to the stop art and then to the act's placeholder, so a missing new file shows the
+## old behaviour rather than a flat field.
+func _area_art() -> Texture2D:
+	var tex := UIKit.load_texture("assets/areas/area_%d.webp" % _act_id())
+	if tex != null:
+		return tex
+	return _stop_art()
+
+
 func _draw_ground(w: float, h: float) -> void:
 	var tex := _ground_tex
 	if tex == null:
@@ -326,10 +395,11 @@ func _draw_ground(w: float, h: float) -> void:
 	var scale_factor := maxf(w / tex_size.x, h / tex_size.y)
 	var drawn := tex_size * scale_factor
 	var origin := Vector2((w - drawn.x) * 0.5, (h - drawn.y) * 0.5)
-	_canvas.draw_texture_rect(tex, Rect2(origin, drawn), false, Color(1, 1, 1, 0.42))
-	# A veil over the whole thing, so the road and the labels read against the painting. Flat
-	# toning, no glow — Jan's standing rule.
-	_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(w, h)), Color(0.05, 0.05, 0.06, 0.35))
+	# Full opacity: the painting is the background now, not a wash behind a drawn road, so it is
+	# not faded to 0.42 any more — the filter below is what sets how loud it is.
+	_canvas.draw_texture_rect(tex, Rect2(origin, drawn), false)
+	# The filter. Flat toning, no glow — Jan's standing rule.
+	_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(w, h)), Color(0.03, 0.03, 0.04, DARK_FILTER))
 
 
 func _draw_home(gate: Vector2) -> void:
@@ -399,16 +469,15 @@ func _place_hero() -> void:
 	_hero.position = Vector2(anchor.x - HERO_SIZE * 0.5, anchor.y - HERO_SIZE + 14.0)
 
 
-func _pairs(points: Array[Vector2]) -> PackedVector2Array:
-	var out := PackedVector2Array()
-	for p in points:
-		out.append(p)
-	return out
-
-
+## The area's own art. There is NO stop-by-stop art for every act yet (`assets/stops/` covers acts
+## 0 and 1), so the per-stop file is tried first and the act's placeholder second — and when
+## neither exists the screen shows the drawn route on a flat field rather than nothing.
+##
+## ⚠️  The progress lookup goes through `_progress()` — see its note. An unguarded index here was
+## what the crash probe found first, and the same defect sat in `_current_fight()` as well.
 func _stop_art() -> Texture2D:
 	var act := _act_id()
-	var stop := int(_state.data["locationProgress"][act])
+	var stop := _progress("locationProgress")
 	var path := "assets/stops/stop_act%d_%d.webp" % [act, stop]
 	var tex := UIKit.load_texture(path)
 	if tex == null:

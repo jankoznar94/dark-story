@@ -254,6 +254,23 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "MAP_SCREEN_ALL_PASS=true"
 
+      # The wilderness road ("putování"). This screen had NO test at all until now, which is
+      # why three of its bugs survived a whole session: a floor whose texture was resolved
+      # inside `_draw()` (flat white, 67 % of the frame in ONE colour), a road band drawn
+      # under the dots, and a route that only used the middle third of the screen. Asserts
+      # that the road SPANS the picture (two-sided: derived from the header's bottom edge
+      # and the action buttons' top, minus the hero sprite, which is drawn UPWARD from his
+      # node), that the nodes stay tappable after the move, that each act loads its OWN area
+      # art rather than the arena's stop art, that every area file has real WEBP magic bytes
+      # (Godot sniffs content, so a mislabelled file is refused silently), and that an act
+      # id no table covers is read defensively instead of logging an error every frame.
+      - name: World screen test (road spans the picture, area art, defensive save reads)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_world_screen.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "WORLD_SCREEN_ALL_PASS=true"
+
       # The arena's DISTANCE rule and the class kit. The PWA starts the duel at maximum
       # separation and the hero walks in; out of his weapon's reach the swing is DISCARDED
       # and its clock restarted. Without it the port's first hit lands on tick zero, which
