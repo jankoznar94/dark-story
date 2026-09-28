@@ -306,9 +306,18 @@ func _build_nav() -> void:
 	box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	box.offset_top = -84
 	box.offset_bottom = -56
+	# ⚠️  THE STRIP MUST NOT EAT TAPS. Its box spans y 760..788 and the road's own action row
+	# ("Jít domů" / "Town Portal") starts at y 752 — a full-width band lying ACROSS those buttons.
+	# A status line is a label and nothing about it is interactive, so both it and its host box
+	# ignore the mouse. (Measured: with both back on STOP the road's button still fired, because
+	# Godot's GUI hit test walks the tree TOP-DOWN and the button is above the strip in it — so
+	# this is hardening against a reorder, not the fix for a bug. Do not read it as the cause of
+	# the dead road buttons: that was the missing tap handler in `world_screen.gd`.)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_layer.add_child(box)
 	_status = UIKit.label("", 14, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
 	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(_status)
 
 

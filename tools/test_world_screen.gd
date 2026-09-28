@@ -95,6 +95,7 @@ func _run() -> void:
 	_test_a_digit_is_centered_in_its_node()
 	_test_the_home_gate_clears_the_header()
 	_test_the_hero_is_gone()
+	_test_the_road_can_be_tapped()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -361,3 +362,61 @@ func _test_the_home_gate_clears_the_header() -> void:
 		_fail("the home gate's ring starts at y=%.0f, inside the header (which ends at %.0f) — "
 			% [ring_top, HEADER_BOTTOM]
 			+ "Jan reported exactly this collision with \"souboj X/Y\"")
+
+
+## ⚠️  THE ROAD WAS PAINTED, NOT BUILT, AND NOBODY COULD TELL.
+##
+## Jan: "Cesta s puntíky pro jednotlivé souboje už ve hře je, ale na nic nereaguje. Nedá se do
+## souboje vstoupit. Ani zpět do města."
+##
+## The screen had `node_at()` AND a test asserting it — but nothing in the game ever CALLED it.
+## The nodes are `draw_circle` ink, not controls, so a tap landed on the full-rect Control, which
+## ignored input, and `next_fight_requested` had no emitter at all. **A hit test is not a tap
+## handler**, and this is the difference: it drives the screen's own `_gui_input` and asserts the
+## signal comes out.
+##
+## Verified by mutation: deleting `_gui_input` turns the first checks red.
+func _test_the_road_can_be_tapped() -> void:
+	var w := _world()
+	# A fresh stop: the playable dot is index 0 and the header must NOT read "souboj 0/10".
+	_main.state.data["areaFightProgress"][0] = 0
+	_main.state.data["locationProgress"][0] = 0
+	_main.show_world(0)
+	if w._tap_index != 0:
+		_fail("a fresh stop offers no playable dot (tap_index=%d, expected 0)" % w._tap_index)
+	if w._header_fight.text != "souboj 1/10":
+		_fail("the header reads '%s'; `areaFightProgress` counts fights WON, so a fresh stop is "
+			% w._header_fight.text + "'souboj 1/10' — '0/10' is the off-by-one Jan saw")
+
+	var fired := [0]
+	w.next_fight_requested.connect(func(): fired[0] += 1)
+
+	# A dot that has not opened, and empty space, must both do NOTHING.
+	w._gui_input(_press(w.node_pos(5)))
+	if fired[0] != 0:
+		_fail("a dot that has not opened started a fight — the tap guard is not on the ROAD")
+	w._gui_input(_press(Vector2(w.node_pos(0).x, w.node_pos(0).y - 200.0)))
+	if fired[0] != 0:
+		_fail("a tap on empty space started a fight — the hit test is not resolving the node")
+
+	# The current dot must emit.
+	w._gui_input(_press(w.node_pos(0)))
+	if fired[0] != 1:
+		_fail("tapping the current dot emitted `next_fight_requested` %d times, expected 1 — "
+			% fired[0] + "the road is painted pixels with no tap handler (Jan's report)")
+
+	# A finished stop has NO playable dot at all.
+	_main.state.data["areaFightProgress"][0] = w._total_fights()
+	_main.show_world(0)
+	if w._tap_index != -1:
+		_fail("a stop with all %d fights won still offers a dot (tap_index=%d) — tapping it "
+			% [w._total_fights(), w._tap_index] + "starts a fight that does not exist")
+
+
+## A synthetic left-button PRESS at `at`, which is what `_gui_input` reads.
+func _press(at: Vector2) -> InputEventMouseButton:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = true
+	e.position = at
+	return e

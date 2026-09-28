@@ -50,8 +50,8 @@ class_name TransitionScreen
 ## the img's own 260x260 rect, so this is the measured behaviour, not a simplification.
 
 const IMAGE_SIZE := 260.0
-## `.transition-content` is centred by the flex parent: (390 - 260) / 2 = 65, measured.
-const CONTENT_X := 65.0
+## `.transition-content` is CENTRED BY THE FLEX PARENT — `(canvas - 260) / 2`. Expressed as an
+## OFFSET rather than the measured absolute `65`, because 65 is only centred on a 390px canvas.
 const CONTENT_Y := 292.0
 ## `showTransition`'s `setTimeout(…, 1800)`.
 const HOLD_MS := 1800.0
@@ -102,6 +102,10 @@ func _ready() -> void:
 	# OFFSETS** have to be set; that is the pair that makes a full-rect child of a layer.
 	# (The size itself needs no assignment — see below.)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# The content box is re-centred on every resize: the web export's `stretch/aspect=expand`
+	# means the canvas width is whatever the phone gives, and a baked x would be left of centre
+	# on all but one of them (see `_centre_box`).
+	resized.connect(_centre_box)
 	# No explicit `size =`: with anchors 0 -> 1 an assignment is overridden by the anchor
 	# system right after `_ready()` (Godot warns about exactly that), and the OFFSETS preset
 	# above already resolved the rect to the parent's own 390x844. The offsets are relative
@@ -118,14 +122,21 @@ func _ready() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	# `.transition-content` — 260x260, centred. Positioned explicitly rather than by a
-	# container: the PWA's flex parent centres it and the port's canvas is the 390 the
-	# measurement was taken at.
+	# `.transition-content` — 260x260, centred on the CANVAS, not on the 390 the measurement was
+	# taken at.
+	#
+	# ⚠️  This used to be the constant `CONTENT_X = 65`, which is `(390 - 260) / 2` — centred on
+	# exactly one canvas width and LEFT on every other. Jan: "transition stránky, kde není obrázek
+	# na středu ale spíš lehce vlevo." Measured on the real build: on a 412px canvas the box's
+	# centre sat at 195 against a canvas centre of 206 (11px left), and on 430 it was 20px left.
+	# The web export uses `stretch/aspect=expand`, so any width is possible. The offsets are
+	# recomputed by `_centre_box()` on every resize instead of being baked in.
 	var box := Control.new()
-	box.position = Vector2(CONTENT_X, CONTENT_Y)
+	box.name = "Content"
 	box.size = Vector2(IMAGE_SIZE, IMAGE_SIZE)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(box)
+	_centre_box()
 
 	_image = TextureRect.new()
 	_image.name = "Art"
@@ -224,6 +235,21 @@ static func masked_texture(tex: Texture2D) -> ImageTexture:
 
 func _masked(tex: Texture2D) -> Texture2D:
 	return masked_texture(tex)
+
+
+## Put the 260x260 `.transition-content` box in the middle of the CANVAS.
+##
+## The PWA centres it with flex on a 390px page; the port's canvas is whatever the device gives
+## (`stretch/aspect=expand`), so the centre has to be computed rather than measured once. This
+## runs from `_ready()` and from every `resized`, and it is the ONLY place that writes the box's
+## position — a second writer would be a second source of truth for the same rect.
+func _centre_box() -> void:
+	var box := get_node_or_null("Content") as Control
+	if box == null:
+		return
+	# The vertical is the measured 292 (the PWA's own y, which is centred on a 844-tall page and
+	# has no reason to move), the horizontal is derived.
+	box.position = Vector2((size.x - IMAGE_SIZE) * 0.5, CONTENT_Y)
 
 
 func is_transitioning() -> bool:

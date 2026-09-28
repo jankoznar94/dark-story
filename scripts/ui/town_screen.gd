@@ -46,7 +46,19 @@ signal town_portal_requested()
 
 ## `.town-tile { aspect-ratio: 4/3 }` inside a 2-column grid with a 10px gap and the PWA's
 ## 16px container padding. 390 - 32 = 358; (358 - 10) / 2 = 174 wide, 174 * 3/4 = 130.5.
+##
+## ⚠️  THIS IS THE SIZE AT 390 ONLY, AND IT IS A MINIMUM RATHER THAN A WIDTH. The PWA's tiles are
+## `1fr` inside a grid that fills its container, so the two columns grow with the screen and the
+## gutters stay EQUAL. A fixed 174px tile does not: measured on a real build, a 412px canvas left
+## 18.2px on the left and 39.9px on the right, and a 430px canvas 19.4 against 58.7 — which is
+## exactly Jan's report ("tlačítka na stránce města: zprava je větší mezera od kraje než zleva").
+## The tiles now EXPAND (`size_flags_horizontal`), so the surplus is split between the two
+## columns the way a browser splits it.
 const TILE_SIZE := Vector2(174, 130)
+## `.town-tile img { width:70%; height:70% }` — a FRACTION of the tile, not a pixel inset. The
+## icon was placed with offsets computed from the fixed 174x130, so it would have stayed 122px
+## wide inside a 180px tile.
+const TILE_ICON_INSET := 0.15
 
 ## `.town-banner-img { aspect-ratio:1/1; object-fit:cover }` on a 100vw banner = 390 of
 ## image, plus `border-top` and `border-bottom` of 2px = 394. Measured off the shipping
@@ -134,8 +146,15 @@ func _build() -> void:
 	column.add_child(grid_pad)
 
 	# `.town-grid` — 2 columns, 10px gap. Exactly the PWA's, not an approximation.
+	#
+	# ⚠️  `grid` is a plain child of a `MarginContainer`, which sizes it to the MARGIN's minimum
+	# — i.e. to its children's minimums, so two 174px tiles plus a 10px gap = 358 and the tiles
+	# stay FIXED however wide the canvas is. The PWA's grid has no width of its own either; it is
+	# a block inside a 358px container, so it fills it. EXPAND_FILL is what makes the columns
+	# share the device's width instead of leaving the surplus as one wider gutter.
 	var grid := GridContainer.new()
 	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
 	grid_pad.add_child(grid)
@@ -236,6 +255,10 @@ func _make_tile(icon_path: String, label_text: String) -> Button:
 	# `Main._install_click_sfx`. Same for the action card below.
 	button.add_to_group("no_click_sfx")
 	button.custom_minimum_size = TILE_SIZE
+	# ⚠️  `1fr` AND NOT A FIXED 174. The PWA's grid columns are `repeat(2, 1fr)`, so they share
+	# whatever width the container has; a fixed tile leaves the surplus as one wider gutter and
+	# the grid reads as shifted left (see TILE_SIZE).
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.focus_mode = Control.FOCUS_NONE
 	button.tooltip_text = label_text
 
@@ -256,12 +279,18 @@ func _make_tile(icon_path: String, label_text: String) -> Button:
 	button.add_theme_stylebox_override("pressed", pressed)
 
 	var icon := TextureRect.new()
-	# `.town-tile img { width:70%; height:70%; object-fit:contain }`
+	# `.town-tile img { width:70%; height:70%; object-fit:contain }` — a percentage of the TILE,
+	# so it is expressed as an inset fraction of the tile rather than as the 26.1px the fixed
+	# 174x130 produced (see TILE_ICON_INSET).
 	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = TILE_SIZE.x * 0.15
-	icon.offset_top = TILE_SIZE.y * 0.15
-	icon.offset_right = -TILE_SIZE.x * 0.15
-	icon.offset_bottom = -TILE_SIZE.y * 0.15
+	icon.anchor_left = TILE_ICON_INSET
+	icon.anchor_top = TILE_ICON_INSET
+	icon.anchor_right = 1.0 - TILE_ICON_INSET
+	icon.anchor_bottom = 1.0 - TILE_ICON_INSET
+	icon.offset_left = 0.0
+	icon.offset_top = 0.0
+	icon.offset_right = 0.0
+	icon.offset_bottom = 0.0
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture = _load(icon_path)

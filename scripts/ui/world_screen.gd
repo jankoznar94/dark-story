@@ -76,6 +76,14 @@ var _header_act: Label
 var _header_fight: Label
 var _walk_button: Button
 var _portal_button: Button
+## Where each fight's node is currently DRAWN, filled by `_draw_road()` and read by the hit
+## test. The road is the taps on this screen — see `_gui_input` — and a tap resolved against
+## the drawn positions cannot drift from what the player aimed at.
+var _node_centres: PackedVector2Array = PackedVector2Array()
+## The fight the player may start, as a node INDEX (0-based), or -1 when the stop is finished.
+## ⚠️  `areaFightProgress` counts the fights ALREADY WON (0..10), so the fight to walk into is
+## the node at exactly that index — the same number `Battle.setup` reads as `area_fight`.
+var _tap_index: int = -1
 ## The road itself. A plain Control with its own `_draw()` rather than a container: everything
 ## here is positioned by hand from `NODES`, and a container would overwrite those rects (the trap
 ## that cost the result page its layout twice).
@@ -99,6 +107,41 @@ func _init(game_data: Node, state, find_item: Callable) -> void:
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build()
+	# ⚠️  A CONTROL must accept input for its own `_gui_input` to run, and this screen is the
+	# whole page: `mouse_filter` is `STOP` so a tap that no button takes still reaches the road.
+	# The engine's GUI hit test walks the tree from the TOP and skips controls set to IGNORE,
+	# so this does not shadow the two buttons below it — they are added later in the tree and
+	# are hit first.
+	mouse_filter = Control.MOUSE_FILTER_STOP
+
+
+## ⚠️  THE ROAD IS THE TAPS, AND THIS IS THE ONLY PLACE A FIGHT IS STARTED FROM A FINGER.
+##
+## Jan: "Cesta s puntíky pro jednotlivé souboje už ve hře je, ale na nic nereaguje. Nedá se do
+## souboje vstoupit. Ani zpět do města."
+##
+## The port had `node_at()` — a hit test and a test asserting it — but NOTHING CALLED IT. The
+## nodes were painted with `draw_circle` into the screen's `_draw()`, which makes them pixels and
+## not controls, so a tap landed on the full-rect Control, which ignored input, and went nowhere.
+## The signal `next_fight_requested` existed and was wired into `main`; it simply had no emitter.
+##
+## Resolved against the DRAWN centres (`_node_centres`), so the tap and the ink cannot drift.
+func _gui_input(event: InputEvent) -> void:
+	var at := Vector2.ZERO
+	if event is InputEventMouseButton:
+		var button := event as InputEventMouseButton
+		if button.button_index != MOUSE_BUTTON_LEFT or not button.pressed:
+			return
+		at = button.position
+	elif event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if not touch.pressed:
+			return
+		at = touch.position
+	else:
+		return
+	if _tap_index >= 0 and node_at(at) == _tap_index:
+		next_fight_requested.emit()
 
 
 ## Every entry into the screen goes through here. `show_screen` calls it, so the header, the
@@ -106,10 +149,17 @@ func _ready() -> void:
 func refresh() -> void:
 	# The ground's texture is resolved HERE, once per entry, and never from inside `_draw()`.
 	_ground_tex = _area_art()
+	# ⚠️  THE FIXES FIRST, THE HEADER SECOND. `_refresh_actions` computes the playable index and
+	# the header prints `souboj n/10` FROM it, so a header written before it would show the wrong
+	# fight after the 10th win of a stop (`areaFightProgress` 10 draws no fight at all).
+	_refresh_actions()
 	if _header_act != null:
 		_header_act.text = _zone_name()
-		_header_fight.text = "souboj %d/%d" % [_current_fight(), _total_fights()]
-	_refresh_actions()
+		# ⚠️  Player-facing, so it is 1-BASED: `areaFightProgress` counts fights ALREADY WON, so a
+		# fresh stop is 0 there and "souboj 0/10" is not a thing a player can be shown. The clamp
+		# keeps a finished stop reading 10/10 instead of 11/10.
+		_header_fight.text = "souboj %d/%d" % [mini(_current_fight() + 1, _total_fights()),
+			_total_fights()]
 	if _canvas != null:
 		_canvas.queue_redraw()
 
@@ -161,6 +211,13 @@ func _zone_name() -> String:
 ##   * "Town Portal" only while a scroll is carried; it STORES the position and spends the
 ##     scroll (`_on_map_portal_used` in main), so the return is free.
 func _refresh_actions() -> void:
+	# ⚠️  The playable index is computed BEFORE the early return below, because it is what the
+	# ROAD's taps are resolved against (`_gui_input`) and what the header prints. A stop whose
+	# fights are all won has NO fight to walk into — `areaFightProgress == 10` draws a node for
+	# a fight that does not exist, and tapping it used to start fight 11 of 10.
+	var total := _total_fights()
+	var fight := _current_fight()
+	_tap_index = fight if fight < total else -1
 	if _portal_button == null:
 		return
 	_portal_button.visible = int(_state.data.get("townPortalCount", 0)) > 0
@@ -227,6 +284,10 @@ func _build_actions() -> void:
 	row.offset_top = row.offset_bottom - 30
 	row.offset_left = 12
 	row.offset_right = -12
+	# ⚠️  The two buttons are 30px tall and the anchors above already fix the row's height, so the
+	# row must NOT take its height from its children — an expanding child would make it grow past
+	# the anchors. Kept explicit: this row is the one place a fixed height is correct.
+	row.custom_minimum_size = Vector2(0, 30)
 	row.add_theme_constant_override("separation", 8)
 	add_child(row)
 
@@ -275,10 +336,12 @@ const NODE_R := 16.0
 
 
 ## Which node a point is on, or -1. Taps are resolved against the DRAWN positions, so the drawing
-## and the hit test cannot drift apart.
+## and the hit test cannot drift apart. `_node_centres` is filled by `_draw_road()`; until the
+## first draw (or in a headless test that never renders) the positions are recomputed from
+## `node_pos`, which is the same arithmetic.
 func node_at(point: Vector2) -> int:
 	for i in _total_fights():
-		var p := node_pos(i)
+		var p := _node_centres[i] if i < _node_centres.size() else node_pos(i)
 		if absf(point.x - p.x) <= 26.0 and absf(point.y - p.y) <= 26.0:
 			return i
 	return -1
@@ -291,6 +354,13 @@ func _draw_road() -> void:
 	var h := size.y
 	_draw_ground(w, h)
 	var total := _total_fights()
+	# ⚠️  The DRAWN centres are recorded here, and `node_at()` resolves taps against them. The
+	# nodes are painted pixels, not controls, so this array is the only thing that knows where
+	# the player actually sees a station — recomputing the position in the hit test would let
+	# the ink and the tappable area drift apart after any change to the curve.
+	_node_centres = PackedVector2Array()
+	for i in total:
+		_node_centres.append(node_pos(i))
 
 	# ⚠️  NO ROAD IS DRAWN. Jan: "Nekresli tam ale už tu hnědou cestu navíc... Nech jen
 	# puntíky." The route is the CHAIN OF NODES itself — an earlier version laid a 30 px brown
@@ -415,14 +485,23 @@ func _draw_home(gate: Vector2) -> void:
 		_draw_centered("domů", Vector2(gate.x, gate.y + 40.0), font, 10, Color("#9a9a9a"))
 
 
-## Four states, and an empty state is a STYLE rather than a hidden node: done (a tick), current
-## (gold, the fight the player is on), next (tappable), locked (dim).
+## The node states, and the numbering follows `areaFightProgress` — the count of fights ALREADY
+## WON on this stop (0..10), because that is the index `Battle.setup` reads as `area_fight`.
+##
+## ⚠️  TWO BUGS LIVED IN THE THREE LINES BELOW, and they are the same off-by-one Jan can see:
+##
+##   * the fight the player is ABOUT TO FIGHT is the node at index `fight` (0-based), NOT at
+##     `fight + 1`. The header read "souboj 0/10" on a fresh stop while this drew node 1 as gold;
+##   * a node only becomes DONE once its fight is behind the player, i.e. `index < fight`. The
+##     old rule (`fight < current`) marked the node the player was STANDING ON as finished, so a
+##     fresh stop showed a tick on a fight nobody had fought.
 func _draw_node(index: int, p: Vector2) -> void:
-	var fight := index + 1
-	var current := _current_fight()
-	var done := fight < current
-	var is_current := fight == current
-	var is_next := fight == current + 1
+	var fight := _current_fight()
+	var done := index < fight
+	var is_current := index == fight
+	# ⚠️  `index > fight` is not "next" — after a stop's fights are all won nothing is playable,
+	# so a node past the end must not advertise itself as the next fight (see `_tap_index`).
+	var is_next := index == fight + 1 and _tap_index >= 0
 
 	var fill := Color("#141414")
 	var border := DIM
@@ -444,6 +523,15 @@ func _draw_node(index: int, p: Vector2) -> void:
 		# A tick, drawn rather than a glyph: DejaVu has no emoji and the game forbids them.
 		_canvas.draw_line(p + Vector2(-6, 0), p + Vector2(-2, 5), NODE_DONE, 2.0)
 		_canvas.draw_line(p + Vector2(-2, 5), p + Vector2(7, -6), NODE_DONE, 2.0)
+	elif index > fight and not is_next:
+		# ⚠️  A fight that has not OPENED yet wears a padlock, so "what am I walking towards" is
+		# legible at a glance. The game forbids emoji, so it is the generated lock icon the map's
+		# stop badges already use — and the tap guard in `_gui_input` already refuses it.
+		var lock := UIKit.load_texture("assets/menu-icons/lock.png")
+		if lock != null:
+			_canvas.draw_texture_rect(lock, Rect2(p - Vector2(9, 9), Vector2(18, 18)), false)
+		else:
+			_draw_centered(str(index + 1), p, font, 14, DIM)
 	else:
 		var colour := GOLD if is_current else (Color(UIKit.TEXT) if is_next else DIM)
 		# ⚠️  Through `_draw_centered`, NOT `draw_string` with the node centre as `pos.x` — the

@@ -510,6 +510,10 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 	var names: Dictionary = _stop_names()
 
 	for stop in total:
+		# ⚠️  `reached` is the HIGHEST stop ever reached, so a stop strictly below it is genuinely
+		# complete and the one AT it is the current one — this is correct as written. (The ROAD's
+		# `_draw_node` had the same shape but indexed the raw fight counter, which is where its
+		# off-by-one lived; do not "fix" this one by analogy.)
 		var done: bool = boss_defeated or stop < reached
 		var is_current: bool = not boss_defeated and stop == current
 		var locked: bool = not boss_defeated and stop > reached
