@@ -41,13 +41,23 @@ const Sfx := preload("res://scripts/audio/sfx.gd")
 ## is honest; wiring a damage number to them would not be.
 const IMPLEMENTED := [
 	"heroicStrike", "thunderClap", "thunderBolt", "battleShout", "defensiveShout",
-	"doubleSwing", "shieldSlam", "pummel", "spellReflect", "frenzy",
+	"doubleSwing", "shieldSlam", "pummel", "spellReflect", "frenzy", "whirlwind",
 ]
 
-## Whirlwind is deliberately absent from IMPLEMENTED as well as from the port: its PWA
-## mechanic is a tap-the-shown-button flurry, which is an interaction model for a DOM
-## page, not a rule. See the port notes.
-const NOT_PORTED := ["whirlwind"]
+## Whirlwind WAS on this list and is no longer: the arena has the reaction buttons it
+## needs now (`ps_*`), and Jan's own design for it maps onto them exactly — a sequence
+## of PS buttons shown one at a time in the middle of the arena, a wrong press ending
+## the flurry, and a time limit per strike so the sequence has weight.
+##
+## What does NOT carry over from the PWA is its PAUSE. There the whole fight stopped
+## while the player tapped, because that page had nothing else driving the loop. Here
+## the fight keeps swinging — the enemy's clock is the interaction — and the flurry
+## competes with it, which is the design rule this whole combat is built on. The
+## `WHIRLWIND_REACTION_MS` deadline is what gives each strike its pressure, and it is
+## counted on the fight's own tick so it is the same on every machine.
+const NOT_PORTED: Array = []
+## How long the player has to press each PS button of a Whirlwind strike.
+const WHIRLWIND_REACTION_MS := 1500
 
 ## Buff durations, in ms. The PWA counted ticks at 60 fps.
 const SHOUT_MS := 30000
@@ -251,6 +261,9 @@ static func _apply(battle, spell_id: String, lv: int, state, find_item: Callable
 		"spellReflect":
 			return _spell_reflect(battle, lv, state, find_item, data, rng)
 
+		"whirlwind":
+			return _whirlwind(battle, lv, rng)
+
 		"battleShout":
 			# +5 + lv*5 % damage for 30 s.
 			var dmg_pct := 5.0 + float(lv) * 5.0
@@ -444,6 +457,29 @@ static func _spell_reflect(battle, lv: int, state, find_item: Callable, data: No
 
 
 # --- helpers shared with the battle ------------------------------------------
+
+## Whirlwind — the barbarian's flurry. The PWA PAUSED the fight and asked the player to
+## press a shown PS button per strike, `3 + lv` of them (maxLv 4 ⇒ 3..7), each on a
+## 1.5 s deadline, a wrong press ending it and spending what was already landed.
+##
+## This port keeps the design and drops the pause: the fight keeps running, so the
+## flurry competes with the enemy's own swings instead of stopping them. Everything
+## else is the PWA's — the random sequence, the per-strike deadline, the miss/evasion/
+## block attack table on each landed strike, and the swing timers resetting at the end
+## so the flurry REPLACES swings rather than stacking on top of them.
+##
+## The strikes resolve in `battle.answer_whirlwind` from the screen's buttons, not here:
+## a flurry that ran to completion inside one call would be a damage spell with extra
+## steps, and the whole point is that it stops when the player gets one wrong.
+static func _whirlwind(battle, lv: int, rng: RandomNumberGenerator) -> Dictionary:
+	var count := 3 + maxi(lv, 1)
+	var dirs: Array = []
+	var keys := ["tri", "circle", "cross", "square"]
+	for _i in count:
+		dirs.append(keys[rng.randi_range(0, keys.size() - 1)])
+	battle.start_whirlwind(dirs, WHIRLWIND_REACTION_MS)
+	return _ok("whirlwind", "Whirlwind: %d uderu" % count, 0)
+
 
 ## The base damage of a plain swing, the live path the port documents: the PWA's
 ## `mb.baseDmg` was never set, so this fallback IS the formula in use.

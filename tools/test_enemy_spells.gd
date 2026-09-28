@@ -206,19 +206,30 @@ func _test_lifestealer_heals_and_manastealer_drains() -> void:
 func _test_critmaster_can_double_a_hit() -> void:
 	# A critmaster rolls a 33 % double. Over many swings the damage MUST exceed the same
 	# number of non-crit swings, or the type is a label with nothing behind it.
+	#
+	# ⚠️  ONE battle, MANY swings — not a fresh battle per swing. `_melee_fight` builds the
+	# battle with a FIXED seed (1234) and `setup` draws the monster from it, so every one of
+	# the 40 samples used to be the same monster against the same hero: the loop was 40
+	# copies of ONE reading, and the verdict swung on which single roll landed. It read
+	# `crit <= normal * 1.05` and passed only while `rng_state == 0` happened to fall on a
+	# different side for the two battles. Driving ONE fight 40 times samples the crit roll
+	# itself, which is what the assertion is about.
+	var b1 := _melee_fight([])
+	b1.monster_type = ""
+	var b2 := _melee_fight([])
+	b2.monster_type = "critmaster"
 	var normal := 0.0
 	var crit := 0.0
 	for i in 40:
-		var b1 := _melee_fight([])
-		b1.monster_type = ""
 		_state.hero()["hp"] = 100000.0
 		b1.hero_hp = 100000.0
+		b1.opp_type = ""
 		b1.enemy_attack(_state, _resolve)
 		normal += (100000.0 - b1.hero_hp)
-		var b2 := _melee_fight([])
-		b2.monster_type = "critmaster"
+
 		_state.hero()["hp"] = 100000.0
 		b2.hero_hp = 100000.0
+		b2.opp_type = ""
 		b2.enemy_attack(_state, _resolve)
 		crit += (100000.0 - b2.hero_hp)
 	if crit <= normal * 1.05:

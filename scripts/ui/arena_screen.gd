@@ -23,10 +23,11 @@ class_name ArenaScreen
 ##   .mb-hp-bar           22px, radius 6, track #2a0a0a, border #e74c3c, fill #e74c3c
 ##   .mb-mana-bar         22px, radius 6, track #1a1a2a, border #3a3a6a, fill #4a6ad4
 ##
-## What is deliberately NOT here: the PWA's rapid-tap minigames and its opportunity
-## dodge/block/counter reaction buttons — interaction models for a page that is watched
-## while tapped (see docs/port-notes.md). The depth axis IS here: `_gap` drives the
-## hero's walk-in, his scale and the monster's lean.
+## What is deliberately NOT here: the PWA's rapid-tap minigames and its hold-to-repeat
+## swings. The opportunity dodge/block/counter reaction buttons ARE here now — Jan brought
+## them back, and they are the whole reason this screen has a reaction layer at all. The
+## depth axis IS here too: `_gap` drives the hero's walk-in, his scale and the monster's
+## lean.
 ##
 ## ============================================================================ the clock
 ##
@@ -253,6 +254,17 @@ var _spell_row: HBoxContainer
 var _spell_signature := ""
 var _result_label: Label
 var _cast_icon: TextureRect
+## The reaction layer: `.ps-btns-def` / `.ps-btns-combo` / `.action-info-icon`.
+var _reaction_row: HBoxContainer
+var _combo_row: HBoxContainer
+var _reaction_buttons: Dictionary = {}
+var _combo_buttons: Dictionary = {}
+var _action_icon: Control
+var _action_ring       # GaugeArc
+var _action_image: CircularPortrait
+## Set false/true by `_refresh_action_layer` each frame, then read by `render()` — the
+## window is on the BATTLE and the screen only mirrors it.
+var _row_shown := false
 var _confirm_layer: Control
 var _surrender_button: Button
 
@@ -965,6 +977,216 @@ func _build_arena() -> void:
 	_spell_row.offset_bottom = -10
 	_arena.add_child(_spell_row)
 
+	_build_reaction_layer()
+
+
+## `.ps-btns-def, .ps-btns-combo` — the reaction row and the class spell bar SHARE the
+## bottom-centre strip of the arena, and the PWA gives it `bottom:64px` while
+## `.arena-class-spells` uses `bottom:10px`. Nothing else in the arena needs the strip
+## between them, so the row is centred there and the spells stay under it.
+##
+## Three layers, built once and hidden, exactly as the PWA declares them in HTML:
+##
+##   * `_reaction_row` — the def buttons (Dodge / Block / Counter), 56px circles
+##   * `_combo_row`    — the four PS buttons (✕ ◯ □ △), the Whirlwind flurry's input
+##   * `_action_icon`  — the 64px icon in the middle of the arena saying WHICH press is
+##                       wanted, plus the Whirlwind countdown ring around it
+##
+## ⚠️  THE CORRECT BUTTON IS NEVER HIGHLIGHTED. Jan's rule, twice over: highlighting it
+## turns the interaction into "press the one that lights up", which is not a reaction —
+## the player has to find it among the buttons themselves. Only the middle icon names it.
+func _build_reaction_layer() -> void:
+	_reaction_row = HBoxContainer.new()
+	_reaction_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_reaction_row.add_theme_constant_override("separation", 12)
+	_reaction_row.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_reaction_row.offset_left = -140
+	_reaction_row.offset_right = 140
+	_reaction_row.offset_top = -180
+	_reaction_row.offset_bottom = -68
+	_reaction_row.visible = false
+	_arena.add_child(_reaction_row)
+
+	_reaction_buttons = {}
+	for spec in REACTION_BUTTONS:
+		var kind := str(spec["kind"])
+		var button := Button.new()
+		# The PWA's own exclusion list again: these carry their own sound.
+		button.add_to_group("no_click_sfx")
+		button.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
+		button.size = Vector2(PS_BUTTON, PS_BUTTON)
+		button.focus_mode = Control.FOCUS_NONE
+		button.tooltip_text = str(spec["label"])
+		# `.ps-def-btn { border-radius:50%; border:2px }` — the PWA's coloured ring around
+		# a black plate, and the PNG inside is RGB (no alpha) so it must be cropped to the
+		# circle or its black corners show as a square in a round frame.
+		var border := Color(str(spec["border"]))
+		var style := _flat_style("#000000", str(spec["border"]), int(PS_BUTTON * 0.5))
+		style.set_border_width_all(PS_BORDER_W)
+		for state_name in ["normal", "hover", "focus", "pressed", "disabled"]:
+			button.add_theme_stylebox_override(state_name, style)
+		var img := CircularPortrait.new()
+		img.texture = _load("assets/ps/%s" % str(spec["icon"]))
+		img.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.backdrop = Color(0, 0, 0, 0)
+		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(img)
+		button.pressed.connect(func(): on_reaction_button(kind))
+		_reaction_row.add_child(button)
+		_reaction_buttons[kind] = button
+
+	# `.ps-btns-combo` — same row, its own set. The flurry's four keys.
+	_combo_row = HBoxContainer.new()
+	_combo_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_combo_row.add_theme_constant_override("separation", 12)
+	_combo_row.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_combo_row.offset_left = -140
+	_combo_row.offset_right = 140
+	_combo_row.offset_top = -180
+	_combo_row.offset_bottom = -68
+	_combo_row.visible = false
+	_arena.add_child(_combo_row)
+
+	_combo_buttons = {}
+	for key in ["tri", "circle", "cross", "square"]:
+		var button := Button.new()
+		button.add_to_group("no_click_sfx")
+		button.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
+		button.size = Vector2(PS_BUTTON, PS_BUTTON)
+		button.focus_mode = Control.FOCUS_NONE
+		button.tooltip_text = key
+		var style := _flat_style("#000000", str(PS_KEY_BORDERS.get(key, "#2a2a2a")),
+			int(PS_BUTTON * 0.5))
+		style.set_border_width_all(PS_BORDER_W)
+		for state_name in ["normal", "hover", "focus", "pressed", "disabled"]:
+			button.add_theme_stylebox_override(state_name, style)
+		# ⚠️  The row uses the SHARED `ps_*.png` (symbol filling the tile), never the
+		# `ps_*_center.png` copies: the `_center` files exist only for the middle icon,
+		# whose padding is what keeps the symbol off the countdown ring. Swapping them
+		# makes these buttons look small and empty.
+		var img := CircularPortrait.new()
+		img.texture = _load("assets/ps/ps_%s.png" % key)
+		img.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.backdrop = Color(0, 0, 0, 0)
+		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(img)
+		button.pressed.connect(func(): on_whirlwind_button(key))
+		_combo_row.add_child(button)
+		_combo_buttons[key] = button
+
+	# `.action-info-icon` — the middle of the arena says which press is wanted, and for
+	# the flurry carries the countdown ring around it.
+	_action_icon = Control.new()
+	_action_icon.custom_minimum_size = Vector2(ACTION_ICON_BOX, ACTION_ICON_BOX)
+	_action_icon.size = Vector2(ACTION_ICON_BOX, ACTION_ICON_BOX)
+	_action_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_action_icon.visible = false
+	_arena.add_child(_action_icon)
+	_centre_in_arena(_action_icon)
+
+	# The countdown ring, drawn UNDER the icon so the symbol sits inside the ring rather
+	# than on top of it. `.combo-ring`'s 8px padding is what separates the two; here the
+	# ring is simply drawn at a larger radius.
+	_action_ring = GaugeArc.track(ACTION_RING_RADIUS, ACTION_RING_W, "#f1c40f")
+	_action_ring.custom_minimum_size = Vector2(ACTION_ICON_BOX, ACTION_ICON_BOX)
+	_action_ring.size = Vector2(ACTION_ICON_BOX, ACTION_ICON_BOX)
+	_action_ring.visible = false
+	_action_icon.add_child(_action_ring)
+
+	_action_image = CircularPortrait.new()
+	_action_image.custom_minimum_size = Vector2(ACTION_SYMBOL, ACTION_SYMBOL)
+	_action_image.size = Vector2(ACTION_SYMBOL, ACTION_SYMBOL)
+	# The middle icon carries a ring in the COLOUR of the press it is asking for — the
+	# PWA's own `border:2px solid` on `.combo-ring img` (it dropped the white border there
+	# so the gold countdown ring stays readable, and this keeps the same two-tier look).
+	_action_image.ring_width = 2.0
+	_action_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_action_icon.add_child(_action_image)
+	# Centred by hand: `_action_icon` is a bare Control, so its child keeps the rect it
+	# is given and a centred placement is arithmetic, not a container's job.
+	_action_image.position = Vector2(
+		(ACTION_ICON_BOX - ACTION_SYMBOL) * 0.5, (ACTION_ICON_BOX - ACTION_SYMBOL) * 0.5)
+
+## `.ps-def-btn` colours, verbatim: orange is the enemy's attack and the dodge answer to
+## it, blue is the block, violet is the riposte. The MIDDLE icon wears the same colour so
+## the "find this button" instruction can be read without highlighting the button.
+const PS_KEY_BORDERS := {
+	"tri": "#2ecc71", "circle": "#e74c3c", "cross": "#e67e22", "square": "#f1c40f",
+}
+## `kind`, label, border colour, icon file — the PWA's `#mbPsDefBtns` triple.
+const REACTION_BUTTONS := [
+	{"kind": "dodge", "label": "Dodge", "border": "#e67e22", "icon": "ps_dodge.png"},
+	{"kind": "block", "label": "Block", "border": "#3498db", "icon": "ps_block.png"},
+	{"kind": "counter", "label": "Counter", "border": "#9b59b6", "icon": "ps_counter.png"},
+]
+## `.ps-def-btn { width:56px; height:56px; border:2px }`.
+const PS_BUTTON := 56.0
+const PS_BORDER_W := 2
+## `.combo-ring img { width:96px;height:96px }` plus its 8px padding.
+const ACTION_SYMBOL := 96.0
+const ACTION_ICON_BOX := 116.0
+const ACTION_RING_RADIUS := 56.0
+const ACTION_RING_W := 3.0
+
+
+## The middle icon: which press is wanted right now, and for the flurry the fraction of
+## the strike's deadline still left. The countdown is a GaugeArc rather than a CSS
+## `conic-gradient` — same mechanism (an arc whose un-drawn part is the gap), and it
+## repaints through `set_value_ratio`, which is the one write that queues a redraw.
+func _refresh_action_icon() -> void:
+	if _action_icon == null or battle == null:
+		return
+	if battle.whirlwind_open():
+		var key := battle.whirlwind_prompt()
+		var file := "ps_%s_center.png" % key
+		var left := battle.ww_deadline_ms
+		var total := maxi(battle.ww_reaction_ms, 1)
+		var ratio := clampf(float(left) / float(total), 0.0, 1.0)
+		var border := Color(str(PS_KEY_BORDERS.get(key, "#f1c40f")))
+		_show_action_icon(file, border, true)
+		_action_ring.set_value_ratio(ratio)
+		return
+	if battle.opportunity_open():
+		var kind := battle.opp_type
+		var icon: String = str({"block": "ps_block.png", "counter": "ps_counter.png"}
+			.get(kind, "ps_dodge.png"))
+		var tint: String = str({"block": "#3498db", "counter": "#9b59b6"}.get(kind, "#e67e22"))
+		_show_action_icon(icon, Color(tint), false)
+		return
+	if _action_icon.visible and not _action_hold:
+		_action_icon.visible = false
+		_action_ring.visible = false
+
+
+## Show the middle icon, and say whether the countdown ring belongs with it. The ring has
+## its own visibility because a Whirlwind strike has a deadline and a dodge window does
+## not — the PWA's own asymmetry (only `.combo-ring` carries `--ww-remaining`).
+func _show_action_icon(file: String, border: Color, ring: bool) -> void:
+	var path := "assets/ps/%s" % file
+	if _action_image.texture == null or _action_icon.get_meta("icon_path", "") != path:
+		_action_image.texture = _load(path)
+		_action_icon.set_meta("icon_path", path)
+	_action_image.ring_colour = border
+	_action_image.ring_width = 2.0
+	_action_icon.visible = true
+	_action_ring.visible = ring
+
+
+## Hold the middle icon up for a moment after the window closes, so a FAILED or MISSED
+## reaction can be seen before it disappears — the PWA's own `setTimeout(hide, 500)` after
+## showing the cross. Counted on real time (`_process`), never on a fight tick: the ticks
+## that would carry it stop the moment the fight ends, and the icon has to clear then too.
+const ACTION_HOLD_MS := 600
+var _action_hold_ms := 0
+var _action_hold := false
+
+
+func _hold_action_icon() -> void:
+	_action_hold = true
+	_action_hold_ms = ACTION_HOLD_MS
+
 
 ## The surrender flag, drawn rather than emoji — a banner pole with a red pennant.
 class FlagGlyph:
@@ -1262,6 +1484,19 @@ func start(state, find_item: Callable) -> bool:
 	_impact = 0.0
 	_hp_ring_flash = 0.0
 	_apply_impact_shake()
+	# The interaction layer is per-FIGHT too: a held cross or a visible row from the
+	# previous fight would sit over the new one before its first window opens.
+	_action_hold = false
+	_action_hold_ms = 0
+	_row_shown = false
+	if _reaction_row != null:
+		_reaction_row.visible = false
+	if _combo_row != null:
+		_combo_row.visible = false
+	if _action_icon != null:
+		_action_icon.visible = false
+	if _action_ring != null:
+		_action_ring.visible = false
 	_last_wall_ms = Time.get_ticks_msec()
 	_clear_floats()
 
@@ -1365,6 +1600,7 @@ func _process(delta: float) -> void:
 	# blow's sound belongs to the blow.
 	if battle != null:
 		_play_cues()
+		_drain_opportunity()
 	if steps > 0 and _tick_accumulator > float(TICK_MS):
 		# A stall longer than MAX_STEPS_PER_FRAME worth of steps (the phone woke up, the
 		# browser tab was backgrounded) leaves time nobody can spend: the cap is what stops
@@ -1379,6 +1615,50 @@ func _process(delta: float) -> void:
 	_apply_centring()
 	_animate(delta)
 	_smooth_update()
+	_refresh_reaction_layer(delta)
+
+
+## Which reaction ROW is up, and whether the middle icon is still being held. Driven from
+## the BATTLE's state every frame rather than tracked here, so the screen cannot disagree
+## with the rules about whether a window is open — the PWA's own `updateDefBtnsVisibility`
+## / `updateCastBtnsVisibility` split, with the state living on the fight.
+##
+## A running flurry WINS over an open window: they share the row, and the flurry's own
+## `start_whirlwind` drops the window, so this order only matters on the frame the two
+## change over.
+func _refresh_reaction_layer(delta: float) -> void:
+	if _reaction_row == null or _combo_row == null:
+		return
+	if _action_hold:
+		_action_hold_ms = maxi(0, _action_hold_ms - int(round(delta * 1000.0)))
+		if _action_hold_ms == 0:
+			_action_hold = false
+	if battle == null or battle.ended:
+		_reaction_row.visible = false
+		_combo_row.visible = false
+		_action_icon.visible = false
+		_action_ring.visible = false
+		return
+
+	var flurry := battle.whirlwind_open()
+	_row_shown = flurry or battle.opportunity_open()
+	_combo_row.visible = flurry
+	_reaction_row.visible = _row_shown and not flurry
+	# Block and Counter are offered only to a hero who can USE them, which is the PWA's
+	# `updateDefBtnsVisibility`: dodge always, block only with a shield, counter only
+	# once the talent is invested. A button that would always be wrong is not a choice.
+	if _reaction_row.visible:
+		(_reaction_buttons["block"] as Button).visible = battle.hero_has_shield(_state, _find_item)
+		(_reaction_buttons["counter"] as Button).visible = \
+			battle.hero_counter_chance(_state) > 0.0
+	_refresh_action_icon()
+
+
+## The middle icon's colour when it is showing a FAILED or MISSED window: the PWA's own
+## `#e74c3c` cross, drawn as the icon's ring rather than as a glyph so no emoji or new
+## asset is involved.
+func _action_hold_visible() -> bool:
+	return _action_hold
 
 
 ## Play everything the fight raised since the last frame. `Sfx` is a child node created in
@@ -2075,9 +2355,90 @@ func cast_spell(spell_id: String) -> Dictionary:
 	return result
 
 
+## The reaction button was pressed. The RULE is `battle.answer_opportunity` — this only
+## forwards the press and reports what came back, the same split as `cast_spell`.
+##
+## ⚠️  An answered window gets its floating text from the BATTLE, not from here (it drains
+## through `_drain_opportunity` on the next frame). Writing "DODGE!" here as well would
+## print it twice the moment both paths ran.
+##
+## ⚠️  AND ITS SOUND COMES FROM THE BATTLE TOO. This used to `_play()` the cue on the
+## correct press as well, on the theory that the press is "the PWA's `showOpportunitySuccess`".
+## It is not: that function plays NO sound (the PWA reads it at the top of `resolveOpportunity`,
+## where the single `playSFX(type === 'block' ? blockSfx : …)` sits). Playing it here as well
+## put TWO cues about one swing into the queue — measured on one answered dodge: the press's
+## cue and then, at the resolution, the same cue again out of `enemy_attack`. The press now
+## only touches the UI (the tick-mark, which `_action_hold_icon` already draws) and the sound
+## is the battle's, exactly once per resolved swing.
+func on_reaction_button(kind: String) -> Dictionary:
+	if battle == null or battle.ended:
+		return {"ok": false, "result": "none", "type": ""}
+	var result: Dictionary = battle.answer_opportunity(kind)
+	if str(result["result"]) == "fail":
+		# A wrong button CLOSES the window — the player may not retry — and the middle
+		# icon stays up a moment so the cross is seen.
+		_hold_action_icon()
+	render()
+	return result
+
+
+## The flurry's PS button was pressed. The strikes are the battle's
+## (`answer_whirlwind`); this forwards the key and reads back the next prompt.
+func on_whirlwind_button(key: String) -> Dictionary:
+	if battle == null or battle.ended:
+		return {"ok": false, "result": "none", "prompt": ""}
+	var result: Dictionary = battle.answer_whirlwind(key, _state, _find_item)
+	if str(result["result"]) == "fail":
+		_hold_action_icon()
+	_drain_log()
+	_state.save()
+	render()
+	return result
+
+
+## Everything the interaction said since the last frame: the word the outcome deserves
+## ("DODGE!" / "BLOCK!" / "COUNTER!") and the cross for a window that went unanswered.
+##
+## Drained on the FRAME rather than inside `step()` — the fight's own drain has the same
+## shape and for the same reason: a tick can raise more than one thing worth showing.
+func _drain_opportunity() -> void:
+	if battle == null:
+		return
+	var word := str(battle.take_opportunity_feedback())
+	if word != "":
+		match word:
+			"block":
+				_float_word("BLOCK!", "#3498db")
+			"counter":
+				_float_word("COUNTER!", "#9b59b6")
+			"dodge":
+				_float_word("DODGE!", "#f39c12")
+	var ww: Dictionary = battle.take_whirlwind_result()
+	match str(ww.get("feedback", "")):
+		"complete":
+			_float_word("WHIRLWIND!", "#f1c40f")
+		"fail":
+			# The cross, not a word: the PWA's `showComboFail` draws the same red cross
+			# it uses for a missed opportunity, because both mean "that press did not go
+			# through" and two different symbols for one idea is noise.
+			_hold_action_icon()
+
+
+## A reaction's own word over the arena, in the PWA's own colours — orange for a dodge
+## (the colour of the arrow it answered), blue for a block, violet for the counter, gold
+## for a completed flurry.
+func _float_word(text: String, colour: String) -> void:
+	if _float_layer == null:
+		return
+	var label := _label(text, 26, Color(colour), HORIZONTAL_ALIGNMENT_CENTER, true)
+	label.size = Vector2(240, 32)
+	_float_layer.add_child(label)
+	_floats.append({"node": label, "life": 1.0, "dy": 0.0, "age": 0.0,
+		"drift": 0.0, "band": "reaction"})
+
+
 ## The potion belt row in the arena: ONE slot per potion TYPE, each a 36x36 tile with the
 ## potion's own icon and a gold count badge — the PWA's `.mb-potion-btn`.
-##
 ## ⚠️  This used to build a TEXT BUTTON per potion (`"Light Healing Potion x3"`, 110x32),
 ## which is what Jan reported: "the slot is drawn as text". The PWA's own markup is a
 ## `<div class="mb-potion-btn">` holding `renderItemIcon(pot, 0)` plus a
@@ -2853,6 +3214,15 @@ class CircularPortrait:
 		set(value):
 			texture = value
 			queue_redraw()
+	## The colour painted OUTSIDE the circle — there is no clip, so the screen has to
+	## repaint the corners itself. `#121212` is the arena's own background; a transparent
+	## value lets a caller on another surface (the reaction buttons' black plate) keep its
+	## own colour instead of importing the arena's.
+	var backdrop := Color("#121212")
+	## A ring drawn around the disc, e.g. the colour of the press the middle icon is
+	## asking for. `0.0` = no ring, which is what the small PS buttons use.
+	var ring_colour := Color(0, 0, 0, 0)
+	var ring_width := 0.0
 
 	func _draw() -> void:
 		if texture == null:
@@ -2862,10 +3232,10 @@ class CircularPortrait:
 		draw_texture_rect(texture, Rect2(Vector2.ZERO, size), false, Color(1, 1, 1, 1))
 
 		# Circular crop by scanline: for every row, the circle's half-width is known, so
-		# the two areas OUTSIDE it are painted back in the arena's colour. A wedge approach
-		# (triangles to the corners) looked right on paper and wrong on screen — the corner
-		# vertex jumps between segments and the triangles cut across the artwork.
-		var bg := Color("#121212")
+		# the two areas OUTSIDE it are painted back in the backdrop colour. A wedge
+		# approach (triangles to the corners) looked right on paper and wrong on screen —
+		# the corner vertex jumps between segments and the triangles cut across the art.
+		var bg := backdrop
 		var row_h := 1.0
 		var rows := int(ceil(size.y / row_h))
 		for i in rows:
@@ -2883,6 +3253,10 @@ class CircularPortrait:
 				draw_rect(Rect2(0.0, float(i) * row_h, left_edge, row_h), bg)
 			if right_edge < size.x:
 				draw_rect(Rect2(right_edge, float(i) * row_h, size.x - right_edge, row_h), bg)
+
+		# The ring, AFTER the crop so it is drawn on top of the corner fill.
+		if ring_width > 0.0:
+			draw_arc(centre, r - ring_width * 0.5, 0.0, TAU, 96, ring_colour, ring_width, true)
 
 		# `.monster-ring-overlay` — rgba(0,0,0,0.6) over the top 30%, then fading out.
 		var overlay_rows := 40

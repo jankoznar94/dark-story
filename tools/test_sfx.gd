@@ -55,6 +55,8 @@ func _initialize() -> void:
 	_test_the_shouts_and_the_reflect_raise_the_shout_cue()
 	_test_the_enemy_hit_carries_the_monsters_own_weapon()
 	_test_the_victory_page_raises_its_own_fanfare()
+	_test_a_resolved_reaction_window_plays_exactly_one_cue()
+	_test_a_completed_flurry_raises_the_strong_strike()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -411,3 +413,73 @@ func _test_the_victory_page_raises_its_own_fanfare() -> void:
 		_fail("the treasure / unlock cues lost their layers")
 	elif str((a[0] as Dictionary).get("paths", [""])[0]) != str((b[0] as Dictionary).get("paths", [""])[0]):
 		_fail("the map's unlock should play the same file as the chest's fanfare")
+
+
+## ONE cue per resolved reaction window — and the sound comes from the BATTLE's resolution,
+## not from the press.
+##
+## ⚠️  This is a regression test: `arena_screen.on_reaction_button` used to play the cue on
+## the correct press as well, reading the PWA's `showOpportunitySuccess` as if it made a
+## sound. It does not — the PWA plays the cue inside `resolveOpportunity`, once, when the
+## swing is settled. Measured before the fix: an answered dodge put the press's cue into the
+## queue AND then the same cue again out of `enemy_attack`, i.e. two plays about one swing.
+## A screen that plays its own copy of a rule's sound is invisible to every rules assertion,
+## which is why the count is pinned here rather than the presence.
+func _test_a_resolved_reaction_window_plays_exactly_one_cue() -> void:
+	var rig := _fresh_battle("barbarian", 30)
+	var battle = rig["battle"]
+	battle.enemy_attack_type = "melee"
+	# A window of a KNOWN kind: the roll itself is `test_reactions`' business.
+	battle.opp_type = "dodge"
+	battle.opp_resolved = false
+	battle.opp_failed = false
+	battle.take_sfx_cues()
+	var answer: Dictionary = battle.answer_opportunity("dodge")
+	if str(answer.get("result", "")) != "hit":
+		_fail("test setup: the window refused the correct answer (%s)" % str(answer))
+		return
+	if not battle.take_sfx_cues().is_empty():
+		_fail("answering the window raised a sound - the cue belongs to the swing's resolution, once")
+	rig["state"].hero()["hp"] = 100000.0
+	battle.hero_hp = 100000.0
+	var settle: Dictionary = battle.enemy_attack(rig["state"], _resolve)
+	if str(settle.get("reason", "")) != "opportunity":
+		_fail("test setup: the answered window did not settle as an avoided blow (%s)" % str(settle))
+		return
+	var cues: Array = battle.take_sfx_cues()
+	if cues.count(Sfx.CUE_DODGE) != 1:
+		_fail("one resolved dodge played the dodge cue %d times: %s" % [cues.count(Sfx.CUE_DODGE), str(cues)])
+
+	# A wrong answer is silent too — the PWA's `showOpportunityFail` is a cross, not a noise.
+	var rig2 := _fresh_battle("barbarian", 30)
+	var b2 = rig2["battle"]
+	b2.enemy_attack_type = "melee"
+	b2.opp_type = "block"
+	b2.opp_resolved = false
+	b2.opp_failed = false
+	b2.take_sfx_cues()
+	b2.answer_opportunity("dodge")
+	if not b2.take_sfx_cues().is_empty():
+		_fail("a WRONG reaction answer raised a sound; the cross is the feedback")
+
+
+## A completed flurry plays `strong_strike` — the PWA's `playSFX(strongStrikeSfx)` in
+## `endCombo(true)`. A flurry that breaks early plays nothing, and the two are easy to swap.
+func _test_a_completed_flurry_raises_the_strong_strike() -> void:
+	var rig := _fresh_battle("barbarian", 30)
+	var battle = rig["battle"]
+	battle.take_sfx_cues()
+	battle.start_whirlwind(["tri"], 1500)
+	battle.answer_whirlwind("tri", rig["state"], _resolve)
+	var cues: Array = battle.take_sfx_cues()
+	if not cues.has(Sfx.CUE_STRONG_STRIKE):
+		_fail("a completed whirlwind flurry raised %s, expected 'strong_strike'" % str(cues))
+
+	var rig2 := _fresh_battle("barbarian", 30)
+	var b2 = rig2["battle"]
+	b2.take_sfx_cues()
+	b2.start_whirlwind(["tri", "circle"], 1500)
+	b2.answer_whirlwind("square", rig2["state"], _resolve)
+	if b2.take_sfx_cues().has(Sfx.CUE_STRONG_STRIKE):
+		_fail("a flurry broken by a wrong press still played the completion fanfare")
+

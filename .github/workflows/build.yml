@@ -527,6 +527,22 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "TRANSITION_ALL_PASS=true"
 
+      # The enemy swing's REACTION window (dodge / block / counter) and the Whirlwind flurry.
+      # A separate gate from ARENA_SCREEN on purpose: that one asserts the WIRING (does the
+      # button reach the rule), this one the RULES (when a window opens, what a wrong answer
+      # costs, when the riposte is spent, when the flurry's deadline bites).
+      #
+      # The verdict is `REACTIONS_ALL_PASS=true` — derived from the GATE's name, which is what
+      # `test_reactions.gd` prints. Verify the grep against the test's own print if either
+      # name changes: a gate grepping a string no test prints kills `set -e` and SKIPS every
+      # later step, so the export and the gh-pages deploy silently never happen.
+      - name: Reaction test (the swing's reaction window, the riposte, the Whirlwind flurry)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_reactions.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "REACTIONS_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

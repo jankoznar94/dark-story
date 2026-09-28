@@ -18,20 +18,23 @@ class_name Talents
 ##
 ## Not every talent has a modelled effect yet. `effect_summary()` reports what a level
 ## does in this port so the UI never promises a number the combat does not read, and
-## `INERT_SKILLS` lists the ones whose mechanic was deliberately not ported (shouts,
-## whirlwind's flurry, the reaction windows).
+## `INERT_SKILLS` lists the ones whose mechanic was deliberately not ported (the shouts
+## that no class spell feeds, the enemy-only afflictions).
 
 ## Skills whose mechanic the port does not model. Investing is still allowed — the
 ## points and the prerequisite gating are real — but the UI says so instead of showing
 ## a bonus that never lands.
 ##
 ## Battle Shout, Defensive Shout and Frenzy came OFF this list when the class spells
-## landed in the arena: the shouts now actually multiply the hero's damage and armour
-## for their 30 s, and Frenzy actually shortens the swing interval. Leaving them here
-## would have the UI deny a bonus the combat reads, which is the same lie in the other
-## direction. Whirlwind stays: its PWA mechanic is a tap-the-button flurry with no
-## equivalent in a portrait auto-combat arena.
-const INERT_SKILLS := ["whirlwind", "skillShout", "thornShield", "faerieFire", "slow"]
+## landed in the arena, and **Whirlwind came off with the reaction layer**: its flurry is
+## a sequence of PS buttons resolved by `battle.answer_whirlwind`, and Counter Attack
+## feeds `consume_counter_bonus`. Leaving either here would have the UI deny a mechanic
+## the combat reads — the same lie in the other direction as promising one it does not.
+##
+## What remains is genuinely absent: `skillShout` (the port models no global shout
+## bonus), and `thornShield` / `faerieFire` / `slow`, which are spells the ENEMY casts —
+## the hero has no equivalent to invest in, so there is nothing for a level to change.
+const INERT_SKILLS := ["skillShout", "thornShield", "faerieFire", "slow"]
 
 
 ## Flattened skill lookup, built once: key -> {key, classId, treeId, tierIdx, name, maxLv, ...}

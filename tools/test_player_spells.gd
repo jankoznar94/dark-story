@@ -162,10 +162,23 @@ func _test_unimplemented_spells_are_refused_not_faked() -> void:
 		_fail("an unimplemented mage spell was reported castable")
 	if PlayerSpells.is_implemented("firebolt"):
 		_fail("firebolt is claimed as implemented")
-	# Whirlwind has its own reason: it was deliberately not ported, which is a different
-	# statement from "not done yet".
-	if not PlayerSpells.NOT_PORTED.has("whirlwind"):
-		_fail("whirlwind is not listed as deliberately not ported")
+	# ⚠️  Whirlwind USED to be asserted here as `NOT_PORTED`. It is implemented now — the
+	# arena has the PS buttons its flurry needs — so the assertion is inverted rather than
+	# deleted: the list it was on must be empty, and the spell must be castable. Leaving
+	# the old check would force Whirlwind back into the not-ported list for no reason but
+	# this line, which is the same "a test can pin a bug in place" trap the scroll driver
+	# hit.
+	if not PlayerSpells.NOT_PORTED.is_empty():
+		_fail("NOT_PORTED is not empty: %s" % str(PlayerSpells.NOT_PORTED))
+	if not PlayerSpells.is_implemented("whirlwind"):
+		_fail("whirlwind is implemented in the battle but not listed as such")
+	# ...and it is offered to a barbarian who has invested in it, then starts a flurry.
+	var barb = _hero("barbarian", {"whirlwind": 1}, 20)
+	var barb_find := _resolve(barb)
+	var barb_reason: String = PlayerSpells.blocked_reason(barb, _data, "barbarian",
+		"whirlwind", _fight(barb), barb_find, 0, 0)
+	if barb_reason != "":
+		_fail("a learned whirlwind is blocked for '%s'" % barb_reason)
 
 
 func _test_mana_gates_and_is_spent() -> void:

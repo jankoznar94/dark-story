@@ -33,6 +33,12 @@ const CUE_STAFF_HIT := "staff_hit"
 const CUE_STAFF_CRIT := "staff_crit"
 const CUE_DODGE := "dodge"
 const CUE_BLOCK := "block"
+## The hero answering the enemy's swing with a riposte. The PWA's `counterSfx` reuses
+## `hit.mp3` rather than adding a file, so this maps to `assets/audio/hit.mp3` — the same
+## arrangement the enemy's hit-sound pool is built from.
+const CUE_COUNTER := "counter"
+## A completed Whirlwind — the PWA's `playSFX(strongStrikeSfx)` in `endCombo(true)`.
+const CUE_STRONG_STRIKE := "strong_strike"
 const CUE_HURT := "hurt"
 const CUE_ENEMY_CAST := "enemy_cast"
 const CUE_SHOUT := "shout"
@@ -183,6 +189,15 @@ const TABLE := {
 	],
 	CUE_BLOCK: [
 		{"paths": ["res://assets/audio/block.mp3"], "volume": 0.70, "chance": 1.0},
+	],
+	## `counterSfx` IS `hit.mp3` in the PWA (`new Audio('hit.mp3'); volume 0.80`). Same
+	## file as the enemy's own hit pool draws from, at the PWA's own louder volume.
+	CUE_COUNTER: [
+		{"paths": ["res://assets/audio/hit.mp3"], "volume": 0.80, "chance": 1.0},
+	],
+	## `endCombo(mb, true)` — the fanfare for getting the whole flurry right.
+	CUE_STRONG_STRIKE: [
+		{"paths": ["res://assets/audio/strong_strike.mp3"], "volume": 0.70, "chance": 1.0},
 	],
 	CUE_HURT: [
 		{"paths": HURT_POOL, "volume": 0.70, "chance": 1.0},

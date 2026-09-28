@@ -24,6 +24,7 @@ const LootSystem := preload("res://scripts/items/loot_system.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 var _data: Node
 var _gen: ItemGen
@@ -44,6 +45,11 @@ func _initialize() -> void:
 	_test_buttons_survive_a_render_tick()
 	_test_the_result_tiles_come_down_on_the_tap_clock()
 	_test_backdrop_is_the_stop_being_fought()
+	_test_reaction_buttons_reach_the_rules()
+	_test_the_reaction_row_tracks_the_battle()
+	_test_counter_and_block_are_offered_only_when_usable()
+	_test_one_reaction_plays_one_sound()
+	_test_the_flurry_row_replaces_the_reaction_row()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -370,3 +376,195 @@ func _new_state():
 	st.bind_data(_data)
 	st.set_class("barbarian")
 	return st
+
+
+## The reaction buttons are the only thing about this feature a player can see, and every
+## way they can be wrong is silent from a rules test: a row built but never shown, a
+## button wired to nothing, a press that never reaches the battle.
+##
+## ⚠️  The press is driven through the BUTTON's own `pressed` signal, not by calling the
+## screen's handler. A call to `on_reaction_button` passes against a button wired to
+## nothing at all — that is exactly the failure this test exists for, and it is the same
+## mistake the portal button made (see the port skill's "a button whose `visible` is set
+## once in `_build()`").
+func _test_reaction_buttons_reach_the_rules() -> void:
+	var s = _hero("barbarian", {}, 20)
+	var screen = _arena(s)
+	var battle = screen.battle
+	# Force a window of a KNOWN kind: the roll is `test_reactions`' business, this is about
+	# the wiring.
+	battle.opp_type = "dodge"
+	battle.opp_resolved = false
+	battle.opp_failed = false
+	screen._refresh_reaction_layer(0.016)
+	if not screen._reaction_row.visible:
+		_fail("an open window did not show the reaction row")
+		return
+	var button: Button = screen._reaction_buttons["dodge"]
+	if button == null:
+		_fail("the reaction row has no dodge button")
+		return
+	button.pressed.emit()
+	if not battle.opp_resolved:
+		_fail("pressing Dodge through its own signal did not reach the battle")
+	# ...and the row goes away once the window is settled, or the player keeps tapping a
+	# window that no longer exists.
+	battle.resolve_opportunity(s)
+	screen._refresh_reaction_layer(0.016)
+	if screen._reaction_row.visible:
+		_fail("the reaction row stayed up after the window was settled")
+
+
+## The row is driven from the BATTLE's state, so there is exactly one place that can
+## disagree — and this asserts the direction of that dependency: the screen must follow
+## the battle, never track a window of its own.
+func _test_the_reaction_row_tracks_the_battle() -> void:
+	var s = _hero("barbarian", {}, 20)
+	var screen = _arena(s)
+	var battle = screen.battle
+	battle.opp_type = ""
+	screen._refresh_reaction_layer(0.016)
+	if screen._reaction_row.visible:
+		_fail("the reaction row is up with no window open")
+	# The middle icon names the press, and for a window with no deadline it must NOT carry
+	# the flurry's countdown ring — that ring belongs to a strike's deadline only.
+	battle.opp_type = "dodge"
+	screen._refresh_reaction_layer(0.016)
+	if not screen._action_icon.visible:
+		_fail("the middle icon is hidden while a window is open")
+	if screen._action_ring.visible:
+		_fail("the countdown ring is up for a window that has no deadline")
+	# ⚠️  And the correct BUTTON is never highlighted. Jan's rule: a highlighted button
+	# turns the reaction into "press the one that lights up", which is not a reaction.
+	for kind in screen._reaction_buttons:
+		var b: Button = screen._reaction_buttons[kind]
+		for state_name in ["normal", "hover", "pressed", "focus"]:
+			var style = b.get_theme_stylebox(state_name)
+			if style is StyleBoxFlat and style.border_color == Color("#ffffff"):
+				_fail("the %s button is highlighted white - the answer must not be shown" % kind)
+
+
+## Block and Counter are offered only to a hero who can USE them (the PWA's
+## `updateDefBtnsVisibility`): dodge always, block only with a shield, counter only once
+## the talent is invested. A button that would always be wrong is not a choice.
+func _test_counter_and_block_are_offered_only_when_usable() -> void:
+	# A shield-less barbarian with no counter: dodge only.
+	var s = _hero("barbarian", {}, 20)
+	s.equip()["shield"] = ""
+	var screen = _arena(s)
+	screen.battle.opp_type = "dodge"
+	screen._refresh_reaction_layer(0.016)
+	if (screen._reaction_buttons["block"] as Button).visible:
+		_fail("Block is offered to a hero with no shield")
+	if (screen._reaction_buttons["counter"] as Button).visible:
+		_fail("Counter is offered to a hero who never bought the talent")
+	if not (screen._reaction_buttons["dodge"] as Button).visible:
+		_fail("Dodge is hidden - it is the one reaction every hero has")
+
+	# Invested counter and a shield on: both appear. A REAL shield from the item table,
+	# because the gate reads the item's own type and a made-up id would have none.
+	var s2 = _hero("barbarian", {"counterAttack": 1}, 20)
+	s2.equip()["shield"] = "shield_buckler"
+	var screen2 = _arena(s2)
+	screen2.battle.opp_type = "dodge"
+	screen2._refresh_reaction_layer(0.016)
+	if not (screen2._reaction_buttons["block"] as Button).visible:
+		_fail("Block is hidden from a hero wearing a shield")
+	if not (screen2._reaction_buttons["counter"] as Button).visible:
+		_fail("Counter is hidden from a hero who invested in it")
+
+
+## ONE cue per resolved reaction window, counted at the MIXER — the press and the swing's
+## resolution together.
+##
+## ⚠️  This is a regression test. `arena_screen.on_reaction_button` played the cue on the
+## correct press as well, reading the PWA's `showOpportunitySuccess` as if it made a sound:
+## it does not. The PWA plays the cue inside `resolveOpportunity`, once, when the swing is
+## settled (measured: an answered dodge put the press's cue into the battle's queue and then
+## the same cue again out of `enemy_attack`).
+##
+## ⚠️  AND THE CUE REALLY IS RAISED BY THE SWING'S RESOLUTION, not by `resolve_opportunity`
+## itself — the battle plays it in `enemy_attack`, in the branch that reads `opp_last_kind`.
+## So the swing has to be DRIVEN here; calling `resolve_opportunity` alone consumes the
+## window and then leaves `enemy_attack` to land a plain hit, which is why an earlier version
+## of this check read "0 sounds" against a port that was already correct.
+##
+## The count is taken on `Sfx.played_count`, not on `battle.take_sfx_cues()`, because the
+## screen's stray copy never entered the battle's queue at all — a rules-level check is blind
+## to it. The battle half is pinned in `test_sfx`; this half is the WIRING.
+func _test_one_reaction_plays_one_sound() -> void:
+	var s = _hero("barbarian", {}, 20)
+	var screen = _arena(s)
+	var battle = screen.battle
+	# The mixer only exists once the screen is in the tree — `_ready()` builds it, and a
+	# `_build()`-only rig has none. Build it the way a real frame would.
+	if screen._sfx == null:
+		screen._sfx = Sfx.new()
+		screen.add_child(screen._sfx)
+	screen._sfx.played_count = 0
+	battle.opp_type = "dodge"
+	battle.opp_resolved = false
+	battle.opp_failed = false
+	screen._refresh_reaction_layer(0.016)
+	(screen._reaction_buttons["dodge"] as Button).pressed.emit()
+	if not battle.opp_resolved:
+		_fail("the press did not reach the battle")
+		return
+	# ⚠️  THE PRESS IS SILENT. This is the half the regression lived in: restoring the
+	# screen's own `_play()` on the correct press turns this red and nothing else.
+	if screen._sfx.played_count != 0:
+		_fail("the reaction PRESS played %d sounds; the PWA's press is a tick-mark only"
+			% screen._sfx.played_count)
+	# ...and the swing's resolution plays it exactly once, through the real path.
+	battle.hero_hp = 100000.0
+	battle.hero_max_hp = 100000.0
+	var settle: Dictionary = battle.enemy_attack(s, screen._find_item)
+	if str(settle.get("reason", "")) != "opportunity":
+		_fail("test setup: the answered window did not settle as an avoided blow (%s)"
+			% str(settle))
+		return
+	screen._play_cues()
+	if screen._sfx.played_count != 1:
+		_fail("one answered reaction played %d sounds, expected 1" % screen._sfx.played_count)
+
+
+## The flurry row replaces the reaction row — and the strike's press goes through the PS
+## button's own signal, the same "a call to the handler passes against a button wired to
+## nothing" rule the reaction row is checked with.
+func _test_the_flurry_row_replaces_the_reaction_row() -> void:
+	var s = _hero("barbarian", {"whirlwind": 1, "oneHandSpec": 1}, 20)
+	var screen = _arena(s)
+	var battle = screen.battle
+	# An open window AND a flurry is the state the rules forbid; prove the screen resolves
+	# it in the flurry's favour rather than drawing both.
+	battle.opp_type = "dodge"
+	battle.start_whirlwind(["tri", "circle", "cross"], 1500)
+	screen._refresh_reaction_layer(0.016)
+	if screen._reaction_row.visible:
+		_fail("the reaction row is up during a flurry - the two share one strip")
+	if not screen._combo_row.visible:
+		_fail("the flurry's PS row is not shown")
+	if not screen._action_icon.visible:
+		_fail("the flurry shows no middle icon - the player cannot know what to press")
+	if not screen._action_ring.visible:
+		_fail("the flurry's countdown ring is missing - the deadline is the whole pressure")
+
+	# The strike's own press goes through the PS button's signal, same rule as above.
+	var prompt: String = battle.whirlwind_prompt()
+	var button: Button = screen._combo_buttons[prompt]
+	if button == null:
+		_fail("there is no PS button for the prompted key '%s'" % prompt)
+		return
+	var landed_before: int = battle.ww_landed
+	button.pressed.emit()
+	if battle.ww_landed == landed_before:
+		_fail("pressing the prompted PS button did not land a strike")
+
+	# After the flurry, the reaction row is free again.
+	battle.ww_active = false
+	battle.opp_type = ""
+	screen._refresh_reaction_layer(0.016)
+	if screen._combo_row.visible:
+		_fail("the PS row stayed up after the flurry ended")
+	if screen._action_icon.visible or screen._action_ring.visible:
+		_fail("the middle icon stayed up after the flurry ended")

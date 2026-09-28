@@ -383,6 +383,26 @@ func _reset_clocks() -> void:
 	cast_spell_id = ""
 	cast_elapsed = 0.0
 	cast_time = 0.0
+	# The reaction state belongs to the FIGHT, not to the battle object. The battle is
+	# built fresh per fight (`battle.setup()` -> `_reset_clocks`) in every current caller,
+	# but a stale window or a banked riposte surviving into the next fight would offer a
+	# reaction to a swing that never happened — the same class of leak as the screen's
+	# `_pack_displayed`.
+	opp_type = ""
+	opp_resolved = false
+	opp_failed = false
+	opp_cooldown_ms = 0
+	opp_last_kind = ""
+	opp_feedback = ""
+	opp_pending_hit = {}
+	counter_pending = false
+	counter_bonus_pct = 0.0
+	ww_active = false
+	ww_dirs = []
+	ww_index = 0
+	ww_deadline_ms = 0
+	ww_landed = 0
+	ww_feedback = ""
 
 
 ## The player's swing interval for this fight, from the equipped weapon(s). Dual
@@ -751,6 +771,15 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 	_tick_spell_clocks(delta_ms, state, find_item)
 	advance_gap(delta_ms)
 
+	# The Whirlwind flurry's own deadline. When it runs out on a strike the player never
+	# pressed, the flurry ends with what it had already landed and the hero's swings
+	# restart — the same shape as a wrong press. Counted HERE, on the fight's clock, so
+	# the pressure is identical on every machine and a test can drive it.
+	if ww_active and ww_deadline_ms > 0:
+		ww_deadline_ms = maxi(0, ww_deadline_ms - int(delta_ms))
+		if ww_deadline_ms == 0:
+			whirlwind_timeout()
+
 	player_swing_elapsed += delta_ms
 	enemy_swing_elapsed += delta_ms
 	if player_slow_ms > 0:
@@ -852,6 +881,12 @@ func _tick_spell_clocks(delta_ms: float, state, find_item: Callable) -> void:
 		enemy_stun_ms = maxi(0, enemy_stun_ms - dt)
 	if enemy_cast_blocked_ms > 0:
 		enemy_cast_blocked_ms = maxi(0, enemy_cast_blocked_ms - dt)
+	# The gap between two reaction windows, on the fight's own clock. It caps how often
+	# the player is asked to react (the PWA's `OPPORTUNITY_COOLDOWN_MS`), and it is a
+	# RULE, so it must not run on wall time — the fight's clock is the only one the
+	# battle knows and a test has to be able to drive it.
+	if opp_cooldown_ms > 0:
+		opp_cooldown_ms = maxi(0, opp_cooldown_ms - dt)
 
 	# The monster's own buffs, on the same clock as everything else. Without these the
 	# Thorn Shield and the shouts would never expire — the exact "permanent buff" failure
@@ -1057,6 +1092,10 @@ func player_attack(state, find_item: Callable) -> Dictionary:
 		queued_frenzy = bool(queued["frenzy"])
 	if battle_shout_dmg_pct > 0.0:
 		mult *= 1.0 + battle_shout_dmg_pct / 100.0
+	# A banked Counter Attack multiplies THIS swing — main hand only, spent on use.
+	# Applied after the shouts and the queued spells, i.e. last, so the riposte reads
+	# as a bonus on the blow rather than as part of the weapon's own profile.
+	mult *= consume_counter_bonus(is_offhand)
 	# The weapon specialisation's damage and attack-rating multipliers, straight from the
 	# talent. `ar_mult` starts at the queued spells' value and compounds with it, exactly
 	# as the PWA multiplied `spec.arMult * arMultOverride`.
@@ -1189,12 +1228,28 @@ func _tick_dots(delta_ms: float) -> void:
 func enemy_attack(state, find_item: Callable) -> Dictionary:
 	if cast_spell_id != "":
 		return {"hit": false, "reason": "casting"}
-	# The hero's own dodge, passive plus Evasion. A dodged swing is spent: the monster
-	# does not get to hit anyway, and the PWA started a fresh swing.
-	if _roll_hero_dodge(state, find_item):
-		_note("DODGE", 0, true)
-		sound(Sfx.CUE_DODGE)
-		return {"hit": false, "reason": "dodge"}
+	# ---- the reaction window -------------------------------------------------
+	# The PWA rolled the opportunity when the swing STARTED and settled it when the
+	# swing LANDED, so the player had the enemy's own swing interval to react. The
+	# port's enemy swing is the same interval, so the window is armed at the end of
+	# one swing and settled here, at the start of the next one's resolution.
+	#
+	# ⚠️  A swing the player ANSWERED never reaches `_roll_hero_dodge` any more: the
+	# passive dodge is now one of the three reactions the window can ask for, and
+	# rolling it separately could swallow a window the player was watching for.
+	if resolve_opportunity(state):
+		match opp_last_kind:
+			"block":
+				_note("BLOCKED BY HERO", 0, true)
+				sound(Sfx.CUE_BLOCK)
+			"counter":
+				_note("COUNTER", 0, true)
+				sound(Sfx.CUE_COUNTER)
+			_:
+				_note("DODGE", 0, true)
+				sound(Sfx.CUE_DODGE)
+		arm_opportunity(state, find_item)
+		return {"hit": false, "reason": "opportunity"}
 	if enemy_attack_type == "caster" and enemy_first_swing_done:
 		var chosen := _choose_spell()
 		if chosen != "":
@@ -1260,6 +1315,11 @@ func enemy_attack(state, find_item: Callable) -> Dictionary:
 	sound(Sfx.CUE_HURT)
 	if hero_hp <= 0.0:
 		_finish(false, state, find_item)
+	else:
+		# The swing has landed, so the NEXT one rolls for its own reaction window —
+		# this is the PWA's `armOpportunity` at the end of `applyEnemyMeleeHit`, and
+		# it is what makes the enemy's swing interval the interaction's frequency.
+		arm_opportunity(state, find_item)
 	return {"hit": true, "damage": dmg}
 
 
@@ -1328,16 +1388,18 @@ func _apply_hero_poison(per_tick: int) -> void:
 	hero_dot_ticks = 3
 
 
-## The hero's chance to dodge this swing, in percent: the passive DEX dodge plus the
-## Evasion buff. The PWA's Evasion was a flat coin flip (50 %) on top; keeping both in
-## one percentage means the two compose instead of one silently overriding the other.
-func _roll_hero_dodge(state, find_item: Callable) -> bool:
-	var chance := hero_dodge_chance(state, find_item)
-	return rng.randf() * 100.0 < chance
-
-
-## `getPlayerDodgeChance` — passive dodge from the hero's level difference and DEX,
-## capped at 50 %, plus Evasion's 50 % while it is up (capped at 75 % together).
+## The hero's chance to dodge an enemy swing OUTRIGHT, in percent: the passive DEX
+## dodge plus the Evasion buff. The PWA's Evasion was a flat coin flip (50 %) on top;
+## keeping both in one percentage means the two compose instead of one silently
+## overriding the other.
+##
+## ⚠️  THIS IS NOT A RULE THE SHIPPED FIGHT ROLLS ANY MORE — `enemy_attack` hands the
+## swing to the REACTION system instead (see `hero_opportunity_chance` below). The PWA
+## has the same shape: its `applyEnemyMeleeHit` never consults `getPlayerDodgeChance`,
+## only the boss sequence does. The function stays because (a) it is the DODGE arm of
+## `hero_opportunity_type`'s weighted roll, which is where the stat now actually lands,
+## and (b) the PWA's numbers are the tie-breaker whenever the reaction's weighting is
+## questioned. Deleting it would leave the dodge stat with no documented source.
 func hero_dodge_chance(state, find_item: Callable) -> float:
 	var hero: Dictionary = state.hero()
 	var diff := float(int(hero.get("level", 1)) - monster_level_value)
@@ -1347,6 +1409,417 @@ func hero_dodge_chance(state, find_item: Callable) -> float:
 	if hero_dodge_buff_ms <= 0:
 		return passive
 	return minf(passive + HERO_DODGE_BUFF_PCT, 75.0)
+
+
+# --- the enemy swing's REACTION window (dodge / block / counter) ----------------
+#
+# Ported from the PWA's Opportunity system (`armOpportunity` -> `resolveOpportunity`),
+# which the port had deliberately skipped. Jan brought it back: dodge, block and the
+# counter ARE the interactive part of the fight and the arena is too thin without them.
+#
+# The design rule the PWA states and this keeps: **the opportunity is a REACTION to the
+# enemy, never a window on the player's own swing.** The enemy's swing timer defines how
+# often one can appear, so a fast weapon does not make the player tap more.
+#
+# The port's shape differs from the PWA's in exactly one place, and it is deliberate:
+# the PWA rolled the OPPORTUNITY at the START of a swing and then still ran the hero's
+# passive dodge when the swing landed. Two rolls on one swing, and the passive one
+# could swallow a window the player was watching for. Here the passive dodge is folded
+# INTO the window's outcome: a swing either offers a reaction or is a plain hit.
+
+## Minimum gap between two opportunities, the PWA's `OPPORTUNITY_COOLDOWN_MS`.
+const OPPORTUNITY_COOLDOWN_MS := 3000
+## Base chance a swing is interactive at all, before the armour bonus. A ceiling as
+## well as a floor: not every swing may be answerable, or the fight is nothing but
+## reflexes (the PWA's `clamp(base + armorBonus, 0, 40)`).
+const OPPORTUNITY_BASE_PCT := 12.0
+const OPPORTUNITY_ARMOR_PER_PCT := 20.0
+const OPPORTUNITY_MAX_PCT := 40.0
+## `getCounterChance` — 10 + 6 per invested level, so lv1 is 16 % and lv5 is 40 %.
+const COUNTER_BASE_PCT := 10.0
+const COUNTER_PER_LEVEL_PCT := 6.0
+## `50 + lv*30` % bonus damage on the next main-hand swing after a landed counter.
+const COUNTER_BONUS_BASE_PCT := 50.0
+const COUNTER_BONUS_PER_LEVEL_PCT := 30.0
+
+## The swing currently offering a reaction: "" | "dodge" | "block" | "counter".
+var opp_type := ""
+## What the LAST resolved window was avoided BY: "" | "dodge" | "block" | "counter".
+## Read by the caller of `resolve_opportunity` for the sound and the log word — the
+## PWA's `type` local, hoisted to a field because the outcome now crosses a call.
+var opp_last_kind := ""
+## The player answered it correctly (`resolve_opportunity` spends it), wrongly, or not
+## at all. All three are distinct: a wrong answer CLOSES the window immediately.
+var opp_resolved := false
+var opp_failed := false
+## Ticks left before the next swing may offer one. Counted in ticks rather than in wall
+## milliseconds because it is a RULE, and the fight's clock is the only clock the rules
+## know — the same number on every machine and drivable by a test.
+var opp_cooldown_ms := 0
+## A landed counter banks a damage bonus for the hero's next main-hand swing.
+var counter_pending := false
+var counter_bonus_pct := 0.0
+## The blow a resolved/refused window describes, held so the SCREEN can play it back as
+## a floating number. The rules decided it; without this the screen would have to roll
+## its own damage, which is the split this whole file exists to prevent.
+var opp_pending_hit := {}
+## Set when a window closed without a blow to show (a successful dodge/block/counter —
+## the number is already on screen as DODGE!/BLOCK!/COUNTER!). The screen drains it so
+## the interaction's own floating text is the rules' word too.
+var opp_feedback := ""
+
+
+## `getOpportunityChance` — how often the enemy's swing is answerable at all. Base 12 %
+## plus the hero's total armour (one point per 20 defence), capped at 40 %. It reads the
+## ARMOUR rather than the dodge stat on purpose: the PWA made this universal to every
+## class so a build with no DEX still gets to react, and the TYPE roll below is where
+## the hero's own dodge/block chances decide what the reaction IS.
+func hero_opportunity_chance(state, find_item: Callable) -> float:
+	# `floorf`, not the polymorphic `floor` — the global `floor()` returns a Variant and
+	# this file treats inference-from-Variant as an error.
+	var armor_bonus := floorf(float(Talents.total_defense(state, find_item)) / OPPORTUNITY_ARMOR_PER_PCT)
+	return clampf(OPPORTUNITY_BASE_PCT + armor_bonus, 0.0, OPPORTUNITY_MAX_PCT)
+
+
+## `getCounterChance` — 0 when the skill is not invested, which is also what keeps
+## `counter` out of the roll entirely for anyone who has not bought it.
+func hero_counter_chance(state) -> float:
+	var lv := _talent_level(state, "counterAttack")
+	if lv <= 0:
+		return 0.0
+	return COUNTER_BASE_PCT + float(lv) * COUNTER_PER_LEVEL_PCT
+
+
+## The bonus a landed counter banks for the next main-hand swing: `50 + lv*30` %.
+func hero_counter_bonus_pct(state) -> float:
+	var lv := maxi(_talent_level(state, "counterAttack"), 1)
+	return COUNTER_BONUS_BASE_PCT + float(lv) * COUNTER_BONUS_PER_LEVEL_PCT
+
+
+## A talent level off the save, keyed `classId_skillKey` the way `Talents` keys it. Read
+## here rather than through a `Talents` instance because the BATTLE holds none, and an
+## instance would mean constructing a whole tree map per fight to read one integer.
+func _talent_level(state, skill_key: String) -> int:
+	var levels: Dictionary = state.data.get("talentLevels", {})
+	return int(levels.get("%s_%s" % [str(state.data.get("heroClass", "")), skill_key], 0))
+
+
+## Does the hero have a real shield? The block arm exists only with one — the PWA's
+## `ITEM_MAP[equip.shield]?.type === 'shield'` — which is why a dual-wielding assassin
+## is only ever offered dodge and counter.
+func hero_has_shield(state, find_item: Callable) -> bool:
+	var shield: Dictionary = find_item.call(state.equip().get("shield"))
+	return str(shield.get("type", "")) == "shield"
+
+
+## Which reaction the swing offers. The three are mutually exclusive (one swing, one
+## window) and the roll is WEIGHTED by the hero's own chances:
+##
+##   * block   — only with a shield, weighted by the shield's block chance
+##   * counter — only with the talent invested, weighted by `hero_counter_chance`
+##   * dodge   — the remainder, weighted by the passive DEX dodge
+##
+## A hero with neither shield nor counter is always offered dodge, since a window with
+## one choice is still a window.
+func hero_opportunity_type(state, find_item: Callable) -> String:
+	var has_shield := hero_has_shield(state, find_item)
+	var counter_chance := hero_counter_chance(state)
+	var block_chance := 0.0
+	if has_shield:
+		# The PWA reuses `getPlayerBlockChance` here. The port's version needs an
+		# `ItemGen` and a `Callable`; the sum it stands on is the shield's own block plus
+		# 1 % per 10 DEX plus 5 % per Shield Specialization level, capped at 75.
+		var shield: Dictionary = find_item.call(state.equip().get("shield"))
+		var dex := int(state.hero().get("attrDex", 0)) + _equip_stat(state.equip(), find_item, "dex")
+		block_chance = minf(float(int(shield.get("blockChance", 0)) + int(dex / 10)
+			+ _talent_level(state, "shieldSpec") * 5), 75.0)
+	var dodge_chance := hero_dodge_chance(state, find_item)
+	var total := block_chance + counter_chance + dodge_chance
+	if total <= 0.0:
+		return "dodge"
+	var roll := rng.randf() * total
+	if roll < block_chance:
+		return "block"
+	if roll < block_chance + counter_chance:
+		return "counter"
+	return "dodge"
+
+
+## `armOpportunity` — decide whether the swing that is STARTING is answerable, and which
+## reaction it offers. Called on every enemy melee swing in `enemy_attack`, which is what
+## makes the enemy's own timer the frequency of the interaction.
+##
+## A caster mid-cast and a boss get no window: the caster is answered by interrupt or
+## reflect, and the PWA's boss path runs its own sequence instead.
+func arm_opportunity(state, find_item: Callable) -> void:
+	opp_type = ""
+	opp_resolved = false
+	opp_failed = false
+	if is_boss or cast_spell_id != "":
+		return
+	# A running flurry owns the input — its PS buttons are in the same row as the
+	# reaction buttons, and two live prompts asking for different presses is the one
+	# state the player cannot read. The window resumes after the flurry ends.
+	if ww_active:
+		return
+	if opp_cooldown_ms > 0:
+		return
+	if rng.randf() * 100.0 >= hero_opportunity_chance(state, find_item):
+		return
+	opp_type = hero_opportunity_type(state, find_item)
+
+
+## The player answered the window. `chosen` is the button they pressed. A wrong answer is
+## FATAL to the opportunity — the window closes and the blow lands — because a player who
+## may retry is a player who cannot fail. Returns what happened, for the screen's own
+## immediate feedback.
+func answer_opportunity(chosen: String) -> Dictionary:
+	if opp_type == "":
+		return {"ok": false, "result": "none", "type": ""}
+	if chosen != opp_type:
+		opp_failed = true
+		var failed := opp_type
+		opp_type = ""
+		return {"ok": false, "result": "fail", "type": failed}
+	opp_resolved = true
+	return {"ok": true, "result": "hit", "type": opp_type}
+
+
+## `resolveOpportunity` — settle the swing's window. Three outcomes, all three real:
+##
+##   * the window is still open and unanswered -> the player MISSED it: the blow lands
+##     and the screen is told to flash a cross (the PWA's own "you did not react" path),
+##   * the answer was wrong (`opp_failed`) -> the blow lands, same cross,
+##   * the answer was right -> the blow does NOT land, the cooldown starts and a counter
+##     banks its bonus.
+##
+## Returns true when the blow was avoided, i.e. the caller must not apply it.
+func resolve_opportunity(state) -> bool:
+	if opp_failed:
+		# The cross was already shown when the wrong button was pressed; this is only
+		# the blow landing behind it.
+		opp_failed = false
+		opp_type = ""
+		opp_cooldown_ms = OPPORTUNITY_COOLDOWN_MS
+		return false
+	if opp_type == "":
+		return false
+	var answered := opp_resolved
+	var kind := opp_type
+	opp_type = ""
+	opp_resolved = false
+	opp_cooldown_ms = OPPORTUNITY_COOLDOWN_MS
+	opp_last_kind = kind
+	if not answered:
+		# Unanswered: the player did not react at all. The PWA shows the same cross it
+		# shows for a mistake — the feedback is "this did not go through", and it must
+		# not be silent, or the window reads as never having appeared.
+		opp_feedback = "missed"
+		return false
+	if kind == "counter":
+		counter_pending = true
+		counter_bonus_pct = hero_counter_bonus_pct(state)
+	# The screen draws the interaction's own word ("DODGE!" …) from here, so the
+	# FLOAT text and the sound can never disagree about what just happened.
+	opp_feedback = kind
+	return true
+
+
+## What the hero's MAIN-hand swing does with a banked counter. The off hand never gets
+## it (the PWA's `if (!isOffhand && mb._counterPending)`), so the bonus cannot be spent
+## twice by a dual wielder.
+func consume_counter_bonus(is_offhand: bool) -> float:
+	if is_offhand or not counter_pending:
+		return 1.0
+	var mult := 1.0 + counter_bonus_pct / 100.0
+	counter_pending = false
+	counter_bonus_pct = 0.0
+	# Say so here rather than in `_resolve_player_hit`: the note belongs to the SPEND,
+	# and a swing that then misses would have printed COUNTER! it never got. The PWA
+	# prints it inside the damage path, after the attack table.
+	_note("COUNTER", 0, false)
+	return mult
+
+
+## The blow a refused window describes, for the SCREEN to draw. The battle decided it (and
+## already applied it); the screen must never roll its own damage.
+func take_opportunity_hit() -> Dictionary:
+	var hit := opp_pending_hit
+	opp_pending_hit = {}
+	return hit
+
+
+## The interaction's own feedback word ("dodge" / "block" / "counter" / "missed"), which
+## the screen renders as floating text. Cleared on read, like the sound queue.
+func take_opportunity_feedback() -> String:
+	var word := opp_feedback
+	opp_feedback = ""
+	return word
+
+
+## Is the window open right now? The screen asks this every frame to show or hide the
+## reaction buttons — it never tracks the window itself.
+func opportunity_open() -> bool:
+	return opp_type != ""
+
+
+# --- Whirlwind: the flurry ------------------------------------------------------
+#
+# The barbarian's skill, and the PWA's one OFENSIVNÍ reaction: a sequence of PS buttons
+# shown one at a time, `3 + lv` strikes, each on its own deadline, a wrong press ending
+# the flurry with whatever was already landed banked.
+#
+# ⚠️  THE ONE DELIBERATE DIFFERENCE FROM THE PWA: it does not PAUSE the fight. There the
+# whole loop stopped while the player tapped, because the page had nothing else driving
+# it. Here the enemy's clock is the interaction (that is the design rule this combat is
+# built on), so the flurry runs ALONGSIDE the enemy's swings and the deadline is what
+# gives it pressure. Everything the player experiences is otherwise the PWA's.
+
+## The sequence of PS keys still to press, and how far in the player is.
+var ww_dirs: Array = []
+var ww_index := 0
+var ww_active := false
+## Ticks left to press the CURRENT key. Counted on the fight's clock, like every other
+## rule — a wall-clock deadline would be a different number on a slow machine and a test
+## could not drive it.
+var ww_deadline_ms := 0
+## The total deadline each strike gets, kept so the screen can draw the countdown as a
+## fraction rather than re-reading the constant.
+var ww_reaction_ms := 0
+## What the flurry is owed: "landed" strikes counted, and the word the screen shows
+## ("whirlwind" on completion, "fail" when a press ends it). Drains like the sound queue.
+var ww_feedback := ""
+var ww_landed := 0
+
+
+## `startWhirlwind` — arm the flurry. Its strikes are dealt by `answer_whirlwind`, one
+## press at a time, so nothing here applies damage.
+func start_whirlwind(dirs: Array, reaction_ms: int) -> void:
+	ww_dirs = dirs.duplicate()
+	ww_index = 0
+	ww_landed = 0
+	ww_active = not ww_dirs.is_empty()
+	ww_reaction_ms = reaction_ms
+	ww_deadline_ms = reaction_ms if ww_active else 0
+	ww_feedback = ""
+	# A running flurry owns the input, so an open reaction window is dropped rather than
+	# competing with the PS buttons for the same row.
+	opp_type = ""
+	opp_resolved = false
+	# The PWA's own reset, and it is load-bearing: Whirlwind REPLACES the hero's swings
+	# rather than adding to them, so the interrupted swing starts over.
+	player_swing_elapsed = 0.0
+
+
+## The key the player has to press right now, or "" when no flurry is running.
+func whirlwind_prompt() -> String:
+	if not ww_active or ww_index >= ww_dirs.size():
+		return ""
+	return str(ww_dirs[ww_index])
+
+
+## The press, from the screen. A correct key lands one strike (through the ordinary
+## miss/evasion/block attack table, exactly as the PWA's `dealComboStrike`); a wrong key
+## ends the flurry with what was landed. Returns what happened, for the screen's own
+## immediate feedback.
+func answer_whirlwind(key: String, state, find_item: Callable) -> Dictionary:
+	if not ww_active:
+		return {"ok": false, "result": "none", "prompt": ""}
+	if key != whirlwind_prompt():
+		ww_active = false
+		ww_deadline_ms = 0
+		ww_feedback = "fail"
+		_reset_swing_timers()
+		return {"ok": false, "result": "fail", "prompt": ""}
+	ww_index += 1
+	var hit := _whirlwind_strike(state, find_item)
+	if ww_index >= ww_dirs.size():
+		ww_active = false
+		ww_deadline_ms = 0
+		ww_feedback = "complete"
+		_reset_swing_timers()
+		sound(Sfx.CUE_STRONG_STRIKE)
+	else:
+		ww_deadline_ms = ww_reaction_ms
+	return {"ok": true, "result": "strike", "hit": hit, "landed": ww_landed,
+		"prompt": whirlwind_prompt()}
+
+
+## The deadline ran out on the current key: the flurry ends, landed strikes kept. Same
+## shape as a wrong press — the player did not react, which is a failure of the flurry.
+func whirlwind_timeout() -> void:
+	if not ww_active:
+		return
+	ww_active = false
+	ww_deadline_ms = 0
+	ww_feedback = "fail"
+	_reset_swing_timers()
+
+
+## One strike: a full main-hand swing through the attack table, the PWA's
+## `dealComboStrike`. The damage spread is the PWA's `0.75 + rand*0.5` (±25 %), not the
+## ±1 of an ordinary swing — every whirlwind blow is one number, not a range.
+func _whirlwind_strike(state, find_item: Callable) -> bool:
+	var weapon: Dictionary = find_item.call(state.equip().get("weapon", "fists"))
+	if weapon.is_empty():
+		weapon = find_item.call("fists")
+	var hero: Dictionary = state.hero()
+	var cls_id := str(state.data.get("heroClass", ""))
+	var ar := int(round(float(prog.hero_attack_rating(hero, state.equip(), cls_id, find_item))))
+	var chance := prog.hit_chance(ar, enemy_defense, int(hero.get("level", 1)), monster_level_value)
+	if rng.randf() * 100.0 >= chance:
+		_note("MISS", 0, false)
+		sound(Sfx.CUE_DODGE)
+		return false
+	if enemy_block_chance > 0.0 and rng.randf() * 100.0 < enemy_block_chance:
+		_note("WHIRLWIND BLOCKED", 0, false)
+		sound(Sfx.CUE_BLOCK)
+		return false
+
+	var spec := Talents.swing_bonus(state, weapon, false, Talents.shield_spec_dmg_mult(state))
+	var base := 2.0 + floorf(float(hero.get("level", 1)) * 0.8) \
+		+ float(prog.weapon_dmg(rng, weapon)) \
+		+ float(int(hero.get("attrStr", 0)) + _equip_stat(state.equip(), find_item, "str")) * 0.3
+	var dmg := float(base) * float(spec["dmgMult"]) * float(spec["handMult"])
+	dmg *= 0.75 + rng.randf() * 0.5
+	dmg = maxf(1.0, round(dmg))
+	enemy_hp -= dmg
+	ww_landed += 1
+	_note("WHIRLWIND", int(dmg), false)
+	sound(hit_cue_for_weapon(weapon, false))
+	_apply_weapon_on_hit(state, weapon)
+	if enemy_hp <= 0.0:
+		mark_enemy_dead(state, find_item)
+	return true
+
+
+## `endCombo`'s swing reset: after a flurry — completed OR broken — the hero's swings
+## start over. Jan's own requirement for the skill ("každý úder má váhu"): the strikes
+## were paid for out of the swing clock, not handed out on top of it.
+##
+## ⚠️  There is no separate off-hand clock to reset: dual wield runs ONE timer that
+## alternates hands (`offhand_turn`), so zeroing the main one already restarts the pair.
+## `player_spells.gd`'s Double Swing zeroes both `player_swing_elapsed` and
+## `offhand_swing_elapsed` because IT was written against the PWA's two-field shape; the
+## port's single clock means one reset is the whole reset.
+func _reset_swing_timers() -> void:
+	player_swing_elapsed = 0.0
+
+
+## Is a flurry running? The screen asks, and the ROW it draws is chosen by this rather
+## than tracked separately.
+func whirlwind_open() -> bool:
+	return ww_active
+
+
+## The flurry's own word, drained by the screen ("complete" / "fail"), plus the strikes
+## it landed. One call so the two can never disagree.
+func take_whirlwind_result() -> Dictionary:
+	var out := {"feedback": ww_feedback, "landed": ww_landed}
+	ww_feedback = ""
+	return out
+
+
 
 
 ## What an enemy hit actually costs the hero, after armour and flat reduction.
