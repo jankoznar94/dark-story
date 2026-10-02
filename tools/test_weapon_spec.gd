@@ -123,11 +123,10 @@ func _rig(state, seed_value: int) -> Battle:
 
 
 ## Drive `n` MAIN-HAND swings and report how many were crits and their total damage.
-## The off-hand is switched off so a dual-wield class does not alternate hands under us and
-## halve the sample; the off-hand has its own test below.
+## The off-hand is switched off so a dual-wield class does not add its own swings under us
+## and halve the sample; the off-hand has its own test below.
 func _sample(b: Battle, state, n: int) -> Dictionary:
 	b.offhand_swing_ms = 0
-	b.offhand_turn = false
 	var crits := 0
 	var swings := 0
 	for _i in n:
@@ -281,9 +280,12 @@ func _test_offhand_penalty_shrinks_with_the_talent() -> void:
 
 
 ## Drive `n` OFF-HAND swings and return their total damage, with the gap pinned at contact
-## and the main hand's own multiplier left alone. `offhand_turn` alternates inside
-## `player_attack`, so the flag is set before every call and the loop counts only the swings
-## whose off-hand branch actually fired.
+## and the main hand's own multiplier left alone.
+##
+## ⚠️  The off hand is called DIRECTLY (`_offhand_attack`), which is what the tick does when
+## the off-hand clock expires. The port used to have to poke `offhand_turn = true` before
+## every `player_attack` call, because the two hands shared one clock that alternated them —
+## that flag is gone with the shared clock.
 ##
 ## The crit roll is switched OFF for this measurement: a crit doubles one swing, and at
 ## 1500 swings a handful of crits would add noise to a ratio whose whole signal is 0.5 vs
@@ -296,10 +298,8 @@ func _sample_offhand(b: Battle, state, n: int = 1500) -> float:
 	while counted < n and guard < n * 4:
 		guard += 1
 		b.reset_gap()
-		# Force the next swing to be the off-hand: `player_attack` flips this flag itself.
-		b.offhand_turn = true
 		var hp_before := b.enemy_hp
-		var result: Dictionary = b.player_attack(state, _resolve)
+		var result: Dictionary = b._offhand_attack(state, _resolve)
 		if bool(result.get("hit", false)) and b.enemy_hp < hp_before:
 			counted += 1
 	b.offhand_swing_ms = 0
@@ -315,7 +315,6 @@ func _sample_mainhand(b: Battle, state, n: int = 1500) -> float:
 	while counted < n and guard < n * 4:
 		guard += 1
 		b.reset_gap()
-		b.offhand_turn = false
 		var hp_before := b.enemy_hp
 		var result: Dictionary = b.player_attack(state, _resolve)
 		if bool(result.get("hit", false)) and b.enemy_hp < hp_before:

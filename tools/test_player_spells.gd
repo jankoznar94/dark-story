@@ -251,7 +251,6 @@ func _test_heroic_strike_queues_and_consumes_once() -> void:
 	# The queue is consumed by the next MAIN-hand swing.
 	# Do NOT pre-clear the flag: cast() set it, and consume_queued is what must clear it.
 	battle.offhand_swing_ms = 0
-	battle.offhand_turn = false
 	var queued: Dictionary = battle.consume_queued(s)
 	if absf(float(queued["dmgMult"]) - 2.0) > 0.001:
 		_fail("heroicStrike at talent 1 gave dmgMult %s, expected 2.0" % queued["dmgMult"])

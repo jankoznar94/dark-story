@@ -543,6 +543,19 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "REACTIONS_ALL_PASS=true"
 
+      # The dual wielder's TWO swing clocks. A separate gate because no other test can see
+      # this: `test_combat` asserts fights END (a fight ends on the old averaged clock too)
+      # and `test_weapon_spec` measures off-hand DAMAGE with the off hand called directly,
+      # so a shared interval cannot show up there. What only this gate checks is the RATE of
+      # each hand and their INDEPENDENCE — plus the one exception, a skill that resets both.
+      # Every assertion verified by mutation.
+      - name: Dual-wield timers (two independent swing clocks, one per hand)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_dual_wield_timers.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "DUAL_WIELD_TIMERS_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

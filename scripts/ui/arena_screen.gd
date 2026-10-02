@@ -2099,13 +2099,17 @@ func _smooth_update() -> void:
 	_enemy_hp_shown = _ease_value("enemy_hp")
 	_enemy_hp_max_shown = _ease_value("enemy_hp_max")
 
-	# The player's two gold arcs: a full ring is a swing just landed and the arc fills as
-	# the next one approaches. The off-hand shares the SAME elapsed clock, which is what the
-	# PWA did (`_playerSwingPct` drove both rings); only the interval differs.
+	# The player's two gold arcs, ONE PER HAND, each drawn straight off its own clock. A full
+	# ring is a swing just landed and the arc fills as the next one approaches.
+	#
+	# ⚠️  The off-hand arc used to be driven by `battle.player_swing_elapsed` — the MAIN
+	# hand's clock — divided by the off-hand's interval, which is why Jan saw it reset
+	# together with the main ring: one clock, two arcs. Two independent clocks now, so two
+	# independent arcs.
 	var player_ms := maxf(float(battle.player_swing_ms), 1.0)
 	_arc_player.set_value_ratio(clampf((battle.player_swing_elapsed + ahead) / player_ms, 0.0, 1.0))
 	if battle.offhand_swing_ms > 0:
-		_arc_offhand.set_value_ratio(clampf((battle.player_swing_elapsed + ahead)
+		_arc_offhand.set_value_ratio(clampf((battle.offhand_swing_elapsed + ahead)
 			/ float(battle.offhand_swing_ms), 0.0, 1.0))
 	# The enemy's timer is the ONE gauge that must NOT be eased, and easing it was the
 	# whole of Jan's "the enemy's swing timer never finishes, it always resets at ~90 %".
