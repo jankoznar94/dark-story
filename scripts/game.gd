@@ -70,11 +70,20 @@ func tower_at(lane: int, slot: int) -> Tower:
 
 
 func try_build(lane: int, slot: int, element: int) -> bool:
+	if lane < 0 or lane >= Network.LANES:
+		_note("Neplatná kolej.")
+		return false
 	if tower_at(lane, slot) != null:
-		_note("Kolej uz ma vez.")
+		_note("Kolej už má věž.")
+		return false
+	# VEZ PATRI JEN NA KOLEJ SVÉHO ZIVLU. Toto je jedine pravidlo staveni
+	# a je vynucene tady - volat ji s jinym zivlem nesmi projit.
+	if not Network.lane_accepts(lane, element):
+		_note("Na kolej %s patří jen věže %s." % [
+			Element.name_of(Network.lane_element(lane)), Element.name_of(Network.lane_element(lane))])
 		return false
 	if gold < Tower.COST:
-		_note("Malo zlata na vez (%d)." % Tower.COST)
+		_note("Málo zlata na věž (%d)." % Tower.COST)
 		return false
 	gold -= Tower.COST
 	var t := Tower.new()
@@ -82,7 +91,7 @@ func try_build(lane: int, slot: int, element: int) -> bool:
 	t.slot = slot
 	t.element = element
 	towers.append(t)
-	_note("Vez %s postavena." % Element.name_of(element))
+	_note("Věž %s postavena." % Element.name_of(element))
 	return true
 
 
@@ -109,11 +118,17 @@ func set_switch(lane: int) -> void:
 	if lane < 0 or lane >= Network.LANES:
 		return
 	net.switch_lane = lane
-	_note("Vyhybka nastavena na %s." % Element.name_of(lane))
+	_note("Výhybka nastavena na %s." % Element.name_of(Network.lane_element(lane)))
 
 
 func switch_lane() -> int:
 	return net.switch_lane
+
+
+# Ktery zivel se na te kolej stavi. NENI to volba hrace: kolej nese svuj
+# zivel a jen ten tam muze stat. UI to jen cte.
+func build_element(lane: int) -> int:
+	return Network.lane_element(lane)
 
 
 # ---------------------------------------------------------------- vlny

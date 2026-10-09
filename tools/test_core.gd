@@ -12,6 +12,7 @@ func _init() -> void:
 	_test_element_table()
 	_test_immunity_lane()
 	_test_opposite_lane_kills()
+	_test_build_rule()
 	_test_switch_routes_enemy()
 	_test_pile_up_loses()
 	_test_economy()
@@ -121,8 +122,9 @@ func _test_immunity_lane() -> void:
 	var g := _fresh()
 	g.auto_wave = false
 	g.gold = 999
-	_ok(g.try_build(0, 0, Element.FIRE), "vez ohně postavena")
-	_ok(g.try_build(0, 1, Element.FIRE), "druha vez ohně postavena")
+	# Vez stoji na koleji sveho zivlu - ohen na ohni.
+	_ok(g.try_build(0, 0, Network.lane_element(0)), "vez ohně postavena na kolej ohně")
+	_ok(g.try_build(0, 1, Network.lane_element(0)), "druha vez ohně postavena")
 	g.set_switch(0)
 	var e: Enemy = _spawn_one(g, Element.FIRE)
 	var hp0: float = e.hp
@@ -139,14 +141,65 @@ func _test_opposite_lane_kills() -> void:
 	var g := _fresh()
 	g.auto_wave = false
 	g.gold = 999
-	g.try_build(1, 0, Element.WATER)
-	g.try_build(1, 1, Element.WATER)
+	# Kolej 1 nese vodu, ohen tam tedy nesmi - ale voda ano, a voda
+	# zabiji ohen. Presne tuhle cestu hra od hrace chce.
+	_ok(g.try_build(1, 0, Network.lane_element(1)), "voda na kolej vody")
+	_ok(g.try_build(1, 1, Network.lane_element(1)), "druha vez vody")
 	g.set_switch(1)
-	_spawn_one(g, Element.FIRE)
+	var e: Enemy = _spawn_one(g, Element.FIRE)
+	var hp0: float = e.hp
+	g.run_for(12.0)
+	_ok(e.hp < hp0, "ohen na vode dostava poskozeni (%.1f -> %.1f)" % [hp0, e.hp])
+	g.run_for(30.0)
 	var lives0: int = g.lives
-	g.run_for(40.0)
 	_ok(g.lives == lives0, "protikladna kolej ho zastavi (zivoty %d)" % g.lives)
 	_ok(g.enemies.is_empty(), "nepritel je mrtev, ne na kolejich")
+
+
+# --------------------------------------------------------------- 4b staveni
+
+func _test_build_rule() -> void:
+	# PRAVIDLO STAVENI: jen stejny zivel na stejny zivel. Testuje se
+	# CELA matice, ne jen jeden pripad - jinak by prosla i verze, ktera
+	# zakazuje jen jednu kombinaci.
+	for lane in range(Network.LANES):
+		var own: int = Network.lane_element(lane)
+		for el in range(Element.COUNT):
+			var g := _fresh()
+			g.auto_wave = false
+			g.gold = 999
+			var before: int = g.gold
+			var built: bool = g.try_build(lane, 0, el)
+			if el == own:
+				_ok(built, "zivel %s na SVOU kolej %d jde postavit" % [Element.name_of(el), lane])
+				_ok(g.tower_at(lane, 0) != null, "a vez tam opravdu stoji")
+				_ok(g.gold == before - Tower.COST, "a zlato se odecte")
+				_ok(g.tower_at(lane, 0).element == el, "a vez ma svuj zivel (%d)" % g.tower_at(lane, 0).element)
+			else:
+				_ok(not built, "zivel %s na CIZI kolej %d postavit NELZE" % [Element.name_of(el), lane])
+				_ok(g.tower_at(lane, 0) == null, "a nic tam nestoji")
+				_ok(g.gold == before, "a zlato zustalo nedotcene (%d)" % g.gold)
+	# UI si zivel pro kolej bere z hry, ne z nejakeho sveho stavu. Kdyby
+	# si ho drzelo zvlast, slo by stavet mimo pravidlo.
+	for lane in range(Network.LANES):
+		var ui_el: int = _fresh().build_element(lane)
+		_ok(ui_el == Network.lane_element(lane),
+			"UI stavi na kolej %d zivel te koleje (%d)" % [lane, ui_el])
+		_ok(Network.lane_accepts(lane, ui_el),
+			"a to je presne to, co kolej prijme")
+	# kolej musi mit zivel, ktery existuje, a kazdy prave jednou
+	var seen := {}
+	for lane in range(Network.LANES):
+		var e: int = Network.lane_element(lane)
+		_ok(e >= 0 and e < Element.COUNT, "kolej %d ma platny zivel (%d)" % [lane, e])
+		_ok(not seen.has(e), "zivel %d neni na dvou kolejich" % e)
+		seen[e] = true
+	_ok(seen.size() == Element.COUNT, "vsechny zivly maji svou kolej (%d)" % seen.size())
+	# vyhybka posila na kolej, ktera existuje
+	for lane in range(Network.LANES):
+		var g2 := _fresh()
+		g2.set_switch(lane)
+		_ok(g2.switch_lane() == lane, "vyhybka se da nastavit na kolej %d" % lane)
 
 
 # --------------------------------------------------------------- 5 prepinani
@@ -182,12 +235,14 @@ func _test_pile_up_loses() -> void:
 
 func _test_economy() -> void:
 	var g := _fresh()
+	# Kolej 0 nese ohen - stavime tedy ohnem, ne vodou.
+	var fire: int = Network.lane_element(0)
 	g.gold = 0
-	_ok(not g.try_build(0, 0, Element.FIRE), "bez zlata se vez nepostavi")
+	_ok(not g.try_build(0, 0, fire), "bez zlata se vez nepostavi")
 	g.gold = 500
-	_ok(g.try_build(0, 0, Element.FIRE), "se zlatem se postavi")
+	_ok(g.try_build(0, 0, fire), "se zlatem se postavi")
 	_ok(g.gold == 500 - Tower.COST, "cena se odecte presne (%d)" % g.gold)
-	_ok(not g.try_build(0, 0, Element.FIRE), "na obsazene misto se nestavi")
+	_ok(not g.try_build(0, 0, fire), "na obsazene misto se nestavi")
 	var t: Tower = g.tower_at(0, 0)
 	_ok(t != null and t.level == 1, "vez zacina na urovni 1")
 	var dps1: float = t.dps()
@@ -195,7 +250,7 @@ func _test_economy() -> void:
 	_ok(t.level == 2 and t.dps() > dps1, "vylepseni zvysi poskozeni (%.0f -> %.0f)" % [dps1, t.dps()])
 	_ok(not g.try_upgrade(0, 0), "nad maximum se vylepsovat neda")
 	g.gold = 0
-	_ok(not g.try_build(2, 0, Element.AIR), "a zlato na to nestaci")
+	_ok(not g.try_build(2, 0, Network.lane_element(2)), "a zlato na to nestaci")
 
 
 # --------------------------------------------------------------- 8 prubeh hry
@@ -209,15 +264,21 @@ func _test_wave_flow() -> void:
 	_ok(g.phase == "wave", "faze je vlna")
 	var wave1: int = g.wave
 	var lives_before: int = g.lives
-	# Vezmi na kazde kole se vlna musí prostřílet - kazdy zivel ma svoji
-	# protikladnou kolej, ktera ho zabije. Testujeme vsechny ctyri zvlast.
+	# Vezmi na kazde kole se vlna musí prostřílet. Kazdy zivel ma svoji
+	# PROTIKLADNOU kolej - a vez na ni je prave ten zivel, ktery je
+	# protikladem toho, kdo po ni pujde. To je jadro hry.
 	for el in range(Element.COUNT):
 		var h := _fresh()
 		h.auto_wave = false
 		h.gold = 5000
-		var kill_lane: int = Element.opposite_of(el)
+		var lane_el: int = Element.opposite_of(el)
+		var kill_lane: int = -1
+		for lane in range(Network.LANES):
+			if Network.lane_element(lane) == lane_el:
+				kill_lane = lane
+		_ok(kill_lane >= 0, "kolej pro %s existuje" % Element.name_of(lane_el))
 		for slot in range(h.net.slot_count()):
-			h.try_build(kill_lane, slot, Element.opposite_of(el))
+			h.try_build(kill_lane, slot, lane_el)
 		h.set_switch(kill_lane)
 		_spawn_one(h, el)
 		var before_lives: int = h.lives
@@ -236,8 +297,8 @@ func _test_determinism() -> void:
 	for g in [a, b]:
 		g.auto_wave = false
 		g.gold = 5000
-		g.try_build(0, 0, Element.opposite_of(0))
-		g.try_build(1, 1, Element.opposite_of(1))
+		for lane in range(Network.LANES):
+			g.try_build(lane, 0, Network.lane_element(lane))
 		g.set_switch(0)
 		g.phase = "wave"
 		g.spawn_left = 8

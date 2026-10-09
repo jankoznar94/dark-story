@@ -16,6 +16,11 @@ extends RefCounted
 # daleko, ne na rozvetveni u vyhybky, kde se paprsky teprve rozbihaji.
 
 const LANES := 4
+# Kterym zivelem nese ktera kolej. Poradi je dane rozvrzenim (shora dolu).
+# Ciselne hodnoty jsou zamerne literalni: GDScript neumi v `const` precist
+# konstantu z jine tridy pres class_name. Test overuje, ze sedi s Element
+# a ze je to permutace vsech zivlu.
+const LANE_ELEMENTS := [0, 1, 2, 3]
 const BASE_TOWER_R := 26.0
 const BASE_SHRINE_R := 30.0
 const BASE_SWITCH_R := 46.0
@@ -110,6 +115,18 @@ func trunk_point_at(s: float) -> Vector2:
 
 func slot_count() -> int:
 	return SLOT_FRACTIONS.size()
+
+
+# Ktery zivel patri na tuhle kolej. VEZ LZE STAVET JEN NA KOLEJ TOHOTO
+# ZIVLU - je to jedine pravidlo staveni a plati v obou smerech.
+static func lane_element(lane: int) -> int:
+	var e: int = LANE_ELEMENTS[lane]
+	return e
+
+
+# Muze na tuhle kolej tato vez? Jedno misto, kde se pravidlo vyhodnocuje.
+static func lane_accepts(lane: int, element: int) -> bool:
+	return element == lane_element(lane)
 
 
 func slot_world(lane: int, slot: int) -> Vector2:

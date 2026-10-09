@@ -133,11 +133,18 @@ func _check_screen(w: float, h: float, name: String) -> String:
 			name, min_cross, g.net.tower_r * 2.0])
 
 	# --- a hra na tom rozliseni musi porad fungovat ---
-	var kill_lane: int = Element.opposite_of(Element.FIRE)
+	# Kazdy zivel umre na sve protikladne koleji - a vez na te koleji
+	# musi byt prave ten protikladny zivel (pravidlo staveni).
+	var target_el: int = Element.opposite_of(Element.FIRE)
+	var kill_lane: int = -1
+	for lane in range(Network.LANES):
+		if Network.lane_element(lane) == target_el:
+			kill_lane = lane
+	_ok(kill_lane >= 0, "%s: kolej pro %s existuje" % [name, Element.name_of(target_el)])
 	g.auto_wave = false
 	g.gold = 5000
 	for slot in range(g.net.slot_count()):
-		g.try_build(kill_lane, slot, Element.opposite_of(Element.FIRE))
+		g.try_build(kill_lane, slot, target_el)
 	g.set_switch(kill_lane)
 	var e: Enemy = g.debug_spawn(Element.FIRE)
 	var lives0: int = g.lives

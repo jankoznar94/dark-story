@@ -12,7 +12,6 @@ const MAX_TOAST := 3.0
 
 var layout := ScreenLayout.new()
 var game: Game = null
-var selected: int = Element.FIRE
 var toast: String = ""
 var toast_t: float = 0.0
 var last_log_size: int = 0
@@ -57,12 +56,9 @@ func _on_resize() -> void:
 # v okamziku, kdy jsou poutnici na kolejich, aby snimek neukazal prazdno.
 func _setup_shot() -> void:
 	game.gold = 5000
-	game.try_build(0, 1, Element.WATER)
-	game.try_build(1, 0, Element.FIRE)
-	game.try_build(1, 1, Element.FIRE)
-	game.try_build(2, 2, Element.AIR)
-	game.try_build(3, 0, Element.EARTH)
-	game.try_build(3, 2, Element.EARTH)
+	for lane in range(Network.LANES):
+		game.try_build(lane, 0, Network.lane_element(lane))
+		game.try_build(lane, 2, Network.lane_element(lane))
 	game.wave = 3
 	game.gold = 240
 	game.lives = 9
@@ -137,21 +133,17 @@ func _handle_tap(pos: Vector2) -> void:
 		game.run_for(6.0)
 		return
 	for i in range(Element.COUNT):
-		if layout.element_button(i).has_point(pos):
-			selected = i
-			_say("Stavím živel %s." % Element.name_of(i))
-			return
-	for i in range(Element.COUNT):
 		if layout.switch_button(i).has_point(pos):
 			game.set_switch(i)
 			return
 	var cell: Vector2i = game.net.nearest_slot(pos)
 	if cell.x >= 0:
-		var existing: Tower = game.tower_at(cell.x, cell.y)
-		if existing == null:
-			game.try_build(cell.x, cell.y, selected)
-		else:
+		# Kliknuti na vez ji vylepsi. Na prazdne misto se stavi VZDY zivel
+		# te koleje - jiny tam postavit nelze, pravidlo je v jadre hry.
+		if game.tower_at(cell.x, cell.y) != null:
 			game.try_upgrade(cell.x, cell.y)
+			return
+		game.try_build(cell.x, cell.y, game.build_element(cell.x))
 		return
 
 
@@ -216,11 +208,15 @@ func _draw_slots() -> void:
 		for slot in range(game.net.slot_count()):
 			var p: Vector2 = game.net.slot_world(lane, slot)
 			var t: Tower = game.tower_at(lane, slot)
-			if t == null:
-				draw_arc(p, r, 0.0, TAU, 24, Color(col.r, col.g, col.b, 0.50), 2.0)
-			else:
+			if t != null:
 				draw_circle(p, r, Color(col.r * 0.40, col.g * 0.40, col.b * 0.40, 0.85))
 				draw_arc(p, r, 0.0, TAU, 24, col, 2.0)
+				continue
+			# Prazdne misto nese RUNU ZIVLU TE KOLEJE - hrac tak vidi, co
+			# tam muze postavit, aniz by to musel zkouset. Barva sama stacit
+			# nesmi, proto je to rovnou znacka.
+			draw_arc(p, r, 0.0, TAU, 24, Color(col.r, col.g, col.b, 0.30), 2.0)
+			_glyph(lane, p, r * 0.52, Color(col.r, col.g, col.b, 0.42))
 
 
 func _draw_towers() -> void:
@@ -319,22 +315,11 @@ func _draw_control_bar() -> void:
 	draw_rect(Rect2(0.0, layout.bar_y, layout.view.x, layout.bar_h), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, layout.bar_y), Vector2(layout.view.x, layout.bar_y),
 		Color(0.28, 0.25, 0.21), 2.0)
-	_label(Vector2(layout.element_x, layout.bar_y + 20.0 * layout.s), "STAVĚT", 13,
-		Color(0.52, 0.49, 0.44))
-	_label(Vector2(layout.switch_x, layout.bar_y + 20.0 * layout.s), "VÝHYBKA", 13,
-		Color(0.52, 0.49, 0.44))
+	_label(Vector2(layout.switch_x, layout.bar_y + 20.0 * layout.s),
+		"VÝHYBKA — kam posílá poutníky", 13, Color(0.52, 0.49, 0.44))
 
-	for i in range(Element.COUNT):
-		var r: Rect2 = layout.element_button(i)
-		var c: Color = Element.color_of(i)
-		var on: bool = i == selected
-		draw_rect(r, Color(c.r, c.g, c.b, 0.30) if on else Color(0.135, 0.125, 0.11))
-		draw_rect(r, c if on else Color(c.r, c.g, c.b, 0.40), false, 3.0 if on else 2.0)
-		_glyph(i, Vector2(r.get_center().x, r.position.y + r.size.y * 0.34),
-			9.0 * layout.s, c)
-		_draw_centered(Element.name_of(i), r, r.position.y + r.size.y * 0.84, 12,
-			Color(0.90, 0.87, 0.80) if on else Color(0.68, 0.65, 0.59))
-
+	# Ctyri tlacitka vyhybky. Vez stavi vzdy zivel te koleje, na kterou
+	# hrac klepne - zadny vyber druhu tu neni, protoze by nemel co delat.
 	for i in range(Element.COUNT):
 		var r: Rect2 = layout.switch_button(i)
 		var c: Color = Element.color_of(i)
@@ -350,6 +335,10 @@ func _draw_control_bar() -> void:
 			Vector2(r.position.x + r.size.x * 0.52, ay + 6.0 * layout.s)]), c)
 		_draw_centered(Element.name_of(i), r, r.position.y + r.size.y * 0.84, 12,
 			Color(0.90, 0.87, 0.80) if on else Color(0.68, 0.65, 0.59))
+		# Na vybrane kole je videt runa stavene veze - protoze je to ta sama.
+		if on:
+			_glyph(i, Vector2(r.get_center().x, r.position.y + r.size.y * 0.18),
+				6.0 * layout.s, c)
 
 	draw_rect(layout.skip_rect, Color(0.20, 0.19, 0.17))
 	draw_rect(layout.skip_rect, Color(0.38, 0.35, 0.30), false, 2.0)
