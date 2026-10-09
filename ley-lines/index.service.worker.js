@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1791557816|2245815';
+const CACHE_VERSION = 'b522006';
 /** @type {string} */
 const CACHE_PREFIX = 'Zily-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -21,7 +21,7 @@ const CACHEABLE_FILES = ["index.wasm","index.pck"];
 const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
-	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -33,6 +33,8 @@ self.addEventListener('activate', (event) => {
 	).then(function () {
 		// Enable navigation preload if available.
 		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+		}).then(function () {
+			return self.clients.claim();
 	}));
 });
 
@@ -105,21 +107,24 @@ self.addEventListener(
 				// Try to use cache first
 				const cache = await caches.open(CACHE_NAME);
 				if (isNavigate) {
-					// Check if we have full cache during HTML page request.
-					/** @type {Response[]} */
-					const fullCache = await Promise.all(FULL_CACHE.map((name) => cache.match(name)));
-					const missing = fullCache.some((v) => v === undefined);
-					if (missing) {
-						try {
-							// Try network if some cached file is missing (so we can display offline page in case).
-							const response = await fetchAndCache(event, cache, isCacheable);
-							return response;
-						} catch (e) {
-							// And return the hopefully always cached offline page in case of network failure.
-							console.error('Network error: ', e); // eslint-disable-line no-console
-							return caches.match(OFFLINE_URL);
+					// NAVIGACE JE VZDY ZE SITE. Godot tu mel cache-first, takze
+					// hrac po nasazeni nove verze dostal stary index.html a z menu se
+					// dozvedel stary otisk buildu - hra vypadala, ze se neaktualizovala.
+					// Kdyz sit neni, spadneme na cache a pak na offline stranku.
+					try {
+						const fresh = await fetch(event.request);
+						if (fresh && fresh.ok) {
+							cache.put(event.request, fresh.clone());
+							return fresh;
 						}
+					} catch (e) {
+						console.error('Network error: ', e); // eslint-disable-line no-console
 					}
+					const cachedPage = await cache.match(event.request);
+					if (cachedPage != null) {
+						return cachedPage;
+					}
+					return caches.match(OFFLINE_URL);
 				}
 				let cached = await cache.match(event.request);
 				if (cached != null) {
