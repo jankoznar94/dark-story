@@ -461,8 +461,9 @@ func _draw_editor_list() -> void:
 		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
 			str(it["name"]), 17, Color(0.88, 0.85, 0.78))
 	if not editor.status.is_empty():
-		_label(Vector2(layout.view.x - 14.0 * layout.ui, layout.hud_h * 0.78),
-			editor.status, 13, Color(0.72, 0.70, 0.62), false, 1.0)
+		_label_right(layout.fit_text(editor.status, _font, layout.font(13.0),
+			layout.view.x - 28.0 * layout.ui), layout.hud_h * 0.78, 13,
+			Color(0.72, 0.70, 0.62), layout.view.x - 14.0 * layout.ui)
 
 
 # Vybrany usek je v editoru ZNACKA navic - hrac musi videt, co upravuje.
@@ -490,20 +491,32 @@ func _draw_editor_bar() -> void:
 	var top: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
-	# Nad pruhem je jedine misto v editoru, kde muze byt text: rika, ktery
-	# usek je vybrany a co se prave stalo. Deska zustava bez textu.
-	_label(Vector2(14.0 * layout.ui, top - 8.0 * layout.ui), editor.sel_text(), 14,
+	# NAD PRUHEM JE JEDNO MISTO, KDE MUZE BYT TEXT: rika, ktery usek je
+	# vybrany a co se prave stalo. Deska zustava bez textu.
+	#
+	# HLASKA JE TO, CO HRA POTREBUJE VIDET - rika, co se stalo a proc neco
+	# nejde. Kresli se ZPRAVA (od praveho okraje) a vybrany usek se vejde do
+	# zbytku: kdyby se obe kreslily naslepo, prekryly by se presne ve chvili,
+	# kdy je hlaska nejdulezitejsi.
+	var bar_w: float = layout.view.x - 28.0 * layout.ui
+	var st: String = layout.fit_text(editor.status, _font, layout.font(14.0), bar_w)
+	var st_w: float = 0.0
+	if not st.is_empty():
+		st_w = _text_w(st, 14)
+		_label_right(st, top - 8.0 * layout.ui, 14, Color(0.72, 0.70, 0.62),
+			layout.view.x - 14.0 * layout.ui)
+	var cap_w: float = maxf(bar_w - st_w - 12.0 * layout.ui, 90.0)
+	_label(Vector2(14.0 * layout.ui, top - 8.0 * layout.ui),
+		layout.fit_text(editor.sel_text(), _font, layout.font(14.0), cap_w), 14,
 		Color(0.88, 0.85, 0.78))
-	if not editor.status.is_empty():
-		_label(Vector2(layout.view.x - 14.0 * layout.ui, top - 8.0 * layout.ui),
-			editor.status, 14, Color(0.72, 0.70, 0.62), false, 1.0)
 	# KOD LEVELU. Kdyz je vyexportovany, ukaze se nad pruhem - hrac ho odsud
-	# opise nebo zkopiruje a posle. Delsi nez sirka displeje se zkrati; cely
-	# je v souboru vedle (a v hlásce je cesta k nemu).
+	# opise nebo zkopiruje a posle. Je pres 700 znaku dlouhy, takze se ZKRATI
+	# a ukonci teckami; cely je v souboru vedle (a v hlasce je cesta k nemu).
 	if not editor.code.is_empty():
 		var cw: float = layout.view.x - 28.0 * layout.ui
 		_label(Vector2(14.0 * layout.ui, top + 16.0 * layout.ui),
-			editor.code, 11, Color(0.80, 0.84, 0.70), false, cw)
+			layout.fit_text(editor.code, _font, layout.font(11.0), cw), 11,
+			Color(0.80, 0.84, 0.70))
 	for i in range(btns.size()):
 		var r: Rect2 = btns[i]
 		draw_rect(r, Color(0.135, 0.125, 0.11))
@@ -842,8 +855,10 @@ func _draw_settings() -> void:
 		draw_rect(row, Color(col.r, col.g, col.b, 0.55), false, 2.0)
 		_label(Vector2(row.position.x + 18.0 * layout.ui,
 			row.position.y + row.size.y * 0.62), labels[i], 18, Color(0.88, 0.85, 0.78))
-		_label(Vector2(row.end.x - 18.0 * layout.ui, row.position.y + row.size.y * 0.62),
-			"ZAPNUTO" if on else "VYPNUTO", 15, col, false, 1.0)
+		# Stav prepinace k pravemu okraji radku - zarovnany DOPRAVA, aby
+		# nepretekl mimo obrazovku (viz _label_right).
+		_label_right("ZAPNUTO" if on else "VYPNUTO",
+			row.position.y + row.size.y * 0.62, 15, col, row.end.x - 18.0 * layout.ui)
 		# Zaskrtavatko je druha znacka krome barvy - ne jen barva.
 		var bx: float = row.end.x - 108.0 * layout.ui
 		var by: float = row.get_center().y
@@ -1116,6 +1131,24 @@ func _label(at: Vector2, text: String, size: int, col: Color,
 			HORIZONTAL_ALIGNMENT_CENTER, width, fs, col)
 	else:
 		draw_string(_font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+
+
+# TEXT ZAROVNANY DOPRAVA (k pravemu okraji obrazovky nebo ramecku).
+# POZOR: _label() kresli VZDY ZLEVA od zadaneho x a `width` pouzije jen pri
+# `centered`. Kdyz se text u praveho okraje kreslil pres _label(), zacal na
+# okraji a tekl MIMO obrazovku - hrac nevidel NIC. Presne to se delo hlásce
+# editoru ("co se prave stalo"), prepinacum v nastaveni i kodu levelu: hrac
+# nemel jak zjistit, proc neco nejde.
+func _label_right(text: String, y: float, size: int, col: Color, right_x: float) -> void:
+	var fs: int = layout.font(float(size))
+	var w: float = maxf(right_x, 40.0)
+	draw_string(_font, Vector2(right_x - w, y), text, HORIZONTAL_ALIGNMENT_RIGHT, w, fs, col)
+
+
+# Sirka textu tak, jak ho opravdu nakresli _label()/_label_right().
+func _text_w(text: String, size: int) -> float:
+	return _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		layout.font(float(size))).x
 
 
 # Znacka zivlu. Barva je hlavni nosic informace, ale NIKDY jediny -

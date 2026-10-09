@@ -245,19 +245,26 @@ func _cycle_target() -> void:
 		status = "jiný cíl pro tenhle úsek není"
 		return
 	level.relayout()
-	status = "úsek %d: %s" % [sel + 1, _target_text(sel)]
+	# NAPOVEDA, CO BUDE NASLEDOVAT. Bez ni se k napojeni dvou useku (dve cesty
+	# se sliji v jednu, "vidlicka") dostane jen ten, kdo vi, ze za vystupy
+	# cyklus pokracuje dal - a to je presne otazka "jak se dve cesty spoji".
+	status = "úsek %d: %s · další cíl: %s" % [sel + 1, _target_text(sel), _next_text(sel)]
 	_after_change()
+
+
+# Co bude nasledovat po dalsim klepnuti. Kdyz uz nic dalsiho neni, rekne to.
+func _next_text(lane: int) -> String:
+	var nxt: int = level.next_choice_index(lane)
+	if nxt < 0:
+		return "žádný"
+	var c: Dictionary = level.target_choices(lane)[nxt]
+	return level.choice_text(int(c["kind"]), int(c["to"]))
 
 
 # Popis cile vybraneho useku. Tri druhy cile - a hrac musi videt, ktery z nich
 # to prave je, protoze se chovaji jinak.
 func _target_text(lane: int) -> String:
-	var kind: int = level.target_kind(lane)
-	if kind == Level.TO_EXIT:
-		return "ústí do výstupu %d" % (level.exit_of(lane) + 1)
-	if kind == Level.TO_JUNCTION:
-		return "vede do výhybky %d" % (level.junction_of(lane) + 1)
-	return "napojuje se na úsek %d" % (level.lane_target_of(lane) + 1)
+	return level.choice_text(level.target_kind(lane), level.to_of(lane))
 
 
 # ---------------------------------------------------------------- kmen

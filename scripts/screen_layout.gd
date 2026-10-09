@@ -219,6 +219,24 @@ func ed_label_px(labels: Array, f: Font) -> int:
 	return 10
 
 
+# ZKRACENI TEXTOVÉHO POLE NA SIRKU. Dlouhy text (kod levelu je pres 700
+# znaku) by jinak pretekl mimo obrazovku a hrac by videl jen jeho zacatek.
+# Pocita se pulenim intervalu: text se meri v kazdem kroku znovu a u 800
+# znaku by to bylo 800 merení na kazdy snimek.
+func fit_text(text: String, f: Font, px: int, max_w: float) -> String:
+	if f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= max_w:
+		return text
+	var lo := 0
+	var hi: int = text.length()
+	while lo < hi:
+		var mid: int = int((lo + hi + 1) / 2)
+		if f.get_string_size(text.substr(0, mid) + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= max_w:
+			lo = mid
+		else:
+			hi = mid - 1
+	return text.substr(0, lo) + "…"
+
+
 # SEZNAM ULOZENYCH LEVELU v editoru. Kolik radku se vejde, pocita rozvrzeni -
 # jinak by hrac s hodne levely mel seznam, ktery mu pretece z displeje.
 func editor_list_fit() -> int:

@@ -594,19 +594,39 @@ func target_choices(lane: int) -> Array:
 	return out
 
 
-func cycle_target(lane: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
+# Popis cile lidsky. Tri druhy cile se chovaji jinak, takze hrac musi videt,
+# ktery z nich to je - a rika se to na JEDNOM miste (editor i hlaska).
+func choice_text(kind: int, to: int) -> String:
+	if kind == TO_EXIT:
+		return "ústí do výstupu %d" % (to + 1)
+	if kind == TO_JUNCTION:
+		return "vede do výhybky %d" % (to + 1)
+	return "napojuje se na úsek %d" % (to + 1)
+
+
+# KTERY CIL BUDE NASLEDOVAT po dalsim klepnuti na "cíl". Jedno misto, kde se
+# to rozhoduje - ptá se ho samotny cyklus i napoveda v hlásce. Dve kopie by
+# se rozešly a napoveda by hracovi lhala.
+func next_choice_index(lane: int) -> int:
 	var choices: Array = target_choices(lane)
 	if choices.size() < 2:
-		return false
+		return -1
 	var at: int = -1
 	for i in range(choices.size()):
 		var c: Dictionary = choices[i]
 		if int(c["kind"]) == target_kind(lane) and int(c["to"]) == to_of(lane):
 			at = i
 			break
-	var next: int = 0 if at < 0 else (at + 1) % choices.size()
+	return 0 if at < 0 else (at + 1) % choices.size()
+
+
+func cycle_target(lane: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	var choices: Array = target_choices(lane)
+	var next: int = next_choice_index(lane)
+	if next < 0 or next >= choices.size():
+		return false
 	var pick: Dictionary = choices[next]
 	var l: Dictionary = lanes[lane]
 	l["kind"] = int(pick["kind"])

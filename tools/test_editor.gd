@@ -34,6 +34,7 @@ func _init() -> void:
 	_test_open_last()
 	_test_entry_button()
 	_test_target_joins_lane()
+	_test_target_hint_tells_the_next_choice()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -517,7 +518,28 @@ func _test_junction_depth_limit() -> void:
 		if int(cc["kind"]) == Level.TO_JUNCTION:
 			bad += 1
 	_ok(bad == 0, "větev z výhybky míří jen do výstupů nebo na jiné úseky (%d do výhybek)" % bad)
-	_ok(ed.level.validate().is_empty(), "level je pořád platný")
+	_ok(ed.level.validate().is_empty(), "a takový level je platný")
+
+
+# NAPOVEDA V HLASCE: "cíl" je cyklus a hrac musi videt, co bude nasledovat -
+# jinak se k napojeni dvou useku (dve cesty se sliji v jednu) dostane jen
+# ten, kdo vi, ze za vystupy cyklus pokracuje dal. A napoveda NESMI LHAT:
+# dalsi stisk musi dat presne to, co slibila.
+func _test_target_hint_tells_the_next_choice() -> void:
+	var ed := _fresh()
+	ed.sel = 1
+	for i in range(12):
+		ed.press(Editor.BTN_TARGET)
+		_ok(ed.status.contains("další cíl:"), "hlaska rika, co bude nasledovat (%s)" % ed.status)
+		var p: int = ed.status.find("další cíl: ")
+		if p < 0:
+			return
+		var promised: String = ed.status.substr(p + "další cíl: ".length()).strip_edges()
+		ed.press(Editor.BTN_TARGET)
+		var now: String = ed.level.choice_text(ed.level.target_kind(1), ed.level.to_of(1))
+		_ok(now == promised,
+			"napoveda nelhala: slibila \"%s\", stalo se \"%s\"" % [promised, now])
+	_ok(ed.level.validate().is_empty(), "a level je pořád platný: %s" % str(ed.level.validate()))
 
 
 # --------------------------------------------------------------- seznam

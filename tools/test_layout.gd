@@ -138,6 +138,17 @@ func _test_board_has_no_furniture() -> void:
 	# jak poutnici jdou do vyhybky odnikud - a v nabidce buildu to nikdo
 	# nepozna. Presne to se stalo a nasel to az Jan na telefonu.
 	_ok(src.contains("_draw_trunk()"), "kmen se kresli na herni desce")
+	# TEXT U PRAVEHO OKRAJE SE MUSI ZAROVNAT DOPRAVA. `_label()` kresli vzdy
+	# ZLEVA od zadaneho x a `width` pouzije jen pri `centered` - takze text
+	# zadany na pravem okraji zacne na okraji a tece MIMO obrazovku. Takhle
+	# byla neviditelna hlaska editoru ("co se prave stalo"), prepinace
+	# v nastaveni i kod levelu. Kontroluje se MISTO VOLANI, ne jen to, ze
+	# nejaka funkce existuje - presne na tomhle uz jednou selhal navod.
+	_ok(not src.contains("_label(Vector2(layout.view.x - 14.0 * layout.ui"),
+		"text u praveho okraje se kresli zleva - pretece mimo obrazovku")
+	_ok(src.contains("_label_right("), "text u praveho okraje se nezarovnava doprava (_label_right)")
+	_ok(src.contains("layout.fit_text("), "dlouhy text se nezkracuje na sirku (fit_text)")
+	_ok(src.contains("fit_text(editor.code"), "kod levelu se nezkracuje - pres 700 znaku by preteklo")
 	for p in ["res://scripts/game_view.gd", "res://scripts/screen_layout.gd",
 			"res://scripts/network.gd"]:
 		var s: String = _read(p)
@@ -297,6 +308,40 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 			"%s: popisek \"%s\" se do tlacitka nevejde (%.0f px do %.0f) při %d px písma" % [
 				name, str(lbls[i]), tw, br.size.x, efs_px])
 	_ok(efs >= 11, "%s: popisky tlacitek editoru jsou uz moc male (%d)" % [name, efs])
+
+	# --- TEXT EDITORU SE MUSI VEJIT NA OBRAZOVKU ---
+	# Hlaska editoru ("co se prave stalo") se kresli ZPRAVA. Kdyz se text u
+	# praveho okraje kresli zleva (jak to driv bylo pres _label), zacne na
+	# okraji a tece MIMO obrazovku - hrac neuvidi nic a nema jak zjistit,
+	# proc neco nejde. Presne to se delo.
+	var bar_w: float = lay.view.x - 28.0 * lay.ui
+	for s in [ed_probe.sel_text(),
+			"na desku se víc drah nevejde (10) — bonusy by se překrývaly",
+			"nová větev s vlastním kmenem (výhybka 2)",
+			"úsek 2: napojuje se na úsek 1 · další cíl: ústí do výstupu 1"]:
+		_ok(lay.fit_text(str(s), font, lay.font(14.0), bar_w) == str(s),
+			"%s: text editoru se nevejde na obrazovku (\"%s\")" % [name, str(s)])
+	# kdyz je hlaska dlouha, vybrany usek se vejde do ZBYTKU (zkraceny) - obe
+	# se nesmi prekryt presne ve chvili, kdy je hlaska nejdulezitejsi
+	var st: String = "na desku se víc drah nevejde (10) — bonusy by se překrývaly"
+	var st_w: float = font.get_string_size(st, HORIZONTAL_ALIGNMENT_LEFT, -1, lay.font(14.0)).x
+	_ok(st_w <= bar_w, "%s: hlaska editoru je sirsi nez obrazovka (%.0f do %.0f)" % [name, st_w, bar_w])
+	_ok(bar_w - st_w - 12.0 * lay.ui >= 90.0,
+		"%s: pri dlouhe hlasce nezbyva na vybrany usek (%0.f px)" % [name, bar_w - st_w - 12.0 * lay.ui])
+	# kod levelu je pres 700 znaku - musi se zkratit a ukoncit teckami
+	var kod: String = "ZILY1;" + "x".repeat(800)
+	var cut: String = lay.fit_text(kod, font, lay.font(11.0), bar_w)
+	_ok(cut.length() < kod.length(), "%s: dlouhy kod levelu se nezkrati" % name)
+	_ok(cut.ends_with("…"), "%s: zkraceny kod nema tecky na konci" % name)
+	_ok(font.get_string_size(cut, HORIZONTAL_ALIGNMENT_LEFT, -1, lay.font(11.0)).x <= bar_w + 0.5,
+		"%s: ani zkraceny kod levelu se nevejde" % name)
+	# prepinac v nastaveni: ZAPNUTO musi zustat uvnitr radku a mimo zaskrtavatko
+	var row: Rect2 = lay.settings_toggle
+	var zw: float = font.get_string_size("ZAPNUTO", HORIZONTAL_ALIGNMENT_LEFT, -1, lay.font(15.0)).x
+	var zx: float = row.end.x - 18.0 * lay.ui - zw
+	_ok(zx >= row.position.x, "%s: ZAPNUTO preteka z radku (%.0f vs %.0f)" % [name, zx, row.position.x])
+	_ok(zx >= row.end.x - 100.0 * lay.ui,
+		"%s: ZAPNUTO leze do zaskrtavatka (%.0f vs %.0f)" % [name, zx, row.end.x - 100.0 * lay.ui])
 
 	# --- CO NEJVIC MISTA NAD DESKOU ---
 	# Nad prvni drazkou nesmi zustat prazdny pruh: kazdy pixel tam chybi
