@@ -226,7 +226,11 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 		var n1: float = float(run0[i][1])
 		var ny: float = float(rows[i])
 		for k in range(Level.NODE_COUNT):
-			ns.append(Vector2(n0 + (n1 - n0) * level.node_frac(k), ny))
+			# UZEL SE SROVNA ODZBOCENIM TOHOHLE USEKU (node_frac_on) - kdyz hrac
+			# ohne usek brzo, uzel se posune pred zatacku. Kresleni musi pocitat
+			# tim samym vzorcem jako geometrie, jinak by hrac videl jiny uzel,
+			# nez do ktereho poutnik opravdu vstoupi.
+			ns.append(Vector2(n0 + (n1 - n0) * level.node_frac_on(i, k), ny))
 		node_pos.append(ns)
 
 	# --- useky ---
@@ -271,7 +275,7 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			var t0: float = float(run0[to][0])
 			var t1: float = float(run0[to][1])
 			var tj: int = clampi(level.from_of(to), 0, maxi(junction_pos.size() - 1, 0))
-			var tx: float = t0 + (t1 - t0) * level.node_frac(level.lane_node(i))
+			var tx: float = t0 + (t1 - t0) * level.node_frac_on(to, level.lane_node(i))
 			entry = junction_merge[tj].distance_to(junction_pos[tj]) \
 				+ junction_pos[tj].distance_to(Vector2(t0, float(rows[to]))) + (tx - t0)
 		lane_entry_s.append(entry)

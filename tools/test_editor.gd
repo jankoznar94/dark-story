@@ -37,6 +37,7 @@ func _init() -> void:
 	_test_target_joins_lane()
 	_test_target_hint_tells_the_next_choice()
 	_test_join_has_several_nodes()
+	_test_deep_branch_joins_other_lanes()
 	_test_exit_delete_button()
 	_test_node_step_buttons()
 
@@ -752,6 +753,54 @@ func _test_target_joins_lane() -> void:
 		"a level zustava platny: %s" % str(ed.level.validate()))
 
 
+# VETEV Z HLUBSI VYHYBKY SE MUSI DAT NAPOJIT I NA JINE USEKY, NE JEN NA
+# SOUROZENCE. Jan: "Jeden úsek jde napojit na uzly jednoho dalšího úseku, ale
+# pak už další úseky ignoruje." Driv byla geometrie tak prisna (pevny podil
+# rovneho useku v can_target), ze vetvi z druhe vyhybky zbyl JEDINY cilovy
+# usek - jeji sourozenec - a ostatni useky se tvarily, jako by neexistovaly.
+func _test_deep_branch_joins_other_lanes() -> void:
+	var ed := _fresh()
+	ed.sel = 4
+	ed.press(Editor.BTN_JUNCTION)
+	var j: int = ed.level.junction_of(4)
+	if j < 0:
+		_ok(false, "usek 4 se rozdělil výhybkou")
+		return
+	var kids: Array = ed.level.lanes_of(j)
+	_ok(kids.size() == 2, "z nove vyhybky vedou dve vetve (%d)" % kids.size())
+	var branch: int = int(kids[0])
+	var sibling: int = int(kids[1])
+	var targets := {}
+	for c in ed.level.target_choices(branch):
+		if int(c["kind"]) == Level.TO_LANE:
+			targets[int(c["to"])] = true
+	_ok(targets.size() >= 4,
+		"vetev z výhybky se dá napojit na vic úseků (%d: %s)" % [targets.size(), str(targets.keys())])
+	_ok(targets.has(sibling), "a mezi nimi je i sourozenecká větev")
+	var outside := 0
+	for t in targets:
+		if int(t) != sibling:
+			outside += 1
+	_ok(outside >= 3, "a taky úseky mimo ni (%d)" % outside)
+	# a napojeni musi byt i REALNE: level po nem zustane platny a kod projde
+	var pick: int = int(targets.keys()[0])
+	for t in targets:
+		if int(t) != sibling:
+			pick = int(t)
+			break
+	var node: int = ed.level.usable_nodes(branch, pick)[0]
+	var l: Dictionary = ed.level.lanes[branch]
+	l["kind"] = Level.TO_LANE
+	l["to"] = pick
+	l["node"] = node
+	ed.level.lanes[branch] = l
+	ed.level.relayout()
+	_ok(ed.level.validate().is_empty(),
+		"napojení vetve na úsek %d (uzel %d) je platné: %s" % [pick + 1, node + 1, str(ed.level.validate())])
+	var back := Level.from_code(ed.level.to_code())
+	_ok(back.to_code() == ed.level.to_code(), "a kod levelu projde tam i zpet")
+
+
 # NAPOJENI MA VIC UZLU. Jan: "musíme udělat komplexnější větvení pomocí
 # výhybek. Aby měl každý úsek X uzlů, do kterých se může úsek zakončit...
 # jeden úsek může končit v jiném a měl by mít možnost končit v různých uzlech
@@ -942,26 +991,55 @@ func _test_node_step_buttons() -> void:
 	_ok(ed2.level.divert_of(0) > d0,
 		"a meni se odboceni, ne uzel (%.2f -> %.2f)" % [d0, ed2.level.divert_of(0)])
 
-	# --- 3) UZEL ZA ODBOCENIM CILOVEHO USEKU SE ODMITNE ---
-	# (jinak by se vetev vlekla do oblouku a level by se nedal vyexportovat)
+	# --- 3) ODBOCENI CILOVEHO USEKU UZ NAPOJENI NERUSI ---
+	# Uzel se odboceni SROVNA (node_frac_on): ohne-li hrac cilovy usek pred
+	# druhy uzel, napojeni se posune pred zatacku, misto aby zmizelo. Driv se
+	# uzel proste "nemel kde byt" a napojeni prestalo existovat.
 	var ed3 := _fresh()
 	_join_at_node_zero(ed3, 1)
 	if ed3.level.target_kind(1) != Level.TO_LANE:
 		return
 	var tgt: int = ed3.level.to_of(1)
+	var node_x_before: float = ed3.level.node_x(tgt, ed3.level.lane_node(1))
 	ed3.sel = tgt
-	for i in range(6):
+	for i in range(10):
 		ed3.press(Editor.BTN_BEND_LEFT)
-	_ok(ed3.level.divert_of(tgt) < float(Level.NODE_FRACS[1]),
-		"cilovy usek se ohnul pred druhy uzel (%.2f)" % ed3.level.divert_of(tgt))
+	_ok(ed3.level.divert_of(tgt) < float(Level.NODE_FRACS[0]),
+		"cilovy usek se ohnul pred prvni uzel (%.2f)" % ed3.level.divert_of(tgt))
 	_ok(ed3.level.validate().is_empty(), "a level je porad platny: %s" % str(ed3.level.validate()))
+	var node_x_after: float = ed3.level.node_x(tgt, ed3.level.lane_node(1))
+	_ok(node_x_after < node_x_before - 0.001,
+		"uzel napojeni se posunul pred zatacku (%.3f -> %.3f)" % [node_x_before, node_x_after])
+	_ok(node_x_after <= ed3.level.bend_x(tgt) + 0.0001,
+		"a lezi na rovném useku (uzel %.3f, zatacka %.3f)" % [node_x_after, ed3.level.bend_x(tgt)])
 	ed3.sel = 1
-	var node0: int = ed3.level.lane_node(1)
-	ed3.press(Editor.BTN_BEND_RIGHT)
-	_ok(ed3.level.lane_node(1) == node0,
-		"do uzlu za odbocenim to nejde (%d)" % ed3.level.lane_node(1))
-	_ok(ed3.status.contains("odbočen"), "a hlaska rekne proc (%s)" % ed3.status)
-	_ok(ed3.level.validate().is_empty(), "a level zustava platny: %s" % str(ed3.level.validate()))
+	_ok(ed3.level.target_kind(1) == Level.TO_LANE and ed3.level.lane_node(1) == 0,
+		"napojeni na cilovy usek zustalo")
+	# Editor NIKDY nesmi nechat level v podobě, ktera se neda vyexportovat:
+	# kdyz uz ohnuti opravdu nema kam uhnout, vrati ho a rekne proc.
+	for i in range(40):
+		ed3.press(Editor.BTN_BEND_LEFT)
+	_ok(ed3.level.validate().is_empty(),
+		"ani po mnoha ohnutich je level platny: %s" % str(ed3.level.validate()))
+	var back3 := Level.from_code(ed3.level.to_code())
+	_ok(back3.to_code() == ed3.level.to_code(), "a kod levelu projde tam i zpet")
+
+	# --- 4) UZEL, DO KTEREHO SE OPRAVDU NEDA, EDITOR ODMITNE A REKNE PROC ---
+	var ed4 := _fresh()
+	_join_at_node_zero(ed4, 1)
+	if ed4.level.target_kind(1) != Level.TO_LANE:
+		return
+	var tgt4: int = ed4.level.to_of(1)
+	ed4.sel = 1
+	var node4: int = ed4.level.lane_node(1)
+	if ed4.level.can_target(1, Level.TO_LANE, tgt4, Level.NODE_COUNT - 1):
+		return
+	ed4.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed4.level.lane_node(1) == node4,
+		"do uzlu, ktery geometrie neda, to nejde (%d)" % ed4.level.lane_node(1))
+	_ok(ed4.status.contains("uzl") or ed4.status.contains("poslední"),
+		"a hlaska to rekne (%s)" % ed4.status)
+	_ok(ed4.level.validate().is_empty(), "a level zustava platny: %s" % str(ed4.level.validate()))
 
 
 # Usek `lane` napojeny na jiny usek v prvnim uzlu (cyklus "cíl" pres vystupy,

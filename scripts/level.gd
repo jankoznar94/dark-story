@@ -752,9 +752,8 @@ func target_choices(lane: int) -> Array:
 		if can_target(lane, TO_EXIT, e):
 			out.append({"kind": TO_EXIT, "to": e})
 	for k in range(lanes.size()):
-		for n in range(NODE_COUNT):
-			if can_target(lane, TO_LANE, k, n):
-				out.append({"kind": TO_LANE, "to": k, "node": n})
+		for n in usable_nodes(lane, k):
+			out.append({"kind": TO_LANE, "to": k, "node": int(n)})
 	for j in range(junctions.size()):
 		if can_target(lane, TO_JUNCTION, j):
 			out.append({"kind": TO_JUNCTION, "to": j})
@@ -883,11 +882,17 @@ func relayout() -> void:
 		# Usek sedi uprostred sveho vlastniho rozpeti. U useku do vystupu je to
 		# proste jeho radek; u useku do vyhybky prostredek jejich vetvi.
 		_row[i] = y0 + gap * _lane_row_index(i)
-	# Vystupy jsou diry v mape: drzi si radek podle sveho indexu v mrizce.
+	# VYSTUPY JSOU DIRY V MAPE: drzi si radek podle sveho indexu v mrizce, ale
+	# VYSTREDI SE JAKO SKUPINA - prvni dira neni na prvnim radku, ale pul radku
+	# nad stredem. Driv se cile skladaly OD SHORA: pri peti drahach a ctyrech
+	# vystupech sedela prvni dira u HUDu a dole zelo prazdno, takze deska
+	# vypadala nevyvazene. Vzorec je schvalne takovy, ze kdyz je cilu presne
+	# tolik co radku, vyjde znak po znaku to same co driv (idx 0..n-1).
 	for idx in range(exits.size()):
 		var e: Array = exits[idx]
 		var keep_x: float = float(e[0])
-		exits[idx] = [keep_x, y0 + gap * float(mini(idx, n - 1))]
+		var row_i: float = float(n - 1) * 0.5 + (float(idx) - float(exits.size() - 1) * 0.5)
+		exits[idx] = [keep_x, y0 + gap * row_i]
 
 
 # Kolik radku mrizka zabira a jakou mezeru ma. Radky jsou to, co level
@@ -988,8 +993,28 @@ func exit_row(idx: int) -> float:
 # Rovny usek toho useku v podilu sirky plochy: od bodu, kde se ohne z vyhybky,
 # k bodu, kde se ohne ke svemu cili. Pocita se v NORMALIZOVANYCH souradnicich
 # (level je nezavisly na displeji) - Network z toho jen prevede na pixely.
-func run_frac(lane: int) -> float:
-	return RUN_FRAC if target_kind(lane) != TO_JUNCTION else RUN_FRAC_CONNECTOR
+#
+# JEDNO MISTO, ze ktereho to vi geometrie (run_x0/run_x1), can_target i
+# kresleni. Kdyby si to pocital can_target zvlast, nabizel by hracovi neco
+# jineho, nez co se pak opravdu nakresli.
+func run_frac_for(kind: int, span: float) -> float:
+	if kind == TO_JUNCTION:
+		return RUN_FRAC_CONNECTOR
+	if kind != TO_LANE:
+		return RUN_FRAC
+	# NAPOJENI: privodni usek musi mit svuj rovny usek mezi vyhybkou, ze ktere
+	# vychazi, a uzlem ciloveho useku. Kdyz je uzel blizko, staci kratsi rovny
+	# usek - jinak by se napojeni vubec nedalo udelat. Presne to driv platilo
+	# pro vetve z hlubsi vyhybky: zbyvala jim jen sourozenecka vetev a ostatni
+	# useky "ignorovaly". Cim delsi rozpeti, tim bliz je podil vychozimu
+	# RUN_FRAC, takze zakladni deska se pocita znak po znaku jako driv.
+	if span <= 0.0:
+		return RUN_FRAC
+	return clampf((1.0 - MIN_RUN / span) * 0.5, 0.0, RUN_FRAC)
+
+
+func run_frac(lane: int, guard: int = 0) -> float:
+	return run_frac_for(target_kind(lane), target_x_of(lane, guard) - junction_x(from_of(lane)))
 
 
 # X-ova souradnice bodu, do ktereho usek vede. Pro cil = jiny usek je to
@@ -1010,11 +1035,22 @@ func _target_x(kind: int, to: int, guard: int, self_lane: int = -1, node: int = 
 	return run_land_x(to, node, guard + 1)
 
 
+# PODIL UZLU NA CILOVEM USEKU, KTERY SE SROVNA ODZBOCENIM. Uzel musi lezet na
+# rovném useku ciloveho useku (za jeho zatackou uz rovny usek neni). Kdyz hrac
+# cilovy usek ohne brzo, driv se tim VSEchna napojeni do nej zrusila - uzel
+# proste "nebyl". Ted se uzel posune pred zatacku: napojeni zustane, jen se
+# vleje o kus driv. Pri vychozim odboceni (0.80) vychazi znak po znaku to same
+# co driv (0.74), takze zakladni deska ani zakotvene levely se nemeni.
+const NODE_BEND_MARGIN := 0.06
+
+
+func node_frac_on(lane: int, node: int) -> float:
+	return minf(node_frac(node), maxf(0.05, divert_of(lane) - NODE_BEND_MARGIN))
+
+
 # Kde se do toho useku vleje privodni vetev: v uzlu `node` jeho rovneho useku.
 func run_land_x(lane: int, node: int = 0, guard: int = 0) -> float:
-	var x0: float = run_x0(lane, guard)
-	var x1: float = run_x1(lane, guard)
-	return x0 + (x1 - x0) * node_frac(node)
+	return node_x(lane, node, guard)
 
 
 # UZEL USEKU jako x-ova souradnice. Jedno misto, kde se to pocita - kresleni
@@ -1023,7 +1059,7 @@ func run_land_x(lane: int, node: int = 0, guard: int = 0) -> float:
 func node_x(lane: int, node: int, guard: int = 0) -> float:
 	var x0: float = run_x0(lane, guard)
 	var x1: float = run_x1(lane, guard)
-	return x0 + (x1 - x0) * node_frac(node)
+	return x0 + (x1 - x0) * node_frac_on(lane, node)
 
 
 # Kde se usek zacina stacet ke svemu cili. Za timhle bodem uz rovny usek neni,
@@ -1037,25 +1073,44 @@ func bend_x(lane: int, guard: int = 0) -> float:
 # Kolik uzlu ciloveho useku je pro tenhle usek vubec pouzitelnych. Jedno
 # misto, kde se to pocita - hlaska editoru z toho dela "uzel 2/3".
 func node_choice_count(lane: int, to: int) -> int:
-	var n := 0
+	return usable_nodes(lane, to).size()
+
+
+# KTERE UZLY CILOVEHO USEKU JSOU POUZITELNE. Jedno misto pro editor (co
+# nabizet), pocitadlo "uzel 2/3" i cyklus cile. Uzly se srovnanim odboceni
+# mohou SPLYNOUT do jednoho bodu - dve volby na stejnem miste jsou jen dve
+# prazdna klepnuti, proto se druha zahodi.
+func usable_nodes(lane: int, to: int) -> Array:
+	var out: Array = []
+	var seen: Array = []
 	for k in range(NODE_COUNT):
-		if can_target(lane, TO_LANE, to, k):
-			n += 1
-	return n
+		if not can_target(lane, TO_LANE, to, k):
+			continue
+		var x: float = node_x(to, k)
+		var dup := false
+		for s in seen:
+			if absf(float(s) - x) < 0.001:
+				dup = true
+				break
+		if dup:
+			continue
+		seen.append(x)
+		out.append(k)
+	return out
 
 
 func run_x0(lane: int, guard: int = 0) -> float:
 	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
 	if span <= 0.0:
 		return junction_x(from_of(lane))
-	return junction_x(from_of(lane)) + span * run_frac(lane)
+	return junction_x(from_of(lane)) + span * run_frac_for(target_kind(lane), span)
 
 
 func run_x1(lane: int, guard: int = 0) -> float:
 	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
 	if span <= 0.0:
 		return junction_x(from_of(lane))
-	return target_x_of(lane, guard) - span * run_frac(lane)
+	return target_x_of(lane, guard) - span * run_frac_for(target_kind(lane), span)
 
 
 func run_of(lane: int) -> float:
@@ -1093,7 +1148,9 @@ func can_target(lane: int, kind: int, to: int, node: int = -1) -> bool:
 			return false
 		# UZEL MUSI LEZET NA ROVNEM USEKU CILOVEHO USEKU. Za jeho zatackou uz
 		# rovny usek neni - vetev by se vlekla do oblouku a na rovnem useku by
-		# zustalo min misto na bonusy, nez level potrebuje.
+		# zustalo min misto na bonusy, nez level potrebuje. Uzel se odboceni
+		# ciloveho useku SROVNA (node_frac_on), takze ohne-li hrac cilovy usek
+		# brzo, napojeni se posune pred zatacku - ne aby zmizelo.
 		if node_x(to, n) > bend_x(to) + 0.0001:
 			return false
 	else:
@@ -1102,8 +1159,9 @@ func can_target(lane: int, kind: int, to: int, node: int = -1) -> bool:
 	var span: float = _target_x(kind, to, 0, lane, n) - junction_x(from_of(lane))
 	if span <= 0.0:
 		return false
-	var frac: float = RUN_FRAC if kind != TO_JUNCTION else RUN_FRAC_CONNECTOR
-	if span * (1.0 - 2.0 * frac) < MIN_RUN:
+	# Stejny podil, jakym se pak usek opravdu kresli (run_frac_for) - dve
+	# kopie by se rozešly a editor by nabizel neco jineho, nez co vznikne.
+	if span * (1.0 - 2.0 * run_frac_for(kind, span)) < MIN_RUN:
 		return false
 	return true
 
