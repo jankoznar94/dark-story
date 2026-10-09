@@ -30,9 +30,8 @@ var log: Array = []
 var auto_wave: bool = true
 
 
-func setup(r: Rect2) -> void:
-	net = Network.new()
-	net.build(r)
+func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9) -> void:
+	rebuild_network(r, scale_hint, bar_top)
 	towers = []
 	enemies = []
 	gold = START_GOLD
@@ -43,6 +42,21 @@ func setup(r: Rect2) -> void:
 	spawn_left = 0
 	spawn_timer = 0.0
 	log = []
+
+
+# Prestaveni site pri zmene velikosti okna. Stav hry zustava - meni se
+# jen souradnice, protoze sit je cista geometrie z rectu.
+func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) -> void:
+	# Zavorky u defaultu jsou potreba: vyraz s = by se jinak cetl jako
+	# prirazeni do promenne "r".
+	var sc: float = scale_hint
+	if sc < 0.0:
+		sc = net.scale
+	var bt: float = bar_top
+	if bt < 0.0:
+		bt = net.bar_top
+	net = Network.new()
+	net.build(r, sc, bt)
 
 
 # ---------------------------------------------------------------- ekonomika

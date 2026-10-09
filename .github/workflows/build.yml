@@ -58,6 +58,18 @@ jobs:
           echo "$OUT" | tail -40
           echo "$OUT" | grep -q "CORE_ALL_PASS=true"
 
+      # ROZVRZENI NA RŮZNÝCH DISPLEJÍCH. Hra se musi sama slozit na kazdem
+      # telefonu, ne jen na tom vyvojovem - prochazi 14 realnych rozliseni
+      # vcetne landscape telefonu, kde je pomer stran jiny nez 960x600.
+      # Kontroluje se i to, ze se na tom rozliseni hra PORAD DAHRAT:
+      # nepritel na protikladne koleji tam opravdu umre.
+      - name: Layout test (14 realnych rozliseni)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_layout.gd 2>&1)
+          echo "$OUT" | tail -45
+          echo "$OUT" | grep -q "LAYOUT_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e

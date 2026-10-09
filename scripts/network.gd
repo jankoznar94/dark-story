@@ -3,20 +3,34 @@ extends RefCounted
 
 # Sit je cista GEOMETRIE: kmen (trunk), na jehoz konci je vyhybka,
 # a z vyhybky vybihaji ctyri cilove koleje - kazda do sve svatyne.
-# Zadna fyzika, zadne uzdy ve scene - jen polyline a vzorkovani bodu.
+# Zadna fyzika, zadne uzly ve scene - jen polyline a vzorkovani bodu.
 #
-# ROZVRZENI je zamerne takove, aby se veze na sousednich kolejich
-# NEPREKRYVALY: mista na veze lezi az na rovnem useku u svatyne, kde
-# jsou koleje od sebe 105 px, ne na rozvetveni u vyhybky, kde se
-# paprsky teprve rozbihaji.
+# ROZVRZENI JE RESPONZIVNI, a to ve dvou rovinach:
+#   * POZICE jsou zlomky plochy (x z sirky, y z vysky) -> sit vyplni displej
+#     a na sirokem telefonu jsou koleje proste delsi. Zadny letterbox.
+#   * VELIKOSTI (polomer veze, svatyne, tloustka linii) jdou z jednoho
+#     meritka `scale` -> kruh zustane kruhem a veze se na zadnem displeji
+#     nezacnou prekryvat.
+#
+# Mista na veze lezi az na ROVNEM useku u svatyne, kde jsou koleje od sebe
+# daleko, ne na rozvetveni u vyhybky, kde se paprsky teprve rozbihaji.
 
 const LANES := 4
-const TOWER_RADIUS := 26.0
-const SWITCH_RADIUS := 46.0
-# Vzdalenost mista na vez od svatyne, od nejblizsiho po nejvzdalenejsi.
-const SLOT_FROM_SHRINE := [60.0, 165.0, 270.0]
+const BASE_TOWER_R := 26.0
+const BASE_SHRINE_R := 30.0
+const BASE_SWITCH_R := 46.0
+const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
 
 var area: Rect2 = Rect2()
+var scale: float = 1.0
+# Horni hrana ovladaciho pruhu. Do site vstupuje jako OMEZENI: zadny bod
+# trasy ani popisek svatyně se nesmi kreslit do pruhu. Predava se jako
+# parametr do build() - kdyby se nastavoval na hotove siti, prvni build
+# by pocital se starym pruhem.
+var bar_top: float = 1.0e9
+var tower_r: float = BASE_TOWER_R
+var shrine_r: float = BASE_SHRINE_R
+var switch_r: float = BASE_SWITCH_R
 var trunk_start: Vector2 = Vector2.ZERO
 var merge: Vector2 = Vector2.ZERO
 var hub: Vector2 = Vector2.ZERO
@@ -28,33 +42,49 @@ var shrine_pos: Array = []
 var switch_lane: int = 0
 
 
-func build(r: Rect2) -> void:
+func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9) -> void:
 	area = r
+	scale = scale_hint
+	bar_top = bar_top_hint
+	tower_r = BASE_TOWER_R * scale
+	shrine_r = BASE_SHRINE_R * scale
+	switch_r = BASE_SWITCH_R * scale
+
 	var w: float = r.size.x
 	var h: float = r.size.y
 
-	trunk_start = Vector2(r.position.x - 24.0, r.position.y + h * 0.5)
+	trunk_start = Vector2(r.position.x - 24.0 * scale, r.position.y + h * 0.5)
 	merge = Vector2(r.position.x + w * 0.295, r.position.y + h * 0.5)
-	hub = merge + Vector2(w * 0.034, 0.0)
+	hub = Vector2(r.position.x + w * 0.332, r.position.y + h * 0.5)
 	trunk_len = _poly_len(PackedVector2Array([trunk_start, merge]))
 
 	var approach_x: float = r.position.x + w * 0.636
 	var shrine_x: float = r.position.x + w * 0.955
+	var run: float = shrine_x - approach_x
 
 	lane_path = []
 	lane_len = []
 	slot_pos = []
 	shrine_pos = []
 
+	# Nejdřív řádky, pak teprve geometrie. Svatyně i s popiskem pod ní
+	# musi zustat NAD ovladacim pruhem - kdyby ne, radky se stlaci k sobe.
+	var label_room: float = 54.0 * scale + 10.0
+	var y0: float = r.position.y + h * 0.10
+	var y_last: float = r.position.y + h * (0.10 + 0.245 * float(LANES - 1))
+	if y_last + label_room > bar_top:
+		y_last = bar_top - label_room
+	var y_step: float = (y_last - y0) / float(LANES - 1)
+
 	for i in range(LANES):
-		var sy: float = r.position.y + h * (0.12 + 0.253 * float(i))
+		var sy: float = y0 + y_step * float(i)
 		var path := PackedVector2Array([merge, hub, Vector2(approach_x, sy), Vector2(shrine_x, sy)])
 		lane_path.append(path)
 		lane_len.append(_poly_len(path))
 		shrine_pos.append(Vector2(shrine_x, sy))
 		var slots: Array = []
-		for d in SLOT_FROM_SHRINE:
-			slots.append(Vector2(shrine_x - float(d), sy))
+		for f in SLOT_FRACTIONS:
+			slots.append(Vector2(approach_x + float(f) * run, sy))
 		slot_pos.append(slots)
 
 
@@ -79,7 +109,7 @@ func trunk_point_at(s: float) -> Vector2:
 
 
 func slot_count() -> int:
-	return SLOT_FROM_SHRINE.size()
+	return SLOT_FRACTIONS.size()
 
 
 func slot_world(lane: int, slot: int) -> Vector2:
@@ -90,7 +120,7 @@ func slot_world(lane: int, slot: int) -> Vector2:
 
 func nearest_slot(world: Vector2) -> Vector2i:
 	var best := Vector2i(-1, -1)
-	var best_d: float = TOWER_RADIUS * 1.5
+	var best_d: float = tower_r * 1.5
 	for lane in range(lane_path.size()):
 		for slot in range(slot_count()):
 			var d: float = slot_world(lane, slot).distance_to(world)
@@ -115,7 +145,7 @@ func min_cross_lane_slot_distance() -> float:
 
 
 func switch_hit(world: Vector2) -> bool:
-	return merge.distance_to(world) <= SWITCH_RADIUS
+	return merge.distance_to(world) <= switch_r
 
 
 func lane_index_from_angle(world: Vector2) -> int:

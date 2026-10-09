@@ -36,7 +36,9 @@ func _ok(cond: bool, what: String) -> void:
 
 func _fresh() -> Game:
 	var g := Game.new()
-	g.setup(Rect2(40.0, 80.0, 880.0, 404.0))
+	# Zakladni rozvrzeni, stejne jako v tele hry. `bar_top` se predava
+	# build() - kdyby chybel, sit by si myslela, ze pruh neexistuje.
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0)
 	return g
 
 
@@ -70,16 +72,17 @@ func _test_geometry() -> void:
 		var last: Vector2 = g.net.point_at(lane, g.net.lane_len[lane])
 		_ok(end.distance_to(last) < 1.0, "kolej %d konci ve svatyni" % lane)
 	_ok(g.net.switch_lane == 0, "vyhybka startuje na prvnim zivlu")
-	# ROZVRZENI: veze na sousednich kolejich se nesmi prekryvat.
+	# ROZVRZENI: veze na sousednich kolejich se nesmi prekryvat. Polomer
+	# veze uz neni konstanta - jde z meritka plochy, tak ho ber z instance.
 	var gap: float = g.net.min_cross_lane_slot_distance()
-	_ok(gap > Network.TOWER_RADIUS * 2.0 + 8.0,
+	_ok(gap > g.net.tower_r * 2.0 + 8.0,
 		"mista na veze mezi kolejemi se neprekryvaji (mezera %.0f px)" % gap)
 	# a vsechna mista musi byt NAD ovladacim pruhem
 	var bar_top: float = 500.0
 	for lane in range(Network.LANES):
 		for slot in range(g.net.slot_count()):
 			var p: Vector2 = g.net.slot_world(lane, slot)
-			_ok(p.y + Network.TOWER_RADIUS < bar_top,
+			_ok(p.y + g.net.tower_r < bar_top,
 				"misto %d/%d neleze do ovladaciho pruhu (y=%.0f)" % [lane, slot, p.y])
 	# zadna herni linie nesmi vest skrz ovladaci pruh
 	for lane in range(Network.LANES):
