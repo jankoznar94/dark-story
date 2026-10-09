@@ -133,6 +133,14 @@ func _check_screen(w: float, h: float, name: String) -> String:
 			name, min_cross, g.net.tower_r * 2.0])
 
 	# --- a hra na tom rozliseni musi porad fungovat ---
+	# Klepnuti na kolej je jedina interakce, kterou hrac prepina vyhybku.
+	# Musi trefit PRAVE tu kolej na kazdem rozliseni - na malem displeji
+	# jsou koleje bliz u sebe, takze se to muze rozbit prave tam.
+	for lane in range(Network.LANES):
+		var tap: Vector2 = g.net.point_at(lane, g.net.lane_len[lane] * 0.7)
+		var hit: int = g.net.lane_tap_at(tap, maxf(10.0, 16.0 * lay.s))
+		_ok(hit == lane,
+			"%s: klepnuti na kolej %d ji vybere (hit=%d)" % [name, lane, hit])
 	# Kazdy zivel umre na sve protikladne koleji - a vez na te koleji
 	# musi byt prave ten protikladny zivel (pravidlo staveni).
 	var target_el: int = Element.opposite_of(Element.FIRE)

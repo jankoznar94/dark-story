@@ -10,7 +10,11 @@ const BASE_HP := 70.0
 const HP_GROWTH := 0.10
 const ENEMY_SPEED := 52.0
 const REWARD := 12
-const SPAWN_INTERVAL := 0.62
+# Rozestup poutniku. Hrac musi stihnout prepnout vyhybku PRO KAZDEHO
+# zvlast, takze dvě vyhybky (dva stisky) se musi vejit do mezery mezi
+# dvema poutniky. Pri 0.62 s to neslo - druhy uz byl na vyhybce, nez
+# hrac doklikal prvni. Test to hlida pres ENEMY_SPEED * SPAWN_INTERVAL.
+const SPAWN_INTERVAL := 1.05
 const BUILD_TIME := 6.0
 const WAVE_BONUS := 40
 

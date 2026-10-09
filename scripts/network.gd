@@ -147,6 +147,37 @@ func nearest_slot(world: Vector2) -> Vector2i:
 	return best
 
 
+# KTERA KOLEJ JE POD PRSTEM. Klepnuti na kolej je jediny zpusob, jak
+# prepnout vyhybku - tlacitka nejsou, protoze casem bude vyhybek vic, nez
+# se jich do pruhu vejde. Vraci -1, kdyz je klepnuto mimo vsechny koleje.
+# `tol` je polovicni sirka pasu kolem linie: male prsty trefuji nepresne
+# a kolej je jen par pixelu sila.
+func lane_tap_at(world: Vector2, tol: float = 14.0) -> int:
+	# Nejnizsi vzdalenost k TRASE (ne k pasu), protoze kandidatu je malo.
+	var best := -1
+	var best_d: float = tol
+	for lane in range(lane_path.size()):
+		var d: float = _dist_to_path(lane, world)
+		if d < best_d:
+			best_d = d
+			best = lane
+	return best
+
+
+func _dist_to_path(lane: int, world: Vector2) -> float:
+	var path: PackedVector2Array = lane_path[lane]
+	var best: float = 1.0e9
+	for k in range(path.size() - 1):
+		var a: Vector2 = path[k]
+		var b: Vector2 = path[k + 1]
+		var ab: Vector2 = b - a
+		var t: float = 0.0
+		if ab.length_squared() > 0.000001:
+			t = clampf((world - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+		best = minf(best, world.distance_to(a + ab * t))
+	return best
+
+
 # Nejmensi vzdalenost mezi misty na vezech RŮZNÝCH kolejí. Testy tuhle
 # hodnotu kontroluji, aby se veze po zmene rozvrzeni nezacaly prekryvat.
 func min_cross_lane_slot_distance() -> float:

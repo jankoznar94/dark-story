@@ -14,6 +14,8 @@ func _init() -> void:
 	_test_opposite_lane_kills()
 	_test_build_rule()
 	_test_switch_routes_enemy()
+	_test_lane_tap_switches()
+	_test_spawn_gap_is_swattable()
 	_test_pile_up_loses()
 	_test_economy()
 	_test_wave_flow()
@@ -215,6 +217,43 @@ func _test_switch_routes_enemy() -> void:
 	g.run_for(6.0)
 	_ok(e.on_lane(), "po projetí vyhybkou je na koleji")
 	_ok(e.lane == 3, "a to na te, ktera byla nastavena PRED vjezdem (lane=%d)" % e.lane)
+
+
+# Klepnuti na kolej je jediny zpusob prepnuti vyhybky. Testuje se CELA
+# matice: pro kazdou kolej se klepne na jeji trasu a vyhybka se musi
+# preklopit PRAVE na ni. Jinak by stacilo, aby se trefovala jen jedna.
+func _test_lane_tap_switches() -> void:
+	for lane in range(Network.LANES):
+		var g := _fresh()
+		g.auto_wave = false
+		# klepni doprostred rovneho useku te kolejе, ne na svatyne ani na
+		# vyhybku - presne tam hrac miri prstem.
+		var p: Vector2 = g.net.point_at(lane, g.net.lane_len[lane] * 0.55)
+		var hit: int = g.net.lane_tap_at(p, 14.0)
+		_ok(hit == lane, "klepnuti na kolej %d ji vybere (hit=%d)" % [lane, hit])
+		g.set_switch(hit)
+		_ok(g.switch_lane() == lane, "a vyhybka je na koleji %d" % lane)
+	# klepnuti mimo vsechny koleje nic nevybere - jinak by se vyhybka
+	# prela nahodne pri klepnuti do prazdneho mista
+	var g2 := _fresh()
+	g2.auto_wave = false
+	var far: Vector2 = Vector2(g2.net.area.end.x - 4.0, g2.net.area.end.y - 4.0)
+	_ok(g2.net.lane_tap_at(far, 4.0) == -1, "klepnuti do prazdna nevybere kolej")
+
+
+# ROZESTUP POUTNIKU. Hrac prepina vyhybku PRO KAZDEHO poutnika zvlast, takze
+# mezi dvema poutniky se musi vejit aspon dve klepnuti. Kdyz je mezera
+# kratsi nez cas na dve klepnuti, hra je nehratelna bez ohledu na to, jak
+# dobre vypada - presne to se stalo pri rozestupu 0.62 s.
+func _test_spawn_gap_is_swattable() -> void:
+	var gap: float = Game.SPAWN_INTERVAL
+	var room: float = Game.ENEMY_SPEED * gap
+	# Dve klepnuti, kazde asi 0.2 s i s rozhodnutim: 52 px/s * 0.4 s.
+	var need: float = 40.0
+	_ok(room > need,
+		"mezera mezi poutniky staci na dve klepnuti (%.0f px, potreba %.0f)" % [room, need])
+	# a nesmi to byt prehnane - jinak by se jich na kolejich hromadilo malo
+	_ok(room < 140.0, "a rozestup neni prehnane velky (%.0f px)" % room)
 
 
 # --------------------------------------------------------------- 6 hromadeni

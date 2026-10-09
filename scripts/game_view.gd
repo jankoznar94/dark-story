@@ -132,19 +132,20 @@ func _handle_tap(pos: Vector2) -> void:
 	if layout.skip_rect.has_point(pos):
 		game.run_for(6.0)
 		return
-	for i in range(Element.COUNT):
-		if layout.switch_button(i).has_point(pos):
-			game.set_switch(i)
-			return
+	# Misto na vez ma prednost: klepnuti na nej stavi, pripadne vylepsuje.
+	# Klepnuti kamkoli JINAM na kolej prepne vyhybku na tuhle kolej. Zadna
+	# tlacitka vyhybky nejsou - casem jich bude vic, nez se jich do pruhu
+	# vejde, a cesta je to, na co se stejne kouka.
 	var cell: Vector2i = game.net.nearest_slot(pos)
 	if cell.x >= 0:
-		# Kliknuti na vez ji vylepsi. Na prazdne misto se stavi VZDY zivel
-		# te koleje - jiny tam postavit nelze, pravidlo je v jadre hry.
 		if game.tower_at(cell.x, cell.y) != null:
 			game.try_upgrade(cell.x, cell.y)
 			return
 		game.try_build(cell.x, cell.y, game.build_element(cell.x))
 		return
+	var lane: int = game.net.lane_tap_at(pos, maxf(12.0, 20.0 * layout.s))
+	if lane >= 0:
+		game.set_switch(lane)
 
 
 func _say(text: String) -> void:
@@ -181,17 +182,34 @@ func _draw_background() -> void:
 
 func _draw_lanes() -> void:
 	var lw: float = maxf(2.0, 9.0 * layout.s)
+	var sel: int = game.switch_lane()
 	for lane in range(Network.LANES):
 		var col: Color = Element.color_of(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
+		# VYBRANA KOLEJ JE SVETLEJSI, ALE PORAD SVOJI BARVY. Hrac tak vidi,
+		# kam poutniky posle, aniž by musel hadat, ktery zivel to je -
+		# barva ani runa se ne meni, meni se jen jas.
 		var faint := col
-		faint.a = 0.28
+		faint.a = 0.28 if lane != sel else 0.42
+		var bright := col
+		bright.a = 0.60 if lane != sel else 0.95
+		var core: float = maxf(1.0, 3.0 * layout.s) if lane != sel else maxf(1.0, 4.5 * layout.s)
+		if lane == sel:
+			var halo := col
+			halo.a = 0.16
+			for k in range(path.size() - 1):
+				draw_line(path[k], path[k + 1], halo, lw * 1.9)
 		for k in range(path.size() - 1):
 			draw_line(path[k], path[k + 1], faint, lw)
-		var bright := col
-		bright.a = 0.60
 		for k in range(path.size() - 1):
-			draw_line(path[k], path[k + 1], bright, maxf(1.0, 3.0 * layout.s))
+			draw_line(path[k], path[k + 1], bright, core)
+		if lane == sel:
+			# Vnejsi lem vybrane kolejnice - druha znacka krome jasu,
+			# aby "vybrano" fungovalo i bez rozliseni barevnych odstinu.
+			var rim := col
+			rim.a = 0.85
+			for k in range(path.size() - 1):
+				draw_line(path[k], path[k + 1], rim, maxf(1.0, 1.6 * layout.s))
 
 
 func _draw_trunk() -> void:
@@ -239,8 +257,8 @@ func _draw_switch() -> void:
 	draw_circle(game.net.merge, 15.0 * layout.s, Color(0.10, 0.095, 0.085))
 	draw_arc(game.net.merge, 15.0 * layout.s, 0.0, TAU, 28, col, 3.0)
 	draw_circle(game.net.hub, 9.0 * layout.s, col)
-	_label(Vector2(game.net.merge.x - 60.0 * layout.s, game.net.merge.y - 30.0 * layout.s),
-		"výhybka", 13, Color(0.62, 0.59, 0.53))
+	_label(Vector2(game.net.merge.x - 92.0 * layout.s, game.net.merge.y - 30.0 * layout.s),
+		"výhybka — klepni na kolej", 13, Color(0.62, 0.59, 0.53))
 
 
 func _draw_shrines() -> void:
@@ -315,30 +333,7 @@ func _draw_control_bar() -> void:
 	draw_rect(Rect2(0.0, layout.bar_y, layout.view.x, layout.bar_h), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, layout.bar_y), Vector2(layout.view.x, layout.bar_y),
 		Color(0.28, 0.25, 0.21), 2.0)
-	_label(Vector2(layout.switch_x, layout.bar_y + 20.0 * layout.s),
-		"VÝHYBKA — kam posílá poutníky", 13, Color(0.52, 0.49, 0.44))
-
-	# Ctyri tlacitka vyhybky. Vez stavi vzdy zivel te koleje, na kterou
-	# hrac klepne - zadny vyber druhu tu neni, protoze by nemel co delat.
-	for i in range(Element.COUNT):
-		var r: Rect2 = layout.switch_button(i)
-		var c: Color = Element.color_of(i)
-		var on: bool = i == game.switch_lane()
-		draw_rect(r, Color(c.r, c.g, c.b, 0.30) if on else Color(0.135, 0.125, 0.11))
-		draw_rect(r, c if on else Color(c.r, c.g, c.b, 0.40), false, 3.0 if on else 2.0)
-		var ay: float = r.position.y + r.size.y * 0.34
-		draw_line(Vector2(r.position.x + r.size.x * 0.20, ay),
-			Vector2(r.position.x + r.size.x * 0.52, ay), c, 3.0)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(r.position.x + r.size.x * 0.52, ay - 6.0 * layout.s),
-			Vector2(r.position.x + r.size.x * 0.66, ay),
-			Vector2(r.position.x + r.size.x * 0.52, ay + 6.0 * layout.s)]), c)
-		_draw_centered(Element.name_of(i), r, r.position.y + r.size.y * 0.84, 12,
-			Color(0.90, 0.87, 0.80) if on else Color(0.68, 0.65, 0.59))
-		# Na vybrane kole je videt runa stavene veze - protoze je to ta sama.
-		if on:
-			_glyph(i, Vector2(r.get_center().x, r.position.y + r.size.y * 0.18),
-				6.0 * layout.s, c)
+	_draw_legend()
 
 	draw_rect(layout.skip_rect, Color(0.20, 0.19, 0.17))
 	draw_rect(layout.skip_rect, Color(0.38, 0.35, 0.30), false, 2.0)
@@ -346,6 +341,35 @@ func _draw_control_bar() -> void:
 		layout.skip_rect.position.y + layout.skip_rect.size.y * 0.44, 18, Color(0.85, 0.82, 0.76))
 	_draw_centered("6 s", layout.skip_rect,
 		layout.skip_rect.position.y + layout.skip_rect.size.y * 0.80, 13, Color(0.58, 0.55, 0.49))
+
+
+# NAVOD. Pruh po zruseni tlacitek vyhybky ukazuje cely cas, ktery poutnik
+# ma kam jit: u kazdeho zivlu je jeho runa, sipka a kolej, ktera ho zabije
+# (tedy kolej jeho protikladu). Hrac tak nemusi nic zkouset - presne vi,
+# kam koho poslat. Runa je u toho proto, ze barva nesmi byt jediny nosic.
+func _draw_legend() -> void:
+	var r: Rect2 = layout.legend
+	var y: float = r.position.y + r.size.y * 0.5
+	var col_w: float = r.size.x / float(Element.COUNT)
+	var run_r: float = minf(9.0 * layout.s, col_w * 0.11)
+	for e in range(Element.COUNT):
+		var x0: float = r.position.x + col_w * float(e)
+		var col: Color = Element.color_of(e)
+		var opp: int = Element.opposite_of(e)
+		var ocol: Color = Element.color_of(opp)
+		var cy: float = y - layout.ui * 5.0
+		var cx: float = x0 + col_w * 0.5 - run_r * 3.4
+		_glyph(e, Vector2(cx, cy), run_r, col)
+		var ax0: float = cx + run_r * 1.7
+		var ax1: float = ax0 + run_r * 2.4
+		draw_line(Vector2(ax0, cy), Vector2(ax1, cy), Color(0.55, 0.52, 0.46), 2.0)
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(ax1 + 5.0, cy), Vector2(ax1, cy - 4.5), Vector2(ax1, cy + 4.5)]),
+			Color(0.55, 0.52, 0.46))
+		_glyph(opp, Vector2(ax1 + 5.0 + run_r * 0.9, cy), run_r, ocol)
+		_label(Vector2(x0 + col_w * 0.5, y + layout.ui * 15.0),
+			"%s → %s" % [Element.name_of(e), Element.name_of(opp)], 15,
+			Color(0.80, 0.77, 0.70), true, col_w)
 
 
 func _draw_centered(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:
