@@ -84,13 +84,18 @@ jobs:
       - name: Fix PWA manifest (Android)
         run: python3 tools/fix_pwa_manifest.py build/web
 
+      # Otisk buildu do hry. Bez nej hrac nepozna, jestli ma po aktualizaci
+      # opravdu novou verzi, nebo mu ji drzi cache service workera.
+      - name: Build stamp
+        run: printf '%s' "${GITHUB_SHA:0:7}" > build/web/version.txt
+
       - name: Assert the expected artifacts exist
         run: |
           set -e
           MISSING=0
           for f in build/web/index.html build/web/index.wasm build/web/index.pck \
                    build/web/index.manifest.json build/web/index.service.worker.js \
-                   build/web/index.192x192.png build/windows/zily.exe; do
+                   build/web/index.192x192.png build/web/version.txt build/windows/zily.exe; do
             if [ -f "$f" ]; then echo "OK   $(du -h "$f" | cut -f1)  $f";
             else echo "MISS ---  $f"; MISSING=1; fi
           done

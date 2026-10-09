@@ -40,6 +40,9 @@ func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	game = Game.new()
 	menu.web = OS.has_feature("web")
+	if menu.web:
+		_install_js_bridge()
+		menu.load_build_id()
 	settings.load_from_disk()
 	_setup_audio()
 	_place_to_window()
@@ -56,6 +59,28 @@ func _ready() -> void:
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
+
+
+# Most z JavaScriptu zpet do hry. JavaScriptBridge.eval vrati u Promise
+# null, ne vysledek, takze vysledky (otisk buildu, stav aktualizace) musi
+# poslat JS sam pres tyhle dve funkce.
+func _install_js_bridge() -> void:
+	JavaScriptBridge.create_callback(_js_set_version)
+	JavaScriptBridge.create_callback(_js_on_update)
+
+
+func _js_set_version(args: Array) -> void:
+	if args.size() < 1:
+		return
+	var s: String = str(args[0])
+	if not s.is_empty():
+		menu.build_id = s
+
+
+func _js_on_update(args: Array) -> void:
+	if args.size() < 1:
+		return
+	menu.apply_update_note(str(args[0]))
 
 
 func _place_to_window() -> void:
@@ -355,6 +380,12 @@ func _draw_menu() -> void:
 	if not menu.update_note.is_empty():
 		_label(Vector2(cx, layout.menu_buttons[2].end.y + 30.0 * layout.ui), menu.update_note, 13,
 			Color(0.72, 0.70, 0.62), true, layout.view.x * 0.9)
+
+	# Otisk buildu. Bez nej se neda poznat, jestli hra po aktualizaci opravdu
+	# bezi z nove verze, nebo ji jeste drzi cache service workera - presne to
+	# hrace mate. Je to mala informace v rohu, ne ovladaci prvek.
+	_label(Vector2(cx, layout.view.y - 10.0 * layout.ui),
+		"build %s" % menu.build_id, 11, Color(0.42, 0.40, 0.36), true, layout.view.x)
 
 
 func _draw_settings() -> void:

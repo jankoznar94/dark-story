@@ -21,9 +21,38 @@ const SUBTITLE := "elementární poutníci na žilách many"
 
 # Prepisuje se v _ready() podle toho, jestli hra bezi ve webovem exportu.
 var web: bool = false
+# Otisk buildu, ktery se zobrazuje v menu. Bez nej se neda poznat, jestli
+# hrac po aktualizaci vidi novou verzi, nebo mu ji jeste drzi cache.
+var build_id: String = "?"
 # Vysledek posledni aktualizace - kresli se jako hlaska pod tlacitky.
 var update_note: String = ""
 var view: int = View.MENU
+
+
+# Nacte otisk buildu (version.txt vedle index.html). Zapisuje se do
+# projektoveho nastaveni - to je jedine misto, na ktere se z GDScriptu
+# dostanu i z JavaScriptoveho callbacku (promenna v Menu by v nem byla
+# jina instance).
+func load_build_id() -> void:
+	build_id = "dev"
+	if not web:
+		return
+	var jb: Object = Engine.get_singleton("JavaScriptBridge")
+	if jb == null:
+		return
+	var js := """
+	(async () => {
+	  try {
+	    const r = await fetch('version.txt', {cache: 'no-store'});
+	    const t = r.ok ? (await r.text()).trim() : '?';
+	    if (window.godotBridge && window.godotBridge.setVersion) {
+	      window.godotBridge.setVersion(t.slice(0, 12) || '?');
+	    }
+	    return t;
+	  } catch (e) { return '?'; }
+	})()
+	"""
+	jb.call("eval", js, false)
 
 
 func open_battle() -> void:
@@ -50,10 +79,10 @@ func is_menu() -> bool:
 	return view == View.MENU
 
 
-# Vyzada aktualizaci PWA: service worker zkontroluje novou verzi a stahne
-# ji, pak se stranka sama reloaduje. Pres JavaScriptBridge se saha jen na
-# webu - a to dynamicky pres Engine.get_singleton, aby se desktopovy
-# export vubec nesnazil resolvnout tridu, kterou nema.
+# Vyzada aktualizaci PWA. Nejdriv zkusi normalni cestu (nova verze uz ceka
+# ve service workeru), a kdyz nic neceka, registraci ODREGISTRUJE a znovu
+# zaregistruje - tim se stahne vse znovu ze site. Bez toho zustane hraci
+# stara verze, dokud nezavre vsechny panely, coz u PWA nejde.
 func request_update() -> void:
 	update_note = ""
 	if not web:
@@ -70,19 +99,40 @@ func request_update() -> void:
 	    const regs = await navigator.serviceWorker.getRegistrations();
 	    if (regs.length === 0) { return 'none'; }
 	    for (const r of regs) { await r.update(); }
-	    setTimeout(() => { location.reload(); }, 1400);
-	    return 'ok';
-	  } catch (e) { return 'err:' + e; }
+	    // Pres cache zadna sila - registrace se zrusi a znovu zalozi,
+	    // takze se vse stahne znovu ze site. Je to hrubsi, ale funguje
+	    // i tomu, kdo ma hru otevrenou jako nainstalovanou aplikaci,
+	    // kde zavreni vsech panelu neni mozne.
+	    for (const r of regs) { await r.unregister(); }
+	    await navigator.serviceWorker.register('index.service.worker.js', {scope: './'});
+	    const cc = await caches.keys();
+	    for (const k of cc) { await caches.delete(k); }
+	    if (window.godotBridge && window.godotBridge.onUpdate) {
+	      window.godotBridge.onUpdate('hard');
+	    }
+	    setTimeout(() => location.reload(), 900);
+	    return 'hard';
+	  } catch (e) {
+	    if (window.godotBridge && window.godotBridge.onUpdate) {
+	      window.godotBridge.onUpdate('err:' + e);
+	    }
+	    return 'err:' + e;
+	  }
 	})()
 	"""
-	var res: Variant = jb.call("eval", js, true)
-	var s: String = "?" if res == null else str(res)
-	match s:
-		"ok":
-			update_note = "Kontroluji novou verzi — stránka se restartuje…"
+	jb.call("eval", js, false)
+
+
+# Vysledek se zpet do GDScriptu vraci pres callback (JavaScriptBridge.eval
+# u Promise vrati null, ne hodnotu). Hlaska se tak ukaze jeste pred
+# restartem stranky.
+func apply_update_note(code: String) -> void:
+	match code:
+		"hard":
+			update_note = "Cache smazána — restartuji…"
 		"none":
 			update_note = "Hra neběží jako PWA — není co aktualizovat."
 		"n/a":
 			update_note = "Prohlížeč neumí aktualizaci na pozadí."
 		_:
-			update_note = "Aktualizace se nepodařila: " + s
+			update_note = "Aktualizace se nepodařila: " + code
