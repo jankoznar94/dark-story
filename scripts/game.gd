@@ -3,6 +3,19 @@ extends RefCounted
 
 # CELA herni logika. Zadne kresleni, zadne nody, zadny Input.
 # Diky tomu se da hra testovat headless a simulovat zrychlene.
+#
+# POSKOZENI DELA CELEK USEKU, ne vez. Usek je dmg zona: cim dele poutnik
+# po elementarnim useku jde, tim vic ran dostane. Bonusy na useku
+# posiluji CELOU dmg zonu, ale samy neutoci.
+#
+# DVE VEZE VYPOCTU, na kterych stoji cela hra:
+#   * neutralni usek poskozuje vsechny presne 100 % - spolehlivy zaklad,
+#   * elementarni usek da vlastnimu zivlu 0 %, jeho protikladu 200 %
+#     a zbylym dvema 50 %. Poslat poutnika na jeho vlastni usek je tedy
+#     ZTRATA - projde bez skrabnuti.
+# Hrac prepina vyhybku pro kazdeho poutnika zvlast a jeho jedina investice
+# je bonus do useku. Investice ma cenu jen tehdy, kdyz na usek dokaze
+# poutniky poslat - to je cele napeti hry.
 
 const START_GOLD := 260
 const START_LIVES := 12
@@ -11,15 +24,24 @@ const HP_GROWTH := 0.10
 const ENEMY_SPEED := 52.0
 const REWARD := 12
 # Rozestup poutniku. Hrac musi stihnout prepnout vyhybku PRO KAZDEHO
-# zvlast, takze dvě vyhybky (dva stisky) se musi vejit do mezery mezi
-# dvema poutniky. Pri 0.62 s to neslo - druhy uz byl na vyhybce, nez
-# hrac doklikal prvni. Test to hlida pres ENEMY_SPEED * SPAWN_INTERVAL.
+# zvlast, takze dve klepnuti se musi vejit do mezery mezi dvema poutniky.
+# Test to hlida pres ENEMY_SPEED * SPAWN_INTERVAL.
 const SPAWN_INTERVAL := 1.05
 const BUILD_TIME := 6.0
 const WAVE_BONUS := 40
+# Poskozeni, ktere da usek poutnikovi za CELE PROJETI sve delky pri
+# jednotkovem nasobku. NENI to poskozeni za sekundu - to by záviselo na
+# tom, jak je displej velky (na malem telefonu je usek kratsi v pixelech,
+# takze by poutnik dostal min ran a hra by se rozbila podle zarizeni).
+# Takto je "usek da X" vlastnost useku, ne obrazovky ani rychlosti.
+#
+# Cisla: neutralni usek 30 (43 % z 70 HP), elementarni na protiklad 60
+# (poutnika ZRANI, ale nezabije - k zabiti je potreba investice), s jedním
+# bonusem x3 = 180 (zabije). Presne to je jadro hry.
+const ZONE_DMG := 30.0
 
 var net: Network = Network.new()
-var towers: Array = []
+var bonuses: Array = []
 var enemies: Array = []
 var gold: int = START_GOLD
 var lives: int = START_LIVES
@@ -36,7 +58,7 @@ var auto_wave: bool = true
 
 func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9) -> void:
 	rebuild_network(r, scale_hint, bar_top)
-	towers = []
+	bonuses = []
 	enemies = []
 	gold = START_GOLD
 	lives = START_LIVES
@@ -63,57 +85,90 @@ func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) 
 	net.build(r, sc, bt)
 
 
-# ---------------------------------------------------------------- ekonomika
+# ---------------------------------------------------------------- bonusy
 
-func tower_at(lane: int, slot: int) -> Tower:
-	for t in towers:
-		var tw: Tower = t
-		if tw.lane == lane and tw.slot == slot:
-			return tw
+func bonus_at(lane: int, slot: int) -> Bonus:
+	for b in bonuses:
+		var bo: Bonus = b
+		if bo.lane == lane and bo.slot == slot:
+			return bo
 	return null
 
 
 func try_build(lane: int, slot: int, element: int) -> bool:
 	if lane < 0 or lane >= Network.LANES:
-		_note("Neplatná kolej.")
+		_note("Neplatný úsek.")
 		return false
-	if tower_at(lane, slot) != null:
-		_note("Kolej už má věž.")
+	if bonus_at(lane, slot) != null:
+		_note("Na tom místě už něco stojí.")
 		return false
-	# VEZ PATRI JEN NA KOLEJ SVÉHO ZIVLU. Toto je jedine pravidlo staveni
-	# a je vynucene tady - volat ji s jinym zivlem nesmi projit.
+	# BONUS PATRI JEN NA USEK SVÉHO ZIVLU. Na neutralni usek nesmi nic -
+	# nema co posilovat, uz poskozuje vsechny stejne. Pravidlo je tady,
+	# volat ji s necim jinym nesmi projit.
 	if not Network.lane_accepts(lane, element):
-		_note("Na kolej %s patří jen věže %s." % [
-			Element.name_of(Network.lane_element(lane)), Element.name_of(Network.lane_element(lane))])
+		if Network.lane_is_neutral(lane):
+			_note("Neutrální úsek nemá element — nedá se na něm stavět.")
+		else:
+			_note("Na úsek %s patří jen bonus %s." % [
+				Element.name_of(Network.lane_element(lane)),
+				Element.name_of(Network.lane_element(lane))])
 		return false
-	if gold < Tower.COST:
-		_note("Málo zlata na věž (%d)." % Tower.COST)
+	if gold < Bonus.COST:
+		_note("Málo zlata na bonus (%d)." % Bonus.COST)
 		return false
-	gold -= Tower.COST
-	var t := Tower.new()
-	t.lane = lane
-	t.slot = slot
-	t.element = element
-	towers.append(t)
-	_note("Věž %s postavena." % Element.name_of(element))
+	gold -= Bonus.COST
+	var b := Bonus.new()
+	b.lane = lane
+	b.slot = slot
+	b.element = element
+	bonuses.append(b)
+	_note("Bonus %s postaven — posiluje celý úsek." % Element.name_of(element))
 	return true
 
 
 func try_upgrade(lane: int, slot: int) -> bool:
-	var t := tower_at(lane, slot)
-	if t == null:
+	var b := bonus_at(lane, slot)
+	if b == null:
 		_note("Prazdne misto.")
 		return false
-	if not t.can_upgrade():
-		_note("Vez je na maximu.")
+	if not b.can_upgrade():
+		_note("Bonus je na maximu.")
 		return false
-	if gold < Tower.UPGRADE_COST:
-		_note("Malo zlata na vylepseni (%d)." % Tower.UPGRADE_COST)
+	if gold < Bonus.UPGRADE_COST:
+		_note("Malo zlata na vylepseni (%d)." % Bonus.UPGRADE_COST)
 		return false
-	gold -= Tower.UPGRADE_COST
-	t.level += 1
-	_note("Vez vylepsena na uroven %d." % t.level)
+	gold -= Bonus.UPGRADE_COST
+	b.level += 1
+	_note("Bonus vylepsen na uroven %d." % b.level)
 	return true
+
+
+# Jak silna je dmg zona na tomhle useku. Nasobi se VSEMI bonusy, ktere
+# na nem stoji - bonus posiluje CELOU dmg zonu, ne jen sve misto.
+func lane_mult(lane: int) -> float:
+	var m := 1.0
+	for item in bonuses:
+		var bo: Bonus = item
+		if bo.lane == lane:
+			m *= bo.mult()
+	return m
+
+
+# Kolik poskozeni tenhle poutnik dostane ZA SEKUNDU na svem useku.
+# Prepocitava se z ZONE_DMG pres dobu projeti useku, takze CELE PROJETI
+# da vzdy stejne poskozeni bez ohledu na velikost displeje.
+func dps_on(e: Enemy) -> float:
+	if not e.on_lane():
+		return 0.0
+	var lane: int = e.lane
+	var len_px: float = float(net.lane_len[lane])
+	if len_px <= 0.001 or e.speed <= 0.0:
+		return 0.0
+	var traverse: float = len_px / e.speed
+	var neutral: bool = Network.lane_is_neutral(lane)
+	var total: float = ZONE_DMG * lane_mult(lane) * Element.lane_multiplier(
+		e.element, Network.lane_element(lane), neutral)
+	return total / traverse
 
 
 # ---------------------------------------------------------------- vyhybka
@@ -122,14 +177,17 @@ func set_switch(lane: int) -> void:
 	if lane < 0 or lane >= Network.LANES:
 		return
 	net.switch_lane = lane
-	_note("Výhybka nastavena na %s." % Element.name_of(Network.lane_element(lane)))
+	if Network.lane_is_neutral(lane):
+		_note("Výhybka nastavena na neutrální úsek.")
+	else:
+		_note("Výhybka nastavena na %s." % Element.name_of(Network.lane_element(lane)))
 
 
 func switch_lane() -> int:
 	return net.switch_lane
 
 
-# Ktery zivel se na te kolej stavi. NENI to volba hrace: kolej nese svuj
+# Ktery zivel se na ten usek stavi. NENI to volba hrace: usek nese svuj
 # zivel a jen ten tam muze stat. UI to jen cte.
 func build_element(lane: int) -> int:
 	return Network.lane_element(lane)
@@ -220,7 +278,12 @@ func _move_enemies(delta: float) -> void:
 				e.leaked = true
 				e.alive = false
 				lives -= 1
-				_note("Poutnik %s dosel do svatyne (-1 zivot)." % Element.name_of(e.element))
+				if Network.lane_is_neutral(e.lane):
+					_note("Poutnik %s došel na neutrální výstup (-1 život)." %
+						Element.name_of(e.element))
+				else:
+					_note("Poutnik %s došel na konec úseku (-1 život)." %
+						Element.name_of(e.element))
 				continue
 		still.append(e)
 	enemies = still
@@ -233,12 +296,9 @@ func _apply_damage(delta: float) -> void:
 		if not e.alive:
 			continue
 		if e.on_lane():
-			var dps := 0.0
-			for item2 in towers:
-				var t: Tower = item2
-				if t.lane != e.lane:
-					continue
-				dps += t.dps() * Element.multiplier(e.element, t.element)
+			# DMG ZONA CELEHO USEKU. Neutralni usek dava vzdy 100 %,
+			# elementarni 0 / 50 / 200 podle toho, kdo po nem jde.
+			var dps: float = dps_on(e)
 			e.hp -= dps * delta
 			if e.hp <= 0.0:
 				e.alive = false
@@ -256,9 +316,9 @@ func _apply_damage(delta: float) -> void:
 
 func lanes_used() -> Array:
 	var seen := {}
-	for item in towers:
-		var t: Tower = item
-		seen[t.lane] = true
+	for item in bonuses:
+		var b: Bonus = item
+		seen[b.lane] = true
 	return seen.keys()
 
 
