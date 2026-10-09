@@ -95,6 +95,10 @@ func _test_board_has_no_furniture() -> void:
 	# Pruh ani SKIP uz nesmi existovat NIKDE.
 	_ok(not src.contains("skip_rect"), "SKIP je pryc z herni sceny")
 	_ok(not src.contains("_draw_control_bar"), "ovladaci pruh je pryc")
+	# KMEN SE MUSI KRESLIT. Kdyz se z vykreslovaci cesty vytratil, hrac vidi,
+	# jak poutnici jdou do vyhybky odnikud - a v nabidce buildu to nikdo
+	# nepozna. Presne to se stalo a nasel to az Jan na telefonu.
+	_ok(src.contains("_draw_trunk()"), "kmen se kresli na herni desce")
 	for p in ["res://scripts/game_view.gd", "res://scripts/screen_layout.gd",
 			"res://scripts/network.gd"]:
 		var s: String = _read(p)
@@ -171,11 +175,12 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	var txt_w: float = guide_w / float(cols) - art_w - float(fs) * 1.6
 	_ok(txt_w >= float(fs) * 4.0, "%s: vedle obrazku nezustava misto na text (%.0f px)" % [name, txt_w])
 
-	# --- tlacitka ZPET ---
-	for k in range(3):
+	# --- tlacitka ZPET, MENU, EDITOR ---
+	for k in range(4):
 		var mb: Array = lay.all_menu_buttons() if k == 0 else (
-			lay.all_settings_buttons() if k == 1 else [lay.guide_back])
-		var tag: String = ["menu", "nastaveni", "navod"][k]
+			lay.all_settings_buttons() if k == 1 else (
+			lay.all_editor_buttons() if k == 2 else [lay.guide_back]))
+		var tag: String = ["menu", "nastaveni", "editor", "navod"][k]
 		for i in range(mb.size()):
 			var r: Rect2 = mb[i]
 			_ok(r.position.x >= -0.5 and r.position.y >= -0.5,
@@ -188,7 +193,7 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 				var r2: Rect2 = mb[j]
 				_ok(not r.intersects(r2),
 					"%s: %s prvky %d a %d se prekryvaji" % [name, tag, i, j])
-		if k == 0:
+		if k == 0 or k == 2:
 			for r in mb:
 				var rr: Rect2 = r
 				min_touch = minf(min_touch, minf(rr.size.x, rr.size.y))
@@ -204,7 +209,7 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 		"%s: hra je na sirku, plocha je sirsi nez vyssi (%.0fx%.0f)" % [name,
 			lay.arena.size.x, lay.arena.size.y])
 
-	for lane in range(Network.LANES):
+	for lane in range(g.net.lane_count()):
 		for slot in range(g.net.slot_count()):
 			var p: Vector2 = g.net.slot_world(lane, slot)
 			_ok(lay.arena.grow(g.net.bonus_r).has_point(p),
@@ -230,20 +235,20 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 
 	# --- a hra na tom rozliseni musi porad fungovat ---
 	# Klepnuti na usek je jedina interakce, kterou hrac prepina vyhybku.
-	for lane in range(Network.LANES):
+	for lane in range(g.net.lane_count()):
 		var tap: Vector2 = g.net.point_at(lane, g.net.lane_len[lane] * 0.7)
 		var hit: int = g.net.lane_tap_at(tap, maxf(10.0, 16.0 * lay.s))
 		_ok(hit == lane, "%s: klepnuti na usek %d ho vybere (hit=%d)" % [name, lane, hit])
 	# Kazdy zivel umre na sve protikladne useku, kdyz je usek vystrojen.
 	var target_el: int = Element.opposite_of(Element.FIRE)
 	var kill_lane: int = -1
-	for lane in range(Network.LANES):
-		if Network.lane_element(lane) == target_el:
+	for lane in range(g.net.lane_count()):
+		if g.net.lane_element(lane) == target_el:
 			kill_lane = lane
 	_ok(kill_lane >= 0, "%s: usek pro %s existuje" % [name, Element.name_of(target_el)])
 	g.auto_wave = false
 	g.gold = 999
-	g.try_build(kill_lane, 0, Network.lane_element(kill_lane))
+	g.try_build(kill_lane, 0, g.net.lane_element(kill_lane))
 	g.set_switch(kill_lane)
 	var e: Enemy = g.debug_spawn(Element.FIRE)
 	var lives0: int = g.lives

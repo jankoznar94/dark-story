@@ -26,7 +26,10 @@ const REWARD := 12
 # Rozestup poutniku. Hrac musi stihnout prepnout vyhybku PRO KAZDEHO
 # zvlast, takze dve klepnuti se musi vejit do mezery mezi dvema poutniky.
 # Test to hlida pres ENEMY_SPEED * SPAWN_INTERVAL.
-const SPAWN_INTERVAL := 1.05
+#
+# Cisla jsou ZAKLADNI DESKA; konkretni level si je muze prepsat pres
+# Level.speed / Level.spawn. Hra je nikdy necte odsud - jen z levelu.
+const SPAWN_INTERVAL := 1.35
 const BUILD_TIME := 6.0
 const WAVE_BONUS := 40
 # Poskozeni, ktere da usek poutnikovi za CELE PROJETI sve delky pri
@@ -40,6 +43,7 @@ const WAVE_BONUS := 40
 # bonusem x3 = 180 (zabije). Presne to je jadro hry.
 const ZONE_DMG := 30.0
 
+var level: Level = null
 var net: Network = Network.new()
 var bonuses: Array = []
 var enemies: Array = []
@@ -56,18 +60,27 @@ var log: Array = []
 var auto_wave: bool = true
 
 
-func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9) -> void:
+func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
+		level_data: Level = null) -> void:
+	level = level_data if level_data != null else Level.base()
 	rebuild_network(r, scale_hint, bar_top)
 	bonuses = []
 	enemies = []
-	gold = START_GOLD
-	lives = START_LIVES
+	gold = level.gold
+	lives = level.lives
 	wave = 0
 	phase = "build"
 	build_timer = BUILD_TIME
 	spawn_left = 0
 	spawn_timer = 0.0
 	log = []
+
+
+# Vymena levelu za behu - pouziva ji editor, ktery si hru nechava postavenou
+# a jen do ni posila upravenou desku.
+func set_level(level_data: Level, r: Rect2, scale_hint: float = -1.0,
+		bar_top: float = -1.0) -> void:
+	setup(r, scale_hint, bar_top, level_data)
 
 
 # Prestaveni site pri zmene velikosti okna. Stav hry zustava - meni se
@@ -81,8 +94,9 @@ func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) 
 	var bt: float = bar_top
 	if bt < 0.0:
 		bt = net.bar_top
+	var lv: Level = level if level != null else Level.base()
 	net = Network.new()
-	net.build(r, sc, bt)
+	net.build(r, sc, bt, lv)
 
 
 # ---------------------------------------------------------------- bonusy
@@ -96,8 +110,11 @@ func bonus_at(lane: int, slot: int) -> Bonus:
 
 
 func try_build(lane: int, slot: int, element: int) -> bool:
-	if lane < 0 or lane >= Network.LANES:
+	if lane < 0 or lane >= net.lane_count():
 		_note("Neplatný úsek.")
+		return false
+	if slot < 0 or slot >= net.slot_count():
+		_note("Neplatné místo.")
 		return false
 	if bonus_at(lane, slot) != null:
 		_note("Na tom místě už něco stojí.")
@@ -105,13 +122,13 @@ func try_build(lane: int, slot: int, element: int) -> bool:
 	# BONUS PATRI JEN NA USEK SVÉHO ZIVLU. Na neutralni usek nesmi nic -
 	# nema co posilovat, uz poskozuje vsechny stejne. Pravidlo je tady,
 	# volat ji s necim jinym nesmi projit.
-	if not Network.lane_accepts(lane, element):
-		if Network.lane_is_neutral(lane):
+	if not net.lane_accepts(lane, element):
+		if net.lane_is_neutral(lane):
 			_note("Neutrální úsek nemá element — nedá se na něm stavět.")
 		else:
 			_note("Na úsek %s patří jen bonus %s." % [
-				Element.name_of(Network.lane_element(lane)),
-				Element.name_of(Network.lane_element(lane))])
+				Element.name_of(net.lane_element(lane)),
+				Element.name_of(net.lane_element(lane))])
 		return false
 	if gold < Bonus.COST:
 		_note("Málo zlata na bonus (%d)." % Bonus.COST)
@@ -165,22 +182,23 @@ func dps_on(e: Enemy) -> float:
 	if len_px <= 0.001 or e.speed <= 0.0:
 		return 0.0
 	var traverse: float = len_px / e.speed
-	var neutral: bool = Network.lane_is_neutral(lane)
-	var total: float = ZONE_DMG * lane_mult(lane) * Element.lane_multiplier(
-		e.element, Network.lane_element(lane), neutral)
+	var neutral: bool = net.lane_is_neutral(lane)
+	var dmg: float = level.zone_dmg if level != null else ZONE_DMG
+	var total: float = dmg * lane_mult(lane) * Element.lane_multiplier(
+		e.element, net.lane_element(lane), neutral)
 	return total / traverse
 
 
 # ---------------------------------------------------------------- vyhybka
 
 func set_switch(lane: int) -> void:
-	if lane < 0 or lane >= Network.LANES:
+	if lane < 0 or lane >= net.lane_count():
 		return
 	net.switch_lane = lane
-	if Network.lane_is_neutral(lane):
+	if net.lane_is_neutral(lane):
 		_note("Výhybka nastavena na neutrální úsek.")
 	else:
-		_note("Výhybka nastavena na %s." % Element.name_of(Network.lane_element(lane)))
+		_note("Výhybka nastavena na %s." % Element.name_of(net.lane_element(lane)))
 
 
 func switch_lane() -> int:
@@ -190,7 +208,7 @@ func switch_lane() -> int:
 # Ktery zivel se na ten usek stavi. NENI to volba hrace: usek nese svuj
 # zivel a jen ten tam muze stat. UI to jen cte.
 func build_element(lane: int) -> int:
-	return Network.lane_element(lane)
+	return net.lane_element(lane)
 
 
 # ---------------------------------------------------------------- vlny
@@ -208,7 +226,7 @@ func _spawn(enemy_el: int) -> void:
 	e.element = enemy_el
 	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(wave - 1))
 	e.hp = e.max_hp
-	e.speed = ENEMY_SPEED
+	e.speed = level.speed if level != null else ENEMY_SPEED
 	e.lane = -1
 	e.s = 0.0
 	enemies.append(e)
@@ -243,7 +261,7 @@ func step(delta: float) -> void:
 		if spawn_left > 0:
 			spawn_timer -= delta
 			if spawn_timer <= 0.0:
-				spawn_timer = SPAWN_INTERVAL
+				spawn_timer = level.spawn if level != null else SPAWN_INTERVAL
 				spawn_left -= 1
 				_spawn(_next_int(Element.COUNT))
 
@@ -278,7 +296,7 @@ func _move_enemies(delta: float) -> void:
 				e.leaked = true
 				e.alive = false
 				lives -= 1
-				if Network.lane_is_neutral(e.lane):
+				if net.lane_is_neutral(e.lane):
 					_note("Poutnik %s došel na neutrální výstup (-1 život)." %
 						Element.name_of(e.element))
 				else:

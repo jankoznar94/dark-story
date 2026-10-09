@@ -26,14 +26,18 @@ Hra je cela deterministicka, proto ji lze simulovat headless.
 | soubor | co to je |
 |---|---|
 | `scripts/element.gd` | ctyri zivly a matice poskozeni (jedna tabulka = cela hra) |
-| `scripts/network.gd` | cista geometrie site (kmen, vyhybka, pet useku, vystupy) |
+| `scripts/level.gd` | LEVEL jako data: koleje, elementy, vystupy, obtiznost + JSON a KOD pro export |
+| `scripts/builtin_levels.gd` | levely zakotvene ve hre (sem prijde kod levelu z editoru) |
+| `scripts/editor.gd` | level editor: klepnutim vyberes usek, tlacitky ho menis |
+| `scripts/network.gd` | cista geometrie site postavena z LEVELU (kmen, vyhybka, useky, vystupy) |
 | `scripts/guide.gd` | text NAVODU + zalamovani a mereni (jedine misto s pravidly) |
 | `scripts/bonus.gd` | bonus na useku = nasobek cele dmg zony |
 | `scripts/enemy.gd` | poutnik = zivel + zivoty + pozice na trase |
 | `scripts/game.gd` | CELA logika. Zadne kresleni, zadny Input |
 | `scripts/game_view.gd` | jedina scena: kresleni + hit-test |
-| `tools/test_core.gd` | pravidla (359 assertu) |
-| `tools/test_layout.gd` | 14 realnych rozliseni, deska bez textu, navod se vejde |
+| `tools/test_core.gd` | pravidla (439 assertu) |
+| `tools/test_layout.gd` | 14 realnych rozliseni, deska bez textu, navod se vejde, EDITOR se vejde |
+| `tools/test_editor.gd` | editor: tlacitka meni level, export kodu, zakotvene levely |
 | `tools/test_audio.gd` | zvuk se meri ze vzorku, ne poslechem |
 | `tools/test_scripts_load.gd` | kazdy .gd se musi nacist |
 
@@ -69,7 +73,36 @@ godot4 --headless --path . --script res://tools/test_scripts_load.gd
 godot4 --headless --path . --script res://tools/test_core.gd    # CORE_ALL_PASS=true
 godot4 --headless --path . --script res://tools/test_layout.gd  # LAYOUT_ALL_PASS=true
 godot4 --headless --path . --script res://tools/test_audio.gd   # AUDIO_ALL_PASS=true
+godot4 --headless --path . --script res://tools/test_editor.gd  # EDITOR_ALL_PASS=true
 ```
+
+## Level editor
+
+Menu -> EDITOR. Klepnutim na usek se usek vybere, tlacitky dole se meni:
+
+- **usek + / usek −** - pocet useku (2 az 7). Pridanim se mrizka vystredi,
+  takze se ostatni useky neposunou.
+- **zivel** - cykli se pres vsechny ctyri zivly a neutralni.
+- **vystup** - do ktere diry v mape usek usti.
+- **odbočení − / +** - kde se usek ohne k vystupu. Diky tomu se daji dve
+  kolejе sbihat do jednoho vystupu.
+- **export** - vyrobi KOD levelu (jedna rada textu) a soubor.
+- **hrat** - spusti kolo s prave upravenym levelem.
+
+**Vse se uklada LOKALNE** (ve webu do localStorage, na desktopu do `user://levels/`).
+Nikam se nic neposila - zadna Firestore.
+
+### Jak dostat level do hry natrvalo
+
+1. V editoru zmackni **export**. Nad pruhem se objevi kod typu
+   `ZILY1;{"name":"...","lanes":[...],...}`.
+2. Posli mi ten kod (vejde se do Telegramu i z telefonu).
+3. Ja ho vlozim do `scripts/builtin_levels.gd` - a level se od te doby veze
+   s hrou na vsech platformach, prezije smazani cache i reinstalaci.
+
+Kod se do toho souboru vklada **doslova**, niceho se rucne neprepisuje:
+`Level.from_code()` ho precte a test (`tools/test_editor.gd`) u kazdeho
+zakotveneho levelu overi, ze je platny a ze jeho kod neni pozmeneny.
 
 ## Nahled
 

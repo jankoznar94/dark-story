@@ -14,10 +14,16 @@ extends RefCounted
 # instalaci jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim
 # okne) a ma manifest + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, GUIDE, SETTINGS, BATTLE }
+enum View { MENU, EDITOR, GUIDE, SETTINGS, BATTLE }
 
 const TITLE := "ZILY"
 const SUBTITLE := "elementární poutníci na žilách many"
+
+# Poradi tlacitek v menu. Je tady, ne v kresleni - kdyby se kresleni a
+# vstup rozešly, klepnuti by delalo neco jineho, nez co je videt.
+const MENU_ITEMS := ["BATTLE", "EDITOR", "NÁVOD", "SETTINGS", "UPDATE"]
+const MENU_SUBS := ["spustit kolo", "vyrobit si level", "pravidla hry a poškození",
+	"hudba a zvuky", "stáhnout novou verzi"]
 
 # Prepisuje se v _ready() podle toho, jestli hra bezi ve webovem exportu.
 var web: bool = false
@@ -57,6 +63,17 @@ func load_build_id() -> void:
 
 func open_battle() -> void:
 	view = View.BATTLE
+
+
+# EDITOR LEVELU. Sem se chodi vyrabet levely rucne - klepnutim na usek se
+# vybere, tlacitky dole se meni. Hra se pri tom nehraje: editor ma svuj
+# stav a do hry posila hotovy level.
+func open_editor() -> void:
+	view = View.EDITOR
+
+
+func is_editor() -> bool:
+	return view == View.EDITOR
 
 
 # NAVOD. Sem se prestehovalo vsechno, co drive stalo popisky primo v herni

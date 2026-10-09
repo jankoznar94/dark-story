@@ -1,7 +1,8 @@
 class_name Network
 extends RefCounted
 
-# Sit je cista GEOMETRIE. Uz to nejsou "koleje do svatyni", ale USEKY:
+# Sit je cista GEOMETRIE postavena z LEVELU. Uz to nejsou "koleje do svatyni",
+# ale USEKY:
 #
 #   [neutralni kmen] -> [vyhybka] -> [ELEMENTARNI USEK] -> [neutralni vystup]
 #
@@ -9,44 +10,34 @@ extends RefCounted
 # poutnik po elementarnim useku jde, tim vic ran dostane. Kdo stoji na
 # kterem useku, rozhoduje HRAC vyhybkou.
 #
+# ZADNA KOLEJ NEMUSI POSKOZOVAT VUBEC. Usek muze byt "harmless" - cesta bez
+# ran. Je to zakladni level, ktery ma takto nastavenou prvni kolej.
+#
 # POSLEDNI PRUH JE NEUTRALNI: nepatri zadnemu zivlu, elementarni bonus
 # na nem stat nemuze, ale poskozuje vsechny stejne (100 %). Je to
 # spolehlivy zaklad - nikdy neublizi, nikdy nezvýhodni.
 #
-# KONEC: kazda elementarni usek se za svym pruhem ohne a slije se do
-# jednoho ze ctyř NEUTRALNICH VYSTUPU. Vystup nema element a nikdo ho
-# "nevlastni" - poutnik, ktery tam dojde, stoji jeden zivot.
+# KONEC: kazda kolej se za svym rovnym usekem ohne a slije se do jednoho
+# z NEUTRALNICH VYSTUPU. Vystup nema element a nikdo ho "nevlastni" -
+# poutnik, ktery tam dojde, stoji jeden zivot.
 #
 # ROZVRZENI JE RESPONZIVNI ve dvou rovinach:
 #   * POZICE jsou zlomky plochy -> sit vyplni displej, zadny letterbox.
 #   * VELIKOSTI jdou z jednoho meritka `scale` -> kruh zustane kruhem
 #     a mista na bonusy se na zadnem displeji nezacnou prekryvat.
 #
-# Mista na bonusy lezi na ROVNEM useku pruhu, kde jsou pruhy od sebe
-# nejdal, ne na rozvetveni u vyhybky, kde se paprsky teprve rozbihaji.
+# KDE se ohne (divert) je cas levelu, ne konstanty: dve koleje se tak sbihaji
+# na stejnem miste, treti se ohne hned za svym usekem. Kdyby to bylo pro vsechny
+# stejne, kazda zmena poctu kolejí by posunula i ty ostatni.
+#
+# Vsechna cisla levelu jsou v Level; tady je jen preklad do pixelu.
 
-# 4 elementarni pruhy + 1 neutralni.
-const LANES := 5
-const STATIC_LANES := 4
-const NEUTRAL := -1
-# Ktery zivel nese ktery pruh (shora dolu). Posledni je neutralni.
-# Ciselne hodnoty jsou zamerne literalni: GDScript neumi v `const` precist
-# konstantu z jine tridy pres class_name. Test overuje, ze sedi s Element
-# a ze prvni ctyri jsou permutace vsech zivlu.
-const LANE_ELEMENTS := [0, 1, 2, 3, NEUTRAL]
-# Do ktereho VYSTUPU se pruh po svem useku ohne (INDEX do exit_pos).
-# Exits stoji na radcich 0, 1, 3, 4 - proto se cesty sbihaji a vznika
-# "nekolik neutralnich vystupu z mapy". Dva pruhy se sliji do jednoho
-# vystupu, ostatni maji kazdy svuj - sit se tim rozdeli, ale nikdo
-# nevlastni bezpecny cil: kazdy vystup stoji zivot.
-const EXITS := [0, 0, 1, 2, 3]
-const EXIT_ROWS := [0, 1, 3, 4]
-const ROW_SPREAD := 0.175
 const BASE_BONUS_R := 26.0
 const BASE_EXIT_R := 30.0
 const BASE_SWITCH_R := 46.0
 const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
 
+var level: Level = null
 var area: Rect2 = Rect2()
 var scale: float = 1.0
 # Horni hrana ovladaciho pruhu. Do site vstupuje jako OMEZENI: zadny bod
@@ -61,7 +52,7 @@ var trunk_start: Vector2 = Vector2.ZERO
 var merge: Vector2 = Vector2.ZERO
 var hub: Vector2 = Vector2.ZERO
 var trunk_len: float = 0.0
-# Rovny usek kazdeho pruhu - tady se kresli dmg zona i mista na bonusy.
+# Rovny usek kazde koleje - tady se kresli dmg zona i mista na bonusy.
 var band_x0: float = 0.0
 var band_x1: float = 0.0
 var rows: Array = []
@@ -73,7 +64,9 @@ var exit_pos: Array = []
 var switch_lane: int = 0
 
 
-func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9) -> void:
+func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
+		level_data: Level = null) -> void:
+	level = level_data if level_data != null else Level.base()
 	area = r
 	scale = scale_hint
 	bar_top = bar_top_hint
@@ -89,51 +82,56 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9) -> vo
 	hub = Vector2(r.position.x + w * 0.25, r.position.y + h * 0.5)
 	trunk_len = _poly_len(PackedVector2Array([trunk_start, merge]))
 
-	band_x0 = r.position.x + w * 0.40
-	band_x1 = r.position.x + w * 0.80
-	var exit_x: float = r.position.x + w * 0.945
+	# Rovny usek vsech kolejí je SPOLECNY - dmg zony tak stoji pres sebe a
+	# hrac je vidi jako jednu mrizku. Kazda kolej se ohne az za nim.
+	band_x0 = r.position.x + w * level.band0
+	band_x1 = r.position.x + w * level.band1
+	var exit_x: float = r.position.x + w * level.exit_x
 
-	# Nejdřív radky, pak teprve geometrie. Deska uz NENESE ZADNY TEXT, takze
-	# pod vystupem uz nic nestoji a radky se mohou roztahnout niz - do
-	# spodni casti hraci plochy. Drzi se jen mala mezera nad pruhem.
+	# Radky jsou uz hotove v levelu (Level.relayout je vystredi ve sve mrizce).
+	# Tady se jen prelozi do pixelu a pripadne pritlaci nad pruh, aby rucka
+	# nekreslila do ovladani.
 	var label_room: float = 12.0 * scale
-	var y0: float = r.position.y + h * 0.10
-	var y_last: float = r.position.y + h * (0.10 + ROW_SPREAD * float(LANES - 1))
-	if y_last + label_room > bar_top:
-		y_last = bar_top - label_room
-	var y_step: float = (y_last - y0) / float(LANES - 1)
+	var y_last_max: float = bar_top - label_room
 	rows = []
-	for i in range(LANES):
-		rows.append(y0 + y_step * float(i))
+	var shift: float = 0.0
+	for i in range(level.lane_count()):
+		var y: float = r.position.y + h * level.row_of(i)
+		rows.append(y)
+		shift = maxf(shift, y - y_last_max)
+	if shift > 0.0:
+		for i in range(rows.size()):
+			rows[i] = float(rows[i]) - shift
+
+	# Vystupy jsou DIRY V MAPE, ne vlastnictvi nejake koleje. Kdo tam dojde,
+	# stoji zivot - a nikdo se na ne neda poslat "bezpecne".
+	exit_pos = []
+	for i in range(level.exits.size()):
+		var p: Array = level.exits[i]
+		exit_pos.append(Vector2(r.position.x + w * float(p[0]),
+			r.position.y + h * float(p[1])))
 
 	lane_path = []
 	lane_len = []
 	lane_exit = []
 	slot_pos = []
-	exit_pos = []
-
-	# Ctyři neutralni vystupy z mapy. Poutnik, ktery do nektereho dojde,
-	# stoji zivot - a nikdo je "nevlastni", takze se na ne neda poslat
-	# nikdo "bezpecne". Vystup je dira, kterou tece krev, ne cil hry.
-	exit_pos = []
-	for ex in EXIT_ROWS:
-		exit_pos.append(Vector2(exit_x, float(rows[ex])))
 
 	var run: float = band_x1 - band_x0
-	for i in range(LANES):
-		var is_neutral: bool = LANE_ELEMENTS[i] == NEUTRAL
-		var ex: int = int(EXITS[i])
+	for i in range(level.lane_count()):
+		var ex: int = level.exit_of(i)
 		# Existence vystupu je invariant site, ne něco, co se smi jen tak
 		# rozbit: kdyby index prestrelil, hra by spadla az za behu.
 		ex = clampi(ex, 0, exit_pos.size() - 1)
 		lane_exit.append(ex)
 		var y: float = float(rows[i])
-		# Neutralni pruh lezi na radku sveho vystupu, takze jde rovnou -
-		# zadne zbytecne lomene koleji.
-		var ex_y: float = float(rows[EXIT_ROWS[ex]])
+		var dx: float = level.divert_x(i)
+		var ey: float = r.position.y + h * level.exit_row(ex)
 		var path := PackedVector2Array([
-			merge, hub, Vector2(band_x0, y), Vector2(band_x1, y),
-			Vector2(exit_x, ex_y)])
+			merge, hub,
+			Vector2(band_x0, y),
+			Vector2(r.position.x + w * dx, y),
+			Vector2(exit_x, ey),
+		])
 		lane_path.append(path)
 		lane_len.append(_poly_len(path))
 		var slots: Array = []
@@ -172,26 +170,27 @@ func slot_world(lane: int, slot: int) -> Vector2:
 	return p
 
 
-# Je tenhle pruh neutralni? Nema element, elementarni bonus na nem
+func lane_count() -> int:
+	return lane_path.size()
+
+
+# Je ta kolej neutralni? Nema element, elementarni bonus na ni
 # stat nemuze, poskozuje vsechny stejne.
-static func lane_is_neutral(lane: int) -> bool:
-	var e: int = LANE_ELEMENTS[lane]
-	return e == NEUTRAL
+func lane_is_neutral(lane: int) -> bool:
+	return level.is_neutral(lane)
 
 
-# Ktery zivel patri na tuhle pruh. U neutralniho vraci NEUTRAL (-1).
-static func lane_element(lane: int) -> int:
-	var e: int = LANE_ELEMENTS[lane]
-	return e
+# Ktery zivel patri na tuhle kolej. U neutralni vraci NEUTRAL (-1).
+func lane_element(lane: int) -> int:
+	return level.el_of(lane)
 
 
-# Muze na tuhle pruh tento bonus? Jedno misto, kde se pravidlo vyhodnocuje.
-# Na neutralni pruh nesmi NIC - ani neutralni bonus neexistuje, protoze
-# neutralni usek uz poskozuje vsechny stejne a nema co posilovat.
-static func lane_accepts(lane: int, element: int) -> bool:
-	if lane_is_neutral(lane):
-		return false
-	return element == lane_element(lane)
+# Muze na tuhle kolej tento bonus? Jedno misto, kde se pravidlo vyhodnocuje.
+# Na neutralni kolej nesmi NIC - ani neutralni bonus neexistuje, protoze
+# neutralni usek uz poskozuje vsechny stejne a nema co posilovat. A na usek,
+# ktery vubec neposkozuje, nema co posilovat tuplem.
+func lane_accepts(lane: int, element: int) -> bool:
+	return level.accepts(lane, element)
 
 
 func nearest_slot(world: Vector2) -> Vector2i:
@@ -236,12 +235,13 @@ func _dist_to_path(lane: int, world: Vector2) -> float:
 	return best
 
 
-# Nejmensi vzdalenost mezi misty na bonusech RŮZNÝCH pruhů. Testy tuhle
+# Nejmensi vzdalenost mezi misty na bonusech RŮZNÝCH kolejích. Testy tuhle
 # hodnotu kontroluji, aby se bonusy po zmene rozvrzeni nezacaly prekryvat.
 func min_cross_lane_slot_distance() -> float:
+	var n: int = lane_path.size()
 	var best: float = 99999.0
-	for a in range(LANES):
-		for b in range(a + 1, LANES):
+	for a in range(n):
+		for b in range(a + 1, n):
 			for sa in range(slot_count()):
 				for sb in range(slot_count()):
 					var d: float = slot_world(a, sa).distance_to(slot_world(b, sb))

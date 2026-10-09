@@ -33,11 +33,19 @@ const PAD := 16.0
 const MIN_TOUCH := 44.0
 # Sirka tlacitka ZPET v navodu.
 const SKIP_W := 92.0
-# Menu: ctyři tlacitka pod sebou - kolo, navod, nastaveni, aktualizace.
+# Menu: pet tlacitek pod sebou - kolo, editor, navod, nastaveni, aktualizace.
 const MENU_BTN_W := 340.0
 const MENU_BTN_H := 58.0
 const MENU_GAP := 20.0
-const MENU_COUNT := 4
+const MENU_COUNT := 5
+
+# EDITOR ma svuj pruh tlacitek DOLE - jako jedina obrazovka. Hraci deska
+# zustava bez ovladani (a test na tom trva), ale level se na telefonu bez
+# tlacitek vubec neda upravit. Pruh je ZAMERNE nizky: kazdy pixel navic
+# bere editoru misto na mrizku, kterou upravuje.
+const ED_BAR_H := 40.0
+const ED_GAP := 4.0
+const ED_COUNT := 8
 
 var view := Vector2(REF_W, REF_H)
 var s := 1.0
@@ -56,6 +64,9 @@ var menu_buttons: Array = []
 var menu_title_y := 0.0
 var settings_toggle := Rect2()
 var settings_back := Rect2()
+# Editor: pruh tlacitek dole + plocha, kterou zabira.
+var ed_buttons: Array = []
+var editor_arena := Rect2()
 
 
 func compute(v: Vector2) -> void:
@@ -116,6 +127,27 @@ func compute(v: Vector2) -> void:
 	settings_toggle = Rect2((v.x - mw) * 0.5, sy0, mw, sh)
 	settings_back = Rect2((v.x - mw) * 0.5, sy0 + (sh + sgap) * 2.0, mw, sh)
 
+	# --- EDITOR ---
+	# Pruh tlacitek dole, vyska z dotykoveho minima pro prst (nemeni se),
+	# mezera a sirka se pocitaji z mista. Osm tlacitek v jedne rade se na
+	# 640 px vejde jen tak, ze se zmensi MEZERA, ne vyska - nizke tlacitko
+	# se prstem netrefi.
+	var eh: float = maxf(MIN_TOUCH, ED_BAR_H * ui)
+	var egap: float = ED_GAP * ui
+	var etot: float = v.x - 2.0 * PAD * ui
+	var ew: float = (etot - egap * float(ED_COUNT - 1)) / float(ED_COUNT)
+	if ew < MIN_TOUCH * 0.8:
+		egap = 2.0
+		ew = (etot - egap * float(ED_COUNT - 1)) / float(ED_COUNT)
+	ed_buttons = []
+	var ex0: float = PAD * ui
+	var ey: float = v.y - eh - 6.0 * ui
+	for i in range(ED_COUNT):
+		ed_buttons.append(Rect2(ex0 + float(i) * (ew + egap), ey, ew, eh))
+	editor_arena = Rect2(PAD * s, hud_h + 6.0 * s,
+		maxf(40.0, v.x - 2.0 * PAD * s),
+		maxf(40.0, ey - 8.0 * ui - hud_h - 6.0 * s))
+
 
 # HERNI DESKA JE BEZ OVLADANI. Vraci prazdny seznam a testy na tom trvaji:
 # jedina interakce na desce je klepnuti na usek nebo na misto na bonus,
@@ -128,6 +160,15 @@ func all_buttons() -> Array:
 func menu_rect(i: int) -> Rect2:
 	var r: Rect2 = menu_buttons[i]
 	return r
+
+
+# Tlacitka EDITORU. Nejsou na herni desce - ta je porad bez ovladani; editor
+# je jina obrazovka se svym vlastnim pruhem dole.
+func all_editor_buttons() -> Array:
+	var out: Array = []
+	for r in ed_buttons:
+		out.append(r)
+	return out
 
 
 # Vsechny dotykove cile MENU. Menu a nastaveni se nikdy nezobrazuji

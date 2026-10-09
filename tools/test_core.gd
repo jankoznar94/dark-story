@@ -21,6 +21,9 @@ func _init() -> void:
 	_test_economy()
 	_test_wave_flow()
 	_test_determinism()
+	_test_level_round_trip()
+	_test_level_edits()
+	_test_custom_level_plays()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -46,6 +49,13 @@ func _fresh() -> Game:
 	return g
 
 
+# Kolik kolejí má ZAKLADNI deska. Testy se ptají odsud, aby se pocet kolejí
+# dal zmenit na jednom miste (v Level) a nemusel se honit po testech.
+func _lanes() -> int:
+	return Level.base().lane_count()
+
+
+
 func _spawn_one(g: Game, el: int) -> Enemy:
 	g.phase = "wave"
 	g.spawn_left = 0
@@ -68,24 +78,24 @@ func _run_to_lane(g: Game, e: Enemy, budget: float = 12.0) -> void:
 # Postav n bonusu na usek. Sama cesta poutnika jen ZRANI - k zabiti je
 # potreba investice, takze kazdy test, ktery chce mrtvolu, si ji koupi.
 func _dress(g: Game, lane: int, n: int) -> void:
-	if Network.lane_is_neutral(lane):
+	if Level.base().is_neutral(lane):
 		return
 	g.gold += 999
 	for i in range(mini(n, g.net.slot_count())):
-		g.try_build(lane, i, Network.lane_element(lane))
+		g.try_build(lane, i, Level.base().el_of(lane))
 
 
 # Kolej, ktera nese dany zivel. U neutralniho pruhu vraci -1.
 func _lane_of(el: int) -> int:
-	for lane in range(Network.LANES):
-		if Network.lane_element(lane) == el:
+	for lane in range(_lanes()):
+		if Level.base().el_of(lane) == el:
 			return lane
 	return -1
 
 
 func _neutral_lane() -> int:
-	for lane in range(Network.LANES):
-		if Network.lane_is_neutral(lane):
+	for lane in range(_lanes()):
+		if Level.base().is_neutral(lane):
 			return lane
 	return -1
 
@@ -94,20 +104,20 @@ func _neutral_lane() -> int:
 
 func _test_geometry() -> void:
 	var g := _fresh()
-	_ok(g.net.lane_path.size() == Network.LANES, "pet pruhu (4 elementarni + neutralni)")
+	_ok(g.net.lane_path.size() == _lanes(), "pet pruhu (4 elementarni + neutralni)")
 	_ok(g.net.slot_count() == 3, "tri mista na bonus na usek")
-	_ok(Network.LANES == Element.COUNT + 1, "ctyři zivly plus prave jeden neutralni")
+	_ok(Level.base().lane_count() == Element.COUNT + 1, "ctyři zivly plus prave jeden neutralni")
 	# prave jeden neutralni pruh a prave ctyři elementarni
 	var neutrals := 0
 	var els := {}
-	for lane in range(Network.LANES):
-		if Network.lane_is_neutral(lane):
+	for lane in range(_lanes()):
+		if g.net.lane_is_neutral(lane):
 			neutrals += 1
 		else:
-			els[Network.lane_element(lane)] = true
+			els[g.net.lane_element(lane)] = true
 	_ok(neutrals == 1, "neutralni pruh je prave jeden (je jich %d)" % neutrals)
 	_ok(els.size() == Element.COUNT, "kazdy zivel ma svuj pruh (%d)" % els.size())
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var ln: float = g.net.lane_len[lane]
 		_ok(ln > 200.0, "usek %d ma rozumnou delku (%.0f)" % [lane, ln])
 		for slot in range(g.net.slot_count()):
@@ -119,15 +129,15 @@ func _test_geometry() -> void:
 	_ok(g.net.trunk_len > 150.0, "neutralni kmen ma smysluplnou delku (%.0f)" % g.net.trunk_len)
 	_ok(g.net.merge.distance_to(g.net.hub) > 10.0, "vyhybka a sberny bod jsou oddelene")
 	# kazdy pruh konci ve SVEM vystupu a vystupy jsou neutralni
-	_ok(g.net.exit_pos.size() == Network.EXIT_ROWS.size(), "ctyři vystupy z mapy")
-	for lane in range(Network.LANES):
+	_ok(g.net.exit_pos.size() == Level.base().exits.size(), "ctyři vystupy z mapy")
+	for lane in range(_lanes()):
 		var last: Vector2 = g.net.point_at(lane, g.net.lane_len[lane])
 		var ex: int = g.net.lane_exit[lane]
 		_ok(last.distance_to(g.net.exit_pos[ex]) < 1.0,
 			"usek %d konci ve svem vystupu %d" % [lane, ex])
 	# a aspon dva pruhy se v jednom vystupu SBÍHAJÍ - "cesty se sliji"
 	var used := {}
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var ex: int = g.net.lane_exit[lane]
 		used[ex] = int(used.get(ex, 0)) + 1
 	var shared := 0
@@ -142,12 +152,12 @@ func _test_geometry() -> void:
 		"mista na bonusy mezi pruhy se neprekryvaji (mezera %.0f px)" % gap)
 	# a vsechna mista musi byt NAD ovladacim pruhem
 	var bar_top: float = 500.0
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		for slot in range(g.net.slot_count()):
 			var p: Vector2 = g.net.slot_world(lane, slot)
 			_ok(p.y + g.net.bonus_r < bar_top,
 				"misto %d/%d neleze do ovladaciho pruhu (y=%.0f)" % [lane, slot, p.y])
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var path: PackedVector2Array = g.net.lane_path[lane]
 		for k in range(path.size()):
 			_ok(path[k].y < bar_top, "usek %d zustava nad pruhem" % lane)
@@ -231,12 +241,12 @@ func _test_zone_damage() -> void:
 	var g2 := _fresh()
 	g2.auto_wave = false
 	g2.gold = 500
-	g2.try_build(lane, 0, Network.lane_element(lane))
+	g2.try_build(lane, 0, Level.base().el_of(lane))
 	_ok(g2.lane_mult(lane) > 1.0, "bonus zvedne nasobek celeho useku (%.2f)" % g2.lane_mult(lane))
 	var g3 := _fresh()
 	g3.auto_wave = false
 	g3.gold = 500
-	g3.try_build(lane, 2, Network.lane_element(lane))
+	g3.try_build(lane, 2, Level.base().el_of(lane))
 	_ok(is_equal_approx(g2.lane_mult(lane), g3.lane_mult(lane)),
 		"a je jedno, na ktere misto useku ho postavis (%.2f vs %.2f)" %
 		[g2.lane_mult(lane), g3.lane_mult(lane)])
@@ -244,8 +254,8 @@ func _test_zone_damage() -> void:
 	var g4 := _fresh()
 	g4.auto_wave = false
 	g4.gold = 500
-	g4.try_build(lane, 0, Network.lane_element(lane))
-	g4.try_build(lane, 1, Network.lane_element(lane))
+	g4.try_build(lane, 0, Level.base().el_of(lane))
+	g4.try_build(lane, 1, Level.base().el_of(lane))
 	_ok(g4.lane_mult(lane) > g2.lane_mult(lane),
 		"dva bonusy daji vic nez jeden (%.2f vs %.2f)" % [g4.lane_mult(lane), g2.lane_mult(lane)])
 	g4.set_switch(lane)
@@ -263,7 +273,7 @@ func _test_zone_damage() -> void:
 	e5.s = 50.0
 	var base_dps: float = g5.dps_on(e5)
 	_ok(base_dps > 0.0, "zakladni dmg zona neco dava (%.2f)" % base_dps)
-	g5.try_build(lane, 2, Network.lane_element(lane))
+	g5.try_build(lane, 2, Level.base().el_of(lane))
 	e5.s = g5.net.lane_len[lane] - 50.0
 	var far_dps: float = g5.dps_on(e5)
 	_ok(far_dps > base_dps,
@@ -284,7 +294,7 @@ func _test_neutral_lane() -> void:
 			"na neutralni usek nelze postavit bonus %s" % Element.name_of(el))
 	_ok(g.bonus_at(nl, 0) == null, "a nic tam nestoji")
 	_ok(g.gold == 9999, "a zlato zustalo nedotcene (%d)" % g.gold)
-	_ok(not Network.lane_accepts(nl, 0), "pravidlo je v siti, ne jen v herni logice")
+	_ok(not Level.base().accepts(nl, 0), "pravidlo je v siti, ne jen v herni logice")
 	# a poskozuje VSECHNY stejne - to je jeho smysl
 	var g2 := _fresh()
 	g2.auto_wave = false
@@ -315,7 +325,7 @@ func _test_own_lane_is_free_pass() -> void:
 	var lane: int = _lane_of(Element.FIRE)
 	# bonusy na useku, aby bylo jasne, ze ani investice vlastni pruh neposkodi
 	_dress(g, lane, 2)
-	_ok(Network.lane_element(lane) == Element.FIRE, "usek nese ohen")
+	_ok(Level.base().el_of(lane) == Element.FIRE, "usek nese ohen")
 	var e: Enemy = _spawn_one(g, Element.FIRE)
 	g.set_switch(lane)
 	var hp0: float = e.hp
@@ -382,15 +392,15 @@ func _test_build_rule() -> void:
 	# PRAVIDLO STAVENI: jen stejny zivel na stejny usek. Testuje se CELA
 	# matice, ne jen jeden pripad - jinak by prosla i verze, ktera zakazuje
 	# jen jednu kombinaci. Neutralni pruh neprijme NIC.
-	for lane in range(Network.LANES):
-		var own: int = Network.lane_element(lane)
+	for lane in range(_lanes()):
+		var own: int = Level.base().el_of(lane)
 		for el in range(Element.COUNT):
 			var g := _fresh()
 			g.auto_wave = false
 			g.gold = 999
 			var before: int = g.gold
 			var built: bool = g.try_build(lane, 0, el)
-			if Network.lane_is_neutral(lane):
+			if Level.base().is_neutral(lane):
 				_ok(not built, "na neutralni usek %d nelze postavit %s" % [lane, Element.name_of(el)])
 				_ok(g.gold == before, "a zlato zustalo nedotcene")
 			elif el == own:
@@ -403,12 +413,12 @@ func _test_build_rule() -> void:
 				_ok(g.bonus_at(lane, 0) == null, "a nic tam nestoji")
 				_ok(g.gold == before, "a zlato zustalo nedotcene (%d)" % g.gold)
 	# UI si zivel pro usek bere z hry, ne z nejakeho sveho stavu.
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var ui_el: int = _fresh().build_element(lane)
-		_ok(ui_el == Network.lane_element(lane),
+		_ok(ui_el == Level.base().el_of(lane),
 			"UI stavi na usek %d zivel toho useku (%d)" % [lane, ui_el])
 	# vyhybka posila na usek, ktery existuje - vcetne neutralniho
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var g2 := _fresh()
 		g2.set_switch(lane)
 		_ok(g2.switch_lane() == lane, "vyhybka se da nastavit na usek %d" % lane)
@@ -417,7 +427,7 @@ func _test_build_rule() -> void:
 # --------------------------------------------------------------- 8 prepinani
 
 func _test_lane_tap_switches() -> void:
-	for lane in range(Network.LANES):
+	for lane in range(_lanes()):
 		var g := _fresh()
 		g.auto_wave = false
 		var p: Vector2 = g.net.point_at(lane, g.net.lane_len[lane] * 0.55)
@@ -546,3 +556,122 @@ func _test_determinism() -> void:
 	_ok(damaged > 0, "a aspon jeden opravdu dostal poskozeni (%d)" % damaged)
 	_ok(a.gold == b.gold, "stejne zlato (%d/%d)" % [a.gold, b.gold])
 	_ok(a.lives == b.lives, "stejne zivoty (%d/%d)" % [a.lives, b.lives])
+
+# --------------------------------------------------------------- 14 level
+
+func _test_level_round_trip() -> void:
+	# LEVEL SE MUSI DAT ULOZIT A NACIST BEZE ZMENY. Kdyby se pri ceste tam
+	# a zpet neco ztratilo, editor by ulozil neco jineho, nez co hrac videl.
+	var lv := Level.base()
+	lv.spread = 0.24
+	lv.zone_dmg = 44.0
+	lv.speed = 40.0
+	lv.spawn = 1.5
+	lv.lanes[1]["divert"] = 0.62
+	lv.relayout()
+	var back := Level.from_json(lv.to_json())
+	_ok(back.lane_count() == lv.lane_count(), "level si drzi pocet koleji")
+	_ok(is_equal_approx(back.spread, lv.spread), "level si drzi rozestup")
+	_ok(is_equal_approx(back.zone_dmg, lv.zone_dmg), "level si drzi poskozeni")
+	_ok(is_equal_approx(back.speed, lv.speed), "level si drzi rychlost")
+	_ok(is_equal_approx(back.spawn, lv.spawn), "level si drzi rozestup poutniku")
+	for i in range(lv.lane_count()):
+		_ok(back.el_of(i) == lv.el_of(i), "kolej %d si drzi element" % i)
+		_ok(back.exit_of(i) == lv.exit_of(i), "kolej %d si drzi vystup" % i)
+		_ok(is_equal_approx(back.divert_of(i), lv.divert_of(i)),
+			"kolej %d si drzi uhel odboceni" % i)
+		_ok(is_equal_approx(back.row_of(i), lv.row_of(i)),
+			"kolej %d si drzi radek" % i)
+	_ok(back.exits.size() == lv.exits.size(), "level si drzi vystupy")
+	# a z levelu se opravdu postavi stejna sit
+	var a := Game.new()
+	a.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	var b := Game.new()
+	b.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, back)
+	for i in range(a.net.lane_count()):
+		_ok(is_equal_approx(a.net.rows[i], b.net.rows[i]),
+			"kolej %d ma po nacteni stejny radek" % i)
+		for k in range(a.net.lane_path[i].size()):
+			_ok(a.net.lane_path[i][k].distance_to(b.net.lane_path[i][k]) < 0.01,
+				"kolej %d ma po nacteni stejny tvar" % i)
+
+
+func _test_level_edits() -> void:
+	# EDITOR: pridani koleje nesmi posunout ty ostatni. To je cela pointa
+	# toho, ze se mrizka vystredi podle sveho stredu.
+	var lv := Level.base()
+	var before: Array = []
+	for i in range(lv.lane_count()):
+		before.append(lv.row_of(i))
+	lv.add_lane()
+	_ok(lv.lane_count() == before.size() + 1, "pridanim koleje jich je vic")
+	# nova kolej dostane element, ktery v mape chybel
+	_ok(lv.el_of(lv.lane_count() - 1) == Level.NEUTRAL,
+		"nova kolej dostane zbyvajici element (neutralni, kdyz uz jsou vsechny)")
+	# a rozestup mezi sousedy je VSUDE STEJNY. Kdyz je kolejí moc na to,
+	# aby se vesly s plnym rozestupem, mezera se zmensi - ale porad stejne
+	# pro vsechny, takze se mrizka nerozjede.
+	var gap0: float = lv.row_of(1) - lv.row_of(0)
+	for i in range(lv.lane_count() - 1):
+		_ok(is_equal_approx(lv.row_of(i + 1) - lv.row_of(i), gap0),
+			"kolej %d a %d drzi stejny rozestup (%.3f vs %.3f)" %
+			[i, i + 1, lv.row_of(i + 1) - lv.row_of(i), gap0])
+	_ok(gap0 > 0.05, "rozestup zustal pouzitelny (%.3f)" % gap0)
+	# a vsechny zustaly nad spodnim okrajem
+	_ok(lv.row_of(lv.lane_count() - 1) <= Level.BOTTOM,
+		"i posledni kolej je nad spodnim okrajem (%.2f)" % lv.row_of(lv.lane_count() - 1))
+	lv.remove_lane()
+	_ok(lv.lane_count() == before.size(), "odebranim koleje jich je zase stejne")
+	# dve koleje se MUSI sbihat do jednoho vystupu - "cesty se sliji"
+	lv.remove_lane()
+	lv.remove_lane()
+	lv.remove_lane()
+	_ok(lv.lane_count() == Level.MIN_LANES, "pod dve koleje to nejde")
+	var used := {}
+	for i in range(lv.lane_count()):
+		used[lv.exit_of(i)] = true
+	_ok(used.size() < lv.lane_count(), "kdyz je koleji min, sbihaji se do jednoho vystupu")
+	# rucky nesmi utect: level se po kazde zmene srovna
+	lv.spread = 9.0
+	lv.band0 = -3.0
+	lv.zone_dmg = 5000.0
+	lv.clamp_all()
+	_ok(lv.spread <= 0.30, "rozestup se srovna do mezi (%.2f)" % lv.spread)
+	_ok(lv.band0 >= 0.28, "zacatek rovneho useku se srovna (%.2f)" % lv.band0)
+	_ok(lv.zone_dmg <= 90.0, "poskozeni se srovna do mezi (%.0f)" % lv.zone_dmg)
+	_ok(lv.validate().is_empty(), "a takovy level je v poradku: %s" % str(lv.validate()))
+
+
+func _test_custom_level_plays() -> void:
+	# LEVEL Z EDITORU SE MUSI DAT HRAT, ne jen ulozit. Zmensi se na dve
+	# koleje a i na nich musi platit cela hra: klepnuti vybere kolej,
+	# spravne poslany poutnik umre, blbe poslany projde.
+	var lv := Level.base()
+	while lv.lane_count() > 2:
+		lv.remove_lane()
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	_ok(g.net.lane_count() == 2, "hra se postavi z levelu o dvou kolejich")
+	_ok(g.lives == lv.lives, "zivoty jdou z levelu (%d)" % g.lives)
+	_ok(g.gold == lv.gold, "zlato jde z levelu (%d)" % g.gold)
+	g.auto_wave = false
+	for lane in range(g.net.lane_count()):
+		var p: Vector2 = g.net.point_at(lane, g.net.lane_len[lane] * 0.7)
+		_ok(g.net.lane_tap_at(p, 14.0) == lane, "klepnuti vybere i kolej %d" % lane)
+	# nepratel musi umrit na protikladnem useku - hleda se dvojice
+	var fired := -1
+	var water := -1
+	for lane in range(g.net.lane_count()):
+		if g.net.lane_element(lane) == Element.FIRE:
+			fired = lane
+		if g.net.lane_element(lane) == Element.WATER:
+			water = lane
+	_ok(fired >= 0 and water >= 0, "v orezanem levelu zustaly oba protikladne useky")
+	g.gold = 999
+	g.try_build(water, 0, Element.WATER)
+	g.set_switch(water)
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	var lives0: int = g.lives
+	g.run_for(60.0)
+	_ok(e.hp <= 0.0, "i v levelu z editoru poutnik na protikladu umre (hp=%.1f)" % e.hp)
+	_ok(g.lives == lives0, "a zivot to nestalo")

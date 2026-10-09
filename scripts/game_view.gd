@@ -22,10 +22,20 @@ const MAX_TOAST := 3.0
 # "cely usek", ale pas to musi ukazat citelne.
 const ZONE_THICK := 24.0
 
+# VELIKOST POUTNIKA. Je to znacka, ktera musi byt citelna na telefonu -
+# poutnik je to, na co se hrac cely cas kouka, takze je vetsi nez zbytek
+# znacek. Polomer je v meritku herni plochy (`s`), takze kruh zustane kruhem
+# na kazdem displeji.
+const ENEMY_R_OUT := 20.0
+const ENEMY_R_IN := 17.0
+const ENEMY_GLYPH := 11.0
+const ENEMY_HP_R := 25.0
+
 var layout := ScreenLayout.new()
 var game: Game = null
 var menu := Menu.new()
 var settings := Settings.new()
+var editor := Editor.new()
 var toast: String = ""
 var toast_t: float = 0.0
 var last_log_size: int = 0
@@ -63,10 +73,13 @@ func _ready() -> void:
 	elif args.has("--settings-shot"):
 		menu.open_settings()
 		_shot = true
+	elif args.has("--editor-shot"):
+		# Snimek editoru: hra se postavi z levelu, ktery je prave v editoru.
+		_open_editor()
+		_shot = true
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
-
 
 # Most z JavaScriptu zpet do hry. JavaScriptBridge.eval vrati u Promise
 # null, ne vysledek, takze vysledky (otisk buildu, stav aktualizace) musi
@@ -102,6 +115,12 @@ func _place_to_window() -> void:
 # Preklopeni site na aktualni rozvrzeni. `bar_top` jde do build() jako
 # parametr - kdyby se nastavil az na hotove siti, pocital by stary okraj.
 func _reflow() -> void:
+	# Editor ma svou plochu - ma dole pruh tlacitek, ktery hra nema. Sit se
+	# prelozi podle toho, ktera obrazovka je otevrena.
+	if menu.is_editor():
+		game.rebuild_network(layout.editor_arena, layout.s,
+			layout.editor_arena.end.y + 20.0 * layout.s)
+		return
 	game.rebuild_network(layout.arena, layout.s, layout.board_bottom)
 
 
@@ -116,10 +135,10 @@ func _on_resize() -> void:
 func _setup_shot() -> void:
 	menu.open_battle()
 	game.gold = 5000
-	for lane in range(Network.LANES):
-		if Network.lane_accepts(lane, Network.lane_element(lane)):
-			game.try_build(lane, 0, Network.lane_element(lane))
-			game.try_build(lane, 2, Network.lane_element(lane))
+	for lane in range(game.net.lane_count()):
+		if game.net.lane_accepts(lane, game.net.lane_element(lane)):
+			game.try_build(lane, 0, game.net.lane_element(lane))
+			game.try_build(lane, 2, game.net.lane_element(lane))
 	game.wave = 3
 	game.gold = 240
 	game.lives = 9
@@ -203,6 +222,8 @@ func _click() -> void:
 		_sfx.play()
 
 
+# Kolo z menu. Hraje se ZAKLADNI deska - ta je na balanc vyladena. Levely
+# z editoru se hraji z editoru (a zakotvene si hrac vybere v menu).
 func _start_battle() -> void:
 	game.setup(layout.arena, layout.s, layout.board_bottom)
 	menu.open_battle()
@@ -250,6 +271,9 @@ func _handle_tap(pos: Vector2) -> void:
 	if menu.is_settings():
 		_handle_settings_tap(pos)
 		return
+	if menu.is_editor():
+		_handle_editor_tap(pos)
+		return
 	# Na desce uz zadne tlacitko neni - jedina interakce je klepnuti na misto
 	# na bonus (stavi / vylepsi) a klepnuti kamkoli JINAM na usek (prepne
 	# vyhybku). Zadna tlacitka vyhybky nejsou: casem jich bude vic, nez se
@@ -295,6 +319,118 @@ func _handle_guide_tap(pos: Vector2) -> void:
 		menu.open_menu()
 
 
+# EDITOR: klepnuti na usek ho vybere, klepnuti na tlacitko neco zmeni.
+# Poradi je dulezite: NEJDRIV tlacitka. Kdyby se hledal usek prvni, klepnuti
+# na tlacitko v pruhu by mohlo vybrat usek, ktery pod nim vede - a tlacitko
+# by nikdy nezabralo.
+func _handle_editor_tap(pos: Vector2) -> void:
+	for i in range(layout.ed_buttons.size()):
+		var r: Rect2 = layout.ed_buttons[i]
+		if not r.has_point(pos):
+			continue
+		_click()
+		editor.press(i)
+		_push_editor_level()
+		if i == Editor.BTN_PLAY:
+			_play_editor_level()
+		return
+	var lane: int = game.net.lane_tap_at(pos, maxf(16.0, 26.0 * layout.s))
+	if lane >= 0:
+		_click()
+		editor.sel = lane
+		editor.status = "úsek %d" % (lane + 1)
+
+
+# Editor si drzi vlastni level a hra dostane jeho kopii. Kdyby dostala level
+# sam, sahala by do nej za behu (bonusy se vazi na usek) a hrac by si rozbil
+# to, co prave upravuje.
+func _push_editor_level() -> void:
+	game.set_level(editor.level.clone(), layout.editor_arena, layout.s,
+		layout.editor_arena.end.y + 20.0 * layout.s)
+	_reflow_editor()
+
+
+# HRAT Z EDITORU. Hrac si level vyrobi a hned si ho zahraje - bez toho by
+# musel level ulozit, vratit se do menu a doufat, ze se hra postavi z toho
+# spravneho. Do hry jde KOPIE: editor si svuj level necha.
+func _play_editor_level() -> void:
+	game.setup(layout.arena, layout.s, layout.board_bottom, editor.level.clone())
+	menu.open_battle()
+
+
+func _open_editor() -> void:
+	menu.open_editor()
+	editor.reset()
+	_push_editor_level()
+
+
+func _draw_editor() -> void:
+	_draw_background()
+	_draw_trunk()
+	_draw_lanes()
+	_draw_zones()
+	_draw_slots()
+	_draw_exits()
+	_draw_switch()
+	_draw_bonuses()
+	_draw_editor_markers()
+	_draw_editor_bar()
+
+
+# Vybrany usek je v editoru ZNACKA navic - hrac musi videt, co upravuje.
+# Meni se jen jas a tvar ukazatele, ne barva: barva je element.
+func _draw_editor_markers() -> void:
+	var n: int = game.net.lane_count()
+	if n == 0:
+		return
+	var lane: int = clampi(editor.sel, 0, n - 1)
+	var y: float = game.net.rows[lane]
+	var r: float = game.net.bonus_r * 0.7
+	var col: Color = _lane_color(lane)
+	var x: float = game.net.band_x0 - 34.0 * layout.s
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(x + r, y), Vector2(x - r * 0.7, y - r), Vector2(x - r * 0.7, y + r)]), col)
+	draw_arc(Vector2(x, y), r * 1.8, 0.0, TAU, 20, Color(col.r, col.g, col.b, 0.55), 2.0)
+
+
+func _draw_editor_bar() -> void:
+	var btns: Array = layout.ed_buttons
+	if btns.is_empty():
+		return
+	var top: float = float(btns[0].position.y) - 26.0 * layout.ui
+	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
+	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
+	# Nad pruhem je jedine misto v editoru, kde muze byt text: rika, ktery
+	# usek je vybrany a co se prave stalo. Deska zustava bez textu.
+	_label(Vector2(14.0 * layout.ui, top - 8.0 * layout.ui), editor.sel_text(), 14,
+		Color(0.88, 0.85, 0.78))
+	if not editor.status.is_empty():
+		_label(Vector2(layout.view.x - 14.0 * layout.ui, top - 8.0 * layout.ui),
+			editor.status, 14, Color(0.72, 0.70, 0.62), false, 1.0)
+	# KOD LEVELU. Kdyz je vyexportovany, ukaze se nad pruhem - hrac ho odsud
+	# opise nebo zkopiruje a posle. Delsi nez sirka displeje se zkrati; cely
+	# je v souboru vedle (a v hlásce je cesta k nemu).
+	if not editor.code.is_empty():
+		var cw: float = layout.view.x - 28.0 * layout.ui
+		_label(Vector2(14.0 * layout.ui, top + 16.0 * layout.ui),
+			editor.code, 11, Color(0.80, 0.84, 0.70), false, cw)
+	for i in range(btns.size()):
+		var r: Rect2 = btns[i]
+		draw_rect(r, Color(0.135, 0.125, 0.11))
+		var accent: Color = Color(0.42, 0.40, 0.35)
+		if i == Editor.BTN_EXPORT:
+			accent = Color(0.65, 0.78, 0.60)
+		elif i == Editor.BTN_PLAY:
+			accent = Color(0.78, 0.62, 0.30)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		_draw_centered(Editor.BTN_LABELS[i], r, r.position.y + r.size.y * 0.64, 13,
+			Color(0.88, 0.85, 0.78))
+
+
+func _reflow_editor() -> void:
+	_reflow()
+
+
 # NASTAVENI: dve prepinaci policka (hudba, zvuky) a zpet do menu.
 func _handle_settings_tap(pos: Vector2) -> void:
 	if layout.settings_back.has_point(pos):
@@ -328,6 +464,9 @@ func _draw() -> void:
 	if menu.is_settings():
 		_draw_settings()
 		return
+	if menu.is_editor():
+		_draw_editor()
+		return
 	_draw_battle()
 
 
@@ -335,6 +474,7 @@ func _draw() -> void:
 # az k spodnimu okraji displeje.
 func _draw_battle() -> void:
 	_draw_background()
+	_draw_trunk()
 	_draw_lanes()
 	_draw_zones()
 	_draw_slots()
@@ -365,8 +505,8 @@ func _draw_menu() -> void:
 	_label(Vector2(cx, layout.menu_title_y + 26.0 * layout.ui), Menu.SUBTITLE, 14,
 		Color(0.58, 0.55, 0.49), true, layout.view.x)
 
-	var names := ["BATTLE", "NÁVOD", "SETTINGS", "UPDATE"]
-	var subs := ["spustit kolo", "pravidla hry a poškození", "hudba a zvuky", "stáhnout novou verzi"]
+	var names: Array = Menu.MENU_ITEMS
+	var subs: Array = Menu.MENU_SUBS
 	for i in range(layout.menu_buttons.size()):
 		var r: Rect2 = layout.menu_rect(i)
 		var accent: Color = Color(0.72, 0.70, 0.62)
@@ -637,15 +777,15 @@ func _draw_background() -> void:
 # Barva pruhu. Neutralni pruh NENI sedy "bez vyznamu" - je to pruh,
 # ktery dela vsem stejne, takze ma vlastni, klidnou barvu.
 func _lane_color(lane: int) -> Color:
-	if Network.lane_is_neutral(lane):
+	if game.net.lane_is_neutral(lane):
 		return Color(0.55, 0.53, 0.48)
-	return Element.color_of(Network.lane_element(lane))
+	return Element.color_of(game.net.lane_element(lane))
 
 
 func _draw_lanes() -> void:
 	var lw: float = maxf(2.0, 9.0 * layout.s)
 	var sel: int = game.switch_lane()
-	for lane in range(Network.LANES):
+	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
 		# VYBRANY USEK JE SVETLEJSI, ALE PORAD SVOJI BARVY. Hrac tak vidi,
@@ -678,7 +818,7 @@ func _draw_lanes() -> void:
 func _draw_zones() -> void:
 	var thick: float = ZONE_THICK * layout.s
 	var sel: int = game.switch_lane()
-	for lane in range(Network.LANES):
+	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		var y: float = game.net.rows[lane]
 		var a: float = 0.10 if lane != sel else 0.17
@@ -704,7 +844,7 @@ func _draw_trunk() -> void:
 
 func _draw_slots() -> void:
 	var r: float = game.net.bonus_r
-	for lane in range(Network.LANES):
+	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		for slot in range(game.net.slot_count()):
 			var p: Vector2 = game.net.slot_world(lane, slot)
@@ -718,8 +858,8 @@ func _draw_slots() -> void:
 			# useku runa neni, protoze tam stat nic nemuze - misto je jen
 			# obrys a to je samo informace.
 			draw_arc(p, r, 0.0, TAU, 24, Color(col.r, col.g, col.b, 0.30), 2.0)
-			if not Network.lane_is_neutral(lane):
-				_glyph(Network.lane_element(lane), p, r * 0.52,
+			if not game.net.lane_is_neutral(lane):
+				_glyph(game.net.lane_element(lane), p, r * 0.52,
 					Color(col.r, col.g, col.b, 0.42))
 
 
@@ -764,11 +904,11 @@ func _draw_enemies() -> void:
 		var e: Enemy = item
 		var p: Vector2 = _enemy_pos(e)
 		var col: Color = Element.color_of(e.element)
-		draw_circle(p, 13.0 * layout.s, Color(0.09, 0.085, 0.08))
-		draw_circle(p, 11.0 * layout.s, col)
-		_glyph(e.element, p, 7.0 * layout.s, Color(0.07, 0.06, 0.06))
+		draw_circle(p, ENEMY_R_OUT * layout.s, Color(0.09, 0.085, 0.08))
+		draw_circle(p, ENEMY_R_IN * layout.s, col)
+		_glyph(e.element, p, ENEMY_GLYPH * layout.s, Color(0.07, 0.06, 0.06))
 		if e.hp_frac() < 1.0:
-			draw_arc(p, 17.0 * layout.s, -PI * 0.5, -PI * 0.5 + TAU * e.hp_frac(), 24,
+			draw_arc(p, ENEMY_HP_R * layout.s, -PI * 0.5, -PI * 0.5 + TAU * e.hp_frac(), 24,
 				Color(0.90, 0.85, 0.55), 3.0)
 
 
@@ -790,6 +930,10 @@ func _draw_hud() -> void:
 	var x0: float = 18.0 * layout.s
 	_label(Vector2(x0, layout.hud_h * 0.48), "Vlna %d" % game.wave, 20, Color(0.90, 0.87, 0.80))
 	_label(Vector2(x0, layout.hud_h * 0.88), game.phase, 13, Color(0.58, 0.55, 0.49))
+	# Jmeno levelu: hrac musi videt, co hraje. "zakladni" znamena, ze jede
+	# puvodni deska balancu.
+	var lv_name: String = game.level.name if game.level != null else "?"
+	_label(Vector2(x0, layout.hud_h * 1.62), lv_name, 12, Color(0.50, 0.47, 0.42))
 	_label(Vector2(x0 + step, layout.hud_h * 0.48), "Životy %d" % game.lives, 20,
 		Color(0.85, 0.42, 0.36) if game.lives <= 4 else Color(0.90, 0.87, 0.80))
 	_label(Vector2(x0 + step, layout.hud_h * 0.88), "z %d" % Game.START_LIVES, 13,
@@ -803,10 +947,10 @@ func _draw_hud() -> void:
 	# kde ji vidi, protoze v desce uz zadny popisek neni.
 	var sel: int = game.switch_lane()
 	var sel_txt: String
-	if Network.lane_is_neutral(sel):
+	if game.net.lane_is_neutral(sel):
 		sel_txt = "neutrální × 1.0"
 	else:
-		sel_txt = "%s × %.1f" % [Element.name_of(Network.lane_element(sel)),
+		sel_txt = "%s × %.1f" % [Element.name_of(game.net.lane_element(sel)),
 			Element.STRONG * game.lane_mult(sel)]
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.48), sel_txt, 18, Color(0.72, 0.70, 0.64))
 	if game.phase == "build":
