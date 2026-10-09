@@ -7,10 +7,11 @@ extends Node2D
 # barevny pas pres cely rovny usek kazdeho pruhu. Hrac tak vidi, kde se
 # bude poutnikum ubirat zivot, a kde ne.
 #
-# HERNI DESKA NENESE ZADNY TEXT. Popisky vyhybky, vystupu i kmene jsou
-# pryc - kazdy radek textu v desce je misto, ktere chybi poutnikum. Vsechno
-# vysvetleni je v MENU pod tlacitkem NAVOD a cisla poskozeni v hornim
-# panelu; deska ma jen znacky (runy, barvy, tvary).
+# HERNI DESKA NENESE ZADNY TEXT ANI ZADNE OVLADANI. Popisky vyhybky,
+# vystupu i kmene jsou pryc (jsou v menu pod NAVODEM) a zmizel i cely spodni
+# pruh vcetne tlacitka SKIP - deska saha az k spodnimu okraji displeje.
+# Vsechno vysvetleni je v NAVODU a cisla poskozeni v hornim panelu; deska ma
+# jen znacky (runy, barvy, tvary).
 #
 # ROZVRZENI JE RESPONZIVNI: pozice jdou z realne velikosti okna pres
 # ScreenLayout, velikosti z jednoho meritka. Pri zmene velikosti okna se
@@ -93,15 +94,15 @@ func _place_to_window() -> void:
 	layout.compute(get_viewport_rect().size)
 	if game == null:
 		game = Game.new()
-		game.setup(layout.arena, layout.s, layout.bar_y)
+		game.setup(layout.arena, layout.s, layout.board_bottom)
 	else:
 		_reflow()
 
 
 # Preklopeni site na aktualni rozvrzeni. `bar_top` jde do build() jako
-# parametr - kdyby se nastavil az na hotove siti, pocital by stary pruh.
+# parametr - kdyby se nastavil az na hotove siti, pocital by stary okraj.
 func _reflow() -> void:
-	game.rebuild_network(layout.arena, layout.s, layout.bar_y)
+	game.rebuild_network(layout.arena, layout.s, layout.board_bottom)
 
 
 func _on_resize() -> void:
@@ -161,9 +162,8 @@ func _pull_toast(delta: float) -> void:
 # ---------------------------------------------------------------- zvuk
 
 # Dve vetve zvuku: hudba a efekty, kazda se daji zvlast vypnout. Zvuk se
-# GENERUJE (jednoducha basova linka + tuknuti pri stisku), protoze hra
-# zatim zadne audio soubory nema - a ticho by u "zapni/vypni hudbu"
-# nešlo poznat. Casem se da nahradit skutecnou hudbou beze zmeny UI.
+# GENERUJE (basova linka + tuknuti pri stisku), protoze hra zadne audio
+# soubory neveze - a ticho by u "zapni/vypni hudbu" nešlo poznat.
 func _setup_audio() -> void:
 	var snd := Sound.new()
 	_music = AudioStreamPlayer.new()
@@ -172,10 +172,18 @@ func _setup_audio() -> void:
 	_music.bus = "Master"
 	add_child(_music)
 	_sfx = AudioStreamPlayer.new()
-	# Tuknuti se NESMYCKUJE - loopovany 0.09s ton praskal 11x za sekundu.
 	_sfx.stream = snd.sfx_tap()
-	_sfx.volume_db = -6.0
+	_sfx.volume_db = -12.0
 	_sfx.bus = "Master"
+	# DULEZITE: bez polyfonie kazde dalsi klepnuti PRERUSI to predchozi a Godot
+	# stream restartuje - a to je ostri rez uprostred obalky, tedy cvaknuti.
+	# Se polyfonii kazde tuknuti dozni, misto aby ho dalsi utalo.
+	#
+	# ALE POZOR: hrac klepe rychle a hlasy se scitaji. Osm tuknuti pres sebe
+	# je +9 dB a Master zacne limitovat - a limitace je presne to praskani,
+	# ktere slysel. Proto strop 4 hlasy a nizsi hlasitost: i ctyri pres sebe
+	# zustanou pod limitem.
+	_sfx.max_polyphony = 4
 	add_child(_sfx)
 
 
@@ -196,7 +204,7 @@ func _click() -> void:
 
 
 func _start_battle() -> void:
-	game.setup(layout.arena, layout.s, layout.bar_y)
+	game.setup(layout.arena, layout.s, layout.board_bottom)
 	menu.open_battle()
 
 
@@ -242,13 +250,10 @@ func _handle_tap(pos: Vector2) -> void:
 	if menu.is_settings():
 		_handle_settings_tap(pos)
 		return
-	if layout.skip_rect.has_point(pos):
-		game.run_for(6.0)
-		return
-	# Misto na bonus ma prednost: klepnuti na nej stavi, pripadne vylepsuje.
-	# Klepnuti kamkoli JINAM na usek prepne vyhybku na ten usek. Zadna
-	# tlacitka vyhybky nejsou - casem jich bude vic, nez se jich do pruhu
-	# vejde, a usek je to, na co se stejne kouka.
+	# Na desce uz zadne tlacitko neni - jedina interakce je klepnuti na misto
+	# na bonus (stavi / vylepsi) a klepnuti kamkoli JINAM na usek (prepne
+	# vyhybku). Zadna tlacitka vyhybky nejsou: casem jich bude vic, nez se
+	# jich do pruhu vejde, a usek je to, na co se stejne kouka.
 	var cell: Vector2i = game.net.nearest_slot(pos)
 	if cell.x >= 0:
 		_click()
@@ -326,6 +331,8 @@ func _draw() -> void:
 	_draw_battle()
 
 
+# HERNI DESKA. Pruh je pryc, takze posledni prvek je HUD - a deska saha
+# az k spodnimu okraji displeje.
 func _draw_battle() -> void:
 	_draw_background()
 	_draw_lanes()
@@ -335,9 +342,7 @@ func _draw_battle() -> void:
 	_draw_switch()
 	_draw_bonuses()
 	_draw_enemies()
-	_draw_trunk()
 	_draw_hud()
-	_draw_control_bar()
 
 
 # ---------------------------------------------------------------- menu
@@ -383,78 +388,199 @@ func _draw_menu() -> void:
 		"build %s" % menu.build_id, 11, Color(0.42, 0.40, 0.36), true, layout.view.x)
 
 
-# NAVOD. Vsechno, co drive stalo popisky primo v desce a v ovladacim pruhu,
-# je tady - a to vcetne tabulky poskozeni. Kresli se z Guide.SOURCE pres
-# Guide.lay_out(), takze se text na malem displeji zalomi a test overi, ze se
-# neztratilo ani slovo. Dvojice zivlu se kresli jako RUNY, protoze barva
-# nesmi byt nikdy jediny nosic informace.
+# NAVOD. Neni to souvisly text - jsou to BLOKY a kazdy blok je OBRAZEK
+# s jednou kratkou vetou. Obrazky se kresli stejnymi znackami zivlu jako hra,
+# takze se hrac uci presne to, co pak na desce uvidí.
+#
+# Na sirokem displeji jsou bloky ve DVOU SLOUPCICH (2x2) a kazdy ma obrazek
+# vlevo a text vpravo. Na uzke/male obrazovce jdou pod sebe.
 func _draw_guide() -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
 	var left: float = _pad_left()
-	var top: float = 16.0 * layout.ui
+	var top: float = 10.0 * layout.ui
 	var avail_w: float = layout.view.x - left * 2.0
+	# ZPET je v rohu obrazovky, text si nad nim nechava misto.
+	var avail_h: float = layout.guide_back.position.y - top - 8.0 * layout.ui
+	var wide: bool = layout.view.x >= 700.0
 
-	# Tlacitko ZPET je v hernim pruhu, takze text musi zustat nad nim.
-	var avail_h: float = layout.bar_y - top - 4.0 * layout.ui
-	# PISMO SE MERI I KRESLI VE SKUTECNYCH PIXELECH. Kdyby se pri kresleni
-	# jeste nasobilo meritkem `ui`, hrac by videl jiny text, nez test meril.
-	var px: int = Guide.fit_px(_font, avail_w, avail_h)
-	var lines: Array = Guide.lay_out(_font, maxi(px, Guide.MIN_PX), avail_w)
+	var px: int = Guide.fit_px(_font, avail_w, avail_h, wide)
+	var fs: int = maxi(px, Guide.MIN_PX)
+	var count: int = Guide.BLOCKS.size()
+	var cols: int = 2 if wide else 1
+	var rows: int = int(ceil(float(count) / float(cols)))
+	var cell_w: float = avail_w / float(cols)
+	var cell_h: float = (avail_h - float(fs) * 1.9) / float(rows)
 
-	# Nadpis je prvni radek v TOKU textu, ne zvlast nad blokem - jinak by
-	# na malem displeji ukradl vysku, ktera chybi posledni vete.
-	var y: float = top + float(maxi(px, Guide.MIN_PX)) * 0.95
-	var first := true
-	for item in lines:
-		match item[0]:
-			"h":
-				if not first:
-					y += float(maxi(px, Guide.MIN_PX)) * Guide.ROW_H * 0.55
-				_label(Vector2(left, y), str(item[1]), px + Guide.TITLE_EXTRA,
-					Color(0.82, 0.79, 0.70), false, avail_w)
-				y += float(maxi(px, Guide.MIN_PX)) * Guide.ROW_H
-			"e":
-				_draw_pair_row(Vector2(left, y + float(maxi(px, Guide.MIN_PX)) * 0.85),
-					float(maxi(px, Guide.MIN_PX)), avail_w)
-				y += float(maxi(px, Guide.MIN_PX)) * Guide.PAIR_ROW
-			_:
-				_label(Vector2(left, y), str(item[1]), px, Color(0.72, 0.69, 0.62), false, avail_w)
-				y += float(maxi(px, Guide.MIN_PX)) * Guide.ROW_P
-		first = false
+	_label(Vector2(left, top + float(fs) * 1.1), Guide.TITLE, fs + 7,
+		Color(0.90, 0.87, 0.80), false, avail_w)
+
+	for i in range(count):
+		var b: Dictionary = Guide.BLOCKS[i]
+		var col: int = i % cols
+		var row: int = i / cols
+		var origin := Vector2(left + cell_w * float(col), top + float(fs) * 1.9 + cell_h * float(row))
+		_draw_guide_block(b, origin, cell_w, cell_h, fs)
 
 	var br: Rect2 = layout.guide_back
 	draw_rect(br, Color(0.20, 0.19, 0.17))
 	draw_rect(br, Color(0.38, 0.35, 0.30), false, 2.0)
-	_draw_centered(Guide.BACK, br, br.position.y + br.size.y * 0.62, 20, Color(0.85, 0.82, 0.76))
+	_draw_centered(Guide.BACK, br, br.position.y + br.size.y * 0.64, 18, Color(0.85, 0.82, 0.76))
 
 
-# Radek s dvojicemi zivlu pro navod: runa -> runa a jmeno -> jmeno.
-# Ctveřice se rozlozi do sloupcu podle sirky displeje, aby se vesly i na
-# maly telefon.
-func _draw_pair_row(at: Vector2, px: float, avail_w: float) -> void:
-	var cols: int = 4 if avail_w >= 560.0 * layout.ui else 2
-	var rows: int = int(ceil(float(Element.COUNT) / float(cols)))
-	var col_w: float = avail_w / float(cols)
-	var row_h: float = px * (Guide.PAIR_ROW if rows > 1 else Guide.PAIR_ROW * 0.55)
-	var run_r: float = minf(px * 0.62, col_w * 0.10)
-	for e in range(Element.COUNT):
-		var col: int = e % cols
-		var row: int = e / cols
-		var x0: float = at.x + col_w * float(col) + col_w * 0.06
-		var y: float = at.y + row_h * float(row)
-		var col_e: Color = Element.color_of(e)
-		var opp: int = Element.opposite_of(e)
-		_glyph(e, Vector2(x0 + run_r, y), run_r, col_e)
-		var ax0: float = x0 + run_r * 2.3
-		var ax1: float = ax0 + run_r * 2.0
-		draw_line(Vector2(ax0, y), Vector2(ax1, y), Color(0.55, 0.52, 0.46), 2.0)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(ax1 + 5.0, y), Vector2(ax1, y - 4.5), Vector2(ax1, y + 4.5)]),
-			Color(0.55, 0.52, 0.46))
-		_glyph(opp, Vector2(ax1 + 5.0 + run_r, y), run_r, Element.color_of(opp))
-		_label(Vector2(ax1 + 5.0 + run_r * 2.2, y + px * 0.28),
-			"%s → %s" % [Element.name_of(e), Element.name_of(opp)],
-			int(round(px * 0.82)), Color(0.78, 0.75, 0.68), false, col_w)
+func _draw_guide_block(b: Dictionary, origin: Vector2, cell_w: float, cell_h: float,
+		fs: int) -> void:
+	var pad: float = float(fs) * 0.8
+	var art_w: float = Guide.art_width(cell_w, cell_h, true)
+	var art_h: float = maxf(float(fs) * 3.0, cell_h - pad * 2.0)
+	var art := Rect2(origin.x + pad, origin.y + pad, art_w, art_h)
+	draw_rect(art, Color(0.125, 0.115, 0.10))
+	draw_rect(art, Color(0.24, 0.22, 0.19), false, 1.0)
+
+	var txt_x: float = art.end.x + float(fs) * 1.1
+	var txt_w: float = origin.x + cell_w - pad - txt_x
+	_label(Vector2(txt_x, origin.y + pad + float(fs) * 0.95), str(b["title"]),
+		fs + 4, Color(0.86, 0.83, 0.75), false, txt_w)
+	var lines: Array = Guide.caption(_font, fs, txt_w, str(b["text"]))
+	var ly: float = origin.y + pad + float(fs) * 0.95 + float(fs) * 1.5
+	for line in lines:
+		_label(Vector2(txt_x, ly), str(line), fs, Color(0.70, 0.67, 0.60), false, txt_w)
+		ly += float(fs) * 1.35
+
+	# Obrazek kresli hra sama - stejnymi znackami, jake ma na desce.
+	match str(b["art"]):
+		"_guide_switch":
+			_guide_switch(art, fs)
+		"_guide_damage":
+			_guide_damage(art, fs)
+		"_guide_bonus":
+			_guide_bonus(art, fs)
+		"_guide_exit":
+			_guide_exit(art, fs)
+		"_guide_lane":
+			_guide_lane(art, fs)
+
+
+# OBRAZEK 1: vyhybka. Kmen se rozvetvuje na useky, vybrany je svetlejsi -
+# presne to, co hrac na desce vidi, kdyz klepne.
+func _guide_switch(r: Rect2, fs: int) -> void:
+	var y: float = r.get_center().y
+	var x0: float = r.position.x + r.size.x * 0.12
+	var xm: float = r.position.x + r.size.x * 0.46
+	var x1: float = r.position.x + r.size.x * 0.88
+	draw_line(Vector2(x0, y), Vector2(xm, y), Color(0.45, 0.41, 0.35), float(fs) * 0.28)
+	var spread: float = r.size.y * 0.30
+	var lanes := [Vector2(x1, y - spread), Vector2(x1, y), Vector2(x1, y + spread)]
+	var sel: int = 1
+	for i in range(lanes.size()):
+		var col: Color = [Element.color_of(Element.FIRE), Element.color_of(Element.WATER),
+			Element.color_of(Element.EARTH)][i]
+		var a: float = 0.95 if i == sel else 0.30
+		draw_line(Vector2(xm, y), lanes[i], Color(col.r, col.g, col.b, a),
+			float(fs) * (0.26 if i == sel else 0.16))
+	draw_circle(Vector2(xm, y), float(fs) * 0.34, Color(0.10, 0.095, 0.085))
+	draw_arc(Vector2(xm, y), float(fs) * 0.34, 0.0, TAU, 20,
+		Element.color_of(Element.WATER), 2.0)
+	# Kolecko mysi/prstu nad vybranym usekem - znacka "klepni sem".
+	var px: float = xm + (x1 - xm) * 0.45
+	draw_arc(Vector2(px, lanes[sel].y), float(fs) * 0.30, 0.0, TAU, 18,
+		Color(0.90, 0.87, 0.80), 2.0)
+
+
+# OBRAZEK 2: poskozeni. Tri useky s runou, u kazdeho nasobek - vlastni 0 %,
+# jiné 50 %, protiklad 200 %. Cisla, ne jen barvy.
+func _guide_damage(r: Rect2, fs: int) -> void:
+	var cx: float = r.position.x + r.size.x * 0.5
+	var c := Vector2(cx, r.get_center().y)
+	var rr: float = minf(r.size.x * 0.16, r.size.y * 0.22)
+	var ring := float(fs) * 0.75
+	var els := [Element.FIRE, Element.WATER, Element.EARTH]
+	var mults := ["2.0", "0", "0.5"]
+	var pos := [c + Vector2(-ring * 1.5, 0.0), c, c + Vector2(ring * 1.5, 0.0)]
+	for i in range(els.size()):
+		var col: Color = Element.color_of(els[i])
+		draw_circle(pos[i], rr, Color(col.r, col.g, col.b, 0.22))
+		draw_arc(pos[i], rr, 0.0, TAU, 22, col, 2.0)
+		_glyph(els[i], pos[i], rr * 0.52, col)
+	# Sipka od Ohne k Vode (protiklad) a k Zemi (jiný).
+	_arrow(pos[0] + Vector2(rr + 2.0, 0.0), pos[1] - Vector2(rr + 2.0, 0.0),
+		Element.color_of(Element.WATER))
+	_arrow(pos[0] + Vector2(rr * 0.8, rr * 0.8), pos[2] - Vector2(rr * 0.8, rr * 0.8),
+		Element.color_of(Element.EARTH))
+	_label(Vector2(cx, pos[0].y - rr - float(fs) * 0.4), mults[0], fs,
+		Color(0.90, 0.85, 0.60), true, r.size.x)
+	_label(Vector2(cx, pos[1].y - rr - float(fs) * 0.4), mults[1], fs,
+		Color(0.60, 0.57, 0.51), true, r.size.x)
+	_label(Vector2(cx, pos[2].y + rr + float(fs) * 1.0), mults[2], fs,
+		Color(0.70, 0.67, 0.60), true, r.size.x)
+
+
+func _arrow(a: Vector2, b: Vector2, col: Color) -> void:
+	draw_line(a, b, Color(col.r, col.g, col.b, 0.7), 2.0)
+	var d: Vector2 = (b - a).normalized()
+	var n := Vector2(-d.y, d.x)
+	draw_colored_polygon(PackedVector2Array([b, b - d * 7.0 + n * 4.0, b - d * 7.0 - n * 4.0]), col)
+
+
+# OBRAZEK 3: bonus. Usek s prazdnym mistem (obrys s runou) a vedle hotovy
+# bonus - hrac vidi, co ma hledat a co z toho vznikne.
+func _guide_bonus(r: Rect2, fs: int) -> void:
+	var y: float = r.get_center().y
+	var col: Color = Element.color_of(Element.AIR)
+	var rr: float = minf(r.size.x * 0.13, r.size.y * 0.24)
+	var x0: float = r.position.x + r.size.x * 0.24
+	var x1: float = r.position.x + r.size.x * 0.72
+	draw_line(Vector2(r.position.x + r.size.x * 0.08, y),
+		Vector2(r.position.x + r.size.x * 0.92, y),
+		Color(col.r, col.g, col.b, 0.35), float(fs) * 0.20)
+	# Prazdne misto: obrys + runa = "sem muzes postavit".
+	draw_arc(Vector2(x0, y), rr, 0.0, TAU, 22, Color(col.r, col.g, col.b, 0.45), 2.0)
+	_glyph(Element.AIR, Vector2(x0, y), rr * 0.52, Color(col.r, col.g, col.b, 0.5))
+	var side: float = minf(r.size.x * 0.10, rr * 1.3)
+	draw_rect(Rect2(Vector2(x1, y) - Vector2(side, side), Vector2(side, side) * 2.0), col)
+	_glyph(Element.AIR, Vector2(x1, y), side * 0.62, Color(0.07, 0.06, 0.06))
+	_arrow(Vector2(x0 + rr + 3.0, y), Vector2(x1 - side - 3.0, y), Color(0.55, 0.52, 0.46))
+
+
+# OBRAZEK 4: vystup. Krizek je jiny tvar nez vsechny runy - nema element,
+# nikdo ho nevlastni a kdo tam dojde, stoji zivot. U toho srdce.
+func _guide_exit(r: Rect2, fs: int) -> void:
+	var c := Vector2(r.get_center().x - r.size.x * 0.12, r.get_center().y)
+	var rr: float = minf(r.size.x * 0.15, r.size.y * 0.30)
+	draw_circle(c, rr, Color(0.13, 0.12, 0.11))
+	draw_arc(c, rr, 0.0, TAU, 28, Color(0.62, 0.58, 0.52), 3.0)
+	var d: float = rr * 0.42
+	draw_line(c - Vector2(d, d), c + Vector2(d, d), Color(0.72, 0.68, 0.60), 3.0)
+	draw_line(c + Vector2(d, -d), c - Vector2(d, -d), Color(0.72, 0.68, 0.60), 3.0)
+	# Srdce = zivot. Kresli se dvema kruhy a trojuhelnikem, aby to nebyl
+	# jen dalsi runa - tvar je jedina znacka, ktera tu muze fungovat.
+	var hc := Vector2(c.x + rr * 2.4, c.y)
+	var hr: float = rr * 0.62
+	var col := Color(0.85, 0.42, 0.36)
+	draw_circle(hc + Vector2(-hr * 0.5, -hr * 0.35), hr * 0.56, col)
+	draw_circle(hc + Vector2(hr * 0.5, -hr * 0.35), hr * 0.56, col)
+	draw_colored_polygon(PackedVector2Array([
+		hc + Vector2(-hr * 0.98, -hr * 0.12), hc + Vector2(hr * 0.98, -hr * 0.12),
+		hc + Vector2(0.0, hr * 1.05)]), col)
+	_arrow(Vector2(c.x + rr + 3.0, c.y), Vector2(hc.x - hr * 1.15, c.y), col)
+
+
+# OBRAZEK 5: useky. Nahore neutralni (sedivy, bere vsem stejne) a pod nim
+# elementarni s runou. Hrac vidi rozdil, ktery se jinak pozna jen hranim.
+func _guide_lane(r: Rect2, fs: int) -> void:
+	var y0: float = r.position.y + r.size.y * 0.30
+	var y1: float = r.position.y + r.size.y * 0.72
+	var x0: float = r.position.x + r.size.x * 0.08
+	var x1: float = r.position.x + r.size.x * 0.92
+	var neu := Color(0.55, 0.53, 0.48)
+	var fire: Color = Element.color_of(Element.FIRE)
+	var lw: float = maxf(2.0, float(fs) * 0.28)
+	draw_line(Vector2(x0, y0), Vector2(x1, y0), Color(neu.r, neu.g, neu.b, 0.80), lw)
+	draw_line(Vector2(x0, y1), Vector2(x1, y1), Color(fire.r, fire.g, fire.b, 0.80), lw)
+	# Neutralni nema runu, elementarni ano - presne ten rozdil, ktery
+	# pozna i hrac, ktery barvy nerozlisuje.
+	draw_arc(Vector2((x0 + x1) * 0.5, y1), float(fs) * 0.60, 0.0, TAU, 22,
+		Color(fire.r, fire.g, fire.b, 0.45), 2.0)
+	_glyph(Element.FIRE, Vector2((x0 + x1) * 0.5, y1), float(fs) * 0.32, fire)
 
 
 func _pad_left() -> float:
@@ -509,8 +635,7 @@ func _draw_background() -> void:
 
 
 # Barva pruhu. Neutralni pruh NENI sedy "bez vyznamu" - je to pruh,
-# ktery dela vsem stejne, takze ma vlastni, klidnou barvu a v navodu
-# je popsan slovem.
+# ktery dela vsem stejne, takze ma vlastni, klidnou barvu.
 func _lane_color(lane: int) -> Color:
 	if Network.lane_is_neutral(lane):
 		return Color(0.55, 0.53, 0.48)
@@ -524,7 +649,7 @@ func _draw_lanes() -> void:
 		var col: Color = _lane_color(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
 		# VYBRANY USEK JE SVETLEJSI, ALE PORAD SVOJI BARVY. Hrac tak vidi,
-		# kam poutniky posle, aniž by musel hadat, ktery element to je -
+		# kam poutniky posle, aniz by musel hadat, ktery element to je -
 		# barva ani runa se ne meni, meni se jen jas.
 		var faint := col
 		faint.a = 0.28 if lane != sel else 0.42
@@ -548,9 +673,8 @@ func _draw_lanes() -> void:
 
 
 # DMG ZONA. Pres cely rovny usek kazdeho pruhu vede barevny pas - tady
-# se poutnikum ubira zivot. Pas je u vybraneho useku sytější, aby bylo
-# videt, kde dmg zona prave pracuje. Cislo nasobku tu ZAMERNE NENI - na
-# desku uz zadny text nepatri, hrac ho ma v hornim panelu u vybraneho useku.
+# se poutnikum ubira zivot. Cislo nasobku tu ZAMERNE NENI - hrac ho ma
+# v hornim panelu u vybraneho useku.
 func _draw_zones() -> void:
 	var thick: float = ZONE_THICK * layout.s
 	var sel: int = game.switch_lane()
@@ -657,7 +781,7 @@ func _enemy_pos(e: Enemy) -> Vector2:
 # HORNI PANEL. Dva radky s písmem 20/13 px se vejdou do 52 px, takze je
 # polovicni proti puvodnimu - kazdy pixel navic jde do herni desky.
 # Popisek vybraneho useku je tu ZAMERNE: je to jedine misto, kde hrac vidi,
-# jak silna dmg zona ho prave ceka, a na desku uz text nepatri.
+# jak silna dmg zona ho prave ceka.
 func _draw_hud() -> void:
 	draw_rect(Rect2(0.0, 0.0, layout.view.x, layout.hud_h), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, layout.hud_h), Vector2(layout.view.x, layout.hud_h),
@@ -705,24 +829,6 @@ func _draw_hud() -> void:
 	if toast_t > 0.0:
 		_label(Vector2(layout.view.x * 0.5, layout.hud_h + 24.0 * layout.s), toast, 16,
 			Color(0.78, 0.75, 0.68), true, layout.view.x * 0.9)
-
-
-# SPODNI PRUH. Neni to uz navod - navod se prestehoval do menu. Zbyva
-# jedine tlacitko SKIP a k tomu jen jemna informace, ze deska je bez
-# popisku. Pruh je proto polovicni a jeho mista dostane herni plocha.
-func _draw_control_bar() -> void:
-	draw_rect(Rect2(0.0, layout.bar_y, layout.view.x, layout.bar_h), Color(0.075, 0.07, 0.065))
-	draw_line(Vector2(0.0, layout.bar_y), Vector2(layout.view.x, layout.bar_y),
-		Color(0.28, 0.25, 0.21), 2.0)
-	_label(Vector2(layout.text_x, layout.bar_y + layout.bar_h * 0.62),
-		"návod je v menu", 14, Color(0.55, 0.52, 0.46))
-
-	draw_rect(layout.skip_rect, Color(0.20, 0.19, 0.17))
-	draw_rect(layout.skip_rect, Color(0.38, 0.35, 0.30), false, 2.0)
-	_draw_centered("SKIP", layout.skip_rect,
-		layout.skip_rect.position.y + layout.skip_rect.size.y * 0.44, 18, Color(0.85, 0.82, 0.76))
-	_draw_centered("6 s", layout.skip_rect,
-		layout.skip_rect.position.y + layout.skip_rect.size.y * 0.80, 13, Color(0.58, 0.55, 0.49))
 
 
 func _draw_centered(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:

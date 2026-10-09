@@ -1,129 +1,115 @@
 class_name Guide
 extends RefCounted
 
-# Text NAVODU. Jedine misto ve hre, kde se vysvetluji pravidla - z herni
-# desky zmizel kazdy popisek, protoze kazdy radek textu v desce je misto,
-# ktere chybi poutnikum.
+# NAVOD. Strucne, obrazkove a hlavne mimo herni desku - na desku se zadny
+# text nevejde, kazdy radek by ubral misto poutnikum.
 #
-# Text je ZDROJ, ne hotove radky: na malem telefonu se musi zalomit podle
-# skutecne sirky pisma. Kresleni i testy pouzivaji STEJNE `lay_out()`, takze
-# test overi to, co hrac opravdu uvidi - a hlavne ze se na malem displeji
-# neztrati ani slovo.
+# Neni to souvisly text. Je to pet BLOKU a kazdy blok je OBRAZEK s jednou
+# kratkou vetou:
 #
-# Radek druhu "e" neni text, ale DVOJICE RUN (kdo je silny proti komu).
-# Barva nesmi byt nikdy jediny nosic informace, proto je u kazde dvojice
-# i jmeno zivlu.
+#   [ nakreslene schema ]   Výhybka
+#                           Klepni na úsek.
 #
-# POZOR, dva chytáky, na kterych uz beh spadl:
-#   1. Funkce se NESMI jmenovat `wrap` - to je vestavena funkce Godotu
-#      (wrap(hodnota, min, max)) a prebije ji i uvnitr teto tridy.
-#   2. Velikost pisma navodu se NESMI nasobit meritkem `ui`. Meri se
-#      a kresli se ve SKUTECNYCH pixelech; kdyby se pri kresleni jeste
-#      zmensila, hrac by videl jiny text, nez jaky test zmeril.
+# Obrazky kresli hra sama (_guide_switch, _guide_damage, ...) stejnymi
+# znackami zivlu jako deska, proto jsou v game_view. Tady je jen to, co se
+# da merit: texty bloku. Test diky tomu overi, ze je navod opravdu STRUCNY
+# (kazdy popisek ma nejvyce MAX_WORDS slov) a ze pro kazdy blok existuje
+# obrazek. Obe veci se snadno rozbijou a nikdo si toho na velkem monitoru
+# nevsimne.
 
 const TITLE := "NÁVOD"
 const BACK := "ZPĚT"
-# O kolik px je nadpis vetsi nez telo textu.
-const TITLE_EXTRA := 7
+# Strucnost je pozadavek, ne styl. Delsi vetu navod nema - delsi veta se
+# na telefonu neprecte a navod se rozpadne na odstavec.
+const MAX_WORDS := 8
+const MIN_PX := 9
+const MAX_PX := 16
 
-const SOURCE := [
-	["h", "Co je cílem"],
-	["p", "Poutníci putují po žilách many. Každý, kdo dojde na výstup, stojí jeden život."],
-	["p", "Cílem je zabít poutníka dřív, než tam dojde. Když se jich nahromadí víc, než stíháš odklízet, síť padne."],
-	["h", "Přepínání výhybky"],
-	["p", "Klepni na úsek a výhybka pošle příští poutníky na něj. Tlačítka žádná nejsou."],
-	["p", "Vybraný úsek je světlejší, barvu ani runu ale nemění."],
-	["h", "Poškození dělá celý úsek"],
-	["e", ""],
-	["p", "Čím déle jde poutník po úseku, tím víc ran dostane. Nezáleží na tom, kde přesně na něm stojí."],
-	["p", "Neutrální úsek: všichni 100 %."],
-	["p", "Elementární úsek: vlastní živel 0 %, jiný 50 %, protiklad 200 %."],
-	["p", "Poslat poutníka na jeho vlastní úsek je ztráta — projde bez škrábnutí."],
-	["h", "Bonusy"],
-	["p", "Klepni na prázdné místo na úseku a postaví se bonus. Patří jen na úsek svého živlu."],
-	["p", "Bonus posiluje celý úsek. Klepnutím na hotový bonus ho vylepšíš."],
-	["p", "Na neutrálním úseku stavět nelze, už teď působí na všechny stejně."],
-	["h", "Zlato a životy"],
-	["p", "Zlato dostaneš za zabitého poutníka a za odraženou vlnu. Životy jsou společné pro celou síť."],
+# Bloky navodu. "art" je jmeno funkce v game_view, ktera ten obrazek kresli.
+const BLOCKS := [
+	{
+		"art": "_guide_switch",
+		"title": "Výhybka",
+		"text": "Klepni na úsek. Poutníci půjdou tam.",
+	},
+	{
+		"art": "_guide_damage",
+		"title": "Poškození",
+		"text": "Bere celý úsek. Protiklad ×2, vlastní nic.",
+	},
+	{
+		"art": "_guide_bonus",
+		"title": "Bonus",
+		"text": "Klepni na místo s runou. Další klepnutí vylepší.",
+	},
+	{
+		"art": "_guide_exit",
+		"title": "Výstup",
+		"text": "Kdo dojde, stojí život.",
+	},
+	{
+		"art": "_guide_lane",
+		"title": "Úseky",
+		"text": "Šedý bere všem stejně, 100 %.",
+	},
 ]
 
-# Vyska radku v nasobcich velikosti pisma. Cim tesnejsi, tim vic textu se
-# vejde na maly displej - a na malem displeji jde kazdy pixel.
-const ROW_P := 1.38
-const ROW_H := 1.70
-const ROW_T := 2.40
-const PAIR_ROW := 3.10
-const MIN_PX := 9
-const MAX_PX := 15
 
-
-# Zalomi zdrojovy text na radky, ktere se vejdou do `max_w` pixelu pri
-# velikosti pisma `px`. Nadpisy a radek s runami zustavaji jako vlastni radek.
-static func lay_out(font: Font, px: int, max_w: float) -> Array:
+# Zalomi kratky popisek na radky, ktere se vejdou do `max_w` pri velikosti
+# pisma `px`. Nadpis bloku se nezalamuje - je kratky.
+static func caption(font: Font, px: int, max_w: float, text: String) -> Array:
 	var out: Array = []
-	for item in SOURCE:
-		var kind: String = item[0]
-		var text: String = item[1]
-		if kind != "p":
-			out.append([kind, text])
-			continue
-		var line: String = ""
-		for word in text.split(" ", false):
-			var cand: String = word if line.is_empty() else line + " " + word
-			if font.get_string_size(cand, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= max_w:
-				line = cand
-			else:
-				if not line.is_empty():
-					out.append(["p", line])
-				line = word
-		if not line.is_empty():
-			out.append(["p", line])
+	var line: String = ""
+	for word in text.split(" ", false):
+		var cand: String = word if line.is_empty() else line + " " + word
+		if font.get_string_size(cand, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= max_w:
+			line = cand
+		else:
+			if not line.is_empty():
+				out.append(line)
+			line = word
+	if not line.is_empty():
+		out.append(line)
 	return out
 
 
-# Vyska hotoveho bloku pri velikosti pisma `px`. Pocita se z TYCH SAMYCH
-# radku, ktere se kresli - proto se do displeje vejde presne to, co se
-# do nej vejit ma.
-static func block_height(lines: Array, px: float) -> float:
-	var h := px * ROW_T
-	var head_gap := false
-	for item in lines:
-		match item[0]:
-			"h":
-				h += px * (ROW_H * (0.55 if head_gap else 1.0))
-				head_gap = true
-			"e":
-				h += px * PAIR_ROW
-			_:
-				h += px * ROW_P
-	return h
+# Sirka obrazku v bloku. Obrazek je vzdy vlevo, text vpravo.
+static func art_width(avail_w: float, block_h: float, wide: bool) -> float:
+	return minf(avail_w * 0.42, block_h * 1.9)
 
 
-# Nejmensi velikost pisma, pri ktere se cely navod vejde do `max_h`.
-# Vraci -1, kdyz se nevejde ani pri nejmensi - to je chyba rozvrzeni,
-# proto to testy kontroluji.
-static func fit_px(font: Font, max_w: float, max_h: float) -> int:
+# Nejmensi velikost pisma, pri ktere se vsechny popisky vejdou do svych bloku
+# a obrazkum zustane rozumne misto. Vraci -1, kdyz se nevejdou ani pri MIN_PX.
+static func fit_px(font: Font, avail_w: float, avail_h: float, wide: bool) -> int:
+	var count: int = BLOCKS.size()
+	if count == 0:
+		return MAX_PX
 	var px: int = MAX_PX
 	while px >= MIN_PX:
-		if block_height(lay_out(font, px, max_w), float(px)) <= max_h:
+		var cols: int = 2 if wide else 1
+		var rows: int = int(ceil(float(count) / float(cols)))
+		var cell_w: float = avail_w / float(cols)
+		var block_h: float = (avail_h - float(px) * 1.9) / float(rows)
+		if block_h < float(px) * 2.6:
+			px -= 1
+			continue
+		var aw: float = art_width(cell_w, block_h, wide)
+		var tw: float = cell_w - aw - float(px) * 1.6
+		if tw < float(px) * 4.0:
+			px -= 1
+			continue
+		var max_lines := 1
+		for b in BLOCKS:
+			max_lines = maxi(max_lines, caption(font, px, tw, str(b["text"])).size() + 1)
+		if block_h >= float(px) * 1.45 * float(max_lines) + float(px) * 0.6:
 			return px
 		px -= 1
 	return -1
 
 
-# Kolik slov navod obsahuje. Test overuje, ze se pri zalamovani na malem
-# displeji neztratilo ani jedno - ticha ztrata textu je presne ta chyba,
-# ktera by se jinak poznala az na telefonu.
-static func word_count(lines: Array) -> int:
+# Kolik slov ma nejdelsi popisek. Test hlida strucnost.
+static func longest_caption_words() -> int:
 	var n := 0
-	for item in lines:
-		if item[0] == "p" or item[0] == "h":
-			n += str(item[1]).split(" ", false).size()
-	return n
-
-
-static func source_word_count() -> int:
-	var n := 0
-	for item in SOURCE:
-		n += str(item[1]).split(" ", false).size()
+	for b in BLOCKS:
+		n = maxi(n, str(b["text"]).split(" ", false).size())
 	return n

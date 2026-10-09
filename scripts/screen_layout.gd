@@ -11,29 +11,28 @@ extends RefCounted
 #          Kruh musi zustat kruhem, proto se nikdy neroztahuje pres osy.
 #   `ui` - meritko OVLADANI A PISMA. Drzi se dotykoveho minima pro prst.
 #
-# HERNI DESKA NENESE ZADNY TEXT. Kazdy popisek v desce je misto, ktere
-# chybi poutnikum, proto z ni zmizely popisky vyhybky, vystupu i kmene.
-# Vsechno vysvetleni je v MENU pod tlacitkem NAVOD a cisla poskozeni
-# v hornim panelu - obe mimo herni plochu.
+# HERNI DESKA NENESE ZADNY TEXT ANI ZADNE OVLADANI. Popisky z ni zmizely
+# (jsou v menu pod NAVODEM) a zmizel i cely spodni pruh vcetne tlacitka SKIP.
+# Deska proto saha az k spodnimu okraji displeje - kazdy pixel navic dostane
+# hraci plocha. Zbyva jen horni panel s císly, ktery je mimo desku.
+#
+# Hraci plocha je proto ZAMERNE bez jedineho tlacitka: `all_buttons()` vraci
+# prazdny seznam a testy to kontroluji. Kdyby se do desky nekdo pokusil
+# vratit tlacitko, hrac by o nej zacal pricházet mista.
 #
 # MENU je prvni obrazovka hry. Jeho tlacitka se pocitaji z okna stejne
 # jako vsechno ostatni, aby se dala na telefonu pohodlne stisknout.
 
 const REF_W := 960.0
 const REF_H := 600.0
-# Horni panel s císly: Vlna, Životy, Zlato a vybraný úsek. Dva radky, ktere
-# se vejdou i s písmem velikosti 20 px do 52 px - vic mista pro desku.
-const HUD_H := 52.0
-# Spodni pruh. Neni v nem zadny navod (ten je v menu), zustava jen SKIP,
-# takze staci 44 px - presne dotykove minimum pro prst.
-const BAR_UNIT_H := 52.0
+# Horni panel s císly: Vlna, Životy, Zlato a vybraný úsek. Dva radky
+# s písmem 20/13 px se vejdou do 48 px - vic mista pro desku.
+const HUD_H := 48.0
 const PAD := 16.0
-const BTN_H := 48.0
-const SKIP_W := 92.0
-# Rozestup mezi prvky, ktere se pocitaji z rozvrzeni (dnes tlacitko ZPET).
-const GAP := 40.0
 # Dotykove minimum pro prst. Pod tim se tlacitko neda spolehlive trefit.
 const MIN_TOUCH := 44.0
+# Sirka tlacitka ZPET v navodu.
+const SKIP_W := 92.0
 # Menu: ctyři tlacitka pod sebou - kolo, navod, nastaveni, aktualizace.
 const MENU_BTN_W := 340.0
 const MENU_BTN_H := 58.0
@@ -44,16 +43,15 @@ var view := Vector2(REF_W, REF_H)
 var s := 1.0
 var ui := 1.0
 var hud_h := HUD_H
-var bar_h := BAR_UNIT_H
-var bar_y := REF_H - BAR_UNIT_H
+# Spodni okraj hraci plochy. Pruh uz neexistuje, takze je to jen okraj
+# displeje s malou rezervou - sit pod nej nesmi kreslit.
+var board_bottom := REF_H
 var arena := Rect2()
-var btn_h := BTN_H
 var text_x := 0.0
-var skip_rect := Rect2()
-# Tlacitko ZPET na obrazovce navodu. Jedine tlacitko, ktere se pocita
-# ze spodniho pruhu, proto se do nej take kresli.
+# Tlacitko ZPET na obrazovce navodu. Neni v zadnem pruhu (ten je pryc),
+# stoji v rohu obrazovky a text si nad nim nechava misto.
 var guide_back := Rect2()
-# Menu a nastaveni - pocita se z okna, ne z herniho pruhu.
+# Menu a nastaveni - pocita se z okna, ne z herni plochy.
 var menu_buttons: Array = []
 var menu_title_y := 0.0
 var settings_toggle := Rect2()
@@ -64,25 +62,26 @@ func compute(v: Vector2) -> void:
 	view = v
 	s = clampf(minf(v.x / REF_W, v.y / REF_H), 0.45, 4.0)
 
-	var floor_ui: float = MIN_TOUCH / BTN_H
+	# Podlaha meritka ovladani. Neni to jen dotykove minimum: pismo v HUDu
+# by pri 0.76 vyslo na 15 px a to se na telefonu necte. 0.85 drzi
+# tlacitka NAD minimem (58*0.85 = 49 px) a text citelny.
+	var floor_ui: float = maxf(MIN_TOUCH / MENU_BTN_H, 0.85)
 	ui = clampf(s, floor_ui, 1.8)
 
 	hud_h = HUD_H * ui
-	bar_h = BAR_UNIT_H * ui
-	bar_y = v.y - bar_h
+	# Deska jde az k spodnimu okraji displeje. Pruh, ktery tu driv byl,
+	# je pryc - jeho vyska je ted hraci plocha.
+	board_bottom = v.y - 3.0 * s
 
-	# Arena si bere vsechno, co zbyde mezi HUDem a ovladacim pruhem.
+	# Arena si bere vsechno, co zbyde pod HUDem.
 	arena = Rect2(PAD * s, hud_h + 6.0 * s,
-		maxf(40.0, v.x - 2.0 * PAD * s), maxf(40.0, bar_y - hud_h - 12.0 * s))
+		maxf(40.0, v.x - 2.0 * PAD * s),
+		maxf(40.0, board_bottom - hud_h - 6.0 * s))
 
 	text_x = PAD * ui
-	btn_h = BTN_H * ui
-	# Jedine tlacitko herniho pruhu. Pruh je ted jen ovladaci, ne navod,
-	# proto je tak nizky - kazdy pixel navic jde do herni desky.
-	skip_rect = Rect2(v.x - PAD * ui - SKIP_W * ui,
-		bar_y + (BAR_UNIT_H - BTN_H) * 0.5 * ui, SKIP_W * ui, btn_h)
-	# ZPET je na stejnem miste jako SKIP, ale vidi se vzdy jen jedno z nich.
-	guide_back = skip_rect
+	# ZPET v navodu: v rohu obrazovky, na dotykovem minimu.
+	guide_back = Rect2(v.x - PAD * ui - SKIP_W * ui,
+		v.y - MIN_TOUCH - 8.0 * ui, SKIP_W * ui, MIN_TOUCH)
 
 	# --- MENU ---
 	# Ctyři tlacitka pod sebou, svisle vycentrovana. Vyska se drzi na
@@ -118,10 +117,12 @@ func compute(v: Vector2) -> void:
 	settings_back = Rect2((v.x - mw) * 0.5, sy0 + (sh + sgap) * 2.0, mw, sh)
 
 
-# Herni dotykove cile. Testy na nich hledaji prekryvy s mistry na bonusy.
-# Herni deska je od textu ohnuta, proto tady krome SKIPU nic neni.
+# HERNI DESKA JE BEZ OVLADANI. Vraci prazdny seznam a testy na tom trvaji:
+# jedina interakce na desce je klepnuti na usek nebo na misto na bonus,
+# a to zadne tlacitko nepotrebuje. Kdyby tu nejake pribylo, ubralo by misto
+# hraci plose - presne to se stalo s pruhem, ktery jsme odstranili.
 func all_buttons() -> Array:
-	return [skip_rect]
+	return []
 
 
 func menu_rect(i: int) -> Rect2:

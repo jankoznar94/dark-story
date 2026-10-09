@@ -7,7 +7,10 @@ extends SceneTree
 # Co se kontroluje a proc:
 #  - jednorazove tuknuti NESMI mit smycku (loopovany 0.09s ton = 11 lupnuti/s)
 #  - smycka hudby MUSI mit cely pocet period, jinak na konci smycky skocí fáze
-#  - obalka: tuknuti zacina a konci v tichu, smycka obalku mit nesmi
+#  - TON MUSI BYT NA FREKVENCI, NA KTERE HRA MICHA. Stream na 22050 Hz
+#    v systemu na 44100 Hz se musi prepočítavat a na smycce pak lupne.
+#  - obalka tuknuti musi na konci dojit PRESNE do nuly - jinak lupnuti
+#  - hudba nema obalku (kazde obehnuti by bylo ticho)
 
 var fails: Array = []
 var checks: int = 0
@@ -16,12 +19,14 @@ var checks: int = 0
 func _init() -> void:
 	var snd := Sound.new()
 
+	_test_mix_rate(snd)
 	_test_tap_not_looped(snd)
 	_test_sfx_does_not_repeat(snd)
+	_test_tap_ends_in_silence(snd)
+	_test_tap_has_envelope(snd)
 	_test_loop_has_whole_cycles(snd)
 	_test_loop_has_no_seam(snd)
 	_test_loop_has_no_envelope(snd)
-	_test_tap_has_envelope(snd)
 	_test_audio_is_audible(snd)
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -53,6 +58,19 @@ func _samples(w: AudioStreamWAV) -> Array:
 	return out
 
 
+# Ton vyrobeny na jine frekvenci, nez na ktere hra micha, se prepočítava -
+# a na smycce to lupne. Tohle je jedna z pricin "stale to praska".
+func _test_mix_rate(snd: Sound) -> void:
+	var sys: int = int(AudioServer.get_mix_rate())
+	var w := snd.sfx_tap()
+	_ok(w.mix_rate == snd.rate(),
+		"tuknuti ma frekvenci generatoru (%d vs %d)" % [w.mix_rate, snd.rate()])
+	if sys > 0:
+		_ok(w.mix_rate == sys,
+			"tuknuti se generuje na frekvenci, na ktere hra micha (%d vs %d)" % [w.mix_rate, sys])
+	_ok(snd.music_loop().mix_rate == w.mix_rate, "hudba i tuknuti micha stejne")
+
+
 func _test_tap_not_looped(snd: Sound) -> void:
 	var w := snd.sfx_tap()
 	_ok(w.loop_mode == AudioStreamWAV.LOOP_DISABLED,
@@ -66,6 +84,20 @@ func _test_sfx_does_not_repeat(snd: Sound) -> void:
 	_ok(sec > 0.05 and sec < 0.2, "tuknuti ma byt kratke (%.3f s)" % sec)
 	_ok(w.loop_mode == AudioStreamWAV.LOOP_DISABLED,
 		"kratky ton ve smycce opakuje obalku ~%.0f x za sekundu" % (1.0 / maxf(sec, 0.001)))
+
+
+# Kdyby posledni vzorek nebyl presne nula, hrac uslysi na konci lupnuti.
+# Zakonceni v tichu je cela oprava "cvaknuti na konci".
+func _test_tap_ends_in_silence(snd: Sound) -> void:
+	# Prohleda nekolik poslednich vzorku: posledni nemusi byt presne nula,
+	# ale obalka musi byt u nuly uz od chvile, kdy ton utichl.
+	var w := snd.sfx_tap()
+	var s := _samples(w)
+	var tail: int = maxi(1, s.size() / 20)
+	var peak := 0
+	for i in range(s.size() - tail, s.size()):
+		peak = maxi(peak, absi(int(s[i])))
+	_ok(peak < 200, "posledni 5 %% tuknuti je ticho, jinak lupne (peak=%d)" % peak)
 
 
 func _test_loop_has_whole_cycles(snd: Sound) -> void:
@@ -105,6 +137,18 @@ func _test_loop_has_no_envelope(snd: Sound) -> void:
 		"konec smycky je utlumeny (RMS %.0f vs uvnitr %.0f)" % [tail_rms, all_rms])
 
 
+# Hluboky ton, ktery telefonni reproduktor neumi, kmita na doraz a chrasti.
+# 55 Hz je pod hranici malých reproduktoru.
+func _test_audio_is_audible(snd: Sound) -> void:
+	var w := snd.music_loop()
+	_ok(w.mix_rate > 8000, "vzorkovaci frekvence (%d)" % w.mix_rate)
+	_ok(w.format == AudioStreamWAV.FORMAT_16_BITS, "format 16 bitu")
+	_ok(w.stereo == false, "mono")
+	_ok(w.data.size() > 0, "buffer neni prazdny")
+	_ok(Sound.MUSIC_HZ >= 80.0,
+		"hudba nesmi byt hlubsi nez 80 Hz - maly reproduktor by chrastil (%.0f Hz)" % Sound.MUSIC_HZ)
+
+
 func _rms(s: Array, from: int, to: int) -> float:
 	var acc := 0.0
 	for i in range(from, to):
@@ -118,14 +162,15 @@ func _test_tap_has_envelope(snd: Sound) -> void:
 	var w := snd.sfx_tap()
 	var s := _samples(w)
 	_ok(absi(int(s[0])) < 40, "tuknuti ma zacinat v tichu (%d)" % absi(int(s[0])))
-	_ok(absi(int(s[s.size() - 1])) < 40, "tuknuti ma koncit v tichu (%d)" % absi(int(s[s.size() - 1])))
-	var mid: int = absi(int(s[s.size() / 2]))
-	_ok(mid > 3000, "uprostred ma tuknuti hlasitost (%d)" % mid)
-
-
-func _test_audio_is_audible(snd: Sound) -> void:
-	var w := snd.music_loop()
-	_ok(w.mix_rate > 8000, "vzorkovaci frekvence (%d)" % w.mix_rate)
-	_ok(w.format == AudioStreamWAV.FORMAT_16_BITS, "format 16 bitu")
-	_ok(w.stereo == false, "mono")
-	_ok(w.data.size() > 0, "buffer neni prazdny")
+	# Hlasitost se meri jako RMS v okne, ne jedinym vzorkem - jeden vzorek
+	# sinusovky muze vyjit klidne i v maximu obalky blizko nule.
+	var a: int = s.size() / 4
+	var b: int = s.size() / 2
+	var body := _rms(s, a, b)
+	_ok(body > 1200.0, "tuknuti ma v tele hlasitost (RMS=%d)" % int(body))
+	# Dobeh musi byt plynuly klesajici, ne skok: hleda se nejvetsi skok
+	# v druhe polovine obalky.
+	var peak := 0
+	for i in range(s.size() / 2, s.size() - 1):
+		peak = maxi(peak, absi(absi(int(s[i + 1])) - absi(int(s[i]))))
+	_ok(peak < 1200, "dobeh tuknuti ma skok %d (ma byt plynuly)" % peak)

@@ -39,14 +39,27 @@ Hra je cela deterministicka, proto ji lze simulovat headless.
 
 ## Co je kde na obrazovce
 
-**HERNI DESKA NENESE ZADNY TEXT.** Popisek vyhybky, vystupu i kmene je pryc -
-kazdy radek textu v desce je misto, ktere chybi poutnikum. Vsechno vysvetleni
-je v MENU pod tlacitkem **NAVOD** (vcetne tabulky poskozeni) a cisla poskozeni
-vybraneho useku v hornim panelu. Deska ma jen znacky: runy, barvy, tvary.
+**HERNI DESKA NENESE ZADNY TEXT ANI ZADNE OVLADANI.** Zmizely popisky
+(vyhybka, vystupy, kmen, nasobky u dmg zon) i cely spodni pruh vcetne SKIP.
+Deska proto saha az k spodnimu okraji displeje a jeji jedina interakce je
+klepnuti na usek (prepne vyhybku) nebo na misto s runou (stavi / vylepsi).
 
-- Horni panel: 52 px (byl 72) - Vlna, Zivoty, Zlato, vybrany usek.
-- Spodni pruh: 52 px (byl 84) - zustava jen SKIP. Navod tu uz neni.
-- Zbytek dostane herni plocha: +48 px vysky na 960x600, +48 px na 932x430.
+- Horni panel: 48 px (byl 72). Vlna, Zivoty, Zlato, vybrany usek.
+- Spodni pruh: ZADNY. Jeho vyska i vyska SKIPu patri hraci plose.
+- **Navod** je v menu (druhe tlacitko): pet obrazkovych bloku, kazdy
+  s kratkym popiskem do 8 slov.
+
+## Zvuk
+
+Hra neveze zadne audio soubory - ton se generuje za behu (`scripts/sound.gd`).
+Ctyri priciny "v reporoduktoru praska", vsechny opravene a zmerene v
+`tools/test_audio.gd`:
+
+1. jednorazove tuknuti melo smycku (11 lupnuti za sekundu),
+2. smycka hudby nemela cely pocet period (skok ve fazi),
+3. ton se generoval na 22050 Hz, ale hra micha na 44100/48000 (prepočet),
+4. hlasitosti se pri rychlem klepani scitaly do limitace - proto strop
+   4 hlasy a `volume_db = -12`.
 
 ## Testy
 
