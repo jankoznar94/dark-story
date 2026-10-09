@@ -10,6 +10,8 @@ var hp: float = 70.0
 var speed: float = 52.0
 var lane: int = -1
 var s: float = 0.0
+# Kterym kmenem (vstupem) poutnik do mapy vstoupil. Map muze mit kmenu vic.
+var trunk: int = 0
 var alive: bool = true
 var leaked: bool = false
 

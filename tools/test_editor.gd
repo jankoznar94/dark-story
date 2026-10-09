@@ -29,6 +29,8 @@ func _init() -> void:
 	_test_junction_depth_limit()
 	_test_level_list()
 	_test_open_last()
+	_test_entry_button()
+	_test_target_joins_lane()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -187,6 +189,41 @@ func _test_export_code() -> void:
 	# nesmyslny kod nesmi shodit hru - vrati zakladni desku
 	_ok(Level.from_code("nesmysl").lane_count() == Level.base().lane_count(),
 		"nesmyslny kod vrati zakladni desku")
+	# KOD MUSI UNEST I VYHYBKY, NAPOJENI NA JINY USEK A DVA VSTUPY. Tudy se
+	# level dostava z telefonu ke mne - kdyby se pri ceste neco ztratilo,
+	# dostal by hrac do hry neco jineho, nez si nakreslil.
+	var ed2 := _fresh()
+	# uberneme useky, aby zbylo misto i na novou vetev s vlastnim kmenem
+	while ed2.level.lane_count() > 3:
+		ed2.sel = ed2.level.lane_count() - 1
+		ed2.press(Editor.BTN_DEL)
+	ed2.sel = 0
+	ed2.press(Editor.BTN_JUNCTION)        # rozdeleni useku = druha vyhybka
+	ed2.press(Editor.BTN_ENTRY)           # druhy vstup (nova vetev s kmenem)
+	if ed2.level.lane_count() > 2:
+		# usek se napoji na jiny usek
+		ed2.sel = ed2.level.lane_count() - 1
+		for i in range(ed2.level.lane_count() + 2):
+			if ed2.level.target_kind(ed2.sel) == Level.TO_LANE:
+				break
+			ed2.press(Editor.BTN_TARGET)
+	_ok(ed2.level.junction_count() >= 2, "level ma vic vyhybek (%d)" % ed2.level.junction_count())
+	_ok(ed2.level.entries.size() >= 2, "a vic vstupu (%d)" % ed2.level.entries.size())
+	var rich: String = ed2.level.to_code()
+	_ok(not rich.contains("\n"), "kod s vyhybkami je porad v jedne rade (%d znaku)" % rich.length())
+	_ok(rich.length() < 900, "a vejde se do Telegramu (%d znaku)" % rich.length())
+	var back2 := Level.from_code(rich)
+	_ok(back2.junction_count() == ed2.level.junction_count(),
+		"vyhybky preziji cestu kodem (%d vs %d)" % [back2.junction_count(), ed2.level.junction_count()])
+	_ok(back2.entries.size() == ed2.level.entries.size(),
+		"i vstupy (%d vs %d)" % [back2.entries.size(), ed2.level.entries.size()])
+	_ok(back2.to_code() == rich, "a kod je po ceste tam a zpet presne stejny")
+	_ok(back2.validate().is_empty(), "a level z kodu je platny: %s" % str(back2.validate()))
+	var kinds_same := true
+	for i in range(mini(back2.lane_count(), ed2.level.lane_count())):
+		if back2.target_kind(i) != ed2.level.target_kind(i) or back2.to_of(i) != ed2.level.to_of(i):
+			kinds_same = false
+	_ok(kinds_same, "a kazdy usek si drzi svuj cil i jeho druh")
 
 
 func _test_builtin_levels() -> void:
@@ -327,9 +364,10 @@ func _test_junction_depth_limit() -> void:
 		"a opravdu žádná nepřibyla (%d)" % ed.level.junction_count())
 	var bad := 0
 	for c in ed.level.target_choices(sub):
-		if int(c) < 0:
+		var cc: Dictionary = c
+		if int(cc["kind"]) == Level.TO_JUNCTION:
 			bad += 1
-	_ok(bad == 0, "větev z výhybky míří jen do výstupů (%d jinam)" % bad)
+	_ok(bad == 0, "větev z výhybky míří jen do výstupů nebo na jiné úseky (%d do výhybek)" % bad)
 	_ok(ed.level.validate().is_empty(), "level je pořád platný")
 
 
@@ -381,3 +419,67 @@ func _test_open_last() -> void:
 	_ok(ed2.local_name == name,
 		"editor se otevře tam, kde hráč skončil (%s vs %s)" % [ed2.local_name, name])
 	_ok(ed2.level.lane_count() == lanes, "a s tím, co měl rozdělané (%d)" % ed2.level.lane_count())
+
+
+# --------------------------------------------------------------- vstupy
+
+# VSTUP (KMEN). Tlacitkem se pridava dalsi vstup do mapy. Do vyhybky, do ktere
+# uz vede usek, kmen pripojit nelze - vede z leveho okraje pres vsechno pred
+# ni. Proto se zalozi cela nova vetev s vlastnim kmenem: mapa ma dva vstupy.
+func _test_entry_button() -> void:
+	var ed := _fresh()
+	ed.sel = 0
+	var j0: int = ed.level.from_of(0)
+	_ok(ed.level.has_entry(j0), "prvni vyhybka ma kmen")
+	_ok(ed.button_labels()[Editor.BTN_ENTRY] == "vstup +",
+		"dokud je kmen jen jeden, tlacitko pridava")
+	ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.entries.size() == 2, "pribyl druhy vstup (%d)" % ed.level.entries.size())
+	_ok(ed.level.junction_count() == 2, "a s nim druha vyhybka (%d)" % ed.level.junction_count())
+	_ok(ed.level.validate().is_empty(),
+		"takovy level je platny: %s" % str(ed.level.validate()))
+	# poutnici musi mit kudy - nova vetev ma sve useky
+	var j1: int = int(ed.level.entries[1])
+	_ok(ed.level.lanes_of(j1).size() == 2, "nova vetev ma dva useky")
+	# a kdyz u ni hrac stiskne vstup znovu, kmen zase zmizi
+	var sub: int = int(ed.level.lanes_of(j1)[0])
+	ed.sel = sub
+	_ok(ed.button_labels()[Editor.BTN_ENTRY] == "vstup −",
+		"u vetve, ktera kmen ma, se tlacitko meni na vstup −")
+	ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.entries.size() == 1, "a kmen zase zmizi (%d)" % ed.level.entries.size())
+	_ok(ed.level.junction_count() == 1, "i s celou svou vetvi (%d)" % ed.level.junction_count())
+	_ok(ed.level.validate().is_empty(), "level je porad platny")
+	# prvni kmen (hlavni vstup) smazat nelze - zmizela by cela deska
+	ed.sel = 0
+	ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.entries.size() >= 1, "hlavni kmen zustava (%d)" % ed.level.entries.size())
+	_ok(ed.level.lane_count() >= Level.MIN_LANES, "a s nim i cela deska (%d useku)" % ed.level.lane_count())
+
+
+# CIL MUZE BYT I JINY USEK. Vybocena vetev se muze vlejt do druhe vetve, ne
+# jen do vystupu nebo do vyhybky. Preskoci se to, co by udelalo smycku.
+func _test_target_joins_lane() -> void:
+	var ed := _fresh()
+	ed.sel = 1
+	var joins := 0
+	var seen_kinds := {}
+	for i in range(ed.level.lane_count() + 2):
+		var kind: int = ed.level.target_kind(1)
+		seen_kinds[kind] = true
+		if kind == Level.TO_LANE:
+			joins += 1
+		ed.press(Editor.BTN_TARGET)
+	_ok(joins > 0, "cíl se dá nastavit i na jiný úsek (%d z %d poloh)" % [
+		joins, ed.level.lane_count() + 2])
+	_ok(seen_kinds.has(Level.TO_EXIT), "a pořád jde nastavit i výstup")
+	# usek se nesmi napojit sam na sebe
+	var self_join := false
+	ed.sel = 0
+	for i in range(ed.level.lane_count() + 2):
+		if ed.level.target_kind(0) == Level.TO_LANE and ed.level.lane_target_of(0) == 0:
+			self_join = true
+		ed.press(Editor.BTN_TARGET)
+	_ok(not self_join, "usek se nenapojuje sam na sebe")
+	_ok(ed.level.validate().is_empty(),
+		"a level zustava platny: %s" % str(ed.level.validate()))

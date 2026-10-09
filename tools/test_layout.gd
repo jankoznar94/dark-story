@@ -270,6 +270,69 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	var txt_w: float = guide_w / float(cols) - art_w - float(fs) * 1.6
 	_ok(txt_w >= float(fs) * 4.0, "%s: vedle obrazku nezustava misto na text (%.0f px)" % [name, txt_w])
 
+	# --- PRUH EDITORU NESMI PREKRYVAT PLOCHU ---
+	# Pruh se kresli od `editor_bar_top()` dolu (popisky vybraneho useku jsou
+	# nad tlacitky) a arena editoru musi koncit NAD nim. Kdyz si to oboji
+	# pocitalo samo, prekryl pruh spodni cast mrizky - a hrac nemel kam klapat.
+	_ok(lay.editor_arena.end.y <= lay.editor_bar_top() - 1.0,
+		"%s: arena editoru leze do pruhu tlacitek (%.0f vs %.0f)" % [
+			name, lay.editor_arena.end.y, lay.editor_bar_top()])
+	_ok(lay.editor_arena.size.y > 60.0,
+		"%s: v editoru nezustava misto na mrizku (%.0f px)" % [name, lay.editor_arena.size.y])
+
+	# --- POPISKY TLACITEK EDITORU SE MUSI VEJIT ---
+	# Tlacitek je jedenact a pruh je nizky. Kdyby popisek pretekal, hrac by
+	# nevidel, co tlacitko dela - a to je presne to, co u editoru nesmi nastat.
+	var ed_probe := Editor.new()
+	ed_probe.reset()
+	var lbls: Array = ed_probe.button_labels()
+	_ok(lbls.size() == lay.ed_buttons.size(),
+		"%s: popisku je tolik, kolik je tlacitek editoru" % name)
+	var efs: int = lay.font(13.0)
+	for i in range(mini(lbls.size(), lay.ed_buttons.size())):
+		var br: Rect2 = lay.ed_buttons[i]
+		var tw: float = font.get_string_size(str(lbls[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, efs).x
+		_ok(tw <= br.size.x - 4.0,
+			"%s: popisek \"%s\" se do tlacitka nevejde (%.0f px do %.0f)" % [
+				name, str(lbls[i]), tw, br.size.x])
+
+	# --- CO NEJVIC MISTA NAD DESKOU ---
+	# Nad prvni drazkou nesmi zustat prazdny pruh: kazdy pixel tam chybi
+	# hraci plose. Meritkem je horni hrana bonusu na prvni draze.
+	var g_top := Game.new()
+	g_top.setup(lay.arena, lay.s, lay.board_bottom)
+	var head: float = float(g_top.net.rows[0]) - g_top.net.bonus_r
+	_ok(head <= lay.hud_h + 4.0 * lay.s,
+		"%s: nad prvni drazkou zustava prazdny pruh (%.0f px pod panelem do %.0f)" % [
+			name, head - lay.hud_h, head])
+	_ok(head >= lay.hud_h - 6.0 * lay.s,
+		"%s: prvni drazka se schovava pod panel (%.0f vs %.0f)" % [name, head, lay.hud_h])
+
+	# --- a LEVEL SE DVEMA VSTUPY musi na tom rozliseni taky fungovat ---
+	# Dva kmeny = dva stromy radku. Musi se vejit do plochy, bonusy se nesmi
+	# prekryvat a hra se z toho musi dat vubec postavit.
+	var lv2 := Level.base()
+	var jt: int = lv2.add_tree()
+	_ok(jt >= 0, "%s: level se dvema vstupy jde sestavit" % name)
+	_ok(lv2.validate().is_empty(),
+		"%s: a je platny: %s" % [name, str(lv2.validate())])
+	var g2 := Game.new()
+	g2.setup(lay.arena, lay.s, lay.board_bottom, lv2)
+	_ok(g2.net.trunk_paths.size() == 2, "%s: sit postavi oba kmeny" % name)
+	for lane in range(g2.net.lane_count()):
+		_ok(g2.net.rows[lane] < lay.board_bottom - 12.0 * lay.s,
+			"%s: drazka %d v levelu se dvema vstupy leze pod desku (%.0f)" % [
+				name, lane, g2.net.rows[lane]])
+		for slot in range(g2.net.slot_count()):
+			var p2: Vector2 = g2.net.slot_world(lane, slot)
+			_ok(lay.arena.grow(g2.net.bonus_r).has_point(p2),
+				"%s: misto %d/%d v levelu se dvema vstupy lezi v plose (%s)" % [
+					name, lane, slot, p2])
+	var gap2: float = g2.net.min_cross_lane_slot_distance()
+	_ok(gap2 > g2.net.bonus_r * 1.8,
+		"%s: bonusy se ve dvou vetvich prekryvaji (mezera %.0f, potreba %.0f)" % [
+			name, gap2, g2.net.bonus_r * 1.8])
+
 	# --- tlacitka ZPET, MENU, EDITOR ---
 	for k in range(4):
 		var mb: Array = lay.all_menu_buttons() if k == 0 else (
@@ -351,6 +414,6 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	_ok(e.hp <= 0.0, "%s: nepritel na protikladnem useku nezahynul (hp=%.1f)" % [name, e.hp])
 	_ok(g.lives == lives0, "%s: zivy se dostal na vystup (zivoty %d)" % [name, g.lives])
 
-	return "%-30s %4.0fx%-4.0f  meritko %.2f  ovladani %.2f  deska %.0fx%.0f (do %.0f)  navod %d px / obrazky %d px  krizeni %.0f" % [
+	return "%-30s %4.0fx%-4.0f  meritko %.2f  ovladani %.2f  deska %.0fx%.0f (do %.0f)  nad deskou %.0f px  navod %d px / obrazky %d px  krizeni %.0f" % [
 		name, w, h, lay.s, lay.ui, lay.arena.size.x, lay.arena.size.y, lay.board_bottom,
-		guide_px, guide_art, min_cross]
+		head - lay.hud_h, guide_px, guide_art, min_cross]

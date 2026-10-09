@@ -135,8 +135,7 @@ func _reflow() -> void:
 	# Editor ma svou plochu - ma dole pruh tlacitek, ktery hra nema. Sit se
 	# prelozi podle toho, ktera obrazovka je otevrena.
 	if menu.is_editor():
-		game.rebuild_network(layout.editor_arena, layout.s,
-			layout.editor_arena.end.y + 20.0 * layout.s)
+		game.rebuild_network(layout.editor_arena, layout.s, layout.editor_bar_top())
 		return
 	game.rebuild_network(layout.arena, layout.s, layout.board_bottom)
 
@@ -487,7 +486,7 @@ func _draw_editor_bar() -> void:
 	if btns.is_empty():
 		return
 	var labels: Array = editor.button_labels()
-	var top: float = float(btns[0].position.y) - 26.0 * layout.ui
+	var top: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
 	# Nad pruhem je jedine misto v editoru, kde muze byt text: rika, ktery
@@ -934,12 +933,16 @@ func _draw_zones() -> void:
 		draw_line(Vector2(x1, y - thick * 0.5), Vector2(x1, y + thick * 0.5), edge, 2.0)
 
 
-# Neutralni kmen. Nema popisek - deska je bez textu.
+# KMENY. Do mapy muze vest vic kmenu (vstupu) - kazdy je vodorovna cara
+# z leveho okraje do sve vyhybky. Nema popisek - deska je bez textu.
 func _draw_trunk() -> void:
-	var a: Vector2 = game.net.trunk_start
-	var b: Vector2 = game.net.merge
-	draw_line(a, b, Color(0.42, 0.38, 0.32, 0.75), maxf(2.0, 9.0 * layout.s))
-	draw_line(a, b, Color(0.58, 0.53, 0.44, 0.9), maxf(1.0, 3.0 * layout.s))
+	for t in range(game.net.trunk_paths.size()):
+		var path: PackedVector2Array = game.net.trunk_paths[t]
+		for k in range(path.size() - 1):
+			draw_line(path[k], path[k + 1], Color(0.42, 0.38, 0.32, 0.75),
+				maxf(2.0, 9.0 * layout.s))
+			draw_line(path[k], path[k + 1], Color(0.58, 0.53, 0.44, 0.9),
+				maxf(1.0, 3.0 * layout.s))
 
 
 func _draw_slots() -> void:
@@ -1022,7 +1025,7 @@ func _draw_enemies() -> void:
 func _enemy_pos(e: Enemy) -> Vector2:
 	if e.on_lane():
 		return game.net.point_at(e.lane, e.s)
-	return game.net.trunk_point_at(e.s)
+	return game.net.trunk_point_at(e.s, e.trunk)
 
 
 # HORNI PANEL. Dva radky s písmem 20/13 px se vejdou do 52 px, takze je
@@ -1036,11 +1039,12 @@ func _draw_hud() -> void:
 	var step: float = layout.view.x * 0.19
 	var x0: float = 18.0 * layout.s
 	_label(Vector2(x0, layout.hud_h * 0.48), "Vlna %d" % game.wave, 20, Color(0.90, 0.87, 0.80))
-	_label(Vector2(x0, layout.hud_h * 0.88), game.phase, 13, Color(0.58, 0.55, 0.49))
-	# Jmeno levelu: hrac musi videt, co hraje. "zakladni" znamena, ze jede
-	# puvodni deska balancu.
+	# Druhy radek leveho sloupce: faze a JMENO LEVELU. Jmeno musi byt videt -
+	# hrac ma vedet, co hraje. Driv viselo POD panelem, tedy na herni plose,
+	# a bralo desce pixel; v panelu je na to misto.
 	var lv_name: String = game.level.name if game.level != null else "?"
-	_label(Vector2(x0, layout.hud_h * 1.62), lv_name, 12, Color(0.50, 0.47, 0.42))
+	_label(Vector2(x0, layout.hud_h * 0.88), "%s · %s" % [game.phase, lv_name], 13,
+		Color(0.58, 0.55, 0.49))
 	_label(Vector2(x0 + step, layout.hud_h * 0.48), "Životy %d" % game.lives, 20,
 		Color(0.85, 0.42, 0.36) if game.lives <= 4 else Color(0.90, 0.87, 0.80))
 	_label(Vector2(x0 + step, layout.hud_h * 0.88), "z %d" % Game.START_LIVES, 13,

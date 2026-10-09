@@ -59,6 +59,8 @@ var spawn_left: int = 0
 var spawn_timer: float = 0.0
 var rng: int = 20261009
 var log: Array = []
+# Kolik poutniku uz do mapy vstoupilo - kmeny se stridaji po poradi.
+var spawn_index: int = 0
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
 var auto_wave: bool = true
 # VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
@@ -81,6 +83,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	build_timer = BUILD_TIME
 	spawn_left = 0
 	spawn_timer = 0.0
+	spawn_index = 0
 	log = []
 
 
@@ -274,6 +277,12 @@ func _spawn(enemy_el: int) -> void:
 	e.speed = level.speed if level != null else ENEMY_SPEED
 	e.lane = -1
 	e.s = 0.0
+	# KMENY SE STRIDAJI. Kdyby chodili vsichni jednim, prisel by druhy kmen
+	# nazmar - a hrac by se musel ucit, ktery je ktery. Takto je tlak
+	# rozlozeny rovnomerne a je to predvidatelne (i pro testy).
+	var trunks: int = maxi(net.trunk_lens.size(), 1)
+	e.trunk = spawn_index % trunks
+	spawn_index += 1
 	enemies.append(e)
 
 
@@ -283,7 +292,6 @@ func debug_spawn(enemy_el: int) -> Enemy:
 	_spawn(enemy_el)
 	var e: Enemy = enemies[enemies.size() - 1]
 	return e
-
 
 func _next_int(limit: int) -> int:
 	rng = (rng * 1103515245 + 12345) & 0x7fffffff
@@ -333,24 +341,34 @@ func _move_enemies(delta: float) -> void:
 			continue
 		e.s += e.speed * delta
 		if not e.on_lane():
-			if e.s >= net.trunk_len:
-				e.s -= net.trunk_len
-				e.lane = selected_lane(0)
+			var ti: int = clampi(e.trunk, 0, maxi(net.trunk_lens.size() - 1, 0))
+			var tlen: float = float(net.trunk_lens[ti]) if not net.trunk_lens.is_empty() else net.trunk_len
+			if e.s >= tlen:
+				e.s -= tlen
+				e.lane = selected_lane(int(net.trunk_to[ti])) if not net.trunk_to.is_empty() else selected_lane(0)
 		else:
 			if e.s >= net.lane_len[e.lane]:
-				# Konec useku. Bud je to VYSTUP (stoji zivot), nebo dalsi
-				# VYHYBKA - a tam poutnik vstoupi na usek, ktery je prave
-				# vybrany. Vyhybka se tedy rozhoduje AZ V OKAMZIKU PRUCHODU,
-				# takze hrac muze prepinat i behem cesty.
+				# Konec useku. Podle druhu cile:
+				#   VYSTUP   - stoji zivot,
+				#   VYHYBKA  - poutnik vstoupi na usek, ktery je na ni prave
+				#              vybrany (rozhoduje se az v okamziku pruchodu),
+				#   JINY USEK - vleje se do nej v miste, kde ten druhy zacina
+				#              svuj rovny usek.
+				var kind: int = int(net.lane_kind[e.lane])
 				var to: int = int(net.lane_to[e.lane])
-				if to < 0:
-					e.lane = selected_lane(-1 - to)
+				if kind == Level.TO_JUNCTION:
+					e.lane = selected_lane(to)
 					e.s = 0.0
 					if e.lane < 0:
 						e.leaked = true
 						e.alive = false
 						lives -= 1
 						continue
+					still.append(e)
+					continue
+				if kind == Level.TO_LANE and to >= 0 and to < net.lane_count():
+					e.lane = to
+					e.s = float(net.lane_entry_s[to])
 					still.append(e)
 					continue
 				e.leaked = true

@@ -45,7 +45,7 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-const ED_COUNT := 10
+const ED_COUNT := 11
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
@@ -92,10 +92,11 @@ func compute(v: Vector2) -> void:
 	# je pryc - jeho vyska je ted hraci plocha.
 	board_bottom = v.y - 3.0 * s
 
-	# Arena si bere vsechno, co zbyde pod HUDem.
-	arena = Rect2(PAD * s, hud_h + 6.0 * s,
+	# Arena si bere vsechno, co zbyde pod HUDem. Mezera pod panelem je jen
+	# mala: kazdy pixel tady je pixel, ktery hrac dostane na desku.
+	arena = Rect2(PAD * s, hud_h + 1.0 * s,
 		maxf(40.0, v.x - 2.0 * PAD * s),
-		maxf(40.0, board_bottom - hud_h - 6.0 * s))
+		maxf(40.0, board_bottom - hud_h - 1.0 * s))
 
 	text_x = PAD * ui
 	# ZPET v navodu: v rohu obrazovky, na dotykovem minimu.
@@ -158,9 +159,21 @@ func compute(v: Vector2) -> void:
 	var ey: float = v.y - eh - 6.0 * ui
 	for i in range(ED_COUNT):
 		ed_buttons.append(Rect2(ex0 + float(i) * (ew + egap), ey, ew, eh))
-	editor_arena = Rect2(PAD * s, hud_h + 6.0 * s,
+	# ARENA EDITORU KONCI NAD PRUHEM. Pruh se kresli od `editor_bar_top()`
+	# nahoru (kvuli popiskum nad tlacitky) - kdyby arena koncila az u tlacitek,
+	# prekryl by pruh spodni cast mrizky, kterou hrac upravuje.
+	editor_arena = Rect2(PAD * s, hud_h + 1.0 * s,
 		maxf(40.0, v.x - 2.0 * PAD * s),
-		maxf(40.0, ey - 8.0 * ui - hud_h - 6.0 * s))
+		maxf(40.0, editor_bar_top() - 2.0 * ui - hud_h - 1.0 * s))
+
+
+# Horni hrana pruhu tlacitek editoru. Pocita se na JEDNOM miste: kresleni
+# pruhu, arena editoru i sit, ktera pod nej nesmi kreslit, pouzivaji tuhle
+# hodnotu. Kdyz si ji kazdy pocital sam, pruh prekryl kus herni plochy.
+func editor_bar_top() -> float:
+	if ed_buttons.is_empty():
+		return view.y
+	return float(ed_buttons[0].position.y) - 26.0 * ui
 
 
 # HERNI DESKA JE BEZ OVLADANI. Vraci prazdny seznam a testy na tom trvaji:

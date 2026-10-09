@@ -35,14 +35,24 @@ const MIN_LANES := 2
 # chce (a dostal by hlasku, ktera nic nevysvetluje).
 const MAX_FAN := 7
 const MAX_EXITS := 6
+# Kolik kmenu (vstupu) muze do mapy vest. Kazdy kmen je jedna cesta, po ktere
+# poutnici do mapy vchazeji - vic kmenu znamena, ze hrac musi hlidat vic míst
+# najednou.
+const MAX_ENTRIES := 4
 # Hloubka vyhybek. 0 = korenova, 1 = vyhybka na konci useku.
 const MAX_DEPTH := 1
+
+# CIL USEKU. Usek muze vest do vystupu, do dalsi vyhybky, nebo se NAPOJIT NA
+# JINY USEK (vetev se do druhe vetve vleje a poutnik po ni pokracuje dal).
+const TO_EXIT := 0
+const TO_JUNCTION := 1
+const TO_LANE := 2
 
 # Pas, do ktereho se mrizka radek rozmistuje. Nahore je HUD, dole okraj
 # displeje; mezi tim se radky VYSTREDI - kdyz je jich min, drzi se u sebe ve
 # stredu, a kdyz vic, mezera se zmensi. Diky tomu se prida usek, aniz by se
 # vsechny ostatni posunuly.
-const TOP := 0.05
+const TOP := 0.03
 const BOTTOM := 0.93
 
 # --- ZAKLADNI DESKA -------------------------------------------------------
@@ -67,8 +77,13 @@ const MERGE_GAP := 0.03
 # 0.25..0.945 da presne pas 0.40..0.80 zakladni desky, na ktere je hra
 # vyladena. Usek, ktery vede do dalsi vyhybky, je kratky - bere se skoro cely,
 # aby se na nem bonusy nemačkaly (0.06).
+# Podil delky rovneho useku, kde se ohne ke svemu cili.
 const RUN_FRAC := 0.22
 const RUN_FRAC_CONNECTOR := 0.06
+# Kde presne se vetev vleje do druheho useku: ne na jeho zacatek, ale kus za
+# nej. Kdyby to bylo hned na zacatku, nemela by privodni vetev (která startuje
+# ze stejne vyhybky) kam se ohnout.
+const LAND_FRAC := 0.30
 # Nejmensi rovny usek, na ktery se jeste vejdou tri bonusy vedle sebe.
 const MIN_RUN := 0.12
 
@@ -92,13 +107,18 @@ var name: String = DEFAULT_NAME
 # Useky. Kazdy je slovnik:
 #   from   - z ktere vyhybky vede (index do junctions)
 #   el     - element (0..3) nebo NEUTRAL (-1)
-#   to     - kam vede: >= 0 je index vystupu, < 0 je vyhybka (-1 - index)
+#   kind   - kam vede: TO_EXIT / TO_JUNCTION / TO_LANE
+#   to     - index vystupu, vyhybky, nebo jineho useku (podle `kind`)
 #   divert - podil delky rovneho useku, kde se usek ohne ke svemu cili
 var lanes: Array = []
 # Vyhybky. Kazda je jen "ventilator" - seznam jejich useku se pocita z lanes
 # (kdo ma from == index). Vlastni stav (ktera vetev je vybrana) drzi az hra:
 # je to stav rozehrane partie, ne level.
 var junctions: Array = []
+# KMENY. Indexy vyhybek, do kterych vede VLASTNI kmen - tedy vstup do mapy.
+# Kdyz jich je vic, poutnici vchazeji na vic mist a hrac musi hlidat vic
+# front najednou. Kazdy kmen je vodorovna cara z leveho okraje.
+var entries: Array = []
 # Vystupy z mapy. Normalizovane souradnice [x, y]. Vystup je dira v mape -
 # nema element a nikdo ho "nevlastni".
 var exits: Array = []
@@ -133,7 +153,16 @@ func el_of(lane: int) -> int:
 	return int(l["el"])
 
 
-# Kam usek vede: >= 0 vystup, < 0 vyhybka (-1 - index).
+# Kam usek vede. Druh cile je v `kind` - proto se da zamerit i na JINY USEK
+# (vetev se vleje do druhe vetve), ne jen do vystupu nebo vyhybky.
+func target_kind(lane: int) -> int:
+	var l: Dictionary = lanes[lane]
+	if l.has("kind"):
+		return int(l["kind"])
+	# Starsi kody "kind" nemely: >= 0 byl vzdy vystup a < 0 vyhybka.
+	return TO_EXIT if int(l["to"]) >= 0 else TO_JUNCTION
+
+
 func to_of(lane: int) -> int:
 	var l: Dictionary = lanes[lane]
 	return int(l["to"])
@@ -145,19 +174,22 @@ func from_of(lane: int) -> int:
 
 
 func lane_is_exit(lane: int) -> bool:
-	return to_of(lane) >= 0
+	return target_kind(lane) == TO_EXIT
 
 
-# Vystup, do ktereho usek usti. -1, kdyz usek vede do dalsi vyhybky.
+# Vystup, do ktereho usek usti. -1, kdyz vede jinam.
 func exit_of(lane: int) -> int:
 	return to_of(lane) if lane_is_exit(lane) else -1
 
 
-# Vyhybka, do ktere usek vede. -1, kdyz usek konci ve vystupu.
+# Vyhybka, do ktere usek vede. -1, kdyz vede jinam.
 func junction_of(lane: int) -> int:
-	if lane_is_exit(lane):
-		return -1
-	return -1 - to_of(lane)
+	return to_of(lane) if target_kind(lane) == TO_JUNCTION else -1
+
+
+# Usek, na ktery se tenhle usek napojuje. -1, kdyz vede jinam.
+func lane_target_of(lane: int) -> int:
+	return to_of(lane) if target_kind(lane) == TO_LANE else -1
 
 
 func is_neutral(lane: int) -> bool:
@@ -192,8 +224,12 @@ func lanes_of(j: int) -> Array:
 	return out
 
 
-# Hloubka vyhybky: 0 = korenova (do ni vede kmen), 1 = na konci useku, ...
+# Hloubka vyhybky: 0 = korenova (kmen), 1 = na konci useku, ... Vyhybka, do
+# ktere vede vlastni kmen, je VZDY korenova: jeji vstup je z leveho okraje,
+# ne z jine vyhybky.
 func junction_depth(j: int) -> int:
+	if has_entry(j):
+		return 0
 	var d := 0
 	var guard := 0
 	var cur := j
@@ -205,10 +241,81 @@ func junction_depth(j: int) -> int:
 				break
 		if parent < 0:
 			break
-		cur = parent
 		d += 1
+		# Vyhybka s vlastnim kmenem je korenova (hloubka 0), takze dite je
+		# o jedna hlubsi a dal se uz nahoru nechodi.
+		if has_entry(parent) or parent == cur:
+			break
+		cur = parent
 		guard += 1
 	return d
+
+
+# ---------------------------------------------------------------- kmeny
+
+func has_entry(j: int) -> bool:
+	for e in entries:
+		if int(e) == j:
+			return true
+	return false
+
+
+func add_entry(j: int) -> bool:
+	if j < 0 or j >= junctions.size():
+		return false
+	if has_entry(j):
+		return false
+	if entries.size() >= MAX_ENTRIES:
+		return false
+	# Do vyhybky, do ktere uz vede usek, vlastni kmen pridat nelze: kmen vede
+	# z leveho okraje a sel by pres vsechno, co je pred tou vyhybkou.
+	if not lanes_into(j).is_empty():
+		return false
+	entries.append(j)
+	relayout()
+	return true
+
+
+# NOVA SAMOSTATNA VETEV S VLASTNIM KMENEM. To je jedina cesta, jak udelat mapu
+# s druhym vstupem: nova vyhybka, ktera nikam nenavazuje, dostane vlastni kmen
+# a dva nove useky do vystupu. Kdyby se kmen jen "pripnul" k existujici
+# vyhybce, vedl by pres cely obrazek a krizil, co je pred ni.
+func add_tree() -> int:
+	if lanes.size() + 2 > MAX_LANES:
+		return -1
+	if junctions.size() >= MAX_ENTRIES:
+		return -1
+	var j: int = junctions.size()
+	junctions.append({})
+	if exits.size() < MAX_EXITS:
+		exits.append([exit_x, TOP])
+	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": free_exit(),
+		"divert": BASE_DIVERT})
+	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": free_exit(),
+		"divert": BASE_DIVERT})
+	entries.append(j)
+	relayout()
+	return j
+
+
+func remove_entry(j: int) -> bool:
+	if entries.size() <= 1:
+		return false
+	# Prvni kmen zustava: je to hlavni vstup mapy a jeho smazanim by zmizela
+	# i cela zakladni deska. Odebrat se da jen kmen, ktery hrac pridal.
+	if j <= 0:
+		return false
+	var at: int = entries.find(j)
+	if at < 0:
+		return false
+	entries.remove_at(at)
+	if lanes_into(j).is_empty() and not lanes_of(j).is_empty():
+		# Vetev, ktera ma jen svuj kmen, je bez nej nedostizna - zmizi cely
+		# strom (vyhybka i jeji useky).
+		_drop_junction(j)
+	else:
+		relayout()
+	return true
 
 
 func junction_row(j: int) -> float:
@@ -303,14 +410,16 @@ func split_lane(lane: int) -> int:
 	var keep_el: int = el_of(lane)
 	var keep_to: int = to_of(lane)
 	var l: Dictionary = lanes[lane]
-	l["to"] = -1 - j_new
+	l["kind"] = TO_JUNCTION
+	l["to"] = j_new
 	lanes[lane] = l
 	if exits.size() < MAX_EXITS:
 		exits.append([exit_x, TOP])
 	var new_to: int = free_exit()
 	junctions.append({})
-	lanes.append({"from": j_new, "el": keep_el, "to": keep_to, "divert": BASE_DIVERT})
-	lanes.append({"from": j_new, "el": _free_element(), "to": new_to, "divert": BASE_DIVERT})
+	lanes.append({"from": j_new, "el": keep_el, "kind": TO_EXIT, "to": keep_to, "divert": BASE_DIVERT})
+	lanes.append({"from": j_new, "el": _free_element(), "kind": TO_EXIT, "to": new_to,
+		"divert": BASE_DIVERT})
 	relayout()
 	return j_new
 
@@ -337,50 +446,95 @@ func merge_lane(lane: int) -> bool:
 			return false
 	var target: int = to_of(kids[0])
 	var l: Dictionary = lanes[lane]
+	l["kind"] = TO_EXIT
 	l["to"] = target
 	lanes[lane] = l
 	_drop_junction(j)
 	return true
 
 
-# Zrusi vyhybku a vsechny jeji useky. Indexy ostatnich vyhybek se posunou,
-# proto se premapuji i odkazy v usecich.
+# Zrusi vyhybku a vsechny jeji useky. Indexy ostatnich vyhybek i useku se
+# posunou, proto se vsechny odkazy premapuji - jinak by nejaky usek mířil na
+# neco, co uz neexistuje (a hra by spadla az za behu).
 func _drop_junction(j: int) -> void:
 	var kids: Array = lanes_of(j)
 	kids.sort()
+	# Stara -> nova cisla useku.
+	var remap := {}
+	var shift := 0
+	for i in range(lanes.size()):
+		if kids.has(i):
+			shift += 1
+			remap[i] = -1
+		else:
+			remap[i] = i - shift
 	for k in range(kids.size() - 1, -1, -1):
 		lanes.remove_at(int(kids[k]))
 	junctions.remove_at(j)
+	var new_entries: Array = []
+	for e in entries:
+		var ei: int = int(e)
+		if ei == j:
+			continue
+		new_entries.append(ei - 1 if ei > j else ei)
+	entries = new_entries
+	if entries.is_empty():
+		entries = [0]
 	for i in range(lanes.size()):
 		var l: Dictionary = lanes[i]
+		var kind: int = int(l.get("kind", TO_EXIT))
 		var to: int = int(l["to"])
-		if to < 0:
-			var t: int = -1 - to
-			if t > j:
-				t -= 1
-			l["to"] = -1 - t
+		if kind == TO_JUNCTION:
+			if to > j:
+				l["to"] = to - 1
+		elif kind == TO_LANE:
+			# Cil je usek: bud se posune, nebo (kdyz zmizel) se z toho stane
+			# vystup - neco rozumneho misto odkazu do prazdna.
+			var new_to: int = int(remap.get(to, -1))
+			if new_to < 0:
+				l["kind"] = TO_EXIT
+				l["to"] = clampi(to, 0, maxi(exits.size() - 1, 0))
+			else:
+				l["to"] = new_to
 		var f: int = int(l.get("from", 0))
 		if f > j:
 			l["from"] = f - 1
 		lanes[i] = l
+	_fix_lane_refs()
 	relayout()
 
 
-# CIL VYBRANEHO USEKU. Cykli se pres vsechny vystupy a pak pres vsechny
-# vyhybky, do kterych se z toho useku da vubec dojet - tim se daji useky
-# SPOJOVAT (dva useky do stejne vyhybky) i ROZDELOVAT (vyhybka sama).
-# Preskakuji se cile, ktere by vyrobily smycku nebo moc hlubokou vyhybku.
+# Po zruseni vyhybky (i jejich useku) se indexy useku posunou. Kazdy odkaz na
+# usek, ktery uz neexistuje, se prevede na vystup - radsi neco rozumneho nez
+# index mimo seznam.
+func _fix_lane_refs() -> void:
+	for i in range(lanes.size()):
+		if target_kind(i) != TO_LANE:
+			continue
+		var t: int = int(lanes[i]["to"])
+		if t < 0 or t >= lanes.size():
+			var l: Dictionary = lanes[i]
+			l["kind"] = TO_EXIT
+			l["to"] = clampi(t, 0, maxi(exits.size() - 1, 0))
+			lanes[i] = l
+
+
+# CIL VYBRANEHO USEKU. Cykli se pres vsechny vystupy, pak pres ostatni useky
+# (vetev se vleje do druhe vetve) a nakonec pres vyhybky. Tim se daji useky
+# SPOJOVAT (dva useky do stejne vyhybky, nebo jeden na druhy) i ROZDELOVAT
+# (vyhybka sama). Preskakuji se cile, ktere by vyrobily smycku, moc hlubokou
+# vyhybku, nebo usek tak kratky, ze by se na nej nevesly bonusy.
 func target_choices(lane: int) -> Array:
 	var out: Array = []
 	for e in range(exits.size()):
-		out.append(e)
-	var from_j: int = from_of(lane)
+		if can_target(lane, TO_EXIT, e):
+			out.append({"kind": TO_EXIT, "to": e})
+	for k in range(lanes.size()):
+		if can_target(lane, TO_LANE, k):
+			out.append({"kind": TO_LANE, "to": k})
 	for j in range(junctions.size()):
-		if j == from_j:
-			continue
-		if junction_depth(from_j) + 1 + junction_depth(j) > MAX_DEPTH:
-			continue
-		out.append(-1 - j)
+		if can_target(lane, TO_JUNCTION, j):
+			out.append({"kind": TO_JUNCTION, "to": j})
 	return out
 
 
@@ -390,10 +544,17 @@ func cycle_target(lane: int) -> bool:
 	var choices: Array = target_choices(lane)
 	if choices.size() < 2:
 		return false
-	var at: int = choices.find(to_of(lane))
+	var at: int = -1
+	for i in range(choices.size()):
+		var c: Dictionary = choices[i]
+		if int(c["kind"]) == target_kind(lane) and int(c["to"]) == to_of(lane):
+			at = i
+			break
 	var next: int = 0 if at < 0 else (at + 1) % choices.size()
+	var pick: Dictionary = choices[next]
 	var l: Dictionary = lanes[lane]
-	l["to"] = int(choices[next])
+	l["kind"] = int(pick["kind"])
+	l["to"] = int(pick["to"])
 	lanes[lane] = l
 	relayout()
 	return true
@@ -434,7 +595,10 @@ func relayout() -> void:
 	_jrow = {}
 	_span = {}
 	_jspan = {}
-	_rows_total = _walk(0, 0, 0)
+	var cursor := 0
+	for root in _roots():
+		cursor = _walk(int(root), cursor, 0)
+	_rows_total = cursor
 	var n: int = maxi(_rows_total, 1)
 	var gap: float = spread
 	var span: float = gap * float(n - 1)
@@ -456,8 +620,44 @@ func relayout() -> void:
 		exits[idx] = [keep_x, y0 + gap * float(mini(idx, n - 1))]
 
 
+# Z kterych vyhybek se mrizka sklada. Kmen (vstup) zaklada vlastni strom, takze
+# map se dvema kmeny ma dva stromy a kazdy si drzi sve radky. Kdyby se pocital
+# jen strom prvni vyhybky, druhy kmen by nemel kde byt.
+func _roots() -> Array:
+	var roots: Array = []
+	var covered := {}
+	var cands: Array = []
+	for e in entries:
+		cands.append(int(e))
+	for j in range(junctions.size()):
+		cands.append(j)
+	for c in cands:
+		var j: int = int(c)
+		if j < 0 or j >= junctions.size() or covered.has(j):
+			continue
+		roots.append(j)
+		_mark_reachable(j, covered)
+	return roots
+
+
+func _mark_reachable(j: int, covered: Dictionary) -> void:
+	var guard := 0
+	var stack: Array = [j]
+	while not stack.is_empty() and guard < 64:
+		guard += 1
+		var cur: int = int(stack.pop_back())
+		if covered.has(cur):
+			continue
+		covered[cur] = true
+		for i in range(lanes.size()):
+			var k: int = junction_of(i)
+			if k >= 0 and from_of(i) == cur and not covered.has(k):
+				stack.append(k)
+
+
 # Rekurzivni prichod mrizkou: kazdemu useku priridi rozpeti radku a vrati
-# index prvniho volneho radku.
+# index prvniho volneho radku. Usek, ktery se napojuje na JINY USEK, je
+# z pohledu mrizky list - ma svuj radek jako usek do vystupu.
 func _walk(j: int, cursor: int, depth: int) -> int:
 	var first: int = cursor
 	var jl: Array = lanes_of(j)
@@ -467,8 +667,12 @@ func _walk(j: int, cursor: int, depth: int) -> int:
 			cursor += 1
 		else:
 			var k: int = junction_of(lane)
-			cursor = _walk(k, cursor, depth + 1)
-			_span[lane] = _jspan.get(k, [cursor, cursor])
+			if k < 0:
+				_span[lane] = [cursor, cursor]
+				cursor += 1
+			else:
+				cursor = _walk(k, cursor, depth + 1)
+				_span[lane] = _jspan.get(k, [cursor, cursor])
 	if jl.is_empty():
 		_jspan[j] = [cursor, cursor]
 	else:
@@ -492,11 +696,104 @@ func exit_row(idx: int) -> float:
 
 
 # Rovny usek toho useku v podilu sirky plochy: od bodu, kde se ohne z vyhybky,
-# k bodu, kde se ohne ke svemu cili.
+# k bodu, kde se ohne ke svemu cili. Pocita se v NORMALIZOVANYCH souradnicich
+# (level je nezavisly na displeji) - Network z toho jen prevede na pixely.
+func run_frac(lane: int) -> float:
+	return RUN_FRAC if target_kind(lane) != TO_JUNCTION else RUN_FRAC_CONNECTOR
+
+
+# X-ova souradnice bodu, do ktereho usek vede. Pro cil = jiny usek je to
+# zacatek JEHO rovneho useku - tam se vetev vleje do te druhe.
+func target_x_of(lane: int, guard: int = 0) -> float:
+	return _target_x(target_kind(lane), to_of(lane), guard, lane)
+
+
+func _target_x(kind: int, to: int, guard: int, self_lane: int = -1) -> float:
+	if kind == TO_EXIT:
+		return exit_x
+	if kind == TO_JUNCTION:
+		return junction_x(to) - MERGE_GAP
+	# Cil = jiny usek. Kdyby se useky odkazovaly dokola (rozbitý level),
+	# rekurze se zastavi - validate to stejne odmitne.
+	if guard > 8 or to < 0 or to >= lanes.size() or to == self_lane:
+		return exit_x
+	return run_land_x(to, guard + 1)
+
+
+# Kde se do toho useku vleje privodni vetev: kus za zacatkem jeho rovneho
+# useku, aby se privodni vetev stihla ohnout.
+func run_land_x(lane: int, guard: int = 0) -> float:
+	var x0: float = run_x0(lane, guard)
+	var x1: float = run_x1(lane, guard)
+	return x0 + (x1 - x0) * LAND_FRAC
+
+
+func run_x0(lane: int, guard: int = 0) -> float:
+	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
+	if span <= 0.0:
+		return junction_x(from_of(lane))
+	return junction_x(from_of(lane)) + span * run_frac(lane)
+
+
+func run_x1(lane: int, guard: int = 0) -> float:
+	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
+	if span <= 0.0:
+		return junction_x(from_of(lane))
+	return target_x_of(lane, guard) - span * run_frac(lane)
+
+
 func run_of(lane: int) -> float:
-	var frac: float = RUN_FRAC if lane_is_exit(lane) else RUN_FRAC_CONNECTOR
-	var t: float = exit_x if lane_is_exit(lane) else junction_x(junction_of(lane)) - MERGE_GAP
-	return (t - junction_x(from_of(lane))) * (1.0 - 2.0 * frac)
+	return run_x1(lane) - run_x0(lane)
+
+
+# Smi tenhle usek vest tam? Jedno misto, kde se to rozhoduje - ptá se ho
+# editor (co nabizet), validate (co proslo) i hra. Tri ruzne podminky by se
+# drive nebo pozdeji rozešly.
+func can_target(lane: int, kind: int, to: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	if kind == TO_EXIT:
+		if to < 0 or to >= exits.size():
+			return false
+	elif kind == TO_JUNCTION:
+		if to < 0 or to >= junctions.size() or to == from_of(lane):
+			return false
+		# Usek vede o patro hloub, ale jen do meze MAX_DEPTH.
+		if junction_depth(from_of(lane)) + 1 > MAX_DEPTH:
+			return false
+		if junction_depth(to) > MAX_DEPTH:
+			return false
+	elif kind == TO_LANE:
+		if to < 0 or to >= lanes.size() or to == lane:
+			return false
+		if _chains_to(to, lane):
+			return false
+	else:
+		return false
+	# Geometrie: mezi vyhybkou a cilem musi zustat misto na rovny usek.
+	var span: float = _target_x(kind, to, 0, lane) - junction_x(from_of(lane))
+	if span <= 0.0:
+		return false
+	var frac: float = RUN_FRAC if kind != TO_JUNCTION else RUN_FRAC_CONNECTOR
+	if span * (1.0 - 2.0 * frac) < MIN_RUN:
+		return false
+	return true
+
+
+# Vede z useku `from` cesta (pres napojovani na dalsi useky) az na usek `to`?
+# Presne to je smycka, ktera se nesmi stat: poutnik by po ni sel porad dokola.
+func _chains_to(from: int, to: int) -> bool:
+	var cur: int = from
+	var guard := 0
+	while cur >= 0 and guard <= lanes.size():
+		if cur == to:
+			return true
+		var nxt: int = lane_target_of(cur)
+		if nxt < 0:
+			return false
+		cur = nxt
+		guard += 1
+	return true
 
 
 # ---------------------------------------------------------------- zakladni
@@ -508,6 +805,7 @@ static func base() -> Level:
 		l.lanes.append({
 			"from": 0,
 			"el": int(BASE_LANE_ELEMENTS[i]),
+			"kind": TO_EXIT,
 			"to": int(BASE_EXITS[i]),
 			"divert": BASE_DIVERT,
 		})
@@ -515,6 +813,7 @@ static func base() -> Level:
 	for r in BASE_EXITS:
 		l.exits.append([BASE_EXIT_X, TOP])
 	l.junctions = [{}]
+	l.entries = [0]
 	l.relayout()
 	return l
 
@@ -535,12 +834,15 @@ func to_dict() -> Dictionary:
 		brief.append({
 			"from": from_of(i),
 			"el": int(l["el"]),
+			"kind": target_kind(i),
 			"to": to_of(i),
 			"divert": float(l.get("divert", BASE_DIVERT)),
 		})
 	return {
 		"name": name,
 		"lanes": brief,
+		"junctions": junctions.size(),
+		"entries": entries.duplicate(),
 		"exits": exits.duplicate(true),
 		"spread": spread,
 		"exit_x": exit_x,
@@ -558,15 +860,27 @@ static func from_dict(d: Dictionary) -> Level:
 	var raw: Array = d.get("lanes", [])
 	for item in raw:
 		var m: Dictionary = item
-		# "exit" je stary nazev klice pro cil useku - stare levely se musi
+		# "exit" je stary nazev klice pro cil useku a chybejici "kind" znamena
+		# stary format (>= 0 byl vystup, < 0 vyhybka). Stare levely se musi
 		# nacist taky, jinak by hrac prisel o to, co ma ulozene.
-		var to: int = int(m.get("to", m.get("exit", 0)))
-		l.lanes.append({
-			"from": int(m.get("from", 0)),
-			"el": int(m.get("el", NEUTRAL)),
-			"to": to,
-			"divert": float(m.get("divert", BASE_DIVERT)),
-		})
+		if m.has("kind"):
+			var kind: int = int(m["kind"])
+			l.lanes.append({
+				"from": int(m.get("from", 0)),
+				"el": int(m.get("el", NEUTRAL)),
+				"kind": kind,
+				"to": int(m.get("to", 0)),
+				"divert": float(m.get("divert", BASE_DIVERT)),
+			})
+		else:
+			var to: int = int(m.get("to", m.get("exit", 0)))
+			l.lanes.append({
+				"from": int(m.get("from", 0)),
+				"el": int(m.get("el", NEUTRAL)),
+				"kind": TO_EXIT if to >= 0 else TO_JUNCTION,
+				"to": to if to >= 0 else (-1 - to),
+				"divert": float(m.get("divert", BASE_DIVERT)),
+			})
 	if l.lanes.is_empty():
 		return Level.base()
 	var ex: Array = d.get("exits", [])
@@ -575,6 +889,16 @@ static func from_dict(d: Dictionary) -> Level:
 		l.exits.append([float(p[0]), float(p[1])])
 	if l.exits.is_empty():
 		l.exits.append([BASE_EXIT_X, TOP])
+	var jn: int = maxi(int(d.get("junctions", 0)), 0)
+	while l.junctions.size() < jn:
+		l.junctions.append({})
+	var ent: Array = d.get("entries", [])
+	for e in ent:
+		var ei: int = int(e)
+		if ei >= 0 and ei < jn and not l.has_entry(ei):
+			l.entries.append(ei)
+	if l.entries.is_empty():
+		l.entries = [0]
 	l.spread = float(d.get("spread", BASE_SPREAD))
 	l.exit_x = float(d.get("exit_x", BASE_EXIT_X))
 	l.zone_dmg = float(d.get("zone_dmg", BASE_ZONE_DMG))
@@ -659,13 +983,28 @@ func clamp_all() -> void:
 		var l: Dictionary = lanes[i]
 		l["from"] = clampi(int(l.get("from", 0)), 0, 16)
 		l["el"] = clampi(int(l["el"]), NEUTRAL, Element.COUNT - 1)
+		var kind: int = int(l.get("kind", TO_EXIT))
+		if kind < TO_EXIT or kind > TO_LANE:
+			kind = TO_EXIT
+		l["kind"] = kind
 		var to: int = int(l["to"])
-		if to >= 0:
+		if kind == TO_EXIT:
 			l["to"] = clampi(to, 0, maxi(exits.size() - 1, 0))
+		elif kind == TO_JUNCTION:
+			l["to"] = clampi(to, 0, maxi(junctions.size() - 1, 0))
 		else:
-			l["to"] = to
+			l["to"] = clampi(to, 0, maxi(lanes.size() - 1, 0))
 		l["divert"] = clampf(float(l.get("divert", BASE_DIVERT)), 0.0, 0.98)
 		lanes[i] = l
+	# Kmeny: prvni musi existovat vzdy, jinak by do mapy nikdo nevstoupil.
+	var clean: Array = []
+	for e in entries:
+		var ei: int = int(e)
+		if ei >= 0 and ei < junctions.size() and not clean.has(ei):
+			clean.append(ei)
+	entries = clean
+	if entries.is_empty():
+		entries = [0]
 
 
 # ---------------------------------------------------------------- ulozeni
@@ -858,32 +1197,47 @@ func validate() -> Array:
 	for i in range(exits.size()):
 		if exits[i].size() < 2:
 			errs.append("výstup %d nemá souřadnice" % (i + 1))
+	if entries.is_empty():
+		errs.append("do mapy nevede žádný kmen")
+	for j in entries:
+		if int(j) < 0 or int(j) >= junctions.size():
+			errs.append("kmen vede do neexistující výhybky")
+		elif not lanes_into(int(j)).is_empty():
+			errs.append("do výhybky %d vede kmen i úsek" % (int(j) + 1))
+	# Kazdy usek musi mit platny cil. Rozhoduje o tom JEDNA funkce - stejna,
+	# kterou se ptá editor, kdyz cile nabizi.
 	for i in range(lanes.size()):
 		if from_of(i) < 0 or from_of(i) >= junctions.size():
 			errs.append("úsek %d vede z neexistující výhybky" % (i + 1))
-		if not lane_is_exit(i):
-			var k: int = junction_of(i)
-			if k < 0 or k >= junctions.size():
-				errs.append("úsek %d vede do neexistující výhybky" % (i + 1))
-			elif junction_depth(from_of(i)) + 1 > MAX_DEPTH:
-				errs.append("úsek %d vede do výhybky, která je moc hluboko" % (i + 1))
-		elif exit_of(i) >= exits.size():
-			errs.append("úsek %d míří na neexistující výstup" % (i + 1))
+		elif not can_target(i, target_kind(i), to_of(i)):
+			var kind: int = target_kind(i)
+			if kind == TO_EXIT:
+				errs.append("úsek %d míří na neexistující výstup" % (i + 1))
+			elif kind == TO_JUNCTION:
+				errs.append("úsek %d vede do výhybky, která je moc hluboko, nebo do sebe" % (i + 1))
+			else:
+				var t: int = to_of(i)
+				if t < 0 or t >= lanes.size():
+					errs.append("úsek %d se napojuje na neexistující úsek" % (i + 1))
+				elif _chains_to(t, i):
+					errs.append("úseky %d a %d se napojují dokola" % [i + 1, t + 1])
+				else:
+					errs.append("úsek %d je moc krátký na to, aby na něm stály bonusy" % (i + 1))
 		if lanes_of(from_of(i)).size() > MAX_FAN:
 			errs.append("z výhybky %d vede víc než %d úseků" % [from_of(i) + 1, MAX_FAN])
-		if run_of(i) < MIN_RUN:
-			errs.append("úsek %d je moc krátký na to, aby na něm stály bonusy" % (i + 1))
 	for j in range(1, junctions.size()):
 		var kids: Array = lanes_of(j)
 		if kids.size() < 2:
 			errs.append("výhybka %d má míň než dva úseky" % (j + 1))
-		if lanes_into(j).is_empty():
+		if lanes_into(j).is_empty() and not has_entry(j):
 			errs.append("do výhybky %d nikdo nevede" % (j + 1))
 		for k in kids:
-			if not lane_is_exit(k):
+			if target_kind(k) == TO_JUNCTION:
 				errs.append("z výhybky %d vede úsek do další výhybky" % (j + 1))
 	if lanes_of(0).size() < MIN_LANES:
 		errs.append("z první výhybky nevedou aspoň dva úseky")
+	if not has_entry(0) and lanes_into(0).is_empty():
+		errs.append("do první výhybky nevede kmen")
 	var killable := 0
 	for i in range(lanes.size()):
 		if not is_neutral(i):

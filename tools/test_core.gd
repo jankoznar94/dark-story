@@ -25,6 +25,8 @@ func _init() -> void:
 	_test_level_edits()
 	_test_custom_level_plays()
 	_test_two_junctions()
+	_test_more_entries()
+	_test_branch_joins_branch()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -683,6 +685,94 @@ func _test_custom_level_plays() -> void:
 
 
 # --------------------------------------------------------------- 15 vyhybky
+
+# LEVEL SE DVEMA VYHYBKAMI. Poutnik projde prvni vyhybkou na usek, ktery vede
+# do druhe vyhybky, a tam se rozhoduje ZNOVU - a nezavisle na te prvni.
+# Vsechno ostatni je jen kresleni: tahle cesta je to, co hrac v levelu s druhou
+# vyhybkou vlastne hraje.
+func _test_more_entries() -> void:
+	# VIC KMENU (VSTUPU). Mapa muze mit vic vstupu - poutnici pak vchazeji na
+	# vic mistech a hrac hlida vic front. Kazdy kmen ma vlastni strom radku,
+	# takze si navzajem nelezou do cesty.
+	var lv := Level.base()
+	var j2: int = lv.add_tree()
+	_ok(j2 >= 0, "pridanim vetve vznikla samostatna vyhybka s vlastnim kmenem")
+	_ok(j2 >= 0 and lv.has_entry(j2), "a ta ma vlastni kmen")
+	_ok(lv.entries.size() == 2, "kmeny jsou dva (%d)" % lv.entries.size())
+	_ok(lv.validate().is_empty(), "takovy level je platny: %s" % str(lv.validate()))
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	g.auto_wave = false
+	_ok(g.net.trunk_paths.size() == 2, "sit postavi oba kmeny (%d)" % g.net.trunk_paths.size())
+	_ok(g.net.trunk_to[0] == 0 and g.net.trunk_to[1] == j2,
+		"kazdy kmen vede do sve vyhybky")
+	# mrizka se musi vejit i se dvema stromy
+	_ok(lv.row_of(lv.lane_count() - 1) <= Level.BOTTOM,
+		"i se dvema kmeny zustava mrizka v plose (%.2f)" % lv.row_of(lv.lane_count() - 1))
+	# poutnici se mezi kmeny STRIDAJI - jinak by druhy kmen prisel nazmar
+	var a: Enemy = g.debug_spawn(Element.FIRE)
+	var b: Enemy = g.debug_spawn(Element.FIRE)
+	var c: Enemy = g.debug_spawn(Element.FIRE)
+	_ok(a.trunk == 0 and b.trunk == 1 and c.trunk == 0,
+		"poutnici se stridaji mezi kmeny (%d, %d, %d)" % [a.trunk, b.trunk, c.trunk])
+	# a poutnik z druheho kmene dojde do sve vyhybky, ne do prvni
+	var e: Enemy = g.debug_spawn(Element.WATER)
+	var t := 0.0
+	while t < 20.0 and e.alive and not e.on_lane():
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+	_ok(e.on_lane() and lv.from_of(e.lane) == j2,
+		"poutnik z druheho kmene vstoupil do sve vyhybky (lane=%d)" % e.lane)
+
+
+func _test_branch_joins_branch() -> void:
+	# VETEV SE MUZE VLEJT DO JINE VETVE. Ne jen do vystupu nebo do vyhybky -
+	# vybocena cesta muze skoncit na druhem useku a poutnik po nem jde dal.
+	var lv := Level.base()
+	var ok_join := false
+	for c in lv.target_choices(1):
+		var cc: Dictionary = c
+		if int(cc["kind"]) == Level.TO_LANE and int(cc["to"]) == 0:
+			ok_join = true
+			var l: Dictionary = lv.lanes[1]
+			l["kind"] = Level.TO_LANE
+			l["to"] = 0
+			lv.lanes[1] = l
+	if not ok_join:
+		_ok(false, "usek se da napojit na jiny usek")
+		return
+	_ok(true, "usek se da napojit na jiny usek")
+	_ok(lv.validate().is_empty(), "takovy level je platny: %s" % str(lv.validate()))
+	# ZPETNA VEZ UZ NELZE - vznikla by smycka
+	var back := false
+	for c in lv.target_choices(0):
+		var cc2: Dictionary = c
+		if int(cc2["kind"]) == Level.TO_LANE and int(cc2["to"]) == 1:
+			back = true
+	_ok(not back, "zpet na usek, ktery se na nej napojuje, to nejde (smycka)")
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	g.auto_wave = false
+	_ok(int(g.net.lane_kind[1]) == Level.TO_LANE, "sit vi, ze usek 1 se napojuje na usek 0")
+	_ok(g.net.lane_entry_s[0] > 0.0,
+		"usek 0 ma vstupni bod, kde se do nej druhy vleje (%.0f px)" % g.net.lane_entry_s[0])
+	# Poutnik poslany na usek 1 dojde na konec a pokracuje po useku 0 - a to
+	# od bodu, kde se napojuje (ne od zacatku).
+	g.set_switch(1)
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	var t := 0.0
+	while t < 30.0 and e.alive and e.lane != 0:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+	_ok(e.alive and e.lane == 0, "poutnik presel z useku 1 na usek 0 (lane=%d)" % e.lane)
+	_ok(e.s >= g.net.lane_entry_s[0] - 1.0,
+		"a to az za mistem, kde se usek napojuje (s=%.0f, vstup=%.0f)" % [
+			e.s, g.net.lane_entry_s[0]])
+	# a dojde az na vystup - stoji zivot (nikde se nezasekl)
+	var lives0: int = g.lives
+	g.run_for(40.0)
+	_ok(g.lives < lives0, "a nakonec dojde na vystup (zivoty %d -> %d)" % [lives0, g.lives])
+
 
 # LEVEL SE DVEMA VYHYBKAMI. Poutnik projde prvni vyhybkou na usek, ktery vede
 # do druhe vyhybky, a tam se rozhoduje ZNOVU - a nezavisle na te prvni.

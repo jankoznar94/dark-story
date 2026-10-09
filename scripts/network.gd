@@ -74,6 +74,18 @@ var lane_sel_index: Array = []
 var lane_run: Array = []
 var slot_pos: Array = []
 var exit_pos: Array = []
+# KMENY (vstupy). Kazdy kmen vede z leveho okraje do sve vyhybky; poutnici se
+# mezi ne rozdeluji, takze hrac hlida vic front najednou.
+var trunk_paths: Array = []
+var trunk_lens: Array = []
+var trunk_to: Array = []
+var trunk_starts: Array = []
+# Kde na usek vstupuje poutnik, ktery se na nej napojil z jineho useku
+# (vzdalenost po trase od zacatku useku). 0 = normalne od zacatku.
+var lane_entry_s: Array = []
+# Druh cile kazdeho useku (TO_EXIT / TO_JUNCTION / TO_LANE) a jeho cil.
+var lane_kind: Array = []
+var lane_target: Array = []
 # Vyhybky. junction_lanes[j] jsou indexy useku, ktere z ni vedou.
 var junction_pos: Array = []
 var junction_merge: Array = []
@@ -108,6 +120,26 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	hub = junction_pos[0]
 	trunk_start = Vector2(r.position.x - 24.0 * scale, hub.y)
 	trunk_len = _poly_len(PackedVector2Array([trunk_start, merge]))
+
+	# --- kmeny (vstupy) ---
+	# Kazdy kmen je vodorovna cara z leveho okraje do sve vyhybky. Kdyz ma mapa
+	# kmenu vic, vchazeji poutnici na vic mistech - a kazdy kmen ma svuj strom
+	# radku (Level.relayout), takze si navzajem nelezou do cesty.
+	trunk_paths = []
+	trunk_lens = []
+	trunk_to = []
+	trunk_starts = []
+	for e in level.entries:
+		var j: int = clampi(int(e), 0, maxi(junction_merge.size() - 1, 0))
+		var start := Vector2(r.position.x - 24.0 * scale, junction_merge[j].y)
+		var path := PackedVector2Array([start, junction_merge[j]])
+		trunk_paths.append(path)
+		trunk_lens.append(_poly_len(path))
+		trunk_to.append(j)
+		trunk_starts.append(start)
+	if not trunk_lens.is_empty():
+		trunk_start = trunk_starts[0]
+		trunk_len = float(trunk_lens[0])
 
 	# --- radky useku ---
 	# Radky jsou uz hotove v levelu (Level.relayout je vystredi ve sve mrizce).
@@ -152,6 +184,9 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	lane_from = []
 	lane_sel_index = []
 	lane_run = []
+	lane_kind = []
+	lane_target = []
+	lane_entry_s = []
 	slot_pos = []
 	junction_lanes = []
 	for j in range(level.junction_count()):
@@ -169,41 +204,55 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 		src_j = clampi(src_j, 0, maxi(junction_pos.size() - 1, 0))
 		var hubp: Vector2 = junction_pos[src_j]
 		var mergep: Vector2 = junction_merge[src_j]
+		var kind: int = level.target_kind(i)
 		var to: int = level.to_of(i)
-		# Cil: vystup, nebo privodni bod dalsi vyhybky. Kdyz usek konci
-		# u vyhybky, konci PRESNE tam, kde zacina jeji privodni usek - poutnik
-		# tak plynule prejde z jednoho useku na druhy.
+		var run0_px: float = r.position.x + w * level.run_x0(i)
+		var run1_px: float = r.position.x + w * level.run_x1(i)
+		if run1_px < run0_px + MIN_RUN_PX * scale:
+			run1_px = run0_px + MIN_RUN_PX * scale
+		# Cil useku:
+		#   vystup  - dira v mape; kdo tam dojde, stoji zivot,
+		#   vyhybka - privodni bod te vyhybky (poutnik plynule prejde dal),
+		#   usek    - ZAcatek rovneho useku teho druheho useku. Vetev se do
+		#             ni vleje a poutnik po ni pokracuje dal.
 		var target: Vector2
-		if to >= 0:
+		if kind == Level.TO_EXIT:
 			target = exit_pos[clampi(to, 0, maxi(exit_pos.size() - 1, 0))]
+		elif kind == Level.TO_JUNCTION:
+			target = junction_merge[clampi(to, 0, maxi(junction_merge.size() - 1, 0))]
 		else:
-			target = junction_merge[clampi(-1 - to, 0, maxi(junction_merge.size() - 1, 0))]
-		# Rovny usek: podil cesty pred ohybem a za nim.
-		var span_px: float = target.x - hubp.x
-		var frac: float = Level.RUN_FRAC if to >= 0 else Level.RUN_FRAC_CONNECTOR
-		var x0: float = hubp.x + span_px * frac
-		var x1: float = target.x - span_px * frac
-		if x1 < x0 + MIN_RUN_PX * scale:
-			x1 = x0 + MIN_RUN_PX * scale
+			var k2: int = clampi(to, 0, maxi(rows.size() - 1, 0))
+			target = Vector2(r.position.x + w * level.run_land_x(k2), float(rows[k2]))
 		var y: float = float(rows[i])
-		var dx: float = lerp(x0, x1, level.divert_of(i))
+		var dx: float = lerp(run0_px, run1_px, level.divert_of(i))
 		var path := PackedVector2Array([
 			mergep, hubp,
-			Vector2(x0, y),
+			Vector2(run0_px, y),
 			Vector2(dx, y),
 			target,
 		])
 		lane_path.append(path)
 		lane_len.append(_poly_len(path))
-		lane_exit.append(to if to >= 0 else -1)
+		# Vstupni bod pro poutnika, ktery se na tenhle usek napojil z jineho:
+		# je to presne ten bod, kde se do rovneho useku vlévá (LAND_FRAC).
+		var entry: float = 0.0
+		for k3 in range(level.lane_count()):
+			if k3 != i and level.target_kind(k3) == Level.TO_LANE and level.to_of(k3) == i:
+				entry = mergep.distance_to(hubp) + hubp.distance_to(Vector2(run0_px, y)) \
+					+ (run1_px - run0_px) * Level.LAND_FRAC
+				break
+		lane_entry_s.append(entry)
+		lane_exit.append(to if kind == Level.TO_EXIT else -1)
 		lane_to.append(to)
+		lane_kind.append(kind)
+		lane_target.append(to)
 		lane_from.append(src_j)
-		lane_run.append([x0, x1])
+		lane_run.append([run0_px, run1_px])
 		if i == 0:
-			run0 = [x0, x1]
+			run0 = [run0_px, run1_px]
 		var slots: Array = []
 		for f in SLOT_FRACTIONS:
-			slots.append(Vector2(x0 + float(f) * (x1 - x0), y))
+			slots.append(Vector2(run0_px + float(f) * (run1_px - run0_px), y))
 		slot_pos.append(slots)
 	# Pas prvniho useku. Je tu pro testy a pro kresleni zakladni desky.
 	band_x0 = float(run0[0]) if run0.size() == 2 else 0.0
@@ -225,9 +274,15 @@ func point_at(lane: int, s: float) -> Vector2:
 	return path[path.size() - 1]
 
 
-func trunk_point_at(s: float) -> Vector2:
-	var t: float = clampf(s / maxf(trunk_len, 0.0001), 0.0, 1.0)
-	return trunk_start.lerp(merge, t)
+func trunk_point_at(s: float, trunk: int = 0) -> Vector2:
+	var t: int = clampi(trunk, 0, maxi(trunk_paths.size() - 1, 0))
+	if trunk_paths.is_empty():
+		var k: float = clampf(s / maxf(trunk_len, 0.0001), 0.0, 1.0)
+		return trunk_start.lerp(merge, k)
+	var len_i: float = maxf(float(trunk_lens[t]), 0.0001)
+	var a: Vector2 = trunk_starts[t]
+	var b: Vector2 = junction_merge[clampi(int(trunk_to[t]), 0, maxi(junction_merge.size() - 1, 0))]
+	return a.lerp(b, clampf(s / len_i, 0.0, 1.0))
 
 
 func slot_count() -> int:

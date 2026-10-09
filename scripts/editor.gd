@@ -37,12 +37,13 @@ const BTN_TARGET := 3
 const BTN_BEND_LEFT := 4
 const BTN_BEND_RIGHT := 5
 const BTN_JUNCTION := 6
-const BTN_LIST := 7
-const BTN_EXPORT := 8
-const BTN_PLAY := 9
+const BTN_ENTRY := 7
+const BTN_LIST := 8
+const BTN_EXPORT := 9
+const BTN_PLAY := 10
 const BTN_LABELS := [
-	"úsek +", "úsek −", "živel", "cíl", "odboč −", "odboč +", "výhybka", "seznam",
-	"export", "hrát",
+	"úsek +", "úsek −", "živel", "cíl", "odboč −", "odboč +", "výhybka", "vstup",
+	"seznam", "export", "hrát",
 ]
 
 var level: Level = Level.base()
@@ -155,6 +156,8 @@ func press(button: int) -> int:
 			_bend(Level.SPREAD_STEP * 5.0)
 		BTN_JUNCTION:
 			_junction()
+		BTN_ENTRY:
+			_entry()
 		BTN_LIST:
 			open_list()
 		BTN_EXPORT:
@@ -171,7 +174,11 @@ func button_labels() -> Array:
 	var out: Array = []
 	for l in BTN_LABELS:
 		out.append(str(l))
-	out[BTN_JUNCTION] = "výhybka +" if can_split() else ("výhybka −" if can_merge() else "výhybka")
+	out[BTN_JUNCTION] = "výhybka" if can_split() else ("sloučit" if can_merge() else "výhybka")
+	if level.lane_count() > 0 and level.has_entry(level.from_of(sel)) and level.entries.size() > 1:
+		out[BTN_ENTRY] = "vstup −"
+	else:
+		out[BTN_ENTRY] = "vstup +"
 	return out
 
 
@@ -215,12 +222,52 @@ func _cycle_target() -> void:
 		status = "jiný cíl pro tenhle úsek není"
 		return
 	level.relayout()
-	var to: int = level.to_of(sel)
-	if to >= 0:
-		status = "úsek %d ústí do výstupu %d" % [sel + 1, to + 1]
-	else:
-		status = "úsek %d vede do výhybky %d" % [sel + 1, (level.junction_of(sel) + 1)]
+	status = "úsek %d: %s" % [sel + 1, _target_text(sel)]
 	_after_change()
+
+
+# Popis cile vybraneho useku. Tri druhy cile - a hrac musi videt, ktery z nich
+# to prave je, protoze se chovaji jinak.
+func _target_text(lane: int) -> String:
+	var kind: int = level.target_kind(lane)
+	if kind == Level.TO_EXIT:
+		return "ústí do výstupu %d" % (level.exit_of(lane) + 1)
+	if kind == Level.TO_JUNCTION:
+		return "vede do výhybky %d" % (level.junction_of(lane) + 1)
+	return "napojuje se na úsek %d" % (level.lane_target_of(lane) + 1)
+
+
+# ---------------------------------------------------------------- kmen
+
+# KMEN (VSTUP). Kazda vyhybka muze mit vlastni kmen, kterym do mapy vchazeji
+# poutnici. Kdyz jich je vic, hrac hlida vic front najednou - a mapa vypada
+# jako sit s vic vstupy, ne jen jedna cesta zleva.
+func _entry() -> void:
+	if level.lane_count() == 0:
+		return
+	var j: int = level.from_of(sel)
+	if level.has_entry(j) and level.entries.size() > 1:
+		if level.remove_entry(j):
+			status = "výhybka %d přišla o svůj kmen" % (j + 1)
+			_after_change()
+			return
+	if level.add_entry(j):
+		status = "výhybka %d má vlastní kmen (vstup zleva)" % (j + 1)
+		_after_change()
+		return
+	# Do vyhybky, do ktere uz vede usek, kmen pridat nejde - vede z leveho
+	# okraje a sel by pres vsechno pred ni. Zalozime tedy CELOU NOVOU VETEV,
+	# ktera ma vlastni kmen: mapa tak dostane druhy vstup.
+	var j2: int = level.add_tree()
+	if j2 >= 0:
+		sel = clampi(level.lane_count() - 2, 0, maxi(level.lane_count() - 1, 0))
+		status = "nová větev s vlastním kmenem (výhybka %d)" % (j2 + 1)
+		_after_change()
+		return
+	if level.junctions.size() >= Level.MAX_ENTRIES:
+		status = "poslední kmen nechat musíš"
+	else:
+		status = "víc než %d úseků nejde" % Level.MAX_LANES
 
 
 # Kde se usek ohne ke svemu cili. Mensi hodnota = ohne driv (bliz k vyhybce),
@@ -246,7 +293,7 @@ func _bend(d: float) -> void:
 func can_split() -> bool:
 	if level.lane_count() == 0 or sel < 0 or sel >= level.lane_count():
 		return false
-	if not level.lane_is_exit(sel):
+	if level.target_kind(sel) != Level.TO_EXIT:
 		return false
 	if level.junction_depth(level.from_of(sel)) + 1 > Level.MAX_DEPTH:
 		return false
@@ -269,7 +316,7 @@ func can_merge() -> bool:
 	if kids.is_empty():
 		return false
 	for k in kids:
-		if not level.lane_is_exit(k):
+		if level.target_kind(k) != Level.TO_EXIT:
 			return false
 	return true
 
@@ -365,10 +412,12 @@ func sel_text() -> String:
 	var el: int = level.el_of(sel)
 	var el_name: String = "neutrální" if el == Level.NEUTRAL else Element.name_of(el)
 	var target: String
-	if level.lane_is_exit(sel):
+	if level.target_kind(sel) == Level.TO_EXIT:
 		target = "výstup %d" % (level.exit_of(sel) + 1)
-	else:
+	elif level.target_kind(sel) == Level.TO_JUNCTION:
 		target = "→ výhybka %d" % (level.junction_of(sel) + 1)
+	else:
+		target = "→ úsek %d" % (level.lane_target_of(sel) + 1)
 	return "úsek %d/%d · z výhybky %d · %s · %s · odbočení %.2f" % [
 		sel + 1, level.lane_count(), level.from_of(sel) + 1, el_name, target,
 		level.divert_of(sel)]
