@@ -78,12 +78,19 @@ jobs:
           ./godot --headless --path . --export-release "Windows" || true
           ls -la build/web build/windows
 
+      # Godot generuje manifest s minimem poli a Androidu to nestaci - chce
+      # short_name, theme_color a hlavne ikonu 192x192, kterou export vubec
+      # neumi. Bez toho instalace skonci hlaskou "Aplikaci nelze otevrit".
+      - name: Fix PWA manifest (Android)
+        run: python3 tools/fix_pwa_manifest.py build/web
+
       - name: Assert the expected artifacts exist
         run: |
           set -e
           MISSING=0
           for f in build/web/index.html build/web/index.wasm build/web/index.pck \
-                   build/windows/zily.exe; do
+                   build/web/index.manifest.json build/web/index.service.worker.js \
+                   build/web/index.192x192.png build/windows/zily.exe; do
             if [ -f "$f" ]; then echo "OK   $(du -h "$f" | cut -f1)  $f";
             else echo "MISS ---  $f"; MISSING=1; fi
           done
