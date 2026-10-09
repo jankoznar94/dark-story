@@ -79,10 +79,18 @@ jobs:
           ls -la build/web build/windows
 
       # Godot generuje manifest s minimem poli a Androidu to nestaci - chce
-      # short_name, theme_color a hlavne ikonu 192x192, kterou export vubec
-      # neumi. Bez toho instalace skonci hlaskou "Aplikaci nelze otevrit".
-      - name: Fix PWA manifest (Android)
-        run: python3 tools/fix_pwa_manifest.py build/web
+      # short_name, theme_color, id, scope a hlavne ikonu 192x192, kterou export
+      # vubec neumi. Navic jeho service worker v install nevola skipWaiting()
+      # a navigaci vyrizuje cache-first, takze hrac po nasazení zustane na stare
+      # hre - presne to se stalo. Otisk commitu jde do CACHE_VERSION, aby
+      # prohlizec novou verzi vubec zaregistroval.
+      - name: Fix PWA export (Android manifest + service worker)
+        run: python3 tools/fix_pwa_export.py build/web "${GITHUB_SHA:0:7}"
+
+      # Service worker je generovany soubor bez buildu - kdyz v nem zustane
+      # neplatna syntaxe, prohlizec ho zahodi a cela PWA prestane fungovat.
+      - name: Service worker must be valid JavaScript
+        run: node --check build/web/index.service.worker.js
 
       # Otisk buildu do hry. Bez nej hrac nepozna, jestli ma po aktualizaci
       # opravdu novou verzi, nebo mu ji drzi cache service workera.
