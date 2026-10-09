@@ -15,8 +15,6 @@ const MAX_TOAST := 3.0
 # Sirka pasu dmg zony. Je to ZNACKA, ne presna mechanika - mechanika je
 # "cely usek", ale pas to musi ukazat citelne.
 const ZONE_THICK := 24.0
-# Frekvence basove linky. Dlouha, pomalá - ma byt slyset, ne otravovat.
-const MUSIC_HZ := 55.0
 
 var layout := ScreenLayout.new()
 var game: Game = null
@@ -159,44 +157,18 @@ func _pull_toast(delta: float) -> void:
 # zatim zadne audio soubory nema - a ticho by u "zapni/vypni hudbu"
 # nešlo poznat. Casem se da nahradit skutecnou hudbou beze zmeny UI.
 func _setup_audio() -> void:
+	var snd := Sound.new()
 	_music = AudioStreamPlayer.new()
-	_music.stream = _make_tone(MUSIC_HZ, 3.0, 0.12)
+	_music.stream = snd.music_loop()
 	_music.volume_db = -16.0
 	_music.bus = "Master"
 	add_child(_music)
 	_sfx = AudioStreamPlayer.new()
-	_sfx.stream = _make_tone(220.0, 0.09, 0.5)
+	# Tuknuti se NESMYCKUJE - loopovany 0.09s ton praskal 11x za sekundu.
+	_sfx.stream = snd.sfx_tap()
 	_sfx.volume_db = -6.0
 	_sfx.bus = "Master"
 	add_child(_sfx)
-
-
-# Obalka (ADSR-like) pres sinusovku - aby ton nepraskal na zacatku a konci.
-func _make_tone(hz: float, sec: float, amp: float) -> AudioStreamWAV:
-	var rate := 22050
-	var n: int = int(sec * float(rate))
-	var data := PackedByteArray()
-	data.resize(n * 2)
-	var fade: float = float(rate) * 0.04
-	for i in range(n):
-		var x: float = float(i) / float(rate)
-		var env: float = 1.0
-		if float(i) < fade:
-			env = float(i) / fade
-		elif float(i) > float(n) - fade:
-			env = maxf(0.0, (float(n) - float(i)) / fade)
-		var v: int = int(sin(TAU * hz * x) * amp * env * 32767.0)
-		data[i * 2] = v & 0xFF
-		data[i * 2 + 1] = (v >> 8) & 0xFF
-	var w := AudioStreamWAV.new()
-	w.format = AudioStreamWAV.FORMAT_16_BITS
-	w.mix_rate = rate
-	w.stereo = false
-	w.data = data
-	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	w.loop_begin = 0
-	w.loop_end = n
-	return w
 
 
 func _sync_audio() -> void:

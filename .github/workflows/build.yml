@@ -70,6 +70,17 @@ jobs:
           echo "$OUT" | tail -45
           echo "$OUT" | grep -q "LAYOUT_ALL_PASS=true"
 
+      # ZVUK. Hracky zvuk se generuje za behu, takze se da zmerit - a musi,
+      # protoze "v reporoduktoru praska" neodhali zadny test pravidel.
+      # Kontroluje se, ze tuknuti nema smycku (loopovany 0.09s ton = 11x/s)
+      # a ze smycka hudby ma cely pocet period a nema obalku.
+      - name: Audio test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_audio.gd 2>&1)
+          echo "$OUT" | tail -20
+          echo "$OUT" | grep -q "AUDIO_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
