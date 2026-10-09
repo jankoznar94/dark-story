@@ -333,6 +333,33 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 		"%s: bonusy se ve dvou vetvich prekryvaji (mezera %.0f, potreba %.0f)" % [
 			name, gap2, g2.net.bonus_r * 1.8])
 
+	# --- PLNA DESKA ---
+	# Strop levelu neni pocet useku ani vyhybek, ale MISTO NA DESCE: radky se
+	# zmensuji jen do MIN_ROW_GAP. Presne tenhle strop se musi na kazdem
+	# rozliseni vejit - jinak by si hrac postavil level, na kterem se bonusy
+	# prekryvaji (a videl by to az ve hre).
+	var lv3: Level = Level.base()
+	while lv3.lane_count() < Level.MAX_LANES:
+		var keep3: Level = lv3.clone()
+		if not lv3.add_lane(0) or not lv3.rows_fit():
+			lv3 = keep3
+			break
+	_ok(lv3.rows_fit(),
+		"%s: plna deska ma vic radku, nez se vejde (%.3f)" % [name, lv3.row_gap()])
+	_ok(lv3.rows_total() >= 9,
+		"%s: na desku se vejde aspon 9 radku (%d)" % [name, lv3.rows_total()])
+	_ok(lv3.validate().is_empty(),
+		"%s: plna deska je platna: %s" % [name, str(lv3.validate())])
+	var g3 := Game.new()
+	g3.setup(lay.arena, lay.s, lay.board_bottom, lv3)
+	var gap3: float = g3.net.min_cross_lane_slot_distance()
+	_ok(gap3 > g3.net.bonus_r * 1.8,
+		"%s: na plne desce (%d drah) se bonusy prekryvaji (mezera %.0f, potreba %.0f)" % [
+			name, lv3.lane_count(), gap3, g3.net.bonus_r * 1.8])
+	for lane in range(g3.net.lane_count()):
+		_ok(g3.net.rows[lane] < lay.board_bottom - 6.0 * lay.s,
+			"%s: draha %d plne desky leze pod desku (%.0f)" % [name, lane, g3.net.rows[lane]])
+
 	# --- tlacitka ZPET, MENU, EDITOR ---
 	for k in range(4):
 		var mb: Array = lay.all_menu_buttons() if k == 0 else (

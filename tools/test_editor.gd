@@ -19,6 +19,7 @@ func _init() -> void:
 	_test_exit_cycle()
 	_test_bend()
 	_test_limits()
+	_test_many_entries_and_junctions()
 	_test_autosave()
 	_test_export_code()
 	_test_builtin_levels()
@@ -131,9 +132,19 @@ func _test_limits() -> void:
 	var ed := _fresh()
 	for i in range(Level.MAX_LANES + 3):
 		ed.press(Editor.BTN_ADD)
+	# STROP NENI POCET USEKU, ALE MISTO NA DESCE. Radky se sice zmensuji, ale
+	# pod MIN_ROW_GAP uz ne - jinak by se bonusy na sousednich drahach
+	# prekryvaly. Na zakladni desce se tak vejde deset drah.
+	_ok(ed.level.rows_fit(), "mrizka zustava v rozestupu, kde se bonusy neprekryvaji (%.3f)" % ed.level.row_gap())
+	_ok(ed.level.lane_count() >= 9,
+		"na desku se vejde aspon 9 drah (%d)" % ed.level.lane_count())
 	_ok(ed.level.lane_count() <= Level.MAX_LANES,
 		"vic nez %d useku to nejde (%d)" % [Level.MAX_LANES, ed.level.lane_count()])
-	_ok(ed.level.lane_count() == Level.MAX_LANES, "a presne tolik jich jde pridat")
+	# a pres strop se uz nic neprida
+	var n: int = ed.level.lane_count()
+	ed.press(Editor.BTN_ADD)
+	_ok(ed.level.lane_count() == n, "a pres strop uz nic nepribyde (%d)" % ed.level.lane_count())
+	_ok(not ed.status.is_empty(), "a hlaska rekne proc (%s)" % ed.status)
 	# mrizka se musi vejit nad spodni okraj displeje
 	_ok(ed.level.row_of(ed.level.lane_count() - 1) <= Level.BOTTOM,
 		"i plna mrizka zustava nad spodnim okrajem (%.2f)" % ed.level.row_of(ed.level.lane_count() - 1))
@@ -144,6 +155,55 @@ func _test_limits() -> void:
 		"pod %d useky to nejde (%d)" % [Level.MIN_LANES, ed.level.lane_count()])
 	ed.press(Editor.BTN_DEL)
 	_ok(ed.level.lane_count() == Level.MIN_LANES, "a dalsi uz nic neudela")
+
+
+# VSTUPU A VYHYBEK MUSI JIT PRIDAT KOLIK SE VEJDE. Jan: "v editoru lze ted
+# pridat jen 1 vstup, nebo jen 1 dalsi vyhybku." Driv to zastavil pocet useku
+# (MAX_LANES = 7), ktery byl nizsi nez misto na desce - hrac tedy narazil na
+# strop, ktery nema s hratelnosti nic spolecneho.
+func _test_many_entries_and_junctions() -> void:
+	# --- VSTUPY (kazdy vlastni kmen = dva nove radky) ---
+	var ed := _fresh()
+	for i in range(6):
+		ed.sel = 0
+		ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.entries.size() >= 3,
+		"vstupu jde pridat vic nez dva (%d)" % ed.level.entries.size())
+	_ok(ed.level.junctions.size() == ed.level.entries.size(),
+		"kazdy novy vstup ma vlastni vyhybku (%d kmenu, %d vyhybek)" % [
+			ed.level.entries.size(), ed.level.junctions.size()])
+	_ok(ed.level.rows_fit(), "a mrizka se porad vejde na desku (%d radku)" % ed.level.rows_total())
+	_ok(ed.level.validate().is_empty(), "takovy level je platny: %s" % str(ed.level.validate()))
+	# dalsi uz se nevejde - a hrac dostane hlasku, ne ticho
+	var e: int = ed.level.entries.size()
+	ed.sel = 0
+	ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.entries.size() == e, "pres strop uz vstup nepribyde (%d)" % ed.level.entries.size())
+	_ok(ed.status.contains("nevejde") or ed.status.contains("nejde"),
+		"a hlaska rekne proc (%s)" % ed.status)
+
+	# --- VYHYBKY ---
+	var ed2 := _fresh()
+	var j0: int = ed2.level.junction_count()
+	for i in range(6):
+		var pick: int = -1
+		for k in range(ed2.level.lane_count()):
+			ed2.sel = k
+			if ed2.can_split():
+				pick = k
+				break
+		if pick < 0:
+			break
+		ed2.sel = pick
+		ed2.press(Editor.BTN_JUNCTION)
+	_ok(ed2.level.junction_count() >= j0 + 3,
+		"vyhybek jde pridat vic nez jednu (%d -> %d)" % [j0, ed2.level.junction_count()])
+	_ok(ed2.level.rows_fit(), "a mrizka se porad vejde na desku (%d radku)" % ed2.level.rows_total())
+	_ok(ed2.level.validate().is_empty(), "a takovy level je platny: %s" % str(ed2.level.validate()))
+	var n_net := Network.new()
+	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed2.level)
+	_ok(n_net.junction_count() == ed2.level.junction_count(),
+		"sit postavi vsechny vyhybky (%d z %d)" % [n_net.junction_count(), ed2.level.junction_count()])
 
 
 func _test_autosave() -> void:

@@ -28,18 +28,30 @@ extends RefCounted
 
 const NEUTRAL := -1
 const DEFAULT_NAME := "vlastni"
-const MAX_LANES := 7
+# NEJMENSI ROZESTUP DRAH, pri kterem se bonusy na sousednich drahach jeste
+# neprekryvaji. Tohle je SKUTECNY strop levelu - pocet useku ani vyhybek sam
+# o sobe nic neomezuje, omezuje mrizka radku. Zmereno na nejmensi podporovane
+# obrazovce (640x360): pri 10 radcich je mezera 31 px a potreba 28 px,
+# jedenacty radek uz test rozvrzeni na vsech 14 rozlisenich odmita.
+const MIN_ROW_GAP := 0.095
+# Kolik useku muze level mit. NENI to hranice hratelnosti (tu drzi MIN_ROW_GAP
+# vyskovym mistem), je to jen pojistka pro cykly a pro to, aby se kod levelu
+# vešel do jedne rady Telegramu.
+const MAX_LANES := 24
 const MIN_LANES := 2
-# Kolik useku muze vest z jedne vyhybky. Je to stejne jako MAX_LANES: kdyby
-# byla hranice nizsi, prisel by hrac o moznost pridat usek tam, kam prave
-# chce (a dostal by hlasku, ktera nic nevysvetluje).
-const MAX_FAN := 7
-const MAX_EXITS := 6
+# Kolik useku muze vest z jedne vyhybky. Vic nez se vejde radku na desku nema
+# kam - druha hranice je stejne MIN_ROW_GAP.
+const MAX_FAN := 10
+const MAX_EXITS := 24
 # Kolik kmenu (vstupu) muze do mapy vest. Kazdy kmen je jedna cesta, po ktere
 # poutnici do mapy vchazeji - vic kmenu znamena, ze hrac musi hlidat vic míst
-# najednou.
-const MAX_ENTRIES := 4
-# Hloubka vyhybek. 0 = korenova, 1 = vyhybka na konci useku.
+# najednou. Kazdy vlastni kmen si bere dva radky, takze driv nez tady zastavi
+# hrace plna deska.
+const MAX_ENTRIES := 8
+# Hloubka vyhybek. 0 = korenova, 1 = vyhybka na konci useku. Hloubka 2 by se
+# do mrizky jeste vesla, ale rovny usek za ni by mel jen 0.121 - presne na
+# hranici MIN_RUN, tedy bez rezervy na bonusy. Zustava proto 1 (a test to
+# hlida: "z vetve druhe vyhybky uz treti vest nesmi").
 const MAX_DEPTH := 1
 
 # CIL USEKU. Usek muze vest do vystupu, do dalsi vyhybky, nebo se NAPOJIT NA
@@ -140,6 +152,10 @@ var _jrow: Dictionary = {}     # vyhybka -> normalizovana y stredu ventilatoru
 var _span: Dictionary = {}     # usek -> [prvni radek, posledni radek]
 var _jspan: Dictionary = {}    # vyhybka -> [prvni radek, posledni radek]
 var _rows_total: int = 0
+# Skutecna mezera radku po relayoutu. Neni to `spread`: kdyz se radky nevejdou,
+# zmensi se VSEM stejne - a prave tahle mezera rozhoduje o tom, jestli se
+# bonusy na sousednich drahach neprekryvaji (MIN_ROW_GAP).
+var _gap: float = BASE_SPREAD
 
 
 # ---------------------------------------------------------------- useky
@@ -605,6 +621,7 @@ func relayout() -> void:
 	if span > BOTTOM - TOP:
 		gap = (BOTTOM - TOP) / float(maxi(n - 1, 1))
 		span = gap * float(n - 1)
+	_gap = gap
 	var y0: float = TOP + (BOTTOM - TOP - span) * 0.5
 	for j in _jspan:
 		var s: Array = _jspan[j]
@@ -618,6 +635,26 @@ func relayout() -> void:
 		var e: Array = exits[idx]
 		var keep_x: float = float(e[0])
 		exits[idx] = [keep_x, y0 + gap * float(mini(idx, n - 1))]
+
+
+# Kolik radku mrizka zabira a jakou mezeru ma. Radky jsou to, co level
+# opravdu omezuje: bonusy na sousednich drahach se nesmi prekryvat.
+func rows_total() -> int:
+	return _rows_total
+
+
+func row_gap() -> float:
+	return _gap
+
+
+# VEJDE SE MRIZKA JESTE NA DESKU? Jedno misto, kde se to rozhoduje - ptá se
+# ho editor (smí hrac pridat dalsi drahu?) i validate (smí se level vyvézt?).
+# Dve kopie podminky by se rozešly: hrac by si postavil level, ktery se mu
+# nevyexportuje.
+func rows_fit() -> bool:
+	if _rows_total <= 1:
+		return true
+	return _gap >= MIN_ROW_GAP
 
 
 # Z kterych vyhybek se mrizka sklada. Kmen (vstup) zaklada vlastni strom, takze
@@ -981,7 +1018,7 @@ func clamp_all() -> void:
 	gold = clampi(gold, 0, 5000)
 	for i in range(lanes.size()):
 		var l: Dictionary = lanes[i]
-		l["from"] = clampi(int(l.get("from", 0)), 0, 16)
+		l["from"] = clampi(int(l.get("from", 0)), 0, MAX_LANES - 1)
 		l["el"] = clampi(int(l["el"]), NEUTRAL, Element.COUNT - 1)
 		var kind: int = int(l.get("kind", TO_EXIT))
 		if kind < TO_EXIT or kind > TO_LANE:
@@ -1197,6 +1234,11 @@ func validate() -> Array:
 	for i in range(exits.size()):
 		if exits[i].size() < 2:
 			errs.append("výstup %d nemá souřadnice" % (i + 1))
+	# MRIZKA SE MUSI VEJIT NA DESKU. Tohle je strop, na ktery hrac narazi pri
+	# pridavani drah i kmenu - ne pocet useku sam o sobe.
+	if not rows_fit():
+		errs.append("na desku se tolik drah nevejde (%d drah, mezera %.3f, potřeba %.3f)" % [
+			_rows_total, _gap, MIN_ROW_GAP])
 	if entries.is_empty():
 		errs.append("do mapy nevede žádný kmen")
 	for j in entries:

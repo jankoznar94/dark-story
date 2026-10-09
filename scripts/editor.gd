@@ -131,7 +131,15 @@ func press(button: int) -> int:
 	match button:
 		BTN_ADD:
 			var from_j: int = level.from_of(sel) if level.lane_count() > 0 else 0
+			var keep: Level = level.clone()
 			if level.add_lane(from_j):
+				# Kdyby pridanim vznikla mrizka, na kterou uz nejsou radky,
+				# zmena se vrati - hrac nesmi dostat level, ktery se mu pak
+				# nevyexportuje.
+				if not level.rows_fit():
+					level = keep
+					status = _rows_status()
+					return button
 				sel = level.lane_count() - 1
 				status = "přidán úsek %d z výhybky %d" % [level.lane_count(), from_j + 1]
 			else:
@@ -175,11 +183,21 @@ func button_labels() -> Array:
 	for l in BTN_LABELS:
 		out.append(str(l))
 	out[BTN_JUNCTION] = "výhybka" if can_split() else ("sloučit" if can_merge() else "výhybka")
-	if level.lane_count() > 0 and level.has_entry(level.from_of(sel)) and level.entries.size() > 1:
-		out[BTN_ENTRY] = "vstup −"
-	else:
-		out[BTN_ENTRY] = "vstup +"
+	# Tlacitko kmene rika presne to, co udela: "vstup −" jen kdyz je opravdu
+	# co odebrat. Kdyz by popisek lhal, hrac by dvakrat zmackl "vstup +" a
+	# podruhe by o vetev prisel.
+	out[BTN_ENTRY] = "vstup +"
+	if level.lane_count() > 0:
+		var je: int = level.from_of(sel)
+		if level.has_entry(je) and je > 0 and level.entries.size() > 1:
+			out[BTN_ENTRY] = "vstup −"
 	return out
+
+
+# Hlaska, kdyz je deska plna. Hrac musi videt, PROC to nejde - "nejde to"
+# ho necha zkouset to same dokola.
+func _rows_status() -> String:
+	return "na desku se víc drah nevejde (%d) — bonusy by se překrývaly" % level.rows_total()
 
 
 # Zmena levelu se rovnou uklada lokalne. Neni to "ukladani pro hrace" - je to
@@ -242,32 +260,46 @@ func _target_text(lane: int) -> String:
 # KMEN (VSTUP). Kazda vyhybka muze mit vlastni kmen, kterym do mapy vchazeji
 # poutnici. Kdyz jich je vic, hrac hlida vic front najednou - a mapa vypada
 # jako sit s vic vstupy, ne jen jedna cesta zleva.
+#
+# POZOR NA PORADI: kdyz je vybrany kmen uz existujici vetve, tlacitko se jmenuje
+# "vstup −" a vstup se odebere. Kdyz je vybrany kmen KORENOVY (vyhybka 0), vzit
+# se neda - a tlacitko v tu chvili rovnou pridava dalsi vetev. Driv se v tom
+# pripade hrac zasekl: druhy stisk mu vetev zase vzal a vypadalo to, ze vstup
+# pridat nejde.
 func _entry() -> void:
 	if level.lane_count() == 0:
 		return
 	var j: int = level.from_of(sel)
-	if level.has_entry(j) and level.entries.size() > 1:
+	if level.has_entry(j) and j > 0 and level.entries.size() > 1:
 		if level.remove_entry(j):
 			status = "výhybka %d přišla o svůj kmen" % (j + 1)
 			_after_change()
-			return
-	if level.add_entry(j):
+		else:
+			status = "tenhle kmen odebrat nejde"
+		return
+	if not level.has_entry(j) and level.add_entry(j):
 		status = "výhybka %d má vlastní kmen (vstup zleva)" % (j + 1)
 		_after_change()
 		return
 	# Do vyhybky, do ktere uz vede usek, kmen pridat nejde - vede z leveho
 	# okraje a sel by pres vsechno pred ni. Zalozime tedy CELOU NOVOU VETEV,
 	# ktera ma vlastni kmen: mapa tak dostane druhy vstup.
+	# VYBER ZUSTAVA TAM, KDE BYL. Kdyby se presunul do nove vetve, ukazovalo by
+	# tlacitko "vstup −" a druhy stisk by vetev zase vzal.
+	var keep: Level = level.clone()
 	var j2: int = level.add_tree()
 	if j2 >= 0:
-		sel = clampi(level.lane_count() - 2, 0, maxi(level.lane_count() - 1, 0))
+		if not level.rows_fit():
+			level = keep
+			status = _rows_status()
+			return
 		status = "nová větev s vlastním kmenem (výhybka %d)" % (j2 + 1)
 		_after_change()
 		return
 	if level.junctions.size() >= Level.MAX_ENTRIES:
 		status = "poslední kmen nechat musíš"
 	else:
-		status = "víc než %d úseků nejde" % Level.MAX_LANES
+		status = _rows_status()
 
 
 # Kde se usek ohne ke svemu cili. Mensi hodnota = ohne driv (bliz k vyhybce),
@@ -324,9 +356,15 @@ func can_merge() -> bool:
 func _junction() -> void:
 	if can_split():
 		var n0: int = level.lane_count()
+		var keep: Level = level.clone()
 		var j: int = level.split_lane(sel)
 		if j < 0:
 			status = "výhybku tady udělat nejde"
+			return
+		# Rozdelenim vznikne o radek vic - kdyz uz se nevejde, zmena se vrati.
+		if not level.rows_fit():
+			level = keep
+			status = _rows_status()
 			return
 		# Vyber prvni novou vetev - hrac hned vidi, co ma upravit.
 		sel = mini(n0, level.lane_count() - 1)
