@@ -2,7 +2,7 @@ extends SceneTree
 
 # ROZVRZENI NA RŮZNÝCH DISPLEJÍCH. Tohle je jadro zadani "nativne na sirku":
 # hra se musi sama slozit na kazdem telefonu, ne jen na tom vyvojovem.
-# Prochazi se realna rozliseni vcetne landscape telefonu, kde je POMER
+# Prochazi se realna rozliveni vcetne landscape telefonu, kde je POMER
 # STRAN jiny nez u 960x600 - prave tam se rozvrzeni lame nejdriv.
 #
 # U kazdeho rozliseni se kontroluje:
@@ -10,8 +10,8 @@ extends SceneTree
 #   * tlacitko ma dotykovou velikost pro prst (>= 44 px)
 #   * mista na bonusy jsou v herni plose, neprekryvaji se mezi pruhy
 #     a nelezi v ovladacim pruhu
-#   * popisek vystupu zustava nad pruhem
-#   * NAVOD SE VEJDE DO PRUHU - meri se skutecna sirka textu, ne odhad
+#   * HERNI DESKA NENESE ZADNY TEXT - vsechno vysvetleni je v menu
+#   * NAVOD SE VEJDE CELY DO OBRAZOVKY MENU, i s tabulkou poskozeni
 #   * hra na tom rozliseni PORAD FUNGUJE: klepnuti na usek vybere prave
 #     ten usek a nepritel na protikladnem useku tam opravdu umre
 #
@@ -35,10 +35,6 @@ const REAL_SCREENS := [
 ]
 
 const MIN_TOUCH := 44.0
-# Texty navodu a cislo u dmg zony - test meri, ze se opravdu vejdou.
-const LEGEND_ROW1 := "Oheň → Voda"
-const LEGEND_ROW2 := "neutrální úsek: všichni 100 %  ·  vlastní 0 %  ·  jiný 50 %  ·  protiklad 200 %"
-const ZONE_LABEL := "dmg × 2.0"
 
 var fails: Array = []
 var checks: int = 0
@@ -47,6 +43,7 @@ var checks: int = 0
 func _init() -> void:
 	print("--- rozvrzeni na %d rozlisenich ---" % REAL_SCREENS.size())
 	var font: Font = ThemeDB.fallback_font
+	_test_board_has_no_text(font)
 	for spec in REAL_SCREENS:
 		var w: float = float(spec[0])
 		var h: float = float(spec[1])
@@ -69,12 +66,58 @@ func _ok(cond: bool, what: String) -> void:
 		fails.append(what)
 
 
+# STRAZCE BEZ TEXTU. Janovo zadani je, ze z herni desky zmizi VSECHEN text -
+# popisek vyhybky, vystupu i kmene. Kdyby se nejaky vratil, poznalo by se to
+# jen okem na telefonu; tenhle test to vi z kodu. Cte se ZDROJAK, protoze
+# z hotove kresby se text zpetne neprecte.
+func _test_board_has_no_text(font: Font) -> void:
+	var path: String = "res://scripts/game_view.gd"
+	var f: FileAccess = FileAccess.open(path, FileAccess.READ)
+	_ok(f != null, "herni scena jde precist (%s)" % path)
+	if f == null:
+		return
+	var src: String = f.get_as_text()
+	f.close()
+	# Vsechno od pozadi po HUD je DESKA. HUD je jedina cast, ktera smi
+	# mit text - je mimo herni plochu.
+	var a: int = src.find("func _draw_background")
+	var b: int = src.find("func _draw_hud")
+	_ok(a >= 0 and b > a, "v herni scene jde najit cast s deskou")
+	if a < 0 or b <= a:
+		return
+	var board: String = src.substr(a, b - a)
+	_ok(not board.contains("_label("), "herni deska neobsahuje zadny popisek (_label)")
+	_ok(not board.contains("draw_string"), "herni deska nekresli zadny text")
+	# A slova, ktera drive v desce byla, uz nikde ve hre nejsou.
+	var scripts := ["res://scripts/game_view.gd", "res://scripts/network.gd"]
+	for p in scripts:
+		var sf: FileAccess = FileAccess.open(p, FileAccess.READ)
+		if sf == null:
+			continue
+		var text: String = sf.get_as_text()
+		sf.close()
+		for gone in ["výhybka —", "neutrální kmen", "dmg × 1.0", "dmg × %.1f"]:
+			_ok(not text.contains(gone),
+				"%s: popisek \"%s\" se do desky vratil" % [p, gone])
+	# Navod musi byt v menu - jinak by zmizel i s popisky.
+	var mf: FileAccess = FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
+	var view_src: String = mf.get_as_text() if mf != null else ""
+	if mf != null:
+		mf.close()
+	_ok(view_src.contains("menu.open_guide()"), "menu otevira NAVOD")
+	_ok(view_src.contains("_draw_guide"), "NAVOD se kresli")
+	_ok(view_src.contains("_draw_pair_row"), "NAVOD kresli dvojice run (ne jen barvu)")
+
+
 func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	var lay := ScreenLayout.new()
 	lay.compute(Vector2(w, h))
 
 	var min_touch: float = 9999.0
 	var min_cross: float = 9999.0
+	var guide_px: int = -1
+	var guide_lines := 0
+	var guide_words := 0
 
 	# --- dotykove cile ---
 	var btns: Array = lay.all_buttons()
@@ -94,26 +137,28 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	_ok(lay.skip_rect.position.y >= lay.bar_y,
 		"%s: SKIP zacina v pruhu (%.0f vs %.0f)" % [name, lay.skip_rect.position.y, lay.bar_y])
 
-	# --- NAVOD SE MUSI VEJIT ---
-	# Pruh je jedina informace o pravidlech hry, takze nesmi pretect
-	# ani na nejmensim displeji. Meri se skutecna sirka textu.
-	var col_w: float = lay.legend.size.x / float(Element.COUNT)
-	var row1_w: float = font.get_string_size(LEGEND_ROW1, HORIZONTAL_ALIGNMENT_LEFT, -1,
-		lay.font(12.0)).x
-	_ok(row1_w <= col_w + 0.5,
-		"%s: popisek dvojice se vejde do sloupce (%.0f > %.0f)" % [name, row1_w, col_w])
-	var row2_w: float = font.get_string_size(LEGEND_ROW2, HORIZONTAL_ALIGNMENT_LEFT, -1,
-		lay.font(13.0)).x
-	_ok(row2_w <= lay.legend.size.x + 0.5,
-		"%s: radek s cisly se vejde do pruhu (%.0f > %.0f)" % [name, row2_w, lay.legend.size.x])
-	_ok(lay.legend.end.y <= lay.bar_y + lay.bar_h + 0.5,
-		"%s: navod nepreteka pod pruh" % name)
+	# --- NAVOD SE MUSI VEJIT CELY ---
+	# Navod je jedina informace o pravidlech hry. Drive bydlel v pruhu
+	# a musel se do nej vejit vodorovne; ted je v obrazovce MENU, takze se
+	# kontroluje, ze se cely vejde do VYSKY obrazovky a neztrati slovo.
+	var guide_left: float = 22.0 * lay.ui
+	var guide_w: float = w - guide_left * 2.0
+	var guide_top: float = 30.0 * lay.ui
+	var guide_h: float = lay.bar_y - guide_top - 6.0 * lay.ui
+	guide_px = Guide.fit_px(font, guide_w, guide_h)
+	_ok(guide_px > 0,
+		"%s: navod se nevejde do obrazovky ani pri 9 px (k dispozici %.0f px)" % [name, guide_h])
+	var lines: Array = Guide.lay_out(font, maxi(guide_px, Guide.MIN_PX), guide_w)
+	guide_lines = lines.size()
+	guide_words = Guide.word_count(lines)
+	_ok(guide_words == Guide.source_word_count(),
+		"%s: zalamovani navodu ztratilo slova (%d z %d)" % [name, guide_words, Guide.source_word_count()])
 
 	# --- MENU A NASTAVENI ---
 	# Menu je prvni obrazovka, takze jeho tlacitka musi byt stisknutelna
 	# prstem na kazdem displeji - jinak se hrac ke hre vubec nedostane.
-	# Menu a nastaveni se nikdy nezobrazuji soucasne, proto se testuji
-	# kazde zvlast.
+	# A NAVOD je mezi nimi, takze musi byt v seznamu taky.
+	_ok(lay.all_menu_buttons().size() == 4, "%s: menu ma ctyři tlacitka (vcetne navodu)" % name)
 	for k in range(2):
 		var mb: Array = lay.all_menu_buttons() if k == 0 else lay.all_settings_buttons()
 		var tag: String = "menu" if k == 0 else "nastaveni"
@@ -129,6 +174,12 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 				var r2: Rect2 = mb[j]
 				_ok(not r.intersects(r2),
 					"%s: %s prvky %d a %d se prekryvaji" % [name, tag, i, j])
+
+	# ZPET v navodu musi byt nad pruhem a mimo text.
+	_ok(lay.guide_back.position.y >= lay.bar_y,
+		"%s: ZPET v navodu zacina v pruhu (%.0f vs %.0f)" % [name, lay.guide_back.position.y, lay.bar_y])
+	_ok(lay.guide_back.position.y - (guide_top + 52.0 * lay.ui) >= guide_h * 0.6,
+		"%s: navod si nebere cely prostor nad ZPET" % name)
 
 	# --- herni plocha a sit ---
 	var g := Game.new()
@@ -150,9 +201,6 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 				Vector2(g.net.bonus_r * 2.0, g.net.bonus_r * 2.0))
 			_ok(not lay.overlaps_with(slot_rect),
 				"%s: misto %d/%d se dotyka tlacitka" % [name, lane, slot])
-		var label_y: float = g.net.exit_pos[g.net.lane_exit[lane]].y + 54.0 * lay.s
-		_ok(label_y < lay.bar_y - 2.0,
-			"%s: popisek vystupu %d leze do pruhu (y=%.0f, pruh=%.0f)" % [name, lane, label_y, lay.bar_y])
 		var path: PackedVector2Array = g.net.lane_path[lane]
 		for k in range(path.size()):
 			_ok(path[k].y < lay.bar_y, "%s: bod useku %d je v ovladacim pruhu" % [name, lane])
@@ -162,6 +210,16 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 		# DMG ZONA musi zustat nad pruhem - jinak by kreslila do ovladani
 		_ok(g.net.rows[lane] < lay.bar_y - 20.0 * lay.s,
 			"%s: dmg zona %d leze k pruhu (y=%.0f)" % [name, lane, g.net.rows[lane]])
+
+	# VSECHNY prvky desky musi zustat nad pruhem. Deska je bez textu, takze
+	# se kontroluje geometrie: useky, vystupy, mista na bonusy i rucky.
+	for lane in range(Network.LANES):
+		var ex: int = g.net.lane_exit[lane]
+		var ep: Vector2 = g.net.exit_pos[ex]
+		_ok(ep.y + g.net.exit_r <= lay.bar_y,
+			"%s: vystup %d leze do pruhu (%.0f + %.0f)" % [name, ex, ep.y, g.net.exit_r])
+	_ok(g.net.exit_pos[0].x + g.net.exit_r <= w + 0.5,
+		"%s: vystupy nekonci mimo obrazovku" % name)
 
 	min_cross = g.net.min_cross_lane_slot_distance()
 	_ok(min_cross > g.net.bonus_r * 2.0,
@@ -194,6 +252,6 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	_ok(e.hp <= 0.0, "%s: nepritel na protikladnem useku nezahynul (hp=%.1f)" % [name, e.hp])
 	_ok(g.lives == lives0, "%s: zivy se dostal na vystup (zivoty %d)" % [name, g.lives])
 
-	return "%-30s %4.0fx%-4.0f  meritko %.2f  ovladani %.2f%s  dotyk %.0f  navod %.0f/%.0f  krizeni %.0f" % [
-		name, w, h, lay.s, lay.ui, " (TESNE)" if lay.narrow else "", min_touch,
-		row2_w, lay.legend.size.x, min_cross]
+	return "%-30s %4.0fx%-4.0f  meritko %.2f  ovladani %.2f  dotyk %.0f  deska %.0fx%.0f  navod %d px / %d radku / %d slov  krizeni %.0f" % [
+		name, w, h, lay.s, lay.ui, min_touch, lay.arena.size.x, lay.arena.size.y,
+		guide_px, guide_lines, guide_words, min_cross]

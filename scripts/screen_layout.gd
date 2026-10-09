@@ -11,33 +11,38 @@ extends RefCounted
 #          Kruh musi zustat kruhem, proto se nikdy neroztahuje pres osy.
 #   `ui` - meritko OVLADANI A PISMA. Drzi se dotykoveho minima pro prst.
 #
-# V hernim pruhu NEJSOU tlacitka vyhybky - prepina se klepnutim na usek.
-# Pruh je proto NAVOD (viz game_view) a zbyva v nem jen SKIP.
+# HERNI DESKA NENESE ZADNY TEXT. Kazdy popisek v desce je misto, ktere
+# chybi poutnikum, proto z ni zmizely popisky vyhybky, vystupu i kmene.
+# Vsechno vysvetleni je v MENU pod tlacitkem NAVOD a cisla poskozeni
+# v hornim panelu - obe mimo herni plochu.
 #
 # MENU je prvni obrazovka hry. Jeho tlacitka se pocitaji z okna stejne
 # jako vsechno ostatni, aby se dala na telefonu pohodlne stisknout.
 
 const REF_W := 960.0
 const REF_H := 600.0
-const HUD_H := 72.0
-const BAR_UNIT_H := 84.0
+# Horni panel s císly: Vlna, Životy, Zlato a vybraný úsek. Dva radky, ktere
+# se vejdou i s písmem velikosti 20 px do 52 px - vic mista pro desku.
+const HUD_H := 52.0
+# Spodni pruh. Neni v nem zadny navod (ten je v menu), zustava jen SKIP,
+# takze staci 44 px - presne dotykove minimum pro prst.
+const BAR_UNIT_H := 52.0
 const PAD := 16.0
-const BTN_H := 54.0
+const BTN_H := 48.0
 const SKIP_W := 92.0
+# Rozestup mezi prvky, ktere se pocitaji z rozvrzeni (dnes tlacitko ZPET).
 const GAP := 40.0
 # Dotykove minimum pro prst. Pod tim se tlacitko neda spolehlive trefit.
 const MIN_TOUCH := 44.0
-# Menu: tri tlacitka pod sebou.
+# Menu: ctyři tlacitka pod sebou - kolo, navod, nastaveni, aktualizace.
 const MENU_BTN_W := 340.0
 const MENU_BTN_H := 58.0
 const MENU_GAP := 20.0
-const MENU_COUNT := 3
+const MENU_COUNT := 4
 
 var view := Vector2(REF_W, REF_H)
 var s := 1.0
 var ui := 1.0
-# Priznani, ze je displej tak maly, ze se navod do pruhu nevejde cely.
-var narrow := false
 var hud_h := HUD_H
 var bar_h := BAR_UNIT_H
 var bar_y := REF_H - BAR_UNIT_H
@@ -45,8 +50,9 @@ var arena := Rect2()
 var btn_h := BTN_H
 var text_x := 0.0
 var skip_rect := Rect2()
-# Plocha pro radek s cisly poskozeni.
-var legend := Rect2()
+# Tlacitko ZPET na obrazovce navodu. Jedine tlacitko, ktere se pocita
+# ze spodniho pruhu, proto se do nej take kresli.
+var guide_back := Rect2()
 # Menu a nastaveni - pocita se z okna, ne z herniho pruhu.
 var menu_buttons: Array = []
 var menu_title_y := 0.0
@@ -71,27 +77,24 @@ func compute(v: Vector2) -> void:
 
 	text_x = PAD * ui
 	btn_h = BTN_H * ui
+	# Jedine tlacitko herniho pruhu. Pruh je ted jen ovladaci, ne navod,
+	# proto je tak nizky - kazdy pixel navic jde do herni desky.
 	skip_rect = Rect2(v.x - PAD * ui - SKIP_W * ui,
 		bar_y + (BAR_UNIT_H - BTN_H) * 0.5 * ui, SKIP_W * ui, btn_h)
-
-	# Radek s cisly poskozeni: po zruseni tlacitek vyhybky je pruh cely
-	# volny, takze navod je videt PORAD - hrac nemusi nikam klikat.
-	var lx: float = text_x
-	var lw: float = maxf(40.0, skip_rect.position.x - GAP * ui - lx)
-	legend = Rect2(lx, bar_y + 26.0 * ui, lw, 30.0 * ui)
-	narrow = lw < 330.0
+	# ZPET je na stejnem miste jako SKIP, ale vidi se vzdy jen jedno z nich.
+	guide_back = skip_rect
 
 	# --- MENU ---
-	# Tri tlacitka pod sebou, svisle vycentrovana. Vyska se drzi na
+	# Ctyři tlacitka pod sebou, svisle vycentrovana. Vyska se drzi na
 	# dotykovem minimu; kdyz je displej nizky, zmensi se rozestup, ne
 	# tlacitko - spatne stisknutelne tlacitko je horsi nez tesnejsi menu.
 	var mw: float = minf(MENU_BTN_W * ui, v.x - 2.0 * PAD * ui)
 	var mh: float = maxf(MIN_TOUCH, MENU_BTN_H * ui)
 	var mgap: float = MENU_GAP * ui
 	var mtot: float = mh * float(MENU_COUNT) + mgap * float(MENU_COUNT - 1)
-	var room: float = v.y - mh - 20.0 * ui
+	var room: float = v.y - mh - 12.0 * ui
 	if mtot > room:
-		mgap = maxf(6.0, (room - mh * float(MENU_COUNT)) / float(MENU_COUNT - 1))
+		mgap = maxf(4.0, (room - mh * float(MENU_COUNT)) / float(MENU_COUNT - 1))
 		mtot = mh * float(MENU_COUNT) + mgap * float(MENU_COUNT - 1)
 	var my0: float = (v.y - mtot) * 0.5 + 16.0 * ui
 	menu_buttons = []
@@ -116,6 +119,7 @@ func compute(v: Vector2) -> void:
 
 
 # Herni dotykove cile. Testy na nich hledaji prekryvy s mistry na bonusy.
+# Herni deska je od textu ohnuta, proto tady krome SKIPU nic neni.
 func all_buttons() -> Array:
 	return [skip_rect]
 

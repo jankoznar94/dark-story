@@ -26,20 +26,36 @@ Hra je cela deterministicka, proto ji lze simulovat headless.
 | soubor | co to je |
 |---|---|
 | `scripts/element.gd` | ctyri zivly a matice poskozeni (jedna tabulka = cela hra) |
-| `scripts/network.gd` | cista geometrie site (kmen, vyhybka, ctyri koleje) |
-| `scripts/tower.gd` | vez = kolej + zivel + uroven |
+| `scripts/network.gd` | cista geometrie site (kmen, vyhybka, pet useku, vystupy) |
+| `scripts/guide.gd` | text NAVODU + zalamovani a mereni (jedine misto s pravidly) |
+| `scripts/bonus.gd` | bonus na useku = nasobek cele dmg zony |
 | `scripts/enemy.gd` | poutnik = zivel + zivoty + pozice na trase |
 | `scripts/game.gd` | CELA logika. Zadne kresleni, zadny Input |
 | `scripts/game_view.gd` | jedina scena: kresleni + hit-test |
-| `tools/test_core.gd` | pravidla (139 assertu) |
+| `tools/test_core.gd` | pravidla (359 assertu) |
+| `tools/test_layout.gd` | 14 realnych rozliseni, deska bez textu, navod se vejde |
+| `tools/test_audio.gd` | zvuk se meri ze vzorku, ne poslechem |
 | `tools/test_scripts_load.gd` | kazdy .gd se musi nacist |
+
+## Co je kde na obrazovce
+
+**HERNI DESKA NENESE ZADNY TEXT.** Popisek vyhybky, vystupu i kmene je pryc -
+kazdy radek textu v desce je misto, ktere chybi poutnikum. Vsechno vysvetleni
+je v MENU pod tlacitkem **NAVOD** (vcetne tabulky poskozeni) a cisla poskozeni
+vybraneho useku v hornim panelu. Deska ma jen znacky: runy, barvy, tvary.
+
+- Horni panel: 52 px (byl 72) - Vlna, Zivoty, Zlato, vybrany usek.
+- Spodni pruh: 52 px (byl 84) - zustava jen SKIP. Navod tu uz neni.
+- Zbytek dostane herni plocha: +48 px vysky na 960x600, +48 px na 932x430.
 
 ## Testy
 
 ```bash
 godot4 --headless --path . --import
 godot4 --headless --path . --script res://tools/test_scripts_load.gd
-godot4 --headless --path . --script res://tools/test_core.gd   # CORE_ALL_PASS=true
+godot4 --headless --path . --script res://tools/test_core.gd    # CORE_ALL_PASS=true
+godot4 --headless --path . --script res://tools/test_layout.gd  # LAYOUT_ALL_PASS=true
+godot4 --headless --path . --script res://tools/test_audio.gd   # AUDIO_ALL_PASS=true
 ```
 
 ## Nahled

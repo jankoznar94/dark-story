@@ -50,9 +50,9 @@ const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
 var area: Rect2 = Rect2()
 var scale: float = 1.0
 # Horni hrana ovladaciho pruhu. Do site vstupuje jako OMEZENI: zadny bod
-# trasy ani popisek vystupu se nesmi kreslit do pruhu. Predava se jako
-# parametr do build() - kdyby se nastavoval na hotove siti, prvni build
-# by pocital se starym pruhem.
+# trasy ani vystup se nesmi kreslit do pruhu. Predava se jako parametr do
+# build() - kdyby se nastavoval na hotove siti, prvni build by pocital se
+# starym pruhem.
 var bar_top: float = 1.0e9
 var bonus_r: float = BASE_BONUS_R
 var exit_r: float = BASE_EXIT_R
@@ -93,9 +93,10 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9) -> vo
 	band_x1 = r.position.x + w * 0.80
 	var exit_x: float = r.position.x + w * 0.945
 
-	# Nejdřív radky, pak teprve geometrie. Vystup i s popiskem pod sebou
-	# musi zustat NAD ovladacim pruhem - kdyby ne, radky se stlaci k sobe.
-	var label_room: float = 54.0 * scale + 10.0
+	# Nejdřív radky, pak teprve geometrie. Deska uz NENESE ZADNY TEXT, takze
+	# pod vystupem uz nic nestoji a radky se mohou roztahnout niz - do
+	# spodni casti hraci plochy. Drzi se jen mala mezera nad pruhem.
+	var label_room: float = 12.0 * scale
 	var y0: float = r.position.y + h * 0.10
 	var y_last: float = r.position.y + h * (0.10 + ROW_SPREAD * float(LANES - 1))
 	if y_last + label_room > bar_top:

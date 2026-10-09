@@ -14,7 +14,7 @@ extends RefCounted
 # instalaci jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim
 # okne) a ma manifest + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, SETTINGS, BATTLE }
+enum View { MENU, GUIDE, SETTINGS, BATTLE }
 
 const TITLE := "ZILY"
 const SUBTITLE := "elementární poutníci na žilách many"
@@ -59,6 +59,13 @@ func open_battle() -> void:
 	view = View.BATTLE
 
 
+# NAVOD. Sem se prestehovalo vsechno, co drive stalo popisky primo v herni
+# desce - a hlavne CELY puvodni navod z ovladaciho pruhu. Deska je tak bez
+# textu a pruh se zmensil na jedno tlacitko.
+func open_guide() -> void:
+	view = View.GUIDE
+
+
 func open_settings() -> void:
 	view = View.SETTINGS
 
@@ -73,6 +80,10 @@ func is_battle() -> bool:
 
 func is_settings() -> bool:
 	return view == View.SETTINGS
+
+
+func is_guide() -> bool:
+	return view == View.GUIDE
 
 
 func is_menu() -> bool:

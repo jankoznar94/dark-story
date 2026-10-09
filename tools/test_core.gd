@@ -151,9 +151,11 @@ func _test_geometry() -> void:
 		var path: PackedVector2Array = g.net.lane_path[lane]
 		for k in range(path.size()):
 			_ok(path[k].y < bar_top, "usek %d zustava nad pruhem" % lane)
-		var label_y: float = g.net.exit_pos[g.net.lane_exit[lane]].y + 54.0
-		_ok(label_y < bar_top - 6.0,
-			"popisek vystupu %d zustava nad pruhem (y=%.0f)" % [lane, label_y])
+		# Deska nema popisek vystupu, ale vystup SAM musi zustat nad pruhem -
+		# jinak by rucka kreslila do ovladani.
+		var exit_p: Vector2 = g.net.exit_pos[g.net.lane_exit[lane]]
+		_ok(exit_p.y + g.net.exit_r < bar_top,
+			"vystup %d zustava nad pruhem (y=%.0f)" % [lane, exit_p.y])
 
 
 # --------------------------------------------------------------- 2 matice
