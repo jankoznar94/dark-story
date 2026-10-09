@@ -119,6 +119,11 @@ func _test_guide_shape() -> void:
 	for b in Guide.BLOCKS:
 		var art: String = str(b["art"])
 		_ok(src.contains("func " + art), "obrazek navodu %s existuje" % art)
+		# A HLAVNE: musi se opravdu VOLAT. Kdyz se blok prida do seznamu,
+		# ale zapomene se vetev v match, obrazek se nikdy nenakresli -
+		# pritom "funkce existuje" test projde. Presne to se stalo.
+		_ok(src.contains('"' + art + '":\n			' + art + "("),
+			"obrazek navodu %s se opravdu kresli (vetev v match)" % art)
 		_ok(not str(b["title"]).is_empty(), "blok %s ma nadpis" % art)
 		_ok(not str(b["text"]).is_empty(), "blok %s ma popisek" % art)
 
