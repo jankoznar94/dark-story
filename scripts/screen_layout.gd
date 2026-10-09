@@ -45,7 +45,12 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-const ED_COUNT := 12
+# Trinact tlacitek. Na 640x360 dava kazde 44 px pri mezere 3.4 px - popisek
+# "výhybka" se do nej vejde pri 11 px (meri to `ed_label_px`, stejnym cislem
+# jako kresleni). Ctvrté tlacitko navic ("cíl −") je posledni, ktere se do
+# jedne rady vejde; dalsi uz by si vyzadalo druhou radu, a ta bere misto
+# mrizce, kterou hrac upravuje.
+const ED_COUNT := 13
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na

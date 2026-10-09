@@ -36,6 +36,8 @@ func _init() -> void:
 	_test_entry_button()
 	_test_target_joins_lane()
 	_test_target_hint_tells_the_next_choice()
+	_test_join_has_several_nodes()
+	_test_exit_delete_button()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -290,8 +292,10 @@ func _test_join_two_lanes() -> void:
 	var n_net := Network.new()
 	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
 	_ok(int(n_net.lane_kind[1]) == Level.TO_LANE, "síť ví, že úsek končí napojením")
-	_ok(float(n_net.lane_entry_s[joined]) > 0.0,
-		"napojený úsek má vstup, kde se do něj větev vlévá (%.0f px)" % n_net.lane_entry_s[joined])
+	# VSTUPNI BOD PATRI PRIVODNIMU USEKU (1), ne cilovemu: do jednoho useku se
+	# muze vlit vic vetvi a kazda vstupuje v jinem uzlu.
+	_ok(float(n_net.lane_entry_s[1]) > 0.0,
+		"napojený úsek má vstup, kde se do cílového vlévá (%.0f px)" % n_net.lane_entry_s[1])
 	# a kód levelu to unese - jinak by se hracuv level prenasel spatne
 	var back := Level.from_code(ed.level.to_code())
 	_ok(back.to_code() == ed.level.to_code(), "a kod levelu napojeni udrzi")
@@ -623,7 +627,11 @@ func _test_target_hint_tells_the_next_choice() -> void:
 			return
 		var promised: String = ed.status.substr(p + "další cíl: ".length()).strip_edges()
 		ed.press(Editor.BTN_TARGET)
-		var now: String = ed.level.choice_text(ed.level.target_kind(1), ed.level.to_of(1))
+		# Text se bere STEJNYM volanim jako v editoru - i s uzlem a s usekem,
+		# ktery se napojuje. Bez nich by text vzdy tvrdil "uzel 1/3" a test by
+		# prosel, i kdyby napoveda lhala.
+		var now: String = ed.level.choice_text(ed.level.target_kind(1), ed.level.to_of(1),
+			ed.level.lane_node(1), 1)
 		_ok(now == promised,
 			"napoveda nelhala: slibila \"%s\", stalo se \"%s\"" % [promised, now])
 	_ok(ed.level.validate().is_empty(), "a level je pořád platný: %s" % str(ed.level.validate()))
@@ -741,3 +749,150 @@ func _test_target_joins_lane() -> void:
 	_ok(not self_join, "usek se nenapojuje sam na sebe")
 	_ok(ed.level.validate().is_empty(),
 		"a level zustava platny: %s" % str(ed.level.validate()))
+
+
+# NAPOJENI MA VIC UZLU. Jan: "musíme udělat komplexnější větvení pomocí
+# výhybek. Aby měl každý úsek X uzlů, do kterých se může úsek zakončit...
+# jeden úsek může končit v jiném a měl by mít možnost končit v různých uzlech
+# daného úseku. Ne jen v jednom jak je to teď."
+#
+# Kdyby uzel zustal jeden, je tenhle test prvni, ktery to rekne: projde cely
+# cyklus "cíl" a pozada, aby nejaky cilovy usek mel aspon DVA uzly - a aby to
+# byly dva RUZNE body na tom useku.
+func _test_join_has_several_nodes() -> void:
+	var ed := _fresh()
+	ed.sel = 1
+	var per_target := {}
+	var samples := {}
+	for i in range(80):
+		if ed.level.target_kind(1) == Level.TO_LANE:
+			var to: int = ed.level.to_of(1)
+			var node: int = ed.level.lane_node(1)
+			if not per_target.has(to):
+				per_target[to] = {}
+			per_target[to][node] = true
+			var n_net := Network.new()
+			n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
+			samples["%d:%d" % [to, node]] = n_net.node_world(to, node).x
+		ed.press(Editor.BTN_TARGET)
+	var multi := 0
+	for to in per_target:
+		if per_target[to].size() >= 2:
+			multi += 1
+	_ok(multi >= 1,
+		"do jednoho useku se da napojit ve vic nez jednom uzlu (%d cilu z %d)" % [
+			multi, per_target.size()])
+	# kazdy uzel je JINY bod na SVEM cilovem useku - jinak by to byly jen dva
+	# nazvy pro to same a hrac by rozdil nevidel. (Srovnava se VZdy v ramci
+	# jednoho ciloveho useku: dva ruzne useky maji uzly na stejnych x, protoze
+	# jejich rovne useky zacinaji i konci na stejne x.)
+	var same_spot := false
+	for to in per_target:
+		var keys: Array = per_target[to].keys()
+		for a in range(keys.size()):
+			for b in range(a + 1, keys.size()):
+				var xa: float = float(samples["%d:%d" % [to, int(keys[a])]])
+				var xb: float = float(samples["%d:%d" % [to, int(keys[b])]])
+				if absf(xa - xb) < 1.0:
+					same_spot = true
+	_ok(not same_spot && multi >= 1,
+		"uzly jednoho useku jsou tri RUZNE body na jeho rovnem useku")
+
+	# --- UZEL SE MUSI UDRZET V KODU LEVELU ---
+	# (pres kod se level dostava z telefonu do hry; ztraceny uzel = jiny level)
+	var ed2 := _fresh()
+	ed2.sel = 1
+	var found := false
+	for i in range(80):
+		if ed2.level.target_kind(1) == Level.TO_LANE and ed2.level.lane_node(1) > 0:
+			found = true
+			break
+		ed2.press(Editor.BTN_TARGET)
+	_ok(found, "napojeni do druheho uzlu je vubec k dosazeni")
+	if not found:
+		return
+	var to2: int = ed2.level.to_of(1)
+	var node2: int = ed2.level.lane_node(1)
+	_ok(ed2.level.validate().is_empty(), "takovy level je platny: %s" % str(ed2.level.validate()))
+	var code: String = ed2.level.to_code()
+	var back := Level.from_code(code)
+	_ok(back.to_code() == code, "a kod levelu uzel udrzi")
+	_ok(back.target_kind(1) == Level.TO_LANE and back.to_of(1) == to2
+			and back.lane_node(1) == node2,
+		"a po ceste tam a zpet je to porad uzel %d (%d), ne %d" % [
+			node2 + 1, back.lane_node(1) + 1, back.lane_node(1)])
+	# a poutnik vstoupi PRESNE do toho uzlu: sit ma vstup jinde nez u uzlu 0
+	var n2 := Network.new()
+	n2.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed2.level)
+	var n0 := Network.new()
+	var lv0: Level = ed2.level.clone()
+	var l0: Dictionary = lv0.lanes[1]
+	l0["node"] = 0
+	lv0.lanes[1] = l0
+	lv0.relayout()
+	n0.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv0)
+	_ok(absf(float(n2.lane_entry_s[1]) - float(n0.lane_entry_s[1])) > 1.0,
+		"jiny uzel = jiny vstupni bod na cilovem useku (%.0f vs %.0f)" % [
+			n2.lane_entry_s[1], n0.lane_entry_s[1]])
+
+
+# RUCNI ZRUSENI CILE. Jan: "cíle stále po smazání úseku nemizí. Přidáme tedy
+# možnost smazat cíl ručně." Automatika maze jen cil, do ktereho po smazane
+# ceste nic nevede (a to je spravne). Tlacitko "cíl −" maze i cil, do ktereho
+# jeste neco vede - ty cesty se prepoji na jiny cil a level zustane platny.
+func _test_exit_delete_button() -> void:
+	# --- 1) cil, do ktereho vede vybrany usek sam ---
+	var ed := _fresh()
+	var last: int = ed.level.lane_count() - 1
+	ed.sel = last
+	var e: int = ed.level.exit_of(last)
+	_ok(e >= 0, "posledni usek usti do cile (%d)" % e)
+	var n0: int = ed.level.exits.size()
+	ed.press(Editor.BTN_EXIT_DEL)
+	_ok(ed.level.exits.size() == n0 - 1,
+		"tlacitko 'cíl −' cil zrusi (%d -> %d)" % [n0, ed.level.exits.size()])
+	_ok(ed.level.validate().is_empty(), "a level zustava platny: %s" % str(ed.level.validate()))
+	_ok(not ed.status.is_empty(), "a hlaska rekne, co se stalo (%s)" % ed.status)
+
+	# --- 2) cil, do ktereho vede vic useku ---
+	# (na zakladni desce vedou prvni dva useky do stejneho cile - presne to je
+	#  ten pripad, kdy automatika cil nechava a Jan ho nevidel zmizet)
+	var ed2 := _fresh()
+	_ok(ed2.level.exit_of(0) == ed2.level.exit_of(1),
+		"prvni dva useky vedou do stejneho cile (%d, %d)" % [
+			ed2.level.exit_of(0), ed2.level.exit_of(1)])
+	var c0: int = ed2.level.exits.size()
+	ed2.sel = 0
+	ed2.press(Editor.BTN_EXIT_DEL)
+	_ok(ed2.level.exits.size() == c0 - 1,
+		"sdileny cil zmizi taky (%d -> %d)" % [c0, ed2.level.exits.size()])
+	_ok(ed2.status.contains("přepojil"),
+		"a hlaska rekne, ktere useky se prepojily (%s)" % ed2.status)
+	for i in range(ed2.level.lane_count()):
+		if ed2.level.target_kind(i) == Level.TO_EXIT:
+			_ok(ed2.level.exit_of(i) < ed2.level.exits.size(),
+				"usek %d nemiri na zruseny cil (%d z %d)" % [
+					i + 1, ed2.level.exit_of(i), ed2.level.exits.size()])
+	_ok(ed2.level.validate().is_empty(), "a level je platny: %s" % str(ed2.level.validate()))
+
+	# --- 3) posledni cil zustava ---
+	# (jinak by nebylo kam dojit - kazdy poutnik by musel vstoupit)
+	var ed3 := _fresh()
+	var guard := 0
+	while ed3.level.exits.size() > 1 and guard < 40:
+		guard += 1
+		var done := false
+		for k in range(ed3.level.lane_count()):
+			ed3.sel = k
+			if ed3.level.exit_of(k) >= 0:
+				ed3.press(Editor.BTN_EXIT_DEL)
+				done = true
+				break
+		if not done:
+			break
+	_ok(ed3.level.exits.size() == 1, "posledni cil zustava (%d)" % ed3.level.exits.size())
+	ed3.sel = 0
+	ed3.press(Editor.BTN_EXIT_DEL)
+	_ok(ed3.level.exits.size() == 1, "a dalsi uz ho neveme (%d)" % ed3.level.exits.size())
+	_ok(not ed3.status.is_empty(), "a hlaska rekne proc (%s)" % ed3.status)
+	_ok(ed3.level.validate().is_empty(), "a level je platny: %s" % str(ed3.level.validate()))

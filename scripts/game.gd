@@ -61,6 +61,12 @@ var rng: int = 20261009
 var log: Array = []
 # Kolik poutniku uz do mapy vstoupilo - kmeny se stridaji po poradi.
 var spawn_index: int = 0
+# ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Neni to vzdycky vsechny ctyri:
+# mapa, ktera ma jen vodu a ohen, posila jen vodni a ohnive poutniky - na
+# ostatni by v mape nebyl protiklad a hrac by je nemel jak zabit.
+# Pocita se pri stavbe site (rebuild_network), takze hra i zmena velikosti
+# okna ji maji vzdy stejnou jako level.
+var spawn_pool: Array = []
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
 var auto_wave: bool = true
 # VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
@@ -108,6 +114,9 @@ func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) 
 	var lv: Level = level if level != null else Level.base()
 	net = Network.new()
 	net.build(r, sc, bt, lv)
+	# Zivly, ktere level posila. Bere se z LEVELU, ne z konstanty: hra se
+	# nikdy nesmi chovat jinak, nez jak vypada mapa.
+	spawn_pool = lv.spawn_elements()
 	_sync_switch()
 
 
@@ -298,6 +307,16 @@ func _next_int(limit: int) -> int:
 	return (rng / 65536) % limit
 
 
+# Ktery zivel poutnika posleme. VYHradNE z zivlu, ktere v mape opravdu jsou:
+# kdyz mapa nema vzduch, neposle se vzduch (hrac by na nej nemel protiklad).
+# Poradi zustava dane (deterministicke) - hra se nikde nesmi zacit chovat
+# jinak podle toho, jak vypada mapa.
+func _next_element() -> int:
+	if spawn_pool.is_empty():
+		return -1
+	return int(spawn_pool[_next_int(spawn_pool.size())])
+
+
 # ---------------------------------------------------------------- krok
 
 func step(delta: float) -> void:
@@ -316,7 +335,9 @@ func step(delta: float) -> void:
 			if spawn_timer <= 0.0:
 				spawn_timer = level.spawn if level != null else SPAWN_INTERVAL
 				spawn_left -= 1
-				_spawn(_next_int(Element.COUNT))
+				var el: int = _next_element()
+				if el >= 0:
+					_spawn(el)
 
 	_move_enemies(delta)
 	_apply_damage(delta)
@@ -367,8 +388,13 @@ func _move_enemies(delta: float) -> void:
 					still.append(e)
 					continue
 				if kind == Level.TO_LANE and to >= 0 and to < net.lane_count():
+					# Vstupni bod patri PRIVODNIMU useku (tomu, kdo se
+					# napojuje): do ciloveho useku se jich muze vlit vic
+					# a kazda vetev vstupuje v jinem uzlu. Proto se cte
+					# jeste PRED prepsanim e.lane.
+					var entry: float = float(net.lane_entry_s[e.lane])
 					e.lane = to
-					e.s = float(net.lane_entry_s[to])
+					e.s = entry
 					still.append(e)
 					continue
 				e.leaked = true

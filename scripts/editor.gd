@@ -37,16 +37,21 @@ const BTN_TARGET := 3
 # NOVY CIL JE JEN RUKOU. Automaticky vznikaly nove cile s kazdou novou cestou
 # a hrac mel v mape diry, ktere nezadal - a cyklus "cíl" se prodluzoval.
 const BTN_EXIT := 4
-const BTN_BEND_LEFT := 5
-const BTN_BEND_RIGHT := 6
-const BTN_JUNCTION := 7
-const BTN_ENTRY := 8
-const BTN_LIST := 9
-const BTN_EXPORT := 10
-const BTN_PLAY := 11
+# RUCNI ZRUSENI CILE. Jan: "cíle stále po smazání úseku nemizí. Přidáme tedy
+# možnost smazat cíl ručně." Automatika maze jen cil, do ktereho po smazane
+# ceste nic nevede; rucne se maze i cil, do ktereho jeste neco vede (ty cesty
+# se prepoji na jiny cil).
+const BTN_EXIT_DEL := 5
+const BTN_BEND_LEFT := 6
+const BTN_BEND_RIGHT := 7
+const BTN_JUNCTION := 8
+const BTN_ENTRY := 9
+const BTN_LIST := 10
+const BTN_EXPORT := 11
+const BTN_PLAY := 12
 const BTN_LABELS := [
-	"úsek +", "úsek −", "živel", "cíl", "cíl +", "odboč −", "odboč +", "výhybka",
-	"vstup", "seznam", "export", "hrát",
+	"úsek +", "úsek −", "živel", "cíl", "cíl +", "cíl −", "odboč −", "odboč +",
+	"výhybka", "vstup", "seznam", "export", "hrát",
 ]
 
 var level: Level = Level.base()
@@ -163,6 +168,8 @@ func press(button: int) -> int:
 			_cycle_target()
 		BTN_EXIT:
 			_add_exit()
+		BTN_EXIT_DEL:
+			_exit_minus()
 		BTN_BEND_LEFT:
 			_bend(-Level.SPREAD_STEP * 5.0)
 		BTN_BEND_RIGHT:
@@ -258,13 +265,14 @@ func _next_text(lane: int) -> String:
 	if nxt < 0:
 		return "žádný"
 	var c: Dictionary = level.target_choices(lane)[nxt]
-	return level.choice_text(int(c["kind"]), int(c["to"]))
+	return level.choice_text(int(c["kind"]), int(c["to"]), int(c.get("node", -1)), lane)
 
 
 # Popis cile vybraneho useku. Tri druhy cile - a hrac musi videt, ktery z nich
 # to prave je, protoze se chovaji jinak.
 func _target_text(lane: int) -> String:
-	return level.choice_text(level.target_kind(lane), level.to_of(lane))
+	return level.choice_text(level.target_kind(lane), level.to_of(lane),
+		level.lane_node(lane), lane)
 
 
 # ---------------------------------------------------------------- kmen
@@ -344,6 +352,40 @@ func _add_exit() -> void:
 	_after_change()
 
 
+# ZRUSENI CILE RUKOU. Dve situace, jedna hlaska:
+#   * vybrany usek do nejakeho cile vede - maze se TEN cil (a useky, ktere do
+#     nej vedly, se prepoji na jiny cil; hrac to vidi v hlasce),
+#   * vybrany usek do zadneho cile nevede - maze se cil, do ktereho nevede nic
+#     (takový zustava po prepojeni useku jinam a jinak by ho nešlo zrusit).
+func _exit_minus() -> void:
+	if level.lane_count() == 0:
+		return
+	var e: int = level.exit_of(sel)
+	if e >= 0:
+		var res: Dictionary = level.remove_exit_forced(e)
+		if not bool(res["ok"]):
+			status = "poslední cíl nechat musíš — jinak by nebylo kam dojít"
+			return
+		var moved: Array = res["moved"]
+		if moved.is_empty():
+			status = "cíl %d zrušen" % (e + 1)
+		else:
+			var parts: Array = []
+			for m in moved:
+				var pair: Array = m
+				parts.append("%d→%d" % [int(pair[0]) + 1, int(pair[1]) + 1])
+			status = "cíl %d zrušen · úseky se přepojily: %s" % [e + 1, ", ".join(parts)]
+		_after_change()
+		return
+	var free: int = level.unused_exit()
+	if free < 0:
+		status = "vybraný úsek nevede do cíle a volný cíl žádný není"
+		return
+	level.remove_exit(free)
+	status = "zrušen cíl %d, do kterého nic nevedlo" % (free + 1)
+	_after_change()
+
+
 # Kde se usek ohne ke svemu cili. Mensi hodnota = ohne driv (bliz k vyhybce),
 # vetsi = jde dele rovne. Diky tomu se daji dve useky sbihat do jednoho
 # vystupu, nebo se naopak rozejit hned na zacatku.
@@ -351,10 +393,21 @@ func _bend(d: float) -> void:
 	if level.lane_count() == 0:
 		return
 	var l: Dictionary = level.lanes[sel]
-	var v: float = clampf(float(l.get("divert", Level.BASE_DIVERT)) + d, 0.0, 0.98)
+	var old: float = float(l.get("divert", Level.BASE_DIVERT))
+	var v: float = clampf(old + d, 0.0, 0.98)
+	var before: Array = level.validate()
+	var keep: Level = level.clone()
 	l["divert"] = v
 	level.lanes[sel] = l
 	level.relayout()
+	# OHNUTI NESMI ROZBIT NAPOJENI. Uzel, do ktereho se vetev vleva, musi lezet
+	# na ROVNEM useku ciloveho useku; kdyz se usek ohne driv, nez kde uzel lezi,
+	# vetev by se vlekla do oblouku a level by se prestal dat vyexportovat.
+	# Zmena se proto vrati a hrac dostane hlasku - ticho by bylo horsi.
+	if before.is_empty() and not level.validate().is_empty():
+		level = keep
+		status = "takhle ohnutý úsek by rozbil napojení — odbočení zůstává %.2f" % level.divert_of(sel)
+		return
 	status = "úsek %d: odbočení %.2f" % [sel + 1, v]
 	_after_change()
 
@@ -497,7 +550,13 @@ func sel_text() -> String:
 	elif level.target_kind(sel) == Level.TO_JUNCTION:
 		target = "→ výhybka %d" % (level.junction_of(sel) + 1)
 	else:
-		target = "→ úsek %d" % (level.lane_target_of(sel) + 1)
+		# U NAPOJENI SE REKNE I UZEL: do jednoho useku se da vlit na vic
+		# mistech a bez uzlu by hrac nevidel, ktery z nich to je.
+		var t: int = level.lane_target_of(sel)
+		if level.node_choice_count(sel, t) > 1:
+			target = "→ úsek %d · %s" % [t + 1, level.node_name(level.lane_node(sel))]
+		else:
+			target = "→ úsek %d" % (t + 1)
 	return "úsek %d/%d · z výhybky %d · %s · %s · odbočení %.2f" % [
 		sel + 1, level.lane_count(), level.from_of(sel) + 1, el_name, target,
 		level.divert_of(sel)]

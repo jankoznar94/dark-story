@@ -27,6 +27,7 @@ func _init() -> void:
 	_test_two_junctions()
 	_test_more_entries()
 	_test_branch_joins_branch()
+	_test_spawns_only_from_map_elements()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -754,8 +755,10 @@ func _test_branch_joins_branch() -> void:
 	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
 	g.auto_wave = false
 	_ok(int(g.net.lane_kind[1]) == Level.TO_LANE, "sit vi, ze usek 1 se napojuje na usek 0")
-	_ok(g.net.lane_entry_s[0] > 0.0,
-		"usek 0 ma vstupni bod, kde se do nej druhy vleje (%.0f px)" % g.net.lane_entry_s[0])
+	# VSTUPNI BOD JE INDEXOVANY PRIVODNIM USEKEM (kdo se napojuje) - do
+	# jednoho useku se jich muze vlit vic a kazda vetev vstupuje jinde.
+	_ok(g.net.lane_entry_s[1] > 0.0,
+		"napojeny usek ma vstupni bod, kde se do ciloveho vleje (%.0f px)" % g.net.lane_entry_s[1])
 	# Poutnik poslany na usek 1 dojde na konec a pokracuje po useku 0 - a to
 	# od bodu, kde se napojuje (ne od zacatku).
 	g.set_switch(1)
@@ -765,9 +768,9 @@ func _test_branch_joins_branch() -> void:
 		g.step(1.0 / 60.0)
 		t += 1.0 / 60.0
 	_ok(e.alive and e.lane == 0, "poutnik presel z useku 1 na usek 0 (lane=%d)" % e.lane)
-	_ok(e.s >= g.net.lane_entry_s[0] - 1.0,
+	_ok(e.s >= g.net.lane_entry_s[1] - 1.0,
 		"a to az za mistem, kde se usek napojuje (s=%.0f, vstup=%.0f)" % [
-			e.s, g.net.lane_entry_s[0]])
+			e.s, g.net.lane_entry_s[1]])
 	# a dojde az na vystup - stoji zivot (nikde se nezasekl)
 	var lives0: int = g.lives
 	g.run_for(40.0)
@@ -807,3 +810,52 @@ func _test_two_junctions() -> void:
 	g.rebuild_network(Rect2(40.0, 80.0, 500.0, 404.0), 1.0, 500.0)
 	_ok(g.switch_lane() == 0, "po zmene velikosti okna volba prvni vyhybky zustava (%d)" % g.switch_lane())
 	_ok(g.selected_lane(1) == branch, "a i volba druhe vyhybky (%d)" % g.selected_lane(1))
+
+
+# NEPRATELSTVI SE RODI JEN Z ZIVLU, KTERE V MAPE JSOU. Jan: "Při vytváření mapy
+# v editoru se vždy budou generovat pouze typy nepřátel podle existujícího
+# elementů úseků. Když jsou na mapě jen úseky s vodou a ohněm, tak budou pouze
+# vodní a ohniví nepřátelé."
+#
+# Neni to kosmetika: poutnik, na ktereho v mape neni protiklad, se neda zabit
+# (vlastni zivel bere 0 %) a level by se nedal dohrat.
+func _test_spawns_only_from_map_elements() -> void:
+	# --- MAPA JEN S OHNEM A VODOU ---
+	var lv := Level.base()
+	for i in range(lv.lane_count()):
+		var el: int = lv.el_of(i)
+		if el == Element.EARTH or el == Element.AIR:
+			var l: Dictionary = lv.lanes[i]
+			l["el"] = Element.FIRE if el == Element.EARTH else Element.WATER
+			lv.lanes[i] = l
+	lv.relayout()
+	_ok(lv.validate().is_empty(), "level bez zeme a vzduchu je platny: %s" % str(lv.validate()))
+	var pool: Array = lv.spawn_elements()
+	_ok(pool.size() == 2 and pool.has(Element.FIRE) and pool.has(Element.WATER),
+		"v mape s ohnem a vodou se posila jen ohen a voda (%s)" % str(pool))
+	_ok(not pool.has(Element.NEUTRAL) and not pool.has(Level.NEUTRAL),
+		"neutralni usek nikoho neposila (%s)" % str(pool))
+
+	# --- CELA VLNA: NIKDO JINY NESMI VSTOUPIT ---
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	_ok(g.spawn_pool.size() == 2, "hra vi o dvou zivlech (%s)" % str(g.spawn_pool))
+	g.start_wave()
+	var seen := {}
+	for i in range(600):
+		g.step(1.0 / 60.0)
+		for item in g.enemies:
+			var en: Enemy = item
+			seen[en.element] = true
+	_ok(not seen.has(Element.EARTH) and not seen.has(Element.AIR),
+		"za celou vlnu neprisel nikdo ze zeme ani ze vzduchu (%s)" % str(seen.keys()))
+	_ok(seen.size() >= 2, "a prisli oba zivly, ktere mapa ma (%s)" % str(seen.keys()))
+
+	# --- ZAKLADNI DESKA POSILA VSEchny CTYRI ---
+	# (zmena se nesmi projevit na zakladni desce - ta je zaklad balancu)
+	var base_pool: Array = Level.base().spawn_elements()
+	_ok(base_pool.size() == Element.COUNT,
+		"zakladni deska posila vsechny ctyri zivly (%s)" % str(base_pool))
+	var g2 := _fresh()
+	_ok(g2.spawn_pool.size() == Element.COUNT,
+		"a hra z ni dostane vsechny ctyri (%s)" % str(g2.spawn_pool))

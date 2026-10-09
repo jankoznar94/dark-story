@@ -480,6 +480,26 @@ func _draw_editor_markers() -> void:
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(x + r, y), Vector2(x - r * 0.7, y - r), Vector2(x - r * 0.7, y + r)]), col)
 	draw_arc(Vector2(x, y), r * 1.8, 0.0, TAU, 20, Color(col.r, col.g, col.b, 0.55), 2.0)
+	# UZLY. Kde se do kazdeho useku muze vlit privodni vetev - hrac z nich
+	# vybira, do ktereho uzlu ma vetev spadnout. Kresli se JEN V EDITORU
+	# (herni deska zustava bez nich) a je to znacka, ne text: plny krouzek
+	# s obrouckou = uzel, do ktereho vede PRAVE VYBRANY usek.
+	var node_r: float = 5.0 * layout.s
+	var land_lane: int = -1
+	var land_node: int = -1
+	if editor.level.target_kind(lane) == Level.TO_LANE:
+		land_lane = editor.level.to_of(lane)
+		land_node = editor.level.lane_node(lane)
+	for i in range(n):
+		var nc: Color = _lane_color(i)
+		for k in range(Level.NODE_COUNT):
+			var p: Vector2 = game.net.node_world(i, k)
+			var picked: bool = (i == land_lane and k == land_node)
+			draw_arc(p, node_r * (1.9 if picked else 1.0), 0.0, TAU, 16,
+				Color(nc.r, nc.g, nc.b, 0.95 if picked else 0.42),
+				2.4 if picked else 1.4)
+			if picked:
+				draw_circle(p, node_r * 0.5, Color(nc.r, nc.g, nc.b, 0.95))
 
 
 func _draw_editor_bar() -> void:

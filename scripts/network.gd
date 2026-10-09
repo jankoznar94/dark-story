@@ -82,7 +82,12 @@ var trunk_to: Array = []
 var trunk_starts: Array = []
 # Kde na usek vstupuje poutnik, ktery se na nej napojil z jineho useku
 # (vzdalenost po trase od zacatku useku). 0 = normalne od zacatku.
+# INDEXOVANE PRIVODNIM USEKEM: do jednoho useku se muze vlit vic vetvi a
+# kazda vstupuje jinam, takze hodnota patri tomu, kdo se napojuje.
 var lane_entry_s: Array = []
+# Uzly kazdeho useku: kde se do nej muze vlit privodni vetev. Editor z nich
+# kresli znacky, podle kterych hrac vybira uzel.
+var node_pos: Array = []
 # Druh cile kazdeho useku (TO_EXIT / TO_JUNCTION / TO_LANE) a jeho cil.
 var lane_kind: Array = []
 var lane_target: Array = []
@@ -198,7 +203,33 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 				lane_sel_index.append(0)
 			lane_sel_index[idx] = k
 
+	# --- rovne useky vsech useku ---
+	# POCITA SE TO PRVNI, zvlast: teprve az jsou znama rovna useku vsech useku,
+	# da se rict, KAM PRESNE se do nektereho z nich vleje napojena vetev (uzel
+	# ma svou x na ROVNEM useku ciloveho useku).
 	var run0: Array = []
+	for i in range(level.lane_count()):
+		var a: float = r.position.x + w * level.run_x0(i)
+		var b: float = r.position.x + w * level.run_x1(i)
+		if b < a + MIN_RUN_PX * scale:
+			b = a + MIN_RUN_PX * scale
+		run0.append([a, b])
+
+	# --- UZLY ---
+	# Uzly kazdeho useku: dirave body na jeho rovnem useku, do kterych se muze
+	# napojit privodni vetev. Kresli se z nich napojeni a editor z nich dela
+	# znacky, podle kterych hrac vybira uzel - jedno misto vypoctu pro obe.
+	node_pos = []
+	for i in range(level.lane_count()):
+		var ns: Array = []
+		var n0: float = float(run0[i][0])
+		var n1: float = float(run0[i][1])
+		var ny: float = float(rows[i])
+		for k in range(Level.NODE_COUNT):
+			ns.append(Vector2(n0 + (n1 - n0) * level.node_frac(k), ny))
+		node_pos.append(ns)
+
+	# --- useky ---
 	for i in range(level.lane_count()):
 		var src_j: int = level.from_of(i)
 		src_j = clampi(src_j, 0, maxi(junction_pos.size() - 1, 0))
@@ -206,15 +237,13 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 		var mergep: Vector2 = junction_merge[src_j]
 		var kind: int = level.target_kind(i)
 		var to: int = level.to_of(i)
-		var run0_px: float = r.position.x + w * level.run_x0(i)
-		var run1_px: float = r.position.x + w * level.run_x1(i)
-		if run1_px < run0_px + MIN_RUN_PX * scale:
-			run1_px = run0_px + MIN_RUN_PX * scale
+		var run0_px: float = float(run0[i][0])
+		var run1_px: float = float(run0[i][1])
 		# Cil useku:
 		#   vystup  - dira v mape; kdo tam dojde, stoji zivot,
 		#   vyhybka - privodni bod te vyhybky (poutnik plynule prejde dal),
-		#   usek    - ZAcatek rovneho useku teho druheho useku. Vetev se do
-		#             ni vleje a poutnik po ni pokracuje dal.
+		#   usek    - UZEL rovneho useku teho druheho useku (hrac si vybira
+		#             ktery). Vetev se do ni vleje a poutnik po ni pokracuje.
 		var target: Vector2
 		if kind == Level.TO_EXIT:
 			target = exit_pos[clampi(to, 0, maxi(exit_pos.size() - 1, 0))]
@@ -222,7 +251,7 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			target = junction_merge[clampi(to, 0, maxi(junction_merge.size() - 1, 0))]
 		else:
 			var k2: int = clampi(to, 0, maxi(rows.size() - 1, 0))
-			target = Vector2(r.position.x + w * level.run_land_x(k2), float(rows[k2]))
+			target = node_world(k2, level.lane_node(i))
 		var y: float = float(rows[i])
 		var dx: float = lerp(run0_px, run1_px, level.divert_of(i))
 		var path := PackedVector2Array([
@@ -233,14 +262,18 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 		])
 		lane_path.append(path)
 		lane_len.append(_poly_len(path))
-		# Vstupni bod pro poutnika, ktery se na tenhle usek napojil z jineho:
-		# je to presne ten bod, kde se do rovneho useku vlévá (LAND_FRAC).
+		# VSTUPNI BOD PRO POUTNIKA, KTERY SE NA TENHLE USEK NAPOJIL. Pocita se
+		# pro PRIVODNI usek (kdo se napojuje a v kterem uzlu) - do jednoho
+		# useku se jich muze vlit vic a kazda vetev vstupuje jinde. Proto je
+		# `lane_entry_s` indexovane PRIVODNIM usekem, ne cilovym.
 		var entry: float = 0.0
-		for k3 in range(level.lane_count()):
-			if k3 != i and level.target_kind(k3) == Level.TO_LANE and level.to_of(k3) == i:
-				entry = mergep.distance_to(hubp) + hubp.distance_to(Vector2(run0_px, y)) \
-					+ (run1_px - run0_px) * Level.LAND_FRAC
-				break
+		if kind == Level.TO_LANE and to >= 0 and to < level.lane_count():
+			var t0: float = float(run0[to][0])
+			var t1: float = float(run0[to][1])
+			var tj: int = clampi(level.from_of(to), 0, maxi(junction_pos.size() - 1, 0))
+			var tx: float = t0 + (t1 - t0) * level.node_frac(level.lane_node(i))
+			entry = junction_merge[tj].distance_to(junction_pos[tj]) \
+				+ junction_pos[tj].distance_to(Vector2(t0, float(rows[to]))) + (tx - t0)
 		lane_entry_s.append(entry)
 		lane_exit.append(to if kind == Level.TO_EXIT else -1)
 		lane_to.append(to)
@@ -248,15 +281,13 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 		lane_target.append(to)
 		lane_from.append(src_j)
 		lane_run.append([run0_px, run1_px])
-		if i == 0:
-			run0 = [run0_px, run1_px]
 		var slots: Array = []
 		for f in SLOT_FRACTIONS:
 			slots.append(Vector2(run0_px + float(f) * (run1_px - run0_px), y))
 		slot_pos.append(slots)
 	# Pas prvniho useku. Je tu pro testy a pro kresleni zakladni desky.
-	band_x0 = float(run0[0]) if run0.size() == 2 else 0.0
-	band_x1 = float(run0[1]) if run0.size() == 2 else 0.0
+	band_x0 = float(run0[0][0]) if not run0.is_empty() else 0.0
+	band_x1 = float(run0[0][1]) if not run0.is_empty() else 0.0
 
 
 func point_at(lane: int, s: float) -> Vector2:
@@ -287,6 +318,18 @@ func trunk_point_at(s: float, trunk: int = 0) -> Vector2:
 
 func slot_count() -> int:
 	return SLOT_FRACTIONS.size()
+
+
+# UZEL USEKU ve svetovych souradnicich. Odtud se kresli napojeni i znacky
+# uzlu v editoru - jedno misto pro obe.
+func node_world(lane: int, node: int) -> Vector2:
+	if lane < 0 or lane >= node_pos.size():
+		return Vector2.ZERO
+	var ns: Array = node_pos[lane]
+	if ns.is_empty():
+		return Vector2.ZERO
+	var p: Vector2 = ns[clampi(node, 0, ns.size() - 1)]
+	return p
 
 
 func slot_world(lane: int, slot: int) -> Vector2:
