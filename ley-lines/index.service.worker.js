@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1791553459|2558925';
+const CACHE_VERSION = '1791554681|2410619';
 /** @type {string} */
 const CACHE_PREFIX = 'Zily-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
