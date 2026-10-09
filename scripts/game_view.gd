@@ -300,14 +300,19 @@ func _handle_menu_tap(pos: Vector2) -> void:
 		if not r.has_point(pos):
 			continue
 		_click()
-		match i:
-			0:
+		# PRES JMENO AKCE, ne pres poradi. Poradi se muze zmenit (a zmenilo
+		# se - pribyl EDITOR) a klepnuti musi porad delat to, co je na
+		# tlacitku napsane.
+		match Menu.MENU_ACTIONS[i]:
+			"battle":
 				_start_battle()
-			1:
+			"editor":
+				_open_editor()
+			"guide":
 				menu.open_guide()
-			2:
+			"settings":
 				menu.open_settings()
-			3:
+			"update":
 				menu.request_update()
 		return
 

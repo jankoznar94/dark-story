@@ -19,11 +19,17 @@ enum View { MENU, EDITOR, GUIDE, SETTINGS, BATTLE }
 const TITLE := "ZILY"
 const SUBTITLE := "elementární poutníci na žilách many"
 
-# Poradi tlacitek v menu. Je tady, ne v kresleni - kdyby se kresleni a
-# vstup rozešly, klepnuti by delalo neco jineho, nez co je videt.
+# TLACITKA MENU JSOU JEDEN SEZNAM. Jmeno, podtitulek i AKCE jsou tady spolu
+# a ve stejnem poradi - kresleni i vstup z toho ctou. Driv to byly dva
+# seznamy (jmena v Menu, cisla v game_view) a stacilo pridat tlacitko
+# doprostred, aby EDITOR vedl na NAVOD: hrac klepl na "EDITOR" a otevrel se
+# navod, protoze se akce vybirala podle poradi, ne podle jmena.
 const MENU_ITEMS := ["BATTLE", "EDITOR", "NÁVOD", "SETTINGS", "UPDATE"]
 const MENU_SUBS := ["spustit kolo", "vyrobit si level", "pravidla hry a poškození",
 	"hudba a zvuky", "stáhnout novou verzi"]
+# Akce tlacitek. game_view je vyhodnocuje PRES JMENO, ne podle poradi -
+# takze prehozeni tlacitek v seznamu nikdy neprehodi, co ktery dela.
+const MENU_ACTIONS := ["battle", "editor", "guide", "settings", "update"]
 
 # Prepisuje se v _ready() podle toho, jestli hra bezi ve webovem exportu.
 var web: bool = false

@@ -41,6 +41,7 @@ var checks: int = 0
 func _init() -> void:
 	print("--- rozvrzeni na %d rozlisenich ---" % REAL_SCREENS.size())
 	var font: Font = ThemeDB.fallback_font
+	_test_menu_buttons_are_wired()
 	_test_board_has_no_furniture()
 	_test_guide_shape()
 	for spec in REAL_SCREENS:
@@ -78,6 +79,43 @@ func _read(path: String) -> String:
 # text I CELE OVLADANI - pruh a SKIP. Kdyby se neco vratilo, poznalo by se to
 # jen okem na telefonu; tenhle test to vi z kodu. Cte se ZDROJAK, protoze
 # z hotove kresby se text zpetne neprecte.
+# KAZDE TLACITKO MENU MUSI BYT NAPOJENE NA SVOU AKCI. Klepnuti na "EDITOR"
+# musi otevrit editor - ne navod. Driv se akce vybirala podle PORADI tlacitka
+# a stacilo pridat tlacitko doprostred, aby se vsechno posunulo: Jan klepl na
+# EDITOR a otevrel se navod. Test cte ZDROJ a hlida, ze se akce vybira pres
+# Menu.MENU_ACTIONS a ze pro kazdou akci existuje vetev.
+func _test_menu_buttons_are_wired() -> void:
+	var src: String = _read("res://scripts/game_view.gd")
+	_ok(src.contains("Menu.MENU_ACTIONS"), "menu vybira akci pres Menu.MENU_ACTIONS")
+	_ok(not src.contains("match i:"), "a NIKOLI podle poradi tlacitka (match i)")
+	# kazda akce musi mit vetev a kazda vetev musi byt v seznamu
+	for a in Menu.MENU_ACTIONS:
+		_ok(src.contains('"%s":' % a), "akce \"%s\" ma vetev v obsluze klepnuti" % a)
+	# a seznamy musi byt stejne dlouhe - jinak by posledni tlacitko nemelo akci
+	_ok(Menu.MENU_ITEMS.size() == Menu.MENU_ACTIONS.size(),
+		"jmen je stejne jako akci (%d vs %d)" % [Menu.MENU_ITEMS.size(), Menu.MENU_ACTIONS.size()])
+	_ok(Menu.MENU_SUBS.size() == Menu.MENU_ACTIONS.size(),
+		"podtitulku je stejne jako akci (%d vs %d)" % [Menu.MENU_SUBS.size(), Menu.MENU_ACTIONS.size()])
+	_ok(Menu.MENU_ITEMS.size() == ScreenLayout.MENU_COUNT,
+		"tlacitek v rozvrzeni je stejne jako polozek menu (%d vs %d)" % [
+			ScreenLayout.MENU_COUNT, Menu.MENU_ITEMS.size()])
+	# a kazda akce musi nekam vest: kazda vetev musi mit aspon jeden prikaz
+	var act: int = src.find("Menu.MENU_ACTIONS[i]:")
+	_ok(act >= 0, "vetveni podle akce je v kodu")
+	if act >= 0:
+		var block: String = src.substr(act, 900)
+		for a in Menu.MENU_ACTIONS:
+			var at: int = block.find('"%s":' % a)
+			_ok(at >= 0, "vetev pro \"%s\" existuje" % a)
+			if at >= 0:
+				var rest: String = block.substr(at)
+				var lines: Array = rest.split("\n")
+				var body: String = ""
+				for k in range(1, mini(lines.size(), 4)):
+					body += String(lines[k])
+				_ok(body.strip_edges().length() > 0, "vetev \"%s\" neco dela" % a)
+
+
 func _test_board_has_no_furniture() -> void:
 	var src: String = _read("res://scripts/game_view.gd")
 	_ok(not src.is_empty(), "herni scena jde precist")
