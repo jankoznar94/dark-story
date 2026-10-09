@@ -486,6 +486,7 @@ func _draw_editor_bar() -> void:
 	if btns.is_empty():
 		return
 	var labels: Array = editor.button_labels()
+	var label_px: int = layout.ed_label_px(labels, _font)
 	var top: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
@@ -516,7 +517,9 @@ func _draw_editor_bar() -> void:
 		elif i == Editor.BTN_LIST:
 			accent = Color(0.55, 0.53, 0.48)
 		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
-		_draw_centered(labels[i], r, r.position.y + r.size.y * 0.64, 13,
+		# Pismo popisku se bere z rozvrzeni (stejne cislo, kterym ho meri test):
+		# na uzkem displeji se o stupen zmensi, aby se popisek do tlacitka vesel.
+		_draw_centered(labels[i], r, r.position.y + r.size.y * 0.64, label_px,
 			Color(0.88, 0.85, 0.78))
 
 

@@ -288,13 +288,15 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	var lbls: Array = ed_probe.button_labels()
 	_ok(lbls.size() == lay.ed_buttons.size(),
 		"%s: popisku je tolik, kolik je tlacitek editoru" % name)
-	var efs: int = lay.font(13.0)
+	var efs: int = lay.ed_label_px(lbls, font)
+	var efs_px: int = lay.font(float(efs))
 	for i in range(mini(lbls.size(), lay.ed_buttons.size())):
 		var br: Rect2 = lay.ed_buttons[i]
-		var tw: float = font.get_string_size(str(lbls[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, efs).x
+		var tw: float = font.get_string_size(str(lbls[i]), HORIZONTAL_ALIGNMENT_LEFT, -1, efs_px).x
 		_ok(tw <= br.size.x - 4.0,
-			"%s: popisek \"%s\" se do tlacitka nevejde (%.0f px do %.0f)" % [
-				name, str(lbls[i]), tw, br.size.x])
+			"%s: popisek \"%s\" se do tlacitka nevejde (%.0f px do %.0f) při %d px písma" % [
+				name, str(lbls[i]), tw, br.size.x, efs_px])
+	_ok(efs >= 11, "%s: popisky tlacitek editoru jsou uz moc male (%d)" % [name, efs])
 
 	# --- CO NEJVIC MISTA NAD DESKOU ---
 	# Nad prvni drazkou nesmi zustat prazdny pruh: kazdy pixel tam chybi

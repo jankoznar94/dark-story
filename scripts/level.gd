@@ -152,6 +152,9 @@ var _jrow: Dictionary = {}     # vyhybka -> normalizovana y stredu ventilatoru
 var _span: Dictionary = {}     # usek -> [prvni radek, posledni radek]
 var _jspan: Dictionary = {}    # vyhybka -> [prvni radek, posledni radek]
 var _rows_total: int = 0
+# Radky cele mrizky: drahy i cile. Kazdy cil je dira na svem radku, takze
+# kdyz je cilu vic nez drah, mrizka ma vic radku nez kolik je drah.
+var _grid_rows: int = 0
 # Skutecna mezera radku po relayoutu. Neni to `spread`: kdyz se radky nevejdou,
 # zmensi se VSEM stejne - a prave tahle mezera rozhoduje o tom, jestli se
 # bonusy na sousednich drahach neprekryvaji (MIN_ROW_GAP).
@@ -303,11 +306,13 @@ func add_tree() -> int:
 		return -1
 	var j: int = junctions.size()
 	junctions.append({})
-	if exits.size() < MAX_EXITS:
-		exits.append([exit_x, TOP])
-	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": free_exit(),
+	# Cile se nevyrabi: obe vetve noveho kmene konci v nekterem z EXISTUJICICH
+	# cilu. Novy cil si hrac prida sam, kdyz ho chce.
+	var e1: int = free_exit()
+	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": e1,
 		"divert": BASE_DIVERT})
-	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": free_exit(),
+	var e2: int = free_exit(e1)
+	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": e2,
 		"divert": BASE_DIVERT})
 	entries.append(j)
 	relayout()
@@ -345,16 +350,51 @@ func junction_x(j: int) -> float:
 # Vystup, ktery nema zadny usek. Pouziva se pri pridavani useku - novy usek
 # ma jit nekam, kde jeste nikdo neni.
 func _exit_used(idx: int) -> bool:
+	return _exit_uses(idx) > 0
+
+
+# Kolik useku do toho vystupu usti.
+func _exit_uses(idx: int) -> int:
+	var n := 0
 	for i in range(lanes.size()):
 		if exit_of(i) == idx:
-			return true
-	return false
+			n += 1
+	return n
 
 
-func free_exit() -> int:
+# VYSTUPY SE NEPRIDAVAJI SAMY. Level si je drzi jako zdroj, ktery hrac
+# spravuje rucne ("cíl +"). Kdyz je kazda nova cesta vyrabela sama, mel hrac
+# v mape cile, ktere nezadal - a cyklus "cíl" se prodluzoval, takze se k
+# napojovani dvou useku skoro nedostal.
+# Novy vystup dostane vlastni radek mrizky (viz relayout), aby se dve diry
+# nekreslily pres sebe.
+func add_exit() -> int:
+	if exits.size() >= MAX_EXITS:
+		return -1
+	exits.append([exit_x, TOP])
+	relayout()
+	return exits.size() - 1
+
+
+# Volny vystup pro novy usek: prednostne takovy, do ktereho nic neusta; kdyz
+# jsou vsechny obsazene, tak ten s nejmensim poctem useku (aby se cesty
+# nehrnuly vsechny do posledniho). `avoid` se pouzije, kdyz usek potrebuje
+# cil JINY, nez ma jeho sourozenec - jinak by obe vetve vedly do stejne diry
+# a vyhybka by nic nerozhodovala.
+func free_exit(avoid: int = -1) -> int:
+	var best: int = -1
+	var best_uses: int = 1 << 30
 	for i in range(exits.size()):
-		if not _exit_used(i):
+		if i == avoid:
+			continue
+		var uses: int = _exit_uses(i)
+		if uses == 0:
 			return i
+		if uses < best_uses:
+			best_uses = uses
+			best = i
+	if best >= 0:
+		return best
 	return maxi(exits.size() - 1, 0)
 
 
@@ -429,9 +469,9 @@ func split_lane(lane: int) -> int:
 	l["kind"] = TO_JUNCTION
 	l["to"] = j_new
 	lanes[lane] = l
-	if exits.size() < MAX_EXITS:
-		exits.append([exit_x, TOP])
-	var new_to: int = free_exit()
+	# Druha vetev musi vest JINAM nez ta prvni - jinak by se hrac rozhodoval
+	# mezi dvema cestami do stejne diry. Novy cil se pritom nevyrabi.
+	var new_to: int = free_exit(keep_to)
 	junctions.append({})
 	lanes.append({"from": j_new, "el": keep_el, "kind": TO_EXIT, "to": keep_to, "divert": BASE_DIVERT})
 	lanes.append({"from": j_new, "el": _free_element(), "kind": TO_EXIT, "to": new_to,
@@ -615,7 +655,11 @@ func relayout() -> void:
 	for root in _roots():
 		cursor = _walk(int(root), cursor, 0)
 	_rows_total = cursor
-	var n: int = maxi(_rows_total, 1)
+	# Cile jsou radky ve STEJNE mrizce jako drahy: kazda dira potrebuje svuj
+	# radek, aby se dve nekreslily pres sebe. Kdyz je cilu vic nez drah, radky
+	# se pridaji - a mezera se zmensi vsem stejne (coz hlida rows_fit()).
+	var n: int = maxi(maxi(_rows_total, exits.size()), 1)
+	_grid_rows = n
 	var gap: float = spread
 	var span: float = gap * float(n - 1)
 	if span > BOTTOM - TOP:
@@ -640,7 +684,7 @@ func relayout() -> void:
 # Kolik radku mrizka zabira a jakou mezeru ma. Radky jsou to, co level
 # opravdu omezuje: bonusy na sousednich drahach se nesmi prekryvat.
 func rows_total() -> int:
-	return _rows_total
+	return _grid_rows
 
 
 func row_gap() -> float:
@@ -648,11 +692,11 @@ func row_gap() -> float:
 
 
 # VEJDE SE MRIZKA JESTE NA DESKU? Jedno misto, kde se to rozhoduje - ptá se
-# ho editor (smí hrac pridat dalsi drahu?) i validate (smí se level vyvézt?).
-# Dve kopie podminky by se rozešly: hrac by si postavil level, ktery se mu
-# nevyexportuje.
+# ho editor (smí hrac pridat dalsi drahu nebo cil?) i validate (smí se level
+# vyvézt?). Dve kopie podminky by se rozešly: hrac by si postavil level, ktery
+# se mu nevyexportuje.
 func rows_fit() -> bool:
-	if _rows_total <= 1:
+	if _grid_rows <= 1:
 		return true
 	return _gap >= MIN_ROW_GAP
 
@@ -1237,8 +1281,8 @@ func validate() -> Array:
 	# MRIZKA SE MUSI VEJIT NA DESKU. Tohle je strop, na ktery hrac narazi pri
 	# pridavani drah i kmenu - ne pocet useku sam o sobe.
 	if not rows_fit():
-		errs.append("na desku se tolik drah nevejde (%d drah, mezera %.3f, potřeba %.3f)" % [
-			_rows_total, _gap, MIN_ROW_GAP])
+		errs.append("na desku se tolik drah nevejde (%d řádků, mezera %.3f, potřeba %.3f)" % [
+			_grid_rows, _gap, MIN_ROW_GAP])
 	if entries.is_empty():
 		errs.append("do mapy nevede žádný kmen")
 	for j in entries:

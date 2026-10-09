@@ -45,7 +45,7 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-const ED_COUNT := 11
+const ED_COUNT := 12
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
@@ -196,6 +196,27 @@ func all_editor_buttons() -> Array:
 	for r in ed_buttons:
 		out.append(r)
 	return out
+
+
+# VELIKOST PISMA POPISKU V PRUHU EDITORU. Tlacitek je dvanact a popisek
+# "výhybka" je na 640x360 o par pixelu sirsi nez tlacitko - kdyby se pismo
+# zmensovat nemohlo, prisel by hrac o popisek (a tlacitko bez popisku je
+# horsi nez zadne). Pocita se na JEDNOM miste: kresleni i test meri stejnym
+# cislem, jinak by test meril neco jineho, nez hrac vidi.
+func ed_label_px(labels: Array, f: Font) -> int:
+	if ed_buttons.is_empty():
+		return 13
+	var room: float = ed_buttons[0].size.x - 4.0
+	for px in range(13, 9, -1):
+		var fpx: int = font(float(px))
+		var fits := true
+		for l in labels:
+			if f.get_string_size(str(l), HORIZONTAL_ALIGNMENT_LEFT, -1, fpx).x > room:
+				fits = false
+				break
+		if fits:
+			return px
+	return 10
 
 
 # SEZNAM ULOZENYCH LEVELU v editoru. Kolik radku se vejde, pocita rozvrzeni -

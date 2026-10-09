@@ -34,16 +34,19 @@ const BTN_ADD := 0
 const BTN_DEL := 1
 const BTN_ELEMENT := 2
 const BTN_TARGET := 3
-const BTN_BEND_LEFT := 4
-const BTN_BEND_RIGHT := 5
-const BTN_JUNCTION := 6
-const BTN_ENTRY := 7
-const BTN_LIST := 8
-const BTN_EXPORT := 9
-const BTN_PLAY := 10
+# NOVY CIL JE JEN RUKOU. Automaticky vznikaly nove cile s kazdou novou cestou
+# a hrac mel v mape diry, ktere nezadal - a cyklus "cíl" se prodluzoval.
+const BTN_EXIT := 4
+const BTN_BEND_LEFT := 5
+const BTN_BEND_RIGHT := 6
+const BTN_JUNCTION := 7
+const BTN_ENTRY := 8
+const BTN_LIST := 9
+const BTN_EXPORT := 10
+const BTN_PLAY := 11
 const BTN_LABELS := [
-	"úsek +", "úsek −", "živel", "cíl", "odboč −", "odboč +", "výhybka", "vstup",
-	"seznam", "export", "hrát",
+	"úsek +", "úsek −", "živel", "cíl", "cíl +", "odboč −", "odboč +", "výhybka",
+	"vstup", "seznam", "export", "hrát",
 ]
 
 var level: Level = Level.base()
@@ -158,6 +161,8 @@ func press(button: int) -> int:
 			_cycle_element()
 		BTN_TARGET:
 			_cycle_target()
+		BTN_EXIT:
+			_add_exit()
 		BTN_BEND_LEFT:
 			_bend(-Level.SPREAD_STEP * 5.0)
 		BTN_BEND_RIGHT:
@@ -300,6 +305,36 @@ func _entry() -> void:
 		status = "poslední kmen nechat musíš"
 	else:
 		status = _rows_status()
+
+
+# NOVY CIL. Cile (diry, kam poutnici dochazeji) se v mape neobjevuji samy -
+# hrac si je pridava timhle tlacitkem, kdyz pro ne ma duvod. Novy cil se
+# rovnou pripoji vybranemu useku: hrac ho nepridava do prazdna, ale proto, ze
+# tenhle usek ma koncit jinde.
+func _add_exit() -> void:
+	if level.lane_count() == 0:
+		return
+	if level.exits.size() >= Level.MAX_EXITS:
+		status = "víc než %d cílů nejde" % Level.MAX_EXITS
+		return
+	var keep: Level = level.clone()
+	var idx: int = level.add_exit()
+	if idx < 0:
+		status = "nový cíl se nepodařilo přidat"
+		return
+	var l: Dictionary = level.lanes[sel]
+	l["kind"] = Level.TO_EXIT
+	l["to"] = idx
+	level.lanes[sel] = l
+	level.relayout()
+	# Cil je dira na vlastnim radku mrizky - kdyz se radek uz nevejde, zmena
+	# se vrati (stejna mez, jako kdyz hrac pridava drahu).
+	if not level.rows_fit():
+		level = keep
+		status = _rows_status()
+		return
+	status = "nový cíl %d — úsek %d do něj ústí" % [idx + 1, sel + 1]
+	_after_change()
 
 
 # Kde se usek ohne ke svemu cili. Mensi hodnota = ohne driv (bliz k vyhybce),

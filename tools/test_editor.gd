@@ -20,6 +20,8 @@ func _init() -> void:
 	_test_bend()
 	_test_limits()
 	_test_many_entries_and_junctions()
+	_test_exits_are_manual_only()
+	_test_join_two_lanes()
 	_test_autosave()
 	_test_export_code()
 	_test_builtin_levels()
@@ -75,6 +77,7 @@ func _test_buttons_change_level() -> void:
 	var e3 := _fresh()
 	_ok(e3.press(Editor.BTN_PLAY) == Editor.BTN_PLAY, "tlacitko HRAT se hra dozvi")
 	_ok(e3.press(Editor.BTN_EXPORT) == Editor.BTN_EXPORT, "a tlacitko EXPORT taky")
+	# i tlacitko noveho cile neco udela - prida cil (viz _test_exits_are_manual_only)
 
 
 func _test_element_cycle() -> void:
@@ -204,6 +207,92 @@ func _test_many_entries_and_junctions() -> void:
 	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed2.level)
 	_ok(n_net.junction_count() == ed2.level.junction_count(),
 		"sit postavi vsechny vyhybky (%d z %d)" % [n_net.junction_count(), ed2.level.junction_count()])
+
+
+# CILE SE PRIDAVAJI JEN RUKOU. Jan: "pro kazdou novou cestu vzniká nový cíl.
+# To není správné chování." Kdyby si cíl vyrobil nový úsek, nová výhybka i
+# nový kmen samy, měl by hráč v mapě díry, které nezadal.
+func _test_exits_are_manual_only() -> void:
+	var ed := _fresh()
+	var e0: int = ed.level.exits.size()
+	ed.sel = 0
+	ed.press(Editor.BTN_ADD)
+	_ok(ed.level.exits.size() == e0,
+		"nový úsek si cíl nevyrobí (%d -> %d)" % [e0, ed.level.exits.size()])
+	var pick: int = -1
+	for k in range(ed.level.lane_count()):
+		ed.sel = k
+		if ed.can_split():
+			pick = k
+			break
+	_ok(pick >= 0, "na desce je co rozdělit")
+	ed.sel = pick
+	ed.press(Editor.BTN_JUNCTION)
+	_ok(ed.level.exits.size() == e0,
+		"ani výhybka si cíl nevyrobí (%d -> %d)" % [e0, ed.level.exits.size()])
+	_ok(ed.level.validate().is_empty(), "a level je platný: %s" % str(ed.level.validate()))
+	# Nove vetve musi vest do RUZNYCH cilu - dve cesty do stejne diry by
+	# znamenaly, ze vyhybka nic nerozhoduje.
+	var j: int = ed.level.junction_of(pick)
+	var kids: Array = ed.level.lanes_of(j)
+	_ok(kids.size() == 2, "z nové výhybky vedou dvě větve (%d)" % kids.size())
+	if kids.size() == 2:
+		_ok(ed.level.to_of(int(kids[0])) != ed.level.to_of(int(kids[1])),
+			"a vedou do různých cílů (%d a %d)" % [
+				ed.level.to_of(int(kids[0])), ed.level.to_of(int(kids[1]))])
+	ed.sel = 0
+	ed.press(Editor.BTN_ENTRY)
+	_ok(ed.level.exits.size() == e0,
+		"ani nový kmen si cíl nevyrobí (%d -> %d)" % [e0, ed.level.exits.size()])
+
+	# --- RUKOU: tlacitko "cíl +" ---
+	var ed2 := _fresh()
+	ed2.sel = 2
+	var c0: int = ed2.level.exits.size()
+	ed2.press(Editor.BTN_EXIT)
+	_ok(ed2.level.exits.size() == c0 + 1,
+		"tlacitko 'cíl +' přidá cíl (%d -> %d)" % [c0, ed2.level.exits.size()])
+	_ok(ed2.level.target_kind(2) == Level.TO_EXIT and ed2.level.to_of(2) == c0,
+		"a vybraný úsek do něj ústí (míří na %d, čekáno %d)" % [ed2.level.to_of(2), c0])
+	_ok(ed2.level.validate().is_empty(), "a level je pořád platný: %s" % str(ed2.level.validate()))
+	var c1: int = ed2.level.exits.size()
+	ed2.press(Editor.BTN_EXIT)
+	_ok(ed2.level.exits.size() == c1 + 1, "a další stisk zase další (%d)" % ed2.level.exits.size())
+	var back := Level.from_code(ed2.level.to_code())
+	_ok(back.exits.size() == ed2.level.exits.size(),
+		"a v kódu levelu jsou všechny cíle (%d)" % back.exits.size())
+	_ok(back.to_code() == ed2.level.to_code(), "a kód se vrátí stejný")
+
+
+# SPOJENI DVOU CEST DO JEDNE. Usek se dá napojit na jiný usek - poutník po něm
+# pokračuje dál, takže se z dvou cest stane jedna. Je to v cyklu tlacitka
+# "cíl" (za výstupy), takže se k tomu hráč musí proklikat - a musí to jít.
+func _test_join_two_lanes() -> void:
+	var ed := _fresh()
+	ed.sel = 1
+	var joined: int = -1
+	var taps := 0
+	for i in range(40):
+		ed.press(Editor.BTN_TARGET)
+		taps += 1
+		if ed.level.target_kind(1) == Level.TO_LANE:
+			joined = ed.level.to_of(1)
+			break
+	_ok(joined >= 0, "úsek se dá napojit na jiný úsek (%d stisků)" % taps)
+	if joined < 0:
+		return
+	_ok(ed.status.contains("napojuje se"),
+		"a hlaska to rekne slovy, kterym hrac rozumi (%s)" % ed.status)
+	_ok(ed.level.validate().is_empty(),
+		"napojeny level je platny: %s" % str(ed.level.validate()))
+	var n_net := Network.new()
+	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
+	_ok(int(n_net.lane_kind[1]) == Level.TO_LANE, "síť ví, že úsek končí napojením")
+	_ok(float(n_net.lane_entry_s[joined]) > 0.0,
+		"napojený úsek má vstup, kde se do něj větev vlévá (%.0f px)" % n_net.lane_entry_s[joined])
+	# a kód levelu to unese - jinak by se hracuv level prenasel spatne
+	var back := Level.from_code(ed.level.to_code())
+	_ok(back.to_code() == ed.level.to_code(), "a kod levelu napojeni udrzi")
 
 
 func _test_autosave() -> void:
