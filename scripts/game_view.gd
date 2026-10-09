@@ -44,6 +44,10 @@ var _font: Font = null
 var _shot: bool = false
 var _shot_frames: int = 0
 var _tap_live: bool = false
+# Hraje se level, ktery si hrac prave vyrobil v editoru? Pak se do nej musi
+# dat vratit - hrac si level zkousi opakovane a nechce u toho pokazde projit
+# menu. V hornim panelu je kvuli tomu navrat do editoru.
+var _from_editor: bool = false
 
 var _music: AudioStreamPlayer = null
 var _sfx: AudioStreamPlayer = null
@@ -76,6 +80,19 @@ func _ready() -> void:
 	elif args.has("--editor-shot"):
 		# Snimek editoru: hra se postavi z levelu, ktery je prave v editoru.
 		_open_editor()
+		_shot = true
+	elif args.has("--junction-shot"):
+		# Snimek editoru s DRUHOU VYHYBKOU - jediny zpusob, jak okem zkontrolovat,
+		# ze se ventilator kresli i s vetvemi a ze se nic nerozjelo.
+		_open_editor()
+		editor.sel = 0
+		editor.press(Editor.BTN_JUNCTION)
+		_push_editor_level()
+		_shot = true
+	elif args.has("--list-shot"):
+		# Snimek seznamu ulozenych levelu.
+		_open_editor()
+		editor.open_list()
 		_shot = true
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
@@ -227,6 +244,7 @@ func _click() -> void:
 func _start_battle() -> void:
 	game.setup(layout.arena, layout.s, layout.board_bottom)
 	menu.open_battle()
+	_from_editor = false
 
 
 # ---------------------------------------------------------------- vstup
@@ -273,6 +291,13 @@ func _handle_tap(pos: Vector2) -> void:
 		return
 	if menu.is_editor():
 		_handle_editor_tap(pos)
+		return
+	# Navrat do editoru z rozehrane hry. Je to PRVNI, co se testuje: je to
+	# v hornim panelu, kde zadna herni interakce neni, takze si to nemuze
+	# s nicim rozumet.
+	if _from_editor and layout.hud_back.has_point(pos):
+		_click()
+		_back_to_editor()
 		return
 	# Na desce uz zadne tlacitko neni - jedina interakce je klepnuti na misto
 	# na bonus (stavi / vylepsi) a klepnuti kamkoli JINAM na usek (prepne
@@ -329,6 +354,19 @@ func _handle_guide_tap(pos: Vector2) -> void:
 # na tlacitko v pruhu by mohlo vybrat usek, ktery pod nim vede - a tlacitko
 # by nikdy nezabralo.
 func _handle_editor_tap(pos: Vector2) -> void:
+	# SEZNAM: kazdy radek je level k nacteni (a prvni je novy level).
+	if editor.is_list():
+		var rows: int = layout.editor_list_fit()
+		var items: Array = editor.list_items(rows)
+		var rects: Array = layout.editor_list_rows(items.size())
+		for i in range(rects.size()):
+			var rr: Rect2 = rects[i]
+			if rr.has_point(pos):
+				_click()
+				editor.pick(items[i])
+				_push_editor_level()
+				return
+		return
 	for i in range(layout.ed_buttons.size()):
 		var r: Rect2 = layout.ed_buttons[i]
 		if not r.has_point(pos):
@@ -357,19 +395,35 @@ func _push_editor_level() -> void:
 
 # HRAT Z EDITORU. Hrac si level vyrobi a hned si ho zahraje - bez toho by
 # musel level ulozit, vratit se do menu a doufat, ze se hra postavi z toho
-# spravneho. Do hry jde KOPIE: editor si svuj level necha.
+# spravneho. Do hry jde KOPIE: editor si svuj level necha. A do hry jde
+# PRIZNAK, ze se hraje z editoru - hrac se musi moci vratit zpet.
 func _play_editor_level() -> void:
 	game.setup(layout.arena, layout.s, layout.board_bottom, editor.level.clone())
 	menu.open_battle()
+	_from_editor = true
 
 
+# ZPET DO EDITORU z rozehraneho levelu. Editor si svuj level nechal, takze se
+# vrati presne tam, kde byl - a hra se z nej postavi znovu.
+func _back_to_editor() -> void:
+	menu.open_editor()
+	editor.close_list()
+	_push_editor_level()
+
+
+# OTEVRE EDITOR TAM, KDE Hrac SKONCIL. Kdyby se pokazde zacinalo od nuly,
+# prisel by hrac o vsechno, co ma ulozene - a ulozene levely by nemely jak
+# se dostat zpet.
 func _open_editor() -> void:
 	menu.open_editor()
-	editor.reset()
+	editor.open_last()
 	_push_editor_level()
 
 
 func _draw_editor() -> void:
+	if editor.is_list():
+		_draw_editor_list()
+		return
 	_draw_background()
 	_draw_trunk()
 	_draw_lanes()
@@ -382,6 +436,36 @@ func _draw_editor() -> void:
 	_draw_editor_bar()
 
 
+# SEZNAM ULOZENYCH LEVELU. Prvni radek je novy level, dalsi jsou ulozene
+# (nejnovejsi nahore) a posledni je navrat do editoru. Klepnuti na radek level
+# nacte - tim se k ulozene praci hrac dostane zpatky a muze v ni pokracovat.
+func _draw_editor_list() -> void:
+	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
+	_label(Vector2(_pad_left(), layout.hud_h * 0.78), "LEVELY", 22, Color(0.90, 0.87, 0.80))
+	var rows: int = layout.editor_list_fit()
+	var items: Array = editor.list_items(rows)
+	var rects: Array = layout.editor_list_rows(items.size())
+	for i in range(items.size()):
+		var r: Rect2 = rects[i]
+		var it: Dictionary = items[i]
+		var kind: String = str(it["kind"])
+		var accent: Color = Color(0.42, 0.40, 0.35)
+		if kind == "new":
+			accent = Color(0.65, 0.78, 0.60)
+		elif kind == "level":
+			accent = Color(0.78, 0.62, 0.30) if str(it["name"]) == editor.local_name \
+				else Color(0.55, 0.53, 0.48)
+		elif kind == "back":
+			accent = Color(0.72, 0.70, 0.62)
+		draw_rect(r, Color(0.135, 0.125, 0.11))
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
+			str(it["name"]), 17, Color(0.88, 0.85, 0.78))
+	if not editor.status.is_empty():
+		_label(Vector2(layout.view.x - 14.0 * layout.ui, layout.hud_h * 0.78),
+			editor.status, 13, Color(0.72, 0.70, 0.62), false, 1.0)
+
+
 # Vybrany usek je v editoru ZNACKA navic - hrac musi videt, co upravuje.
 # Meni se jen jas a tvar ukazatele, ne barva: barva je element.
 func _draw_editor_markers() -> void:
@@ -392,7 +476,7 @@ func _draw_editor_markers() -> void:
 	var y: float = game.net.rows[lane]
 	var r: float = game.net.bonus_r * 0.7
 	var col: Color = _lane_color(lane)
-	var x: float = game.net.band_x0 - 34.0 * layout.s
+	var x: float = float(game.net.lane_run[lane][0]) - 34.0 * layout.s
 	draw_colored_polygon(PackedVector2Array([
 		Vector2(x + r, y), Vector2(x - r * 0.7, y - r), Vector2(x - r * 0.7, y + r)]), col)
 	draw_arc(Vector2(x, y), r * 1.8, 0.0, TAU, 20, Color(col.r, col.g, col.b, 0.55), 2.0)
@@ -402,6 +486,7 @@ func _draw_editor_bar() -> void:
 	var btns: Array = layout.ed_buttons
 	if btns.is_empty():
 		return
+	var labels: Array = editor.button_labels()
 	var top: float = float(btns[0].position.y) - 26.0 * layout.ui
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
@@ -427,8 +512,12 @@ func _draw_editor_bar() -> void:
 			accent = Color(0.65, 0.78, 0.60)
 		elif i == Editor.BTN_PLAY:
 			accent = Color(0.78, 0.62, 0.30)
+		elif i == Editor.BTN_JUNCTION:
+			accent = Color(0.60, 0.58, 0.72)
+		elif i == Editor.BTN_LIST:
+			accent = Color(0.55, 0.53, 0.48)
 		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
-		_draw_centered(Editor.BTN_LABELS[i], r, r.position.y + r.size.y * 0.64, 13,
+		_draw_centered(labels[i], r, r.position.y + r.size.y * 0.64, 13,
 			Color(0.88, 0.85, 0.78))
 
 
@@ -789,19 +878,20 @@ func _lane_color(lane: int) -> Color:
 
 func _draw_lanes() -> void:
 	var lw: float = maxf(2.0, 9.0 * layout.s)
-	var sel: int = game.switch_lane()
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
 		# VYBRANY USEK JE SVETLEJSI, ALE PORAD SVOJI BARVY. Hrac tak vidi,
 		# kam poutniky posle, aniz by musel hadat, ktery element to je -
-		# barva ani runa se ne meni, meni se jen jas.
+		# barva ani runa se ne meni, meni se jen jas. Kazda vyhybka ma svuj
+		# vybrany usek, takze se svetlych useku kresli tolik, kolik je vyhybek.
+		var sel: bool = game.lane_selected(lane)
 		var faint := col
-		faint.a = 0.28 if lane != sel else 0.42
+		faint.a = 0.28 if not sel else 0.42
 		var bright := col
-		bright.a = 0.60 if lane != sel else 0.95
-		var core: float = maxf(1.0, 3.0 * layout.s) if lane != sel else maxf(1.0, 4.5 * layout.s)
-		if lane == sel:
+		bright.a = 0.60 if not sel else 0.95
+		var core: float = maxf(1.0, 3.0 * layout.s) if not sel else maxf(1.0, 4.5 * layout.s)
+		if sel:
 			var halo := col
 			halo.a = 0.16
 			for k in range(path.size() - 1):
@@ -810,7 +900,7 @@ func _draw_lanes() -> void:
 			draw_line(path[k], path[k + 1], faint, lw)
 		for k in range(path.size() - 1):
 			draw_line(path[k], path[k + 1], bright, core)
-		if lane == sel:
+		if sel:
 			var rim := col
 			rim.a = 0.85
 			for k in range(path.size() - 1):
@@ -820,23 +910,28 @@ func _draw_lanes() -> void:
 # DMG ZONA. Pres cely rovny usek kazdeho pruhu vede barevny pas - tady
 # se poutnikum ubira zivot. Cislo nasobku tu ZAMERNE NENI - hrac ho ma
 # v hornim panelu u vybraneho useku.
+#
+# KAZDY USEK MA SVUJ PAS: kdyz ma level druhou vyhybku, jeji useky zacinaji
+# dal od kraje, takze jeji pas je posunuty. Kdyby vsechny useky sdilely jeden
+# pas, druha vyhybka by sve bonusy nemela kam nakreslit.
 func _draw_zones() -> void:
 	var thick: float = ZONE_THICK * layout.s
-	var sel: int = game.switch_lane()
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
+		var run: Array = game.net.lane_run[lane]
+		var x0: float = float(run[0])
+		var x1: float = float(run[1])
 		var y: float = game.net.rows[lane]
-		var a: float = 0.10 if lane != sel else 0.17
-		draw_rect(Rect2(game.net.band_x0, y - thick * 0.5,
-			game.net.band_x1 - game.net.band_x0, thick), Color(col.r, col.g, col.b, a))
+		var sel: bool = game.lane_selected(lane)
+		var a: float = 0.10 if not sel else 0.17
+		draw_rect(Rect2(x0, y - thick * 0.5, x1 - x0, thick),
+			Color(col.r, col.g, col.b, a))
 		# Hranice dmg zony - dve tenke znacky, aby bylo jasne, kde zacina
 		# a kde konci. Bez nich by se pas ztratil v pozadi.
 		var edge := col
-		edge.a = 0.35 if lane != sel else 0.70
-		draw_line(Vector2(game.net.band_x0, y - thick * 0.5),
-			Vector2(game.net.band_x0, y + thick * 0.5), edge, 2.0)
-		draw_line(Vector2(game.net.band_x1, y - thick * 0.5),
-			Vector2(game.net.band_x1, y + thick * 0.5), edge, 2.0)
+		edge.a = 0.35 if not sel else 0.70
+		draw_line(Vector2(x0, y - thick * 0.5), Vector2(x0, y + thick * 0.5), edge, 2.0)
+		draw_line(Vector2(x1, y - thick * 0.5), Vector2(x1, y + thick * 0.5), edge, 2.0)
 
 
 # Neutralni kmen. Nema popisek - deska je bez textu.
@@ -883,11 +978,18 @@ func _draw_bonuses() -> void:
 				6.0 * layout.s, 5.0 * layout.s), Color(0.95, 0.88, 0.6))
 
 
+# VYHYBKA. Kazda ma svuj kruh v miste, kde do ni vchazi privodni usek, a svuj
+# stred, odkud se vetve rozbihaji. Barva je barva useku, ktery je prave
+# vybrany - takze hrac vidi, kam posle dalsiho poutnika, u KAZDE vyhybky.
 func _draw_switch() -> void:
-	var col: Color = _lane_color(game.switch_lane())
-	draw_circle(game.net.merge, 15.0 * layout.s, Color(0.10, 0.095, 0.085))
-	draw_arc(game.net.merge, 15.0 * layout.s, 0.0, TAU, 28, col, 3.0)
-	draw_circle(game.net.hub, 9.0 * layout.s, col)
+	for j in range(game.net.junction_count()):
+		var lane: int = game.selected_lane(j)
+		var col: Color = _lane_color(lane) if lane >= 0 else Color(0.55, 0.53, 0.48)
+		var m: Vector2 = game.net.junction_merge[j]
+		var h: Vector2 = game.net.junction_pos[j]
+		draw_circle(m, 15.0 * layout.s, Color(0.10, 0.095, 0.085))
+		draw_arc(m, 15.0 * layout.s, 0.0, TAU, 28, col, 3.0)
+		draw_circle(h, 9.0 * layout.s, col)
 
 
 # NEUTRALNI VYSTUP. Nema element a nikdo ho nevlastni - kazdy poutnik,
@@ -951,8 +1053,12 @@ func _draw_hud() -> void:
 	# hrac vyhybkou kupuje, proto patri do HUDu - a je to jedine misto,
 	# kde ji vidi, protoze v desce uz zadny popisek neni.
 	var sel: int = game.switch_lane()
+	if sel < 0:
+		sel = 0
 	var sel_txt: String
-	if game.net.lane_is_neutral(sel):
+	if game.net.lane_count() == 0:
+		sel_txt = "—"
+	elif game.net.lane_is_neutral(sel):
 		sel_txt = "neutrální × 1.0"
 	else:
 		sel_txt = "%s × %.1f" % [Element.name_of(game.net.lane_element(sel)),
@@ -964,6 +1070,16 @@ func _draw_hud() -> void:
 	else:
 		_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.88),
 			"v úsecích: %d" % game.enemies.size(), 13, Color(0.58, 0.55, 0.49))
+
+	# NAVRAT DO EDITORU. Kresli se jen kdyz hrac hraje level z editoru - je to
+	# jedine tlacitko, ktere se v hornim panelu hry muze objevit, a je mimo
+	# herni desku (panel neni hraci plocha).
+	if _from_editor:
+		var br: Rect2 = layout.hud_back
+		draw_rect(br, Color(0.20, 0.19, 0.17))
+		draw_rect(br, Color(0.78, 0.62, 0.30), false, 2.0)
+		_draw_centered("EDITOR", br, br.position.y + br.size.y * 0.66, 16,
+			Color(0.90, 0.87, 0.80))
 
 	if game.phase == "lost":
 		var bw: float = minf(420.0 * layout.s, layout.view.x * 0.8)

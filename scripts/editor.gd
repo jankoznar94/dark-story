@@ -13,6 +13,11 @@ extends RefCounted
 # je na male obrazovce nepresne. Tlacitka jsou jednoznacna a vidi se u nich,
 # co delaji.
 #
+# DVA REZIMY: kresleni levelu (EDIT) a SEZNAM ulozenych levelu (LIST). Seznam
+# je potreba proto, ze levelu je vic a hrac se k nim musi dostat zpatky -
+# jinak by kazde otevreni editoru zacalo od nuly a ulozena prace by byla
+# nedostizna.
+#
 # UKLADANI JE LOKALNI. Nikam se nic neposila - zadna Firestore. Kdo chce
 # level prenest do hry natrvalo, zmackne EXPORT a posle mi jednoradkovy KOD
 # (vejde se do Telegramu i z telefonu). Ja ho vlozim do BuiltinLevels a level
@@ -22,17 +27,22 @@ extends RefCounted
 # neprisel o praci, kdyz mu prohlizec zavre panel. Proto tu neni tlacitko
 # "ulozit" - bylo by to tlacitko, ktere nic neresi.
 
+enum { MODE_EDIT, MODE_LIST }
+
 # Tlacitka editoru. Poradi je poradi ve spodnim pruhu.
 const BTN_ADD := 0
 const BTN_DEL := 1
 const BTN_ELEMENT := 2
-const BTN_EXIT := 3
+const BTN_TARGET := 3
 const BTN_BEND_LEFT := 4
 const BTN_BEND_RIGHT := 5
-const BTN_EXPORT := 6
-const BTN_PLAY := 7
+const BTN_JUNCTION := 6
+const BTN_LIST := 7
+const BTN_EXPORT := 8
+const BTN_PLAY := 9
 const BTN_LABELS := [
-	"úsek +", "úsek −", "živel", "výstup", "odbočení −", "odbočení +", "export", "hrát",
+	"úsek +", "úsek −", "živel", "cíl", "odboč −", "odboč +", "výhybka", "seznam",
+	"export", "hrát",
 ]
 
 var level: Level = Level.base()
@@ -44,30 +54,37 @@ var status: String = ""
 # a poslat. Je to nejkratsi cesta z telefonu: soubor se z telefonu posila
 # slozite, jedna rada textu ne.
 var code: String = ""
-# Jmeno, pod kterym se level uklada lokalne. Generuje se jednou za otevreni
-# editoru, aby se kazda zmena neukladala pod jinym jmenem.
+# Jmeno, pod kterym se level uklada lokalne.
 var local_name: String = ""
+# Rezim editoru: kresleni, nebo seznam ulozenych levelu.
+var mode: int = MODE_EDIT
+# Stranka v seznamu. Levelu muze byt vic, nez se jich na displej vejde.
+var list_page: int = 0
 
 
+# NOVY LEVEL. Jmeno se generuje z volneho cisla ("level-1", "level-2", ...),
+# aby se v seznamu dalo najit. Nahodne nebo casove jmeno by v seznamu
+# neznamenalo nic.
 func reset() -> void:
 	level = Level.base()
 	sel = 0
-	status = ""
 	code = ""
-	local_name = "level-%d" % (int(Time.get_unix_time_from_system()) % 100000)
+	mode = MODE_EDIT
+	list_page = 0
+	local_name = Level.next_free_name()
+	level.name = local_name
+	level.save()
+	status = "nový level: " + local_name
 
 
-# Nacte level - bud zakotveny ve hre, nebo lokalne ulozeny. Jeden vstup pro
-# obe cesty: hrac nemusi vedet, odkud level prisel.
-func load_named(n: String) -> void:
-	var lv: Level = Level.builtin(n)
-	if lv == null:
-		lv = Level.load_named(n)
-	level = lv
-	sel = 0
-	code = ""
-	local_name = level.name
-	status = "načteno: " + level.name
+# OTEVRI EDITOR TAM, KDE Hrac SKONCIL. Kdyz ma hrac rozdelany level, vrati se
+# do nej; teprve kdyz nic rozdelaneho neni, zacina novy.
+func open_last() -> void:
+	var last: String = Level.last_name()
+	if not last.is_empty() and Level.saved_names().has(last):
+		load_named(last)
+		return
+	reset()
 
 
 func _clamp_sel() -> void:
@@ -77,21 +94,47 @@ func _clamp_sel() -> void:
 	sel = clampi(sel, 0, level.lane_count() - 1)
 
 
+# Nacte level - bud zakotveny ve hre, nebo lokalne ulozeny. Jeden vstup pro
+# obe cesty: hrac nemusi vedet, odkud level prisel.
+#
+# ZAKOTVENY LEVEL SE NACTE JAKO KOPIE. Kdyby se upravoval pod svym jmenem,
+# ulozil by se do lokalniho seznamu pod jmenem zakotveneho levelu - a pri
+# dalsim nacteni by se hledal zase zakotveny, takze by hrac prisel o sve
+# upravy. Kopie ma vlastni jmeno a je to jeji vlastni level.
+func load_named(n: String) -> void:
+	var lv: Level = Level.builtin(n)
+	if lv == null:
+		level = Level.load_named(n)
+		local_name = level.name
+		status = "načteno: " + level.name
+	else:
+		level = lv
+		local_name = Level.next_free_name()
+		level.name = local_name
+		level.save()
+		status = "kopie levelu %s → %s" % [n, local_name]
+	sel = 0
+	code = ""
+	mode = MODE_EDIT
+	list_page = 0
+
+
 # Jedno tlacitko editoru. Vsechno, co editor umi, je tady - kdyby se
-# operace rozdelila mezi tlačítka a klávesové zkratky, nešlo by to na
+# operace rozdelila mezi tlacitka a klavesove zkratky, neslo by to na
 # telefonu vubec pouzit.
 func press(button: int) -> int:
 	# VYBER SE SROVNA PRVNI. Hrac mohl klepnout na usek a pak level zmenit
-	# (odebrat usek, nacist jiny) - bez toho by zivel nebo vystup sahal
+	# (odebrat usek, nacist jiny) - bez toho by zivel nebo cil sahal
 	# mimo level a hra by spadla az za behu.
 	_clamp_sel()
 	match button:
 		BTN_ADD:
-			if level.add_lane():
+			var from_j: int = level.from_of(sel) if level.lane_count() > 0 else 0
+			if level.add_lane(from_j):
 				sel = level.lane_count() - 1
-				status = "přidán úsek %d" % level.lane_count()
+				status = "přidán úsek %d z výhybky %d" % [level.lane_count(), from_j + 1]
 			else:
-				status = "víc než %d úseků nejde" % Level.MAX_LANES
+				status = "z té výhybky už vede víc úseků nejde"
 			_after_change()
 		BTN_DEL:
 			if level.lane_count() <= Level.MIN_LANES:
@@ -104,17 +147,32 @@ func press(button: int) -> int:
 				status = "úsek nejde odebrat"
 		BTN_ELEMENT:
 			_cycle_element()
-		BTN_EXIT:
-			_cycle_exit()
+		BTN_TARGET:
+			_cycle_target()
 		BTN_BEND_LEFT:
 			_bend(-Level.SPREAD_STEP * 5.0)
 		BTN_BEND_RIGHT:
 			_bend(Level.SPREAD_STEP * 5.0)
+		BTN_JUNCTION:
+			_junction()
+		BTN_LIST:
+			open_list()
 		BTN_EXPORT:
 			_export()
 		BTN_PLAY:
 			status = "spouštím hru s tímto levelem"
 	return button
+
+
+# Popisky tlacitek. Tlacitko vyhybky rika, co udela TED - rozdelit usek,
+# nebo ho naopak pripojit zpet. Tlacitko, ktere dela neco jineho, nez je na
+# nem napsane, je horsi nez zadne.
+func button_labels() -> Array:
+	var out: Array = []
+	for l in BTN_LABELS:
+		out.append(str(l))
+	out[BTN_JUNCTION] = "výhybka +" if can_split() else ("výhybka −" if can_merge() else "výhybka")
+	return out
 
 
 # Zmena levelu se rovnou uklada lokalne. Neni to "ukladani pro hrace" - je to
@@ -125,8 +183,10 @@ func _after_change() -> void:
 	level.save()
 
 
+# ---------------------------------------------------------------- usek
+
 # Zivel vybraneho useku. Cykli se pres vsechny ctyri a neutralni - hrac tak
-# muze postavit treba dve kolejе stejneho zivlu, nebo naopak udelat mapu bez
+# muze postavit treba dve useky stejneho zivlu, nebo naopak udelat mapu bez
 # neutralniho useku (coz je tezsi, ale hratelne).
 func _cycle_element() -> void:
 	if level.lane_count() == 0:
@@ -145,23 +205,26 @@ func _cycle_element() -> void:
 	_after_change()
 
 
-# Vystup, kam usek usti. Vystup je dira v mape - nema element a nikdo ho
-# "nevlastni". Kdyz jich je vic nez kolejí, zustanou nepouzite: to je
-# v poradku, maji proste jen vic der.
-func _cycle_exit() -> void:
+# CIL vybraneho useku: vystup, nebo VYHYBKA. Takhle se useky SPOJUJI (dva
+# useky do stejne vyhybky) i ROZDELUJI (vyhybka ma vic vetvi nez puvodni
+# jedna cesta). Preskakuji se cile, ktere by vyrobily smycku.
+func _cycle_target() -> void:
 	if level.lane_count() == 0:
 		return
-	var l: Dictionary = level.lanes[sel]
-	var ex: int = (int(l["exit"]) + 1) % maxi(level.exits.size(), 1)
-	l["exit"] = ex
-	level.lanes[sel] = l
+	if not level.cycle_target(sel):
+		status = "jiný cíl pro tenhle úsek není"
+		return
 	level.relayout()
-	status = "úsek %d ústí do výstupu %d" % [sel + 1, ex + 1]
+	var to: int = level.to_of(sel)
+	if to >= 0:
+		status = "úsek %d ústí do výstupu %d" % [sel + 1, to + 1]
+	else:
+		status = "úsek %d vede do výhybky %d" % [sel + 1, (level.junction_of(sel) + 1)]
 	_after_change()
 
 
-# Kde se usek ohne k vystupu. Mensi hodnota = ohne driv (bliz k vyhybce),
-# vetsi = jde dele rovne. Diky tomu se daji dve koleje sbihat do jednoho
+# Kde se usek ohne ke svemu cili. Mensi hodnota = ohne driv (bliz k vyhybce),
+# vetsi = jde dele rovne. Diky tomu se daji dve useky sbihat do jednoho
 # vystupu, nebo se naopak rozejit hned na zacatku.
 func _bend(d: float) -> void:
 	if level.lane_count() == 0:
@@ -173,6 +236,142 @@ func _bend(d: float) -> void:
 	level.relayout()
 	status = "úsek %d: odbočení %.2f" % [sel + 1, v]
 	_after_change()
+
+
+# ---------------------------------------------------------------- vyhybka
+
+# ROZDELENI: vybrany usek prestane koncit ve vystupu a konci v nove vyhybce,
+# ze ktere vedou dve vetve. Prvni pokracuje tam, kam vedl puvodni usek (a nese
+# jeho zivel), druha vede do noveho vystupu.
+func can_split() -> bool:
+	if level.lane_count() == 0 or sel < 0 or sel >= level.lane_count():
+		return false
+	if not level.lane_is_exit(sel):
+		return false
+	if level.junction_depth(level.from_of(sel)) + 1 > Level.MAX_DEPTH:
+		return false
+	if level.lane_count() + 2 > Level.MAX_LANES:
+		return false
+	return true
+
+
+# SLITI: vybrany usek vede do vyhybky, do ktere vede sam a jeji vetve konci
+# ve vystupech. Usek se prepoji na prvni z nich a vyhybka zmizi.
+func can_merge() -> bool:
+	if level.lane_count() == 0 or sel < 0 or sel >= level.lane_count():
+		return false
+	var j: int = level.junction_of(sel)
+	if j < 0:
+		return false
+	if level.lanes_into(j).size() != 1:
+		return false
+	var kids: Array = level.lanes_of(j)
+	if kids.is_empty():
+		return false
+	for k in kids:
+		if not level.lane_is_exit(k):
+			return false
+	return true
+
+
+func _junction() -> void:
+	if can_split():
+		var n0: int = level.lane_count()
+		var j: int = level.split_lane(sel)
+		if j < 0:
+			status = "výhybku tady udělat nejde"
+			return
+		# Vyber prvni novou vetev - hrac hned vidi, co ma upravit.
+		sel = mini(n0, level.lane_count() - 1)
+		status = "úsek %d se rozdělil výhybkou %d" % [sel, j + 1]
+		_after_change()
+		return
+	if can_merge():
+		var j2: int = level.junction_of(sel)
+		if level.merge_lane(sel):
+			status = "výhybka %d se slila zpět do úseku %d" % [j2 + 1, sel + 1]
+			_after_change()
+			return
+	if level.lane_count() > 0 and not level.lane_is_exit(sel):
+		status = "do té výhybky vede víc úseků, nedá se zrušit"
+	elif level.lane_count() + 2 > Level.MAX_LANES:
+		status = "víc než %d úseků nejde" % Level.MAX_LANES
+	elif level.junction_depth(level.from_of(sel)) + 1 > Level.MAX_DEPTH:
+		status = "dál už by výhybka neměla místo na bonusy"
+	else:
+		status = "z výhybky nejde udělat další"
+
+
+# ---------------------------------------------------------------- seznam
+
+func open_list() -> void:
+	mode = MODE_LIST
+	list_page = 0
+	status = ""
+
+
+func close_list() -> void:
+	mode = MODE_EDIT
+
+
+func is_list() -> bool:
+	return mode == MODE_LIST
+
+
+# Radky seznamu, ktere se vejdou na displej. Prvni je vzdy "novy level",
+# posledni "zpet"; mezi tim stranka levelu a pripadne listovani.
+func list_items(rows: int) -> Array:
+	var per: int = maxi(rows - 4, 1)
+	var names: Array = Level.saved_names()
+	names.reverse()
+	var pages: int = maxi(int(ceil(float(names.size()) / float(per))), 1)
+	list_page = clampi(list_page, 0, pages - 1)
+	var out: Array = []
+	out.append({"kind": "new", "name": "+ " + Level.next_free_name()})
+	var start: int = list_page * per
+	for i in range(start, mini(start + per, names.size())):
+		out.append({"kind": "level", "name": str(names[i])})
+	if names.size() > per:
+		if list_page + 1 < pages:
+			out.append({"kind": "more", "name": "▸ další úrovně"})
+		if list_page > 0:
+			out.append({"kind": "older", "name": "◂ předchozí"})
+	out.append({"kind": "back", "name": "zpět do editoru"})
+	return out
+
+
+# Klepnuti na radek seznamu.
+func pick(item: Dictionary) -> void:
+	match str(item.get("kind", "")):
+		"new":
+			reset()
+			status = "nový level: " + local_name
+		"level":
+			load_named(str(item.get("name", "")))
+		"more":
+			list_page += 1
+		"older":
+			list_page -= 1
+		"back":
+			close_list()
+
+
+# Popis vybraneho useku. Kresli se do HUDu editoru - deska sama zustava bez
+# textu jako ve hre.
+func sel_text() -> String:
+	if level.lane_count() == 0:
+		return "žádný úsek"
+	_clamp_sel()
+	var el: int = level.el_of(sel)
+	var el_name: String = "neutrální" if el == Level.NEUTRAL else Element.name_of(el)
+	var target: String
+	if level.lane_is_exit(sel):
+		target = "výstup %d" % (level.exit_of(sel) + 1)
+	else:
+		target = "→ výhybka %d" % (level.junction_of(sel) + 1)
+	return "úsek %d/%d · z výhybky %d · %s · %s · odbočení %.2f" % [
+		sel + 1, level.lane_count(), level.from_of(sel) + 1, el_name, target,
+		level.divert_of(sel)]
 
 
 # EXPORT. Vysledek je jednoradkovy KOD, ktery se vejde do Telegramu, a
@@ -191,18 +390,6 @@ func _export() -> void:
 		status = "kód je níže, soubor se nepodařilo uložit"
 	else:
 		status = "export: " + where
-
-
-# Popis vybraneho useku. Kresli se do HUDu editoru - deska sama zustava bez
-# textu jako ve hre.
-func sel_text() -> String:
-	if level.lane_count() == 0:
-		return "žádný úsek"
-	_clamp_sel()
-	var el: int = level.el_of(sel)
-	var el_name: String = "neutrální" if el == Level.NEUTRAL else Element.name_of(el)
-	return "úsek %d/%d · %s · výstup %d · odbočení %.2f" % [
-		sel + 1, level.lane_count(), el_name, level.exit_of(sel) + 1, level.divert_of(sel)]
 
 
 # Co je k dispozici k nacteni: zakotvene levely ve hre + lokalne ulozene.

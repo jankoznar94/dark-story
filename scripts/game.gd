@@ -29,7 +29,10 @@ const REWARD := 12
 #
 # Cisla jsou ZAKLADNI DESKA; konkretni level si je muze prepsat pres
 # Level.speed / Level.spawn. Hra je nikdy necte odsud - jen z levelu.
-const SPAWN_INTERVAL := 1.35
+#
+# Mezera mezi poutniky. Jan chtel jeste vic mista nez 1.35, proto 1.9
+# (52 px/s * 1.9 = 99 px mezi poutniky).
+const SPAWN_INTERVAL := 1.9
 const BUILD_TIME := 6.0
 const WAVE_BONUS := 40
 # Poskozeni, ktere da usek poutnikovi za CELE PROJETI sve delky pri
@@ -58,11 +61,16 @@ var rng: int = 20261009
 var log: Array = []
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
 var auto_wave: bool = true
+# VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
+# ROZEHRANE PARTIE, ne level: proto to neni v Levelu a proto se to pri zmene
+# velikosti okna neztrati (sit se prelozi, volba hrace zustava).
+var switch_sel: Array = []
 
 
 func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 		level_data: Level = null) -> void:
 	level = level_data if level_data != null else Level.base()
+	switch_sel = []
 	rebuild_network(r, scale_hint, bar_top)
 	bonuses = []
 	enemies = []
@@ -97,6 +105,23 @@ func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) 
 	var lv: Level = level if level != null else Level.base()
 	net = Network.new()
 	net.build(r, sc, bt, lv)
+	_sync_switch()
+
+
+# Volby vyhybek musi mit hra svuj vlastni seznam: sit se pri zmene velikosti
+# okna stavi ZNOVU, takze by se volba hrace ztratila. Prepocita se jen tolik
+# voleb, kolik ma sit vyhybek - kdyz se pocet zmeni (jiny level), zacinaji
+# vsechny na prvni vetvi.
+func _sync_switch() -> void:
+	var n: int = net.junction_count()
+	for j in range(n):
+		if j < switch_sel.size():
+			var lanes_in_j: int = maxi(net.junction_lanes[j].size(), 1)
+			switch_sel[j] = clampi(int(switch_sel[j]), 0, lanes_in_j - 1)
+		else:
+			switch_sel.append(0)
+	while switch_sel.size() > n:
+		switch_sel.remove_at(switch_sel.size() - 1)
 
 
 # ---------------------------------------------------------------- bonusy
@@ -191,18 +216,38 @@ func dps_on(e: Enemy) -> float:
 
 # ---------------------------------------------------------------- vyhybka
 
+# KLEPNUTI NA USEK PREPNE VYHYBKU, ZE KTERE TEN USEK VEDE. Vyhybek muze byt
+# vic a kazda ma svou volbu - hrac tim rozhoduje, kam pujde dalsi poutnik.
 func set_switch(lane: int) -> void:
 	if lane < 0 or lane >= net.lane_count():
 		return
-	net.switch_lane = lane
+	var j: int = net.lane_junction(lane)
+	if j < 0:
+		return
+	switch_sel[j] = int(net.lane_sel_index[lane])
 	if net.lane_is_neutral(lane):
-		_note("Výhybka nastavena na neutrální úsek.")
+		_note("Výhybka %d nastavena na neutrální úsek." % (j + 1))
 	else:
-		_note("Výhybka nastavena na %s." % Element.name_of(net.lane_element(lane)))
+		_note("Výhybka %d nastavena na %s." % [j + 1, Element.name_of(net.lane_element(lane))])
 
 
+# Ktery usek vyhybka posila. Hra to potrebuje pri kazdem pruchodu poutnika.
+func selected_lane(j: int) -> int:
+	if j < 0 or j >= net.junction_count():
+		return -1
+	if switch_sel.size() != net.junction_count():
+		_sync_switch()
+	return net.junction_lane(j, int(switch_sel[j]))
+
+
+# Usek vybrany na PRVNI vyhybce. HUD v nem ukazuje nasobek poskozeni.
 func switch_lane() -> int:
-	return net.switch_lane
+	return selected_lane(0)
+
+
+# Je tenhle usek prave vybrany na sve vyhybce? Kresli se podle toho jas.
+func lane_selected(lane: int) -> bool:
+	return selected_lane(net.lane_junction(lane)) == lane
 
 
 # Ktery zivel se na ten usek stavi. NENI to volba hrace: usek nese svuj
@@ -290,9 +335,24 @@ func _move_enemies(delta: float) -> void:
 		if not e.on_lane():
 			if e.s >= net.trunk_len:
 				e.s -= net.trunk_len
-				e.lane = net.switch_lane
+				e.lane = selected_lane(0)
 		else:
 			if e.s >= net.lane_len[e.lane]:
+				# Konec useku. Bud je to VYSTUP (stoji zivot), nebo dalsi
+				# VYHYBKA - a tam poutnik vstoupi na usek, ktery je prave
+				# vybrany. Vyhybka se tedy rozhoduje AZ V OKAMZIKU PRUCHODU,
+				# takze hrac muze prepinat i behem cesty.
+				var to: int = int(net.lane_to[e.lane])
+				if to < 0:
+					e.lane = selected_lane(-1 - to)
+					e.s = 0.0
+					if e.lane < 0:
+						e.leaked = true
+						e.alive = false
+						lives -= 1
+						continue
+					still.append(e)
+					continue
 				e.leaked = true
 				e.alive = false
 				lives -= 1

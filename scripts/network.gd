@@ -2,33 +2,32 @@ class_name Network
 extends RefCounted
 
 # Sit je cista GEOMETRIE postavena z LEVELU. Uz to nejsou "koleje do svatyni",
-# ale USEKY:
+# ale USEKY a VYHYBKY:
 #
-#   [neutralni kmen] -> [vyhybka] -> [ELEMENTARNI USEK] -> [neutralni vystup]
+#   [kmenný úsek] -> [VÝHYBKA 0] -> [ÚSEK] -> [VÝSTUP]
+#                                  \-------> [VÝHYBKA 1] -> [ÚSEK] -> [VÝSTUP]
+#                                                          \----> [ÚSEK] -> [VÝSTUP]
 #
-# POŠKOZENI SE DEJE NA USEKU, ne ve vezi. Usek je dmg zona: cim dele
-# poutnik po elementarnim useku jde, tim vic ran dostane. Kdo stoji na
-# kterem useku, rozhoduje HRAC vyhybkou.
+# POSKOZENI SE DEJE NA USEKU, ne ve vezi. Usek je dmg zona: cim dele poutnik
+# po useku jde, tim vic ran dostane. Kdo stoji na kterem useku, rozhoduje
+# HRAC - klepnutim na usek se prepne vyhybka, ze ktere ten usek vede. Kdyz
+# vyhybek vic, kazda si drzi svou volbu: klepnuti na usek prepne tu svou.
 #
-# ZADNA KOLEJ NEMUSI POSKOZOVAT VUBEC. Usek muze byt "harmless" - cesta bez
-# ran. Je to zakladni level, ktery ma takto nastavenou prvni kolej.
+# ZADNA KOLEJ NEMUSI POSKOZOVAT VUBEC. Usek muze byt neutralni - bere vsem
+# presne 100 %, takze je to spolehlivy zaklad, i kdyz nikoho nezabije.
 #
-# POSLEDNI PRUH JE NEUTRALNI: nepatri zadnemu zivlu, elementarni bonus
-# na nem stat nemuze, ale poskozuje vsechny stejne (100 %). Je to
-# spolehlivy zaklad - nikdy neublizi, nikdy nezvýhodni.
-#
-# KONEC: kazda kolej se za svym rovnym usekem ohne a slije se do jednoho
-# z NEUTRALNICH VYSTUPU. Vystup nema element a nikdo ho "nevlastni" -
-# poutnik, ktery tam dojde, stoji jeden zivot.
+# KONEC: usek vede bud do NEUTRALNIHO VYSTUPU (dira v mape, nikdo ji
+# "nevlastni", kdo tam dojde stoji zivot), nebo do dalsi VYHYBKY.
 #
 # ROZVRZENI JE RESPONZIVNI ve dvou rovinach:
 #   * POZICE jsou zlomky plochy -> sit vyplni displej, zadny letterbox.
 #   * VELIKOSTI jdou z jednoho meritka `scale` -> kruh zustane kruhem
 #     a mista na bonusy se na zadnem displeji nezacnou prekryvat.
 #
-# KDE se ohne (divert) je cas levelu, ne konstanty: dve koleje se tak sbihaji
-# na stejnem miste, treti se ohne hned za svym usekem. Kdyby to bylo pro vsechny
-# stejne, kazda zmena poctu kolejí by posunula i ty ostatni.
+# ROVNY USEK (kde stoji bonusy a kresli se dmg zona) se pocita Z KAZDEHO USEKU
+# ZVLAST: je to pas mezi jeho vyhybkou a jeho cilem. Zakladni deska z toho
+# vyjde presne na svuj vyladeny pas 0.40..0.80, ale druha vyhybka si posune
+# svuj pas dal od kraje - jinak by jeji useky nemely kam kreslit bonusy.
 #
 # Vsechna cisla levelu jsou v Level; tady je jen preklad do pixelu.
 
@@ -36,32 +35,49 @@ const BASE_BONUS_R := 26.0
 const BASE_EXIT_R := 30.0
 const BASE_SWITCH_R := 46.0
 const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
+# Nejmensi delka rovneho useku v pixelech. Z levelu se da vyrobit i usek tak
+# kratky, ze by se na nem bonusy slepily pres sebe; tady se to zastavi na
+# kreslitelne mezi.
+const MIN_RUN_PX := 60.0
 
 var level: Level = null
 var area: Rect2 = Rect2()
 var scale: float = 1.0
-# Horni hrana ovladaciho pruhu. Do site vstupuje jako OMEZENI: zadny bod
-# trasy ani vystup se nesmi kreslit do pruhu. Predava se jako parametr do
-# build() - kdyby se nastavoval na hotove siti, prvni build by pocital se
-# starym pruhem.
+# Horni hrana, za kterou se nesmi kreslit. Do site vstupuje jako OMEZENI:
+# zadny bod trasy ani vystup se nesmi kreslit za ni. Predava se jako parametr
+# do build() - kdyby se nastavoval na hotove siti, prvni build by pocital se
+# starym okrajem.
 var bar_top: float = 1.0e9
 var bonus_r: float = BASE_BONUS_R
 var exit_r: float = BASE_EXIT_R
 var switch_r: float = BASE_SWITCH_R
 var trunk_start: Vector2 = Vector2.ZERO
+# Vstup do prvni vyhybky a jeji stred. `merge` je bod, kde konci privodni
+# usek; z nej vede kratky kmen do stredu ventilatoru (`hub`). Kazda vyhybka
+# ma svou dvojici - vyhybka cislo j je na junction_pos[j] / junction_merge[j].
 var merge: Vector2 = Vector2.ZERO
 var hub: Vector2 = Vector2.ZERO
 var trunk_len: float = 0.0
-# Rovny usek kazde koleje - tady se kresli dmg zona i mista na bonusy.
 var band_x0: float = 0.0
 var band_x1: float = 0.0
 var rows: Array = []
 var lane_path: Array = []
 var lane_len: Array = []
+# Vystup, do ktereho usek usti. -1, kdyz usek vede do dalsi vyhybky.
 var lane_exit: Array = []
+# Kam usek vede (stejne kodovani jako v Levelu) a ze ktere vyhybky vede.
+var lane_to: Array = []
+var lane_from: Array = []
+# Ktere vetve sve vyhybky ten usek je - potrebuje hra, aby vedela, co prepnout.
+var lane_sel_index: Array = []
+# Rovny usek kazdeho useku: [x0, x1]. Tady stoji bonusy a kresli se dmg zona.
+var lane_run: Array = []
 var slot_pos: Array = []
 var exit_pos: Array = []
-var switch_lane: int = 0
+# Vyhybky. junction_lanes[j] jsou indexy useku, ktere z ni vedou.
+var junction_pos: Array = []
+var junction_merge: Array = []
+var junction_lanes: Array = []
 
 
 func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
@@ -77,20 +93,26 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	var w: float = r.size.x
 	var h: float = r.size.y
 
-	trunk_start = Vector2(r.position.x - 24.0 * scale, r.position.y + h * 0.5)
-	merge = Vector2(r.position.x + w * 0.22, r.position.y + h * 0.5)
-	hub = Vector2(r.position.x + w * 0.25, r.position.y + h * 0.5)
+	# --- vyhybky ---
+	# X z hloubky (kazda dalsi stoji dal od kraje, aby jeji useky mely pred
+	# vystupy misto), Y ze mrizky radku. Stred ventilatoru je to, co hrac
+	# vidi; privodni usek konci o kus driv (MERGE_GAP).
+	junction_pos = []
+	junction_merge = []
+	for j in range(level.junction_count()):
+		var jx: float = r.position.x + w * level.junction_x(j)
+		var jy: float = r.position.y + h * level.junction_row(j)
+		junction_pos.append(Vector2(jx, jy))
+		junction_merge.append(Vector2(jx - w * Level.MERGE_GAP, jy))
+	merge = junction_merge[0]
+	hub = junction_pos[0]
+	trunk_start = Vector2(r.position.x - 24.0 * scale, hub.y)
 	trunk_len = _poly_len(PackedVector2Array([trunk_start, merge]))
 
-	# Rovny usek vsech kolejí je SPOLECNY - dmg zony tak stoji pres sebe a
-	# hrac je vidi jako jednu mrizku. Kazda kolej se ohne az za nim.
-	band_x0 = r.position.x + w * level.band0
-	band_x1 = r.position.x + w * level.band1
-	var exit_x: float = r.position.x + w * level.exit_x
-
+	# --- radky useku ---
 	# Radky jsou uz hotove v levelu (Level.relayout je vystredi ve sve mrizce).
-	# Tady se jen prelozi do pixelu a pripadne pritlaci nad pruh, aby rucka
-	# nekreslila do ovladani.
+	# Tady se jen prelozi do pixelu a pripadne pritlaci nad spodni okraj, aby
+	# rucka nekreslila mimo plochu.
 	var label_room: float = 12.0 * scale
 	var y_last_max: float = bar_top - label_room
 	rows = []
@@ -102,42 +124,90 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	if shift > 0.0:
 		for i in range(rows.size()):
 			rows[i] = float(rows[i]) - shift
+		for j in range(junction_pos.size()):
+			var p: Vector2 = junction_pos[j]
+			var m: Vector2 = junction_merge[j]
+			junction_pos[j] = p - Vector2(0.0, shift)
+			junction_merge[j] = m - Vector2(0.0, shift)
+		merge = junction_merge[0]
+		hub = junction_pos[0]
+		trunk_start = Vector2(trunk_start.x, hub.y)
 
-	# Vystupy jsou DIRY V MAPE, ne vlastnictvi nejake koleje. Kdo tam dojde,
+	# --- vystupy ---
+	# Vystupy jsou DIRY V MAPE, ne vlastnictvi nejakeho useku. Kdo tam dojde,
 	# stoji zivot - a nikdo se na ne neda poslat "bezpecne".
 	exit_pos = []
 	for i in range(level.exits.size()):
 		var p: Array = level.exits[i]
-		exit_pos.append(Vector2(r.position.x + w * float(p[0]),
-			r.position.y + h * float(p[1])))
+		var v := Vector2(r.position.x + w * float(p[0]), r.position.y + h * float(p[1]))
+		if shift > 0.0:
+			v = v - Vector2(0.0, shift)
+		exit_pos.append(v)
 
+	# --- useky ---
 	lane_path = []
 	lane_len = []
 	lane_exit = []
+	lane_to = []
+	lane_from = []
+	lane_sel_index = []
+	lane_run = []
 	slot_pos = []
+	junction_lanes = []
+	for j in range(level.junction_count()):
+		var jl: Array = level.lanes_of(j)
+		junction_lanes.append(jl)
+		for k in range(jl.size()):
+			var idx: int = int(jl[k])
+			while lane_sel_index.size() <= idx:
+				lane_sel_index.append(0)
+			lane_sel_index[idx] = k
 
-	var run: float = band_x1 - band_x0
+	var run0: Array = []
 	for i in range(level.lane_count()):
-		var ex: int = level.exit_of(i)
-		# Existence vystupu je invariant site, ne něco, co se smi jen tak
-		# rozbit: kdyby index prestrelil, hra by spadla az za behu.
-		ex = clampi(ex, 0, exit_pos.size() - 1)
-		lane_exit.append(ex)
+		var src_j: int = level.from_of(i)
+		src_j = clampi(src_j, 0, maxi(junction_pos.size() - 1, 0))
+		var hubp: Vector2 = junction_pos[src_j]
+		var mergep: Vector2 = junction_merge[src_j]
+		var to: int = level.to_of(i)
+		# Cil: vystup, nebo privodni bod dalsi vyhybky. Kdyz usek konci
+		# u vyhybky, konci PRESNE tam, kde zacina jeji privodni usek - poutnik
+		# tak plynule prejde z jednoho useku na druhy.
+		var target: Vector2
+		if to >= 0:
+			target = exit_pos[clampi(to, 0, maxi(exit_pos.size() - 1, 0))]
+		else:
+			target = junction_merge[clampi(-1 - to, 0, maxi(junction_merge.size() - 1, 0))]
+		# Rovny usek: podil cesty pred ohybem a za nim.
+		var span_px: float = target.x - hubp.x
+		var frac: float = Level.RUN_FRAC if to >= 0 else Level.RUN_FRAC_CONNECTOR
+		var x0: float = hubp.x + span_px * frac
+		var x1: float = target.x - span_px * frac
+		if x1 < x0 + MIN_RUN_PX * scale:
+			x1 = x0 + MIN_RUN_PX * scale
 		var y: float = float(rows[i])
-		var dx: float = level.divert_x(i)
-		var ey: float = r.position.y + h * level.exit_row(ex)
+		var dx: float = lerp(x0, x1, level.divert_of(i))
 		var path := PackedVector2Array([
-			merge, hub,
-			Vector2(band_x0, y),
-			Vector2(r.position.x + w * dx, y),
-			Vector2(exit_x, ey),
+			mergep, hubp,
+			Vector2(x0, y),
+			Vector2(dx, y),
+			target,
 		])
 		lane_path.append(path)
 		lane_len.append(_poly_len(path))
+		lane_exit.append(to if to >= 0 else -1)
+		lane_to.append(to)
+		lane_from.append(src_j)
+		lane_run.append([x0, x1])
+		if i == 0:
+			run0 = [x0, x1]
 		var slots: Array = []
 		for f in SLOT_FRACTIONS:
-			slots.append(Vector2(band_x0 + float(f) * run, y))
+			slots.append(Vector2(x0 + float(f) * (x1 - x0), y))
 		slot_pos.append(slots)
+	# Pas prvniho useku. Je tu pro testy a pro kresleni zakladni desky.
+	band_x0 = float(run0[0]) if run0.size() == 2 else 0.0
+	band_x1 = float(run0[1]) if run0.size() == 2 else 0.0
 
 
 func point_at(lane: int, s: float) -> Vector2:
@@ -174,6 +244,10 @@ func lane_count() -> int:
 	return lane_path.size()
 
 
+func junction_count() -> int:
+	return junction_lanes.size()
+
+
 # Je ta kolej neutralni? Nema element, elementarni bonus na ni
 # stat nemuze, poskozuje vsechny stejne.
 func lane_is_neutral(lane: int) -> bool:
@@ -186,11 +260,44 @@ func lane_element(lane: int) -> int:
 
 
 # Muze na tuhle kolej tento bonus? Jedno misto, kde se pravidlo vyhodnocuje.
-# Na neutralni kolej nesmi NIC - ani neutralni bonus neexistuje, protoze
-# neutralni usek uz poskozuje vsechny stejne a nema co posilovat. A na usek,
-# ktery vubec neposkozuje, nema co posilovat tuplem.
 func lane_accepts(lane: int, element: int) -> bool:
 	return level.accepts(lane, element)
+
+
+# Ktera vyhybka ten usek posila. Hrac na usek klepne a prepne tim SVOU vyhybku.
+func lane_junction(lane: int) -> int:
+	if lane < 0 or lane >= lane_from.size():
+		return -1
+	return int(lane_from[lane])
+
+
+# Usek, ktery z vyhybky vede v poradi `k`.
+func junction_lane(j: int, k: int) -> int:
+	if j < 0 or j >= junction_lanes.size():
+		return -1
+	var jl: Array = junction_lanes[j]
+	if k < 0 or k >= jl.size():
+		return -1
+	return int(jl[k])
+
+
+# Usek, ktery z vyhybky vede do jejiho stredu - to je ta "kmenova" vetev,
+# ktera se kresli jako pokracovani privodniho useku.
+func junction_hub_lane(j: int) -> int:
+	if j < 0 or j >= junction_lanes.size():
+		return -1
+	var jl: Array = junction_lanes[j]
+	if jl.is_empty():
+		return -1
+	var best: int = int(jl[0])
+	var best_d: float = 1.0e9
+	for item in jl:
+		var idx: int = int(item)
+		var d: float = absf(float(rows[idx]) - junction_pos[j].y)
+		if d < best_d:
+			best_d = d
+			best = idx
+	return best
 
 
 func nearest_slot(world: Vector2) -> Vector2i:
@@ -235,7 +342,7 @@ func _dist_to_path(lane: int, world: Vector2) -> float:
 	return best
 
 
-# Nejmensi vzdalenost mezi misty na bonusech RŮZNÝCH kolejích. Testy tuhle
+# Nejmensi vzdalenost mezi misty na bonusech RŮZNÝCH usecích. Testy tuhle
 # hodnotu kontroluji, aby se bonusy po zmene rozvrzeni nezacaly prekryvat.
 func min_cross_lane_slot_distance() -> float:
 	var n: int = lane_path.size()
@@ -248,10 +355,6 @@ func min_cross_lane_slot_distance() -> float:
 					if d < best:
 						best = d
 	return best
-
-
-func switch_hit(world: Vector2) -> bool:
-	return merge.distance_to(world) <= switch_r
 
 
 func _poly_len(path: PackedVector2Array) -> float:

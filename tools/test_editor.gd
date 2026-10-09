@@ -25,6 +25,10 @@ func _init() -> void:
 	_test_play_custom_level()
 	_test_selector_matches_drawn_lanes()
 	_test_status_text()
+	_test_junction_split_merge()
+	_test_junction_depth_limit()
+	_test_level_list()
+	_test_open_last()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -58,7 +62,7 @@ func _test_buttons_change_level() -> void:
 	_ok(ed.level.lane_count() == n0, "tlacitko 'usek −' usek odebere")
 	# KAZDE tlacitko musi neco zmenit. Kdyby nejake nedelalo nic, hrac by
 	# mackal a nic by se nedelo - a nikdo by nepoznal, ktere to je.
-	for b in [Editor.BTN_ELEMENT, Editor.BTN_EXIT, Editor.BTN_BEND_LEFT, Editor.BTN_BEND_RIGHT]:
+	for b in [Editor.BTN_ELEMENT, Editor.BTN_TARGET, Editor.BTN_BEND_LEFT, Editor.BTN_BEND_RIGHT]:
 		var e2 := _fresh()
 		var before: String = e2.level.to_code()
 		e2.press(b)
@@ -85,14 +89,17 @@ func _test_element_cycle() -> void:
 
 
 func _test_exit_cycle() -> void:
+	# CIL USEKU: vyhybka ho cykli pres vsechny vystupy (a u levelu s dalsi
+	# vyhybkou i pres ni - tim se useky SPOJUJI). Na zakladni desce jsou jen
+	# vystupy, takze se musi dat projit vsechny.
 	var ed := _fresh()
 	ed.sel = 0
 	var seen := {}
 	for i in range(ed.level.exits.size() + 1):
-		seen[ed.level.exit_of(0)] = true
-		ed.press(Editor.BTN_EXIT)
+		seen[ed.level.to_of(0)] = true
+		ed.press(Editor.BTN_TARGET)
 	_ok(seen.size() == ed.level.exits.size(),
-		"vystup se cykli pres vsechny vystupy (%d z %d)" % [seen.size(), ed.level.exits.size()])
+		"cíl se cykli pres vsechny vystupy (%d z %d)" % [seen.size(), ed.level.exits.size()])
 	# a kazdy vystup musi byt porad v plose
 	for i in range(ed.level.exits.size()):
 		var p: Array = ed.level.exits[i]
@@ -257,3 +264,120 @@ func _test_status_text() -> void:
 	ed.press(Editor.BTN_DEL)
 	ed.press(Editor.BTN_ELEMENT)
 	_ok(ed.sel < ed.level.lane_count(), "vyber po odebrani zustava v levelu (%d)" % ed.sel)
+
+
+# --------------------------------------------------------------- vyhybky
+
+# ROZDELENI A SLITI USEKU. Tohle je cela pointa druhe vyhybky: hrac si vyrobi
+# dalsi volbu na ceste, ktera dosud zadnou nemela - a kdyz se mu to nelibi,
+# zase ji zrusi. Kdyby slo jen pridavat, byl by level jednosmerka.
+func _test_junction_split_merge() -> void:
+	var ed := _fresh()
+	var n0: int = ed.level.lane_count()
+	var before_to: int = ed.level.to_of(0)
+	ed.sel = 0
+	_ok(ed.can_split(), "vybrany usek se da rozdělit výhybkou")
+	ed.press(Editor.BTN_JUNCTION)
+	_ok(ed.level.junction_count() == 2, "přibyla druhá výhybka (%d)" % ed.level.junction_count())
+	_ok(ed.level.lane_count() == n0 + 2, "a s ní dvě nové větve (%d)" % ed.level.lane_count())
+	_ok(not ed.level.lane_is_exit(0), "rozdělený úsek už nekončí ve výstupu")
+	var j: int = ed.level.junction_of(0)
+	_ok(ed.level.lanes_of(j).size() == 2, "z nové výhybky vedou dva úseky")
+	# jedna vetev pokracuje tam, kam vedl puvodni usek - cesta se nikam neztratila
+	var kept := false
+	var diff := false
+	for k in ed.level.lanes_of(j):
+		if ed.level.to_of(k) == before_to:
+			kept = true
+		else:
+			diff = true
+	_ok(kept, "jedna větev pokračuje do původního výstupu")
+	_ok(diff, "druhá větev vede jinam - rozdělení něco znamená")
+	_ok(ed.level.validate().is_empty(),
+		"takový level je platný: %s" % str(ed.level.validate()))
+	# usek z prvni vyhybky je kratky, ale i na nem musi byt misto na bonusy
+	var n_net := Network.new()
+	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
+	_ok(n_net.junction_count() == 2, "síť postaví obě výhybky")
+	_ok(n_net.lane_run[0][1] - n_net.lane_run[0][0] > 40.0,
+		"rovný úsek spojovacího useku má rozumnou délku (%.0f)" % (n_net.lane_run[0][1] - n_net.lane_run[0][0]))
+	# SLITI ZPET
+	ed.sel = 0
+	_ok(ed.can_merge(), "rozdělený úsek se dá zase slít")
+	ed.press(Editor.BTN_JUNCTION)
+	_ok(ed.level.junction_count() == 1, "výhybka zmizela (%d)" % ed.level.junction_count())
+	_ok(ed.level.lane_count() == n0, "a s ní i její větve (%d)" % ed.level.lane_count())
+	_ok(ed.level.to_of(0) == before_to, "úsek vede zase tam, kam vedl")
+
+
+# HLOUBKA. Z vetve druhe vyhybky uz treti vest nesmi - mezi vyhybkou a
+# vystupem musi zustat misto na rovny usek s bonusy. A cil vetve z vyhybky
+# nesmi nabizet jinou vyhybku: vznikla by smycka, po ktere by poutnik sel
+# porad dokola.
+func _test_junction_depth_limit() -> void:
+	var ed := _fresh()
+	ed.sel = 0
+	ed.press(Editor.BTN_JUNCTION)
+	var j: int = ed.level.junction_of(0)
+	var sub: int = int(ed.level.lanes_of(j)[0])
+	ed.sel = sub
+	_ok(not ed.can_split(), "z větve druhé výhybky už další výhybka nejde")
+	ed.press(Editor.BTN_JUNCTION)
+	_ok(ed.level.junction_count() == 2,
+		"a opravdu žádná nepřibyla (%d)" % ed.level.junction_count())
+	var bad := 0
+	for c in ed.level.target_choices(sub):
+		if int(c) < 0:
+			bad += 1
+	_ok(bad == 0, "větev z výhybky míří jen do výstupů (%d jinam)" % bad)
+	_ok(ed.level.validate().is_empty(), "level je pořád platný")
+
+
+# --------------------------------------------------------------- seznam
+
+# SEZNAM ULOZENYCH LEVELU. Ulozene levely musi byt odnekud videt a klepnutim
+# se musi dat nacist zpet - jinak by kazde otevreni editoru zacalo od nuly
+# a ulozena prace by byla nedostizna.
+func _test_level_list() -> void:
+	var ed := _fresh()
+	ed.press(Editor.BTN_ADD)
+	var name: String = ed.local_name
+	var rows := 8
+	var items: Array = ed.list_items(rows)
+	_ok(items.size() <= rows, "seznam se vejde na displej (%d radku)" % items.size())
+	_ok(str(items[0]["kind"]) == "new", "prvni radek je novy level")
+	_ok(str(items[items.size() - 1]["kind"]) == "back", "posledni je navrat do editoru")
+	var found := false
+	for it in items:
+		if str(it["kind"]) == "level" and str(it["name"]) == name:
+			found = true
+	_ok(found, "právě uložený level je v seznamu")
+	# klepnuti na radek level nacte - a hrac v nem muze pokracovat
+	var want := ed.level.lane_count()
+	var ed2 := Editor.new()
+	ed2.list_items(rows)
+	ed2.load_named(name)
+	_ok(ed2.level.lane_count() == want, "načtený level má stejné úseky (%d)" % ed2.level.lane_count())
+	_ok(ed2.local_name == name, "a další změny jdou zase do něho, ne do nového")
+	ed2.press(Editor.BTN_ELEMENT)
+	_ok(Level.load_named(name).lane_count() == want,
+		"a uloží se zpátky pod svým jménem")
+	# novy level zpet dostane nove jmeno, aby se v seznamu neprekryl
+	var ed3 := Editor.new()
+	ed3.reset()
+	_ok(ed3.local_name != name, "nový level má vlastní jméno (%s vs %s)" % [ed3.local_name, name])
+	_ok(Level.saved_names().has(ed3.local_name), "a je hned v seznamu")
+
+
+# EDITOR SE OTEVRE TAM, KDE Hrac SKONCIL. Kdyby zacinal vzdy od nuly, prisel
+# by hrac o rozdelanou praci pri kazdem odskoci do hry.
+func _test_open_last() -> void:
+	var ed := _fresh()
+	ed.press(Editor.BTN_ADD)
+	var name: String = ed.local_name
+	var lanes: int = ed.level.lane_count()
+	var ed2 := Editor.new()
+	ed2.open_last()
+	_ok(ed2.local_name == name,
+		"editor se otevře tam, kde hráč skončil (%s vs %s)" % [ed2.local_name, name])
+	_ok(ed2.level.lane_count() == lanes, "a s tím, co měl rozdělané (%d)" % ed2.level.lane_count())

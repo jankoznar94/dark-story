@@ -44,6 +44,7 @@ func _init() -> void:
 	_test_menu_buttons_are_wired()
 	_test_board_has_no_furniture()
 	_test_guide_shape()
+	_test_editor_screens_are_wired()
 	for spec in REAL_SCREENS:
 		var w: float = float(spec[0])
 		var h: float = float(spec[1])
@@ -170,6 +171,35 @@ func _test_guide_shape() -> void:
 		_ok(not str(b["text"]).is_empty(), "blok %s ma popisek" % art)
 
 
+# DVE NOVE OBRAZOVKY EDITORU A NAVRAT ZE HRY. Kontroluje se, ze jsou opravdu
+# NAPOJENE - ze se seznam levelu kresli i obsluhuje a ze se z rozehraneho
+# levelu da vratit do editoru. Kdyby zustala jen funkce bez volani, hrac by
+# na obrazovce videl neco jineho, nez co se da zmacknout.
+func _test_editor_screens_are_wired() -> void:
+	var src: String = _read("res://scripts/game_view.gd")
+	# seznam levelu
+	_ok(src.contains("_draw_editor_list()"), "seznam levelu se kresli")
+	_ok(src.contains("editor.is_list()"), "obsluha klepnuti vi o seznamu")
+	_ok(src.contains("editor.list_items("), "radky seznamu jdou z editoru")
+	_ok(src.contains("layout.editor_list_fit()"), "a rozvrzeni rika, kolik jich je videt")
+	_ok(src.contains("editor.pick("), "klepnuti na radek level nacte")
+	_ok(src.contains("_open_editor"), "editor se z menu otevira")
+	_ok(src.contains("editor.open_last()"),
+		"a otevira se tam, kde hrac skoncil (ne od nuly)")
+	# navrat do editoru z rozehrane hry
+	_ok(src.contains("layout.hud_back"), "navrat do editoru je v hornim panelu")
+	_ok(src.contains("_back_to_editor()"), "a klepnuti na nej neco dela")
+	_ok(src.contains("_from_editor = true"), "hrac vi, ze hraje level z editoru")
+	_ok(src.contains("menu.open_editor()\n	editor.close_list()"),
+		"navrat zpet otevre editor a ne jeho seznam")
+	# tlacitka editoru: popisky se berou z editoru (tlacitko vyhybky se meni)
+	_ok(src.contains("editor.button_labels()"), "popisky tlacitek editoru jdou z editoru")
+	_ok(not src.contains("Editor.BTN_LABELS"), "a nikdo je nebere z konstanty")
+	_ok(Editor.BTN_LABELS.size() == ScreenLayout.ED_COUNT,
+		"tlacitek editoru je tolik, kolik jich rozvrzeni pocita (%d vs %d)" % [
+			Editor.BTN_LABELS.size(), ScreenLayout.ED_COUNT])
+
+
 func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 	var lay := ScreenLayout.new()
 	lay.compute(Vector2(w, h))
@@ -187,6 +217,33 @@ func _check_screen(w: float, h: float, name: String, font: Font) -> String:
 		"%s: deska nekonci u okraje displeje (%.0f vs %.0f)" % [name, lay.board_bottom, h])
 	_ok(lay.arena.end.y + 0.5 >= lay.board_bottom - 6.0 * lay.s,
 		"%s: herni plocha nedosahuje k okraji desky" % name)
+
+	# --- NAVRAT DO EDITORU v hornim panelu ---
+	# Je to JEDINE tlacitko, ktere se v hre muze objevit (a jen kdyz hrac
+	# hraje level z editoru). Musi byt cele v panelu a vpravo, kde nic
+	# neprekazi - a musi byt dost velke na prst.
+	var hb: Rect2 = lay.hud_back
+	_ok(hb.position.x >= 0.0 and hb.end.x <= w + 0.5 and hb.end.y <= lay.hud_h + 0.5,
+		"%s: navrat do editoru leze mimo horni panel (%s)" % [name, hb])
+	_ok(hb.position.x >= w * 0.70,
+		"%s: navrat do editoru prekazi cislum v panelu (x=%.0f)" % [name, hb.position.x])
+	_ok(hb.size.x >= 80.0 * lay.ui and hb.size.y >= lay.hud_h - 6.0 * lay.ui - 0.01,
+		"%s: navrat do editoru je moc maly (%s)" % [name, hb])
+
+	# --- SEZNAM ULOZENYCH LEVELU v editoru ---
+	var fit: int = lay.editor_list_fit()
+	_ok(fit >= 3, "%s: do seznamu levelu se vejdou aspon tri radky (%d)" % [name, fit])
+	var lrows: Array = lay.editor_list_rows(fit)
+	_ok(lrows.size() == fit, "%s: radku seznamu je tolik, kolik se jich vejde" % name)
+	for i in range(lrows.size()):
+		var lr: Rect2 = lrows[i]
+		_ok(lr.position.x >= -0.5 and lr.end.y <= h + 0.5,
+			"%s: radek seznamu %d leze mimo obrazovku (%s)" % [name, i, lr])
+		_ok(minf(lr.size.x, lr.size.y) >= MIN_TOUCH - 0.01,
+			"%s: radek seznamu %d je moc maly (%.1f)" % [name, i, minf(lr.size.x, lr.size.y)])
+		for j in range(i + 1, lrows.size()):
+			var lr2: Rect2 = lrows[j]
+			_ok(not lr.intersects(lr2), "%s: radky seznamu %d a %d se prekryvaji" % [name, i, j])
 
 	# --- NAVOD SE MUSI VEJIT CELY ---
 	# Navod je jedina informace o pravidlech hry. Je obrazkovy, takze se

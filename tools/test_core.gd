@@ -24,6 +24,7 @@ func _init() -> void:
 	_test_level_round_trip()
 	_test_level_edits()
 	_test_custom_level_plays()
+	_test_two_junctions()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -145,7 +146,7 @@ func _test_geometry() -> void:
 		if int(used[k]) > 1:
 			shared += 1
 	_ok(shared > 0, "aspon jeden vystup je spolecny pro vic pruhu (%d)" % shared)
-	_ok(g.net.switch_lane == 0, "vyhybka startuje na prvnim pruhu")
+	_ok(g.switch_lane() == 0, "vyhybka startuje na prvnim pruhu")
 	# ROZVRZENI: bonusy na sousednich pruhach se nesmi prekryvat.
 	var gap: float = g.net.min_cross_lane_slot_distance()
 	_ok(gap > g.net.bonus_r * 2.0 + 8.0,
@@ -450,6 +451,10 @@ func _test_spawn_gap_is_swattable() -> void:
 	var need: float = 40.0
 	_ok(room > need,
 		"mezera mezi poutniky staci na dve klepnuti (%.0f px, potreba %.0f)" % [room, need])
+	# Jan chtel jeste vic mista ("o dost větší") - mezera se proto hlida
+	# i zdola, ne jen shora. Strop je tu proto, ze mezi dvema poutniky nesmi
+	# byt takova dira, aby se hra zacala vleknout.
+	_ok(room >= 90.0, "a je o dost vetsi nez driv (%.0f px, driv 70)" % room)
 	_ok(room < 140.0, "a rozestup neni prehnane velky (%.0f px)" % room)
 
 
@@ -633,11 +638,11 @@ func _test_level_edits() -> void:
 	_ok(used.size() < lv.lane_count(), "kdyz je koleji min, sbihaji se do jednoho vystupu")
 	# rucky nesmi utect: level se po kazde zmene srovna
 	lv.spread = 9.0
-	lv.band0 = -3.0
+	lv.exit_x = -3.0
 	lv.zone_dmg = 5000.0
 	lv.clamp_all()
 	_ok(lv.spread <= 0.30, "rozestup se srovna do mezi (%.2f)" % lv.spread)
-	_ok(lv.band0 >= 0.28, "zacatek rovneho useku se srovna (%.2f)" % lv.band0)
+	_ok(lv.exit_x >= 0.80, "konec useku se srovna do mezi (%.2f)" % lv.exit_x)
 	_ok(lv.zone_dmg <= 90.0, "poskozeni se srovna do mezi (%.0f)" % lv.zone_dmg)
 	_ok(lv.validate().is_empty(), "a takovy level je v poradku: %s" % str(lv.validate()))
 
@@ -675,3 +680,40 @@ func _test_custom_level_plays() -> void:
 	g.run_for(60.0)
 	_ok(e.hp <= 0.0, "i v levelu z editoru poutnik na protikladu umre (hp=%.1f)" % e.hp)
 	_ok(g.lives == lives0, "a zivot to nestalo")
+
+
+# --------------------------------------------------------------- 15 vyhybky
+
+# LEVEL SE DVEMA VYHYBKAMI. Poutnik projde prvni vyhybkou na usek, ktery vede
+# do druhe vyhybky, a tam se rozhoduje ZNOVU - a nezavisle na te prvni.
+# Vsechno ostatni je jen kresleni: tahle cesta je to, co hrac v levelu s druhou
+# vyhybkou vlastne hraje.
+func _test_two_junctions() -> void:
+	var lv := Level.base()
+	var j: int = lv.split_lane(0)
+	_ok(j >= 0 and lv.junction_count() == 2, "level ma druhou vyhybku (%d)" % lv.junction_count())
+	_ok(lv.validate().is_empty(), "a je platny: %s" % str(lv.validate()))
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv)
+	g.auto_wave = false
+	_ok(g.net.junction_count() == 2, "sit postavi obe vyhybky (%d)" % g.net.junction_count())
+	# vyhybky se prepinaji NEZAVISLE: kazda svym usekem
+	var branch: int = int(lv.lanes_of(1)[0])
+	g.set_switch(branch)
+	_ok(g.selected_lane(1) == branch, "druha vyhybka se prepne svym usekem (%d)" % g.selected_lane(1))
+	g.set_switch(2)
+	_ok(g.selected_lane(1) == branch, "a prvni vyhybka se tim nezmeni")
+	_ok(g.switch_lane() == 2, "prvni vyhybka si drzi svou volbu (%d)" % g.switch_lane())
+	# poutnik poslany na privodni usek dojde az do druhe vyhybky
+	g.set_switch(0)
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	var t := 0.0
+	while t < 30.0 and e.alive and e.lane != branch:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+	_ok(e.alive and e.on_lane() and lv.from_of(e.lane) == 1,
+		"poutnik prosel druhou vyhybkou na jeji usek (lane=%d)" % e.lane)
+	# zmena velikosti okna nesmi volbu vyhybek zahodit - sit se stavi znovu
+	g.rebuild_network(Rect2(40.0, 80.0, 500.0, 404.0), 1.0, 500.0)
+	_ok(g.switch_lane() == 0, "po zmene velikosti okna volba prvni vyhybky zustava (%d)" % g.switch_lane())
+	_ok(g.selected_lane(1) == branch, "a i volba druhe vyhybky (%d)" % g.selected_lane(1))

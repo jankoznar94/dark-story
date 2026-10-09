@@ -45,7 +45,13 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-const ED_COUNT := 8
+const ED_COUNT := 10
+
+# HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
+# hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
+# desce: panel neni hraci plocha a hrac se z rozdelaneho levelu musi dostat
+# zpet. Sirka je zamerne velkorysa - je to cil pro prst.
+const HUD_BACK_W := 104.0
 
 var view := Vector2(REF_W, REF_H)
 var s := 1.0
@@ -64,6 +70,8 @@ var menu_buttons: Array = []
 var menu_title_y := 0.0
 var settings_toggle := Rect2()
 var settings_back := Rect2()
+# Navrat do editoru v hornim panelu hry (jen kdyz hrac hraje level z editoru).
+var hud_back := Rect2()
 # Editor: pruh tlacitek dole + plocha, kterou zabira.
 var ed_buttons: Array = []
 var editor_arena := Rect2()
@@ -93,6 +101,12 @@ func compute(v: Vector2) -> void:
 	# ZPET v navodu: v rohu obrazovky, na dotykovem minimu.
 	guide_back = Rect2(v.x - PAD * ui - SKIP_W * ui,
 		v.y - MIN_TOUCH - 8.0 * ui, SKIP_W * ui, MIN_TOUCH)
+	# NAVRAT DO EDITORU v hornim panelu. Kresli se jen tehdy, kdyz hrac hraje
+	# level z editoru - jinak by na desce bylo tlacitko, ktere nema co delat.
+	# Je to v panelu, ne na desce, a je to co nejvetsi: prst se na telefon
+	# nema kam jinam vejit.
+	hud_back = Rect2(v.x - PAD * ui * 0.5 - HUD_BACK_W * ui, 3.0 * ui,
+		HUD_BACK_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
 
 	# --- MENU ---
 	# Ctyři tlacitka pod sebou, svisle vycentrovana. Vyska se drzi na
@@ -168,6 +182,36 @@ func all_editor_buttons() -> Array:
 	var out: Array = []
 	for r in ed_buttons:
 		out.append(r)
+	return out
+
+
+# SEZNAM ULOZENYCH LEVELU v editoru. Kolik radku se vejde, pocita rozvrzeni -
+# jinak by hrac s hodne levely mel seznam, ktery mu pretece z displeje.
+func editor_list_fit() -> int:
+	var top: float = hud_h + 8.0 * ui
+	var bottom: float = view.y - 6.0 * ui
+	var h: float = editor_list_row_h()
+	return maxi(int((bottom - top + editor_list_gap()) / (h + editor_list_gap())), 1)
+
+
+func editor_list_row_h() -> float:
+	return maxf(MIN_TOUCH, 30.0 * ui)
+
+
+func editor_list_gap() -> float:
+	return 6.0 * ui
+
+
+func editor_list_rows(count: int) -> Array:
+	var out: Array = []
+	if count <= 0:
+		return out
+	var h: float = editor_list_row_h()
+	var gap: float = editor_list_gap()
+	var top: float = hud_h + 8.0 * ui
+	var w: float = view.x - 2.0 * PAD * ui
+	for i in range(count):
+		out.append(Rect2(PAD * ui, top + float(i) * (h + gap), w, h))
 	return out
 
 
