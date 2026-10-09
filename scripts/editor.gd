@@ -171,9 +171,9 @@ func press(button: int) -> int:
 		BTN_EXIT_DEL:
 			_exit_minus()
 		BTN_BEND_LEFT:
-			_bend(-Level.SPREAD_STEP * 5.0)
+			_bend_or_node(-1)
 		BTN_BEND_RIGHT:
-			_bend(Level.SPREAD_STEP * 5.0)
+			_bend_or_node(1)
 		BTN_JUNCTION:
 			_junction()
 		BTN_ENTRY:
@@ -195,6 +195,14 @@ func button_labels() -> Array:
 	for l in BTN_LABELS:
 		out.append(str(l))
 	out[BTN_JUNCTION] = "výhybka" if can_split() else ("sloučit" if can_merge() else "výhybka")
+	# U NAPOJENI SE TATAZ TLACITKA JMENUJI "uzel". Kdyz usek vede do jineho
+	# useku, hrac u nej nevybira odboceni, ale UZEL - tedy KAM na cilovem useku
+	# se vetev vleje. Popisek vzdy rika, co se stane (stejna zvyklost jako
+	# "výhybka"/"sloučit" a "vstup +/−"); hrac tak nemusi prokladat cely
+	# cyklus "cíl", aby se posunul o uzel dal.
+	var joined: bool = level.lane_count() > 0 and level.target_kind(sel) == Level.TO_LANE
+	out[BTN_BEND_LEFT] = "uzel −" if joined else "odboč −"
+	out[BTN_BEND_RIGHT] = "uzel +" if joined else "odboč +"
 	# Tlacitko kmene rika presne to, co udela: "vstup −" jen kdyz je opravdu
 	# co odebrat. Kdyz by popisek lhal, hrac by dvakrat zmackl "vstup +" a
 	# podruhe by o vetev prisel.
@@ -383,6 +391,53 @@ func _exit_minus() -> void:
 		return
 	level.remove_exit(free)
 	status = "zrušen cíl %d, do kterého nic nevedlo" % (free + 1)
+	_after_change()
+
+
+# DVOJÍ VYZNAM TLACITEK "odboč" PODLE STAVU. Kdyz vybrany usek vede do jineho
+# useku (napojeni), posouvaji UZEL; jindy hybou odbocenim. Popisek to vzdy
+# rekne (viz button_labels), takze hrac vi, co se stane.
+func _bend_or_node(dir: int) -> void:
+	if level.lane_count() == 0:
+		return
+	if level.target_kind(sel) == Level.TO_LANE:
+		_node_step(dir)
+		return
+	_bend(float(dir) * Level.SPREAD_STEP * 5.0)
+
+
+# UZEL NAPOJENI. Jeden stisk = sousedni uzel na cilovem useku. Preskoci se
+# uzel, ktery neprojde geometrii (lezel by za odbocenim ciloveho useku) - hrac
+# dostane hlasku, ne ticho a ne level, ktery se neda vyexportovat.
+#
+# Zmena se pred zapsanim overi: posun uzlu meni rovny usek TOHOTO useku, takze
+# by mohl vzit misto napojeni, ktere do nej vede odjinud. Kdyby level prestal
+# byt platny, zmena se vrati (stejna mez jako u odboceni a pridavani drah).
+func _node_step(dir: int) -> void:
+	var to: int = level.to_of(sel)
+	var cur: int = level.lane_node(sel)
+	var nxt: int = cur + dir
+	if nxt < 0 or nxt >= Level.NODE_COUNT:
+		status = "úsek %d: %s je %s" % [sel + 1, level.node_name(cur),
+			"první" if dir < 0 else "poslední"]
+		return
+	if not level.can_target(sel, Level.TO_LANE, to, nxt):
+		status = "úsek %d: do uzlu %d/%d to nejde — leží za odbočením úseku %d" % [
+			sel + 1, nxt + 1, Level.NODE_COUNT, to + 1]
+		return
+	var before: Array = level.validate()
+	var keep: Level = level.clone()
+	var l: Dictionary = level.lanes[sel]
+	l["node"] = nxt
+	level.lanes[sel] = l
+	level.relayout()
+	if before.is_empty() and not level.validate().is_empty():
+		level = keep
+		status = "úsek %d: tenhle uzel by rozbil jiné napojení — zůstává %s" % [
+			sel + 1, level.node_name(cur)]
+		return
+	status = "úsek %d: napojení v uzlu %d/%d → úsek %d" % [
+		sel + 1, nxt + 1, Level.NODE_COUNT, to + 1]
 	_after_change()
 
 

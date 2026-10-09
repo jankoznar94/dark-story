@@ -38,6 +38,7 @@ func _init() -> void:
 	_test_target_hint_tells_the_next_choice()
 	_test_join_has_several_nodes()
 	_test_exit_delete_button()
+	_test_node_step_buttons()
 
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	for f in fails:
@@ -896,3 +897,78 @@ func _test_exit_delete_button() -> void:
 	_ok(ed3.level.exits.size() == 1, "a dalsi uz ho neveme (%d)" % ed3.level.exits.size())
 	_ok(not ed3.status.is_empty(), "a hlaska rekne proc (%s)" % ed3.status)
 	_ok(ed3.level.validate().is_empty(), "a level je platny: %s" % str(ed3.level.validate()))
+
+
+# SAMOSTATNE OVLADANI UZLU. Jan: "Samostatné ovládání by bylo lepší." Uzel se
+# posouva tlacitky, ktera mimo napojeni hybou odbocenim - u napojeni se
+# prejmenuji na "uzel −"/"uzel +" a jeden stisk = sousedni uzel. Hrac tak
+# nemusi prokladat cely cyklus "cíl", aby se posunul o uzel dal.
+func _test_node_step_buttons() -> void:
+	# --- 1) U NAPOJENI POSOUVAJI UZEL ---
+	var ed := _fresh()
+	_join_at_node_zero(ed, 1)
+	if ed.level.target_kind(1) != Level.TO_LANE:
+		_ok(false, "usek 2 se vubec da napojit")
+		return
+	var to: int = ed.level.to_of(1)
+	var labels: Array = ed.button_labels()
+	_ok(str(labels[Editor.BTN_BEND_LEFT]).contains("uzel")
+			and str(labels[Editor.BTN_BEND_RIGHT]).contains("uzel"),
+		"u napojeni se tlacitka jmenuji 'uzel' (%s, %s)" % [
+			labels[Editor.BTN_BEND_LEFT], labels[Editor.BTN_BEND_RIGHT]])
+	ed.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed.level.lane_node(1) == 1, "a stisk posune uzel na druhy (%d)" % ed.level.lane_node(1))
+	# pozor na sklonovani: hlaska rika "v uzlu", ne "uzel"
+	_ok(ed.status.contains("uzl"), "a hlaska rekne ktery (%s)" % ed.status)
+	ed.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed.level.lane_node(1) == 2, "a na treti (%d)" % ed.level.lane_node(1))
+	ed.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed.level.lane_node(1) == 2, "pres posledni uzel to nejde (%d)" % ed.level.lane_node(1))
+	_ok(ed.status.contains("poslední"), "a hlaska to rekne (%s)" % ed.status)
+	ed.press(Editor.BTN_BEND_LEFT)
+	_ok(ed.level.lane_node(1) == 1, "a zpet na druhy (%d)" % ed.level.lane_node(1))
+	_ok(ed.level.validate().is_empty(), "takovy level je platny: %s" % str(ed.level.validate()))
+	var back := Level.from_code(ed.level.to_code())
+	_ok(back.lane_node(1) == 1 and back.to_of(1) == to,
+		"kod uzel udrzi (uzel=%d, usek=%d)" % [back.lane_node(1), back.to_of(1) + 1])
+
+	# --- 2) MIMO NAPOJENI HYBOU ODBOCENIM (jako driv) ---
+	var ed2 := _fresh()
+	ed2.sel = 0
+	_ok(str(ed2.button_labels()[Editor.BTN_BEND_LEFT]) == "odboč −",
+		"mimo napojeni je to porad 'odboč' (%s)" % ed2.button_labels()[Editor.BTN_BEND_LEFT])
+	var d0: float = ed2.level.divert_of(0)
+	ed2.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed2.level.divert_of(0) > d0,
+		"a meni se odboceni, ne uzel (%.2f -> %.2f)" % [d0, ed2.level.divert_of(0)])
+
+	# --- 3) UZEL ZA ODBOCENIM CILOVEHO USEKU SE ODMITNE ---
+	# (jinak by se vetev vlekla do oblouku a level by se nedal vyexportovat)
+	var ed3 := _fresh()
+	_join_at_node_zero(ed3, 1)
+	if ed3.level.target_kind(1) != Level.TO_LANE:
+		return
+	var tgt: int = ed3.level.to_of(1)
+	ed3.sel = tgt
+	for i in range(6):
+		ed3.press(Editor.BTN_BEND_LEFT)
+	_ok(ed3.level.divert_of(tgt) < float(Level.NODE_FRACS[1]),
+		"cilovy usek se ohnul pred druhy uzel (%.2f)" % ed3.level.divert_of(tgt))
+	_ok(ed3.level.validate().is_empty(), "a level je porad platny: %s" % str(ed3.level.validate()))
+	ed3.sel = 1
+	var node0: int = ed3.level.lane_node(1)
+	ed3.press(Editor.BTN_BEND_RIGHT)
+	_ok(ed3.level.lane_node(1) == node0,
+		"do uzlu za odbocenim to nejde (%d)" % ed3.level.lane_node(1))
+	_ok(ed3.status.contains("odbočen"), "a hlaska rekne proc (%s)" % ed3.status)
+	_ok(ed3.level.validate().is_empty(), "a level zustava platny: %s" % str(ed3.level.validate()))
+
+
+# Usek `lane` napojeny na jiny usek v prvnim uzlu (cyklus "cíl" pres vystupy,
+# useky az k napojeni).
+func _join_at_node_zero(ed: Editor, lane: int) -> void:
+	ed.sel = lane
+	for i in range(80):
+		if ed.level.target_kind(lane) == Level.TO_LANE and ed.level.lane_node(lane) == 0:
+			return
+		ed.press(Editor.BTN_TARGET)
