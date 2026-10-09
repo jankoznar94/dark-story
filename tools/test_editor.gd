@@ -21,6 +21,7 @@ func _init() -> void:
 	_test_limits()
 	_test_many_entries_and_junctions()
 	_test_exits_are_manual_only()
+	_test_exit_goes_with_its_last_lane()
 	_test_join_two_lanes()
 	_test_autosave()
 	_test_export_code()
@@ -294,6 +295,92 @@ func _test_join_two_lanes() -> void:
 	# a kód levelu to unese - jinak by se hracuv level prenasel spatne
 	var back := Level.from_code(ed.level.to_code())
 	_ok(back.to_code() == ed.level.to_code(), "a kod levelu napojeni udrzi")
+
+
+# CIL PO SMAZANE CESTE. Jan: "Jakmile smažu cestu a do jejího cíle už nic
+# nevede, tak by se měl cíl automaticky smazat. Ale pouze při mazání cesty.
+# Když vytvořím cíl ručně, tak může dočasně zůstat bez cesty."
+func _test_exit_goes_with_its_last_lane() -> void:
+	var ed := _fresh()
+	# usek 5 (posledni na zakladni desce) usti do sveho cile sam
+	var last: int = ed.level.lane_count() - 1
+	var e: int = ed.level.exit_of(last)
+	var uses := 0
+	for i in range(ed.level.lane_count()):
+		if ed.level.exit_of(i) == e:
+			uses += 1
+	_ok(uses == 1, "cil posledniho useku vede jen do nej (%d)" % uses)
+	var e0: int = ed.level.exits.size()
+	ed.sel = last
+	ed.press(Editor.BTN_DEL)
+	_ok(ed.level.exits.size() == e0 - 1,
+		"po smazani cesty zmizel i osirely cil (%d -> %d)" % [e0, ed.level.exits.size()])
+	_ok(ed.level.validate().is_empty(), "a level je platny: %s" % str(ed.level.validate()))
+	# zadny usek nesmi ukazovat na cil, ktery uz neexistuje
+	for i in range(ed.level.lane_count()):
+		if ed.level.target_kind(i) == Level.TO_EXIT:
+			_ok(ed.level.to_of(i) < ed.level.exits.size(),
+				"usek %d miri na neexistujici cil (%d z %d)" % [
+					i + 1, ed.level.to_of(i), ed.level.exits.size()])
+
+	# --- RUCNE PRIDANY CIL BEZ CESTY ZUSTAVA ---
+	var ed2 := _fresh()
+	ed2.sel = 0
+	ed2.press(Editor.BTN_EXIT)
+	var manual: int = ed2.level.exits.size() - 1
+	_ok(ed2.level.to_of(0) == manual, "novy cil si hrac pripojil sam (%d)" % manual)
+	# prepojime usek 1 na JINY cil - ten rucne pridany zustane bez cesty
+	for i in range(30):
+		if ed2.level.target_kind(0) == Level.TO_EXIT and ed2.level.to_of(0) != manual:
+			break
+		ed2.press(Editor.BTN_TARGET)
+	_ok(ed2.level.target_kind(0) == Level.TO_EXIT and ed2.level.to_of(0) != manual,
+		"usek 1 se prepojil na jiny cil (%d)" % ed2.level.to_of(0))
+	var c1: int = ed2.level.exits.size()
+	# Smazeme usek 2 (cislo 0). Jeho cil pouziva i nekdo dalsi, takze zadny cil
+	# zmizet nema - a ten rucne pridany teprve ne.
+	ed2.sel = 0
+	ed2.press(Editor.BTN_DEL)
+	_ok(ed2.level.exits.size() == c1,
+		"ručně přidaný cíl bez cesty zůstává (%d -> %d)" % [c1, ed2.level.exits.size()])
+	_ok(ed2.level.validate().is_empty(), "a level je porad platny: %s" % str(ed2.level.validate()))
+
+	# --- CISLA USEKU SE POSUNOU, ODKAZY SE MUSI POSUNOUT S NIMI ---
+	# (jinak by se vetev vleva do jineho useku, nez hrac videl)
+	var ed4 := _fresh()
+	ed4.sel = 1
+	for i in range(30):
+		if ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 3:
+			break
+		ed4.press(Editor.BTN_TARGET)
+	_ok(ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 3,
+		"usek 2 se napojil na usek 4 (kind=%d, to=%d)" % [
+			ed4.level.target_kind(1), ed4.level.to_of(1)])
+	# smazeme usek MEZI nimi (cislo 2 = index 2): nas usek si cislo podrzi,
+	# cilova usek se posune na 2
+	ed4.sel = 2
+	ed4.press(Editor.BTN_DEL)
+	_ok(ed4.level.lane_count() == 4, "usek 3 zmizel (%d)" % ed4.level.lane_count())
+	_ok(ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 2,
+		"odkaz na usek se posunul s cisly (cekal 2, je %d)" % ed4.level.to_of(1))
+	_ok(ed4.level.validate().is_empty(), "a level je platny: %s" % str(ed4.level.validate()))
+	for i in range(ed4.level.lane_count()):
+		if ed4.level.target_kind(i) == Level.TO_LANE:
+			_ok(ed4.level.to_of(i) < ed4.level.lane_count() and ed4.level.to_of(i) != i,
+				"usek %d se nenapojuje sam na sebe nebo mimo desku (%d)" % [i + 1, ed4.level.to_of(i)])
+
+	# --- CIL ZMIZI I KDYBY ZMIZELA CELA VETEV ---
+	# (slouceni vyhybky zpet do useku nechava druhy cil prazdny)
+	var ed3 := _fresh()
+	ed3.sel = 0
+	ed3.press(Editor.BTN_JUNCTION)
+	var e3before: int = ed3.level.exits.size()
+	ed3.sel = 0
+	_ok(ed3.can_merge(), "rozdeleny usek se da slit zpet")
+	ed3.press(Editor.BTN_JUNCTION)
+	_ok(ed3.level.exits.size() <= e3before,
+		"po sliti nezustal osirely cil (%d -> %d)" % [e3before, ed3.level.exits.size()])
+	_ok(ed3.level.validate().is_empty(), "a level je platny: %s" % str(ed3.level.validate()))
 
 
 func _test_autosave() -> void:

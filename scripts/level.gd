@@ -376,6 +376,29 @@ func add_exit() -> int:
 	return exits.size() - 1
 
 
+# ZRUSENI CILE. Pouziva se, kdyz mizi CESTA: kdyz je cesta smazana a do
+# jejiho cile uz nic nevede, cil zmizi s ni. Rucne pridany cil (tlacitkem
+# "cíl +") zustava - ten si hrac hlida sam a muze docasne zustat bez cesty,
+# dokud ho nejaka cesta nepouzije.
+# Indexy vystupu se posunou, proto se vsechny odkazy na ne premapuji: jinak
+# by nejaky usek mířil na cil, ktery uz neexistuje.
+func remove_exit(idx: int) -> bool:
+	if idx < 0 or idx >= exits.size():
+		return false
+	if exits.size() <= 1:
+		return false
+	if _exit_uses(idx) > 0:
+		return false
+	exits.remove_at(idx)
+	for i in range(lanes.size()):
+		if target_kind(i) == TO_EXIT and to_of(i) > idx:
+			var l: Dictionary = lanes[i]
+			l["to"] = to_of(i) - 1
+			lanes[i] = l
+	relayout()
+	return true
+
+
 # Volny vystup pro novy usek: prednostne takovy, do ktereho nic neusta; kdyz
 # jsou vsechny obsazene, tak ten s nejmensim poctem useku (aby se cesty
 # nehrnuly vsechny do posledniho). `avoid` se pouzije, kdyz usek potrebuje
@@ -430,8 +453,10 @@ func add_lane(from_j: int = 0) -> bool:
 	return true
 
 
-# Odebere usek. Kdyz po nem zustane prazdna vyhybka, odebere se i ta (jinak by
-# v mape zustal ventilator, do ktereho nikdo nevede).
+# Odebere usek. Cil, do ktereho uz po nem nic nevede, zmizi s nim - cesta
+# i s cilem, kam vedla. Rucne pridany cil zustava (viz remove_exit).
+# Kdyz po nem zustane prazdna vyhybka, odebere se i ta (jinak by v mape
+# zustal ventilator, do ktereho nikdo nevede).
 func remove_lane(at: int = -1) -> bool:
 	if lanes.size() <= MIN_LANES:
 		return false
@@ -441,12 +466,36 @@ func remove_lane(at: int = -1) -> bool:
 	if i < 0 or i >= lanes.size():
 		return false
 	var j: int = from_of(i)
+	var gone_exit: int = exit_of(i)
 	lanes.remove_at(i)
+	# Cisla useku se posunula - odkazy "napojuje se na usek N" se musi posunout
+	# s nimi, jinak by se vetev vleva do JINEHO useku, nez hrac videl.
+	_shift_lane_refs(i)
+	if gone_exit >= 0:
+		remove_exit(gone_exit)
 	if j > 0 and lanes_of(j).is_empty():
 		_drop_junction(j)
 	else:
 		relayout()
 	return true
+
+
+# Po smazani useku `gone` se indexy ostatnich posunou. Kdo se na smazany usek
+# napojoval, zustal by s cilem do prazdna - z toho se stane vystup.
+func _shift_lane_refs(gone: int) -> void:
+	for i in range(lanes.size()):
+		if target_kind(i) != TO_LANE:
+			continue
+		var t: int = to_of(i)
+		var l: Dictionary = lanes[i]
+		if t == gone:
+			l["kind"] = TO_EXIT
+			l["to"] = free_exit()
+			lanes[i] = l
+		elif t > gone:
+			l["to"] = t - 1
+			lanes[i] = l
+	_fix_lane_refs()
 
 
 # ROZDĚLENÍ ÚSEKU. Vybrany usek prestane koncit ve vystupu a skonci v NOVE
@@ -515,6 +564,13 @@ func merge_lane(lane: int) -> bool:
 func _drop_junction(j: int) -> void:
 	var kids: Array = lanes_of(j)
 	kids.sort()
+	# Cile, ktere s tou vetvi zmizi. Sesbiraji se PRED smazanim useku a na
+	# konci se osirele cile zrusi - rucne pridane (nepouzite) zustavaji.
+	var gone_exits: Array = []
+	for k in kids:
+		var e: int = exit_of(int(k))
+		if e >= 0 and not gone_exits.has(e):
+			gone_exits.append(e)
 	# Stara -> nova cisla useku.
 	var remap := {}
 	var shift := 0
@@ -557,6 +613,13 @@ func _drop_junction(j: int) -> void:
 			l["from"] = f - 1
 		lanes[i] = l
 	_fix_lane_refs()
+	# Osirele cile te vetve zmizi. Indexy se posouvaji, proto az tady - vsechny
+	# odkazy na vystupy uz jsou premapovane na nove indexy useku. Maze se od
+	# nejvyssiho indexu, aby zbyvajici cisla zustala platna.
+	gone_exits.sort()
+	gone_exits.reverse()
+	for e2 in gone_exits:
+		remove_exit(int(e2))
 	relayout()
 
 
