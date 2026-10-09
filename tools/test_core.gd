@@ -36,7 +36,7 @@ func _ok(cond: bool, what: String) -> void:
 
 func _fresh() -> Game:
 	var g := Game.new()
-	g.setup(Rect2(40.0, 80.0, 880.0, 420.0))
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0))
 	return g
 
 
@@ -86,6 +86,11 @@ func _test_geometry() -> void:
 		var path: PackedVector2Array = g.net.lane_path[lane]
 		for k in range(path.size()):
 			_ok(path[k].y < bar_top, "kolej %d zustava nad pruhem" % lane)
+		# ani popisek svatyne se nesmi dotknout pruhu (posledni svatyně
+		# byla jednou uříznutá - text se kresli 54 px pod stredem)
+		var label_y: float = g.net.shrine_pos[lane].y + 54.0
+		_ok(label_y < bar_top - 6.0,
+			"popisek svatyne %d zustava nad pruhem (y=%.0f)" % [lane, label_y])
 
 
 # --------------------------------------------------------------- 2 matice

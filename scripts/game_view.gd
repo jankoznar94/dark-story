@@ -34,7 +34,7 @@ var _shot_frames: int = 0
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	game = Game.new()
-	game.setup(Rect2(40.0, 80.0, 880.0, 420.0))
+	game.setup(Rect2(40.0, 80.0, 880.0, 404.0))
 	_layout_buttons()
 	game.set_switch(Element.FIRE)
 	if OS.get_cmdline_user_args().has("--shot"):

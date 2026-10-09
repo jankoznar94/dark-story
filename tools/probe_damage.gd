@@ -4,7 +4,7 @@ extends SceneTree
 
 func _init() -> void:
 	var g := Game.new()
-	g.setup(Rect2(40.0, 80.0, 880.0, 420.0))
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0))
 	g.gold = 999
 	var b1: bool = g.try_build(1, 0, Element.WATER)
 	var b2: bool = g.try_build(1, 1, Element.WATER)
