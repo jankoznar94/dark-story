@@ -413,7 +413,8 @@ func _test_exit_goes_with_its_last_lane() -> void:
 	var manual: int = ed2.level.exits.size() - 1
 	_ok(ed2.level.to_of(0) == manual, "novy cil si hrac pripojil sam (%d)" % manual)
 	# prepojime usek 1 na JINY cil - ten rucne pridany zustane bez cesty
-	for i in range(30):
+	# (cyklus je delsi, kdyz se nabizeji i vsechny uzly cilovych cest)
+	for i in range(140):
 		if ed2.level.target_kind(0) == Level.TO_EXIT and ed2.level.to_of(0) != manual:
 			break
 		ed2.press(Editor.BTN_TARGET)
@@ -432,7 +433,7 @@ func _test_exit_goes_with_its_last_lane() -> void:
 	# (jinak by se vetev vleva do jineho useku, nez hrac videl)
 	var ed4 := _fresh()
 	ed4.sel = 1
-	for i in range(30):
+	for i in range(140):
 		# Hledá se napojení, které ROZDĚLILO úsek 4 (index 3): napojený úsek
 		# pak vede do nového spodního úseku, ne do něj samého.
 		if ed4.level.target_kind(1) == Level.TO_LANE:
@@ -710,6 +711,10 @@ func _test_target_hint_tells_the_next_choice() -> void:
 	ed.sel = 1
 	for i in range(12):
 		ed.press(Editor.BTN_TARGET)
+		# Cyklus muze narazit i na cil, ktery by rozbil ROZDĚLENÍ - ten editor
+		# rovnou odmítne a rekne to. Nápověda se pak nekoná (a je to správně).
+		if ed.status.contains("rozbil rozdělení"):
+			continue
 		_ok(ed.status.contains("další cíl:"), "hlaska rika, co bude nasledovat (%s)" % ed.status)
 		var p: int = ed.status.find("další cíl: ")
 		if p < 0:

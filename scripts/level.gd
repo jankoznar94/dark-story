@@ -118,6 +118,11 @@ const NODE_COUNT := 3
 const MERGE_NODE_FRACS := [0.0, 0.52, 0.74]
 # Nejmensi rovny usek, na ktery se jeste vejdou tri bonusy vedle sebe.
 const MIN_RUN := 0.12
+# Nejmensi rovny usek, ktery smi vzniknout ROZDELENIM. Jan: "Úsek se nemusí
+# dělit na dva stejně dlouhé úseky." - hráč si vybírá uzel, ve kterém se cesta
+# dělí, a díly proto mohou být krátké i nestejné. Musí jen zůstat dost místa na
+# to, aby se úsek dal nakreslit a nesl bonus (ne MIN_RUN, ten je pro bonusy).
+const MIN_RUN_DIVIDE := 0.06
 
 # Obtiznost. Cisla jsou zakladni deska; level si je muze prepsat.
 const BASE_ZONE_DMG := 30.0
@@ -823,23 +828,26 @@ func _fix_lane_refs() -> void:
 # nemel jak vybrat, do ktereho uzlu ma vetev spadnout.
 func target_choices(lane: int) -> Array:
 	var out: Array = []
-	# VLASTNÍ CESTA SE V CYKLU PŘESKAKUJE. Rozdělení se po ní posouvá tlačítky
-	# "uzel ±" - kdyby se cyklus vracel na uzly té cesty, na které hráč už je,
-	# zasekl by se na ní (spodní úsek má vyšší číslo, ale na cestě je hned za
-	# horním) a k ostatním cestám by se nedostal.
-	var own: Array = []
+	# UZLY CÍLOVÉ CESTY SE NABÍZEJÍ VŠECHNY. Jan: "Teď jde napojit jeden úsek
+	# na druhý pouze v jednom uzlu. Mělo by být možné si vybrat z několika
+	# uzlů. Úsek se nemusí dělit na dva stejně dlouhé úseky." Každý uzel je
+	# vlastní volba a napojení se v něm ROZDĚLÍ (split_at_join).
+	#
+	# Jen u SVÉHO současného rozdělení se nabízí jen stav, na kterém hráč
+	# stojí: jinak by se cyklus nechal zamotat do "rozděl to zas o kus dál"
+	# a k ostatním cestám by se už nedostal. Rozdělení se po svém úseku
+	# posouvá tlačítky "uzel ±".
+	var own_kids: Array = []
 	if target_kind(lane) == TO_LANE:
-		own = path_chain(to_of(lane))
+		var div: int = from_of(to_of(lane))
+		if is_division(div):
+			own_kids = lanes_of(div)
 	for e in range(exits.size()):
 		if can_target(lane, TO_EXIT, e):
 			out.append({"kind": TO_EXIT, "to": e})
 	for k in path_order():
 		for n in usable_nodes(lane, k):
-			# VLASTNÍ CESTA SE V NABÍDCE NEOBJEVUJE - kromě stavu, na kterém
-			# hráč právě stojí. Rozdělení se po své cestě posouvá tlačítky
-			# "uzel ±"; kdyby se na ni cyklus vracel, zasekl by se na ní
-			# (spodní úsek má vyšší číslo, ale na cestě je hned za horním).
-			if own.has(k) and not (k == to_of(lane) and int(n) == lane_node(lane)):
+			if own_kids.has(k) and int(n) != lane_node(lane):
 				continue
 			out.append({"kind": TO_LANE, "to": k, "node": int(n)})
 	for j in range(junctions.size()):
@@ -1073,7 +1081,7 @@ func can_divide(at: int, node: int) -> bool:
 	var up: float = (x - MERGE_GAP) - junction_x(from_of(at))
 	if up <= 0.0:
 		return false
-	if up * (1.0 - run_in_frac(at, TO_JUNCTION, up) - run_frac_for(TO_JUNCTION, up)) < MIN_RUN:
+	if up * (1.0 - run_in_frac(at, TO_JUNCTION, up) - run_frac_for(TO_JUNCTION, up)) < MIN_RUN_DIVIDE:
 		return false
 	# Dolní část: od dělicího bodu ke svému cíli. Vzniká bez náběhu, takže
 	# rozhoduje jen zatáčka na konci (run_in_frac ji tam dá 0).
@@ -1081,7 +1089,7 @@ func can_divide(at: int, node: int) -> bool:
 	var down: float = _target_x(kind, to_of(at), 0, at, lane_node(at)) - x
 	if down <= 0.0:
 		return false
-	if down * (1.0 - run_frac_for(kind, down)) < MIN_RUN:
+	if down * (1.0 - run_frac_for(kind, down)) < MIN_RUN_DIVIDE:
 		return false
 	return true
 
