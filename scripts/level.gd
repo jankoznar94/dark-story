@@ -952,13 +952,18 @@ func next_choice_index(lane: int) -> int:
 	return (at + 1) % choices.size()
 
 
-func cycle_target(lane: int) -> bool:
+func cycle_target(lane: int, skip: int = 0) -> bool:
 	if lane < 0 or lane >= lanes.size():
 		return false
 	var choices: Array = target_choices(lane)
 	var next: int = next_choice_index(lane)
 	if next < 0 or next >= choices.size():
 		return false
+	# `skip` preskoci dalsi volby: editor tim obchazi cile, ktere by rozbily
+	# rozdeleni (jinak by na nich cyklus zustal viset a hrac by videl porad
+	# tu samou hlasku).
+	if skip != 0:
+		next = (next + skip) % choices.size()
 	var pick: Dictionary = choices[next]
 	var l: Dictionary = lanes[lane]
 	var kind: int = int(pick["kind"])

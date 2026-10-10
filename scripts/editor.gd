@@ -264,12 +264,25 @@ func _cycle_target() -> void:
 	# bez horni casti (rozdeleni drzi obe casti, jedna bez druhe nema smysl).
 	var before: Array = level.validate()
 	var keep: Level = level.clone()
-	if not level.cycle_target(sel):
-		status = "jiný cíl pro tenhle úsek není"
-		return
-	if before.is_empty() and not level.validate().is_empty():
+	# CIL, KTERY BY ROZBIL ROZDĚLENÍ, SE PRESKOCI. Kdyz se na nem cyklus
+	# zastavil, hrac videl porad dokola tu samou hlasku a s "cíl" se nedalo
+	# nic delat ("Tlačítko cíl lze použít jednou. Pak opakovaně píše chybu.").
+	var total: int = level.target_choices(sel).size()
+	var ok: bool = false
+	var refused: bool = false
+	for skip in range(maxi(total, 1)):
+		if level.cycle_target(sel, skip):
+			if before.is_empty() and not level.validate().is_empty():
+				refused = true
+				level = keep.clone()
+				continue
+			ok = true
+			break
+		level = keep.clone()
+	if not ok:
 		level = keep
-		status = "tenhle cíl by rozbil rozdělení úseku — nejdřív ho sluč"
+		status = ("tenhle cíl by rozbil rozdělení úseku — nejdřív ho sluč" if refused
+			else "jiný cíl pro tenhle úsek není")
 		return
 	level.relayout()
 	# NAPOJENÍ ROZDĚLÍ CÍLOVÝ ÚSEK. Kdyz to je to, co se stalo, hlaska to
@@ -301,8 +314,20 @@ func target_kind_is_join(lane: int) -> bool:
 func _next_text(lane: int) -> String:
 	if lane < 0 or lane >= level.lane_count():
 		return "žádný"
+	# Stejne jako klepnuti: cile, ktere by rozbily rozdeleni, se preskakuji.
+	var total: int = level.target_choices(lane).size()
+	var before_ok: bool = level.validate().is_empty()
 	var probe: Level = level.clone()
-	if not probe.cycle_target(lane):
+	var moved: bool = false
+	for skip in range(maxi(total, 1)):
+		probe = level.clone()
+		if not probe.cycle_target(lane, skip):
+			continue
+		if before_ok and not probe.validate().is_empty():
+			continue
+		moved = true
+		break
+	if not moved:
 		return "žádný"
 	if lane >= probe.lane_count():
 		return "žádný"

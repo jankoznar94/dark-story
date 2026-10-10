@@ -23,6 +23,7 @@ func _init() -> void:
 	_test_exits_are_manual_only()
 	_test_exit_goes_with_its_last_lane()
 	_test_join_divides_target()
+	_test_target_cycle_never_gets_stuck()
 	_test_join_two_lanes()
 	_test_autosave()
 	_test_export_code()
@@ -345,6 +346,32 @@ func _test_join_divides_target() -> void:
 	_ok(back.to_code() == code and back.lane_count() == ed.level.lane_count(),
 		"kód levelu rozdělení udrží (%d znaků)" % code.length())
 	_ok(back.validate().is_empty(), "a level z kódu je platný: %s" % str(back.validate()))
+
+
+# "CIL" SE NESMI ZASEKNOUT. Jan: "Tlačítko cíl lze použít jednou. Pak
+# opakovaně píše chybu 'Tento cíl by rozbil úsek, prvně ho sluč'." Cil, ktery
+# by rozbil rozdeleni, se proto PRESKOCI - jinak hrac vidi porad tu samou
+# hlasku a s cílem se nedá nic dělat.
+func _test_target_cycle_never_gets_stuck() -> void:
+	for s in range(5):
+		var ed := _fresh()
+		ed.sel = s
+		var stuck := 0
+		var worst := 0
+		for t in range(80):
+			ed.press(Editor.BTN_TARGET)
+			if ed.status.contains("rozbil rozdělení"):
+				stuck += 1
+				worst = maxi(worst, stuck)
+			else:
+				stuck = 0
+			if not ed.level.validate().is_empty():
+				_ok(false, "usek %d: po klepnuti na cil je level rozbity (%s)" % [
+					s + 1, str(ed.level.validate())])
+				return
+		_ok(worst < 2, "usek %d: cyklus cíle se nezasekne na rozbitém cíli (%d x za sebou)" % [
+			s + 1, worst])
+	_ok(true, "cyklus cíle se na zadnem useku nezasekne")
 
 
 # SPOJENI DVOU CEST DO JEDNE. Usek se dá napojit na jiný usek - poutník po něm
