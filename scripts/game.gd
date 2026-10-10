@@ -156,7 +156,7 @@ func try_build(lane: int, slot: int, element: int) -> bool:
 	if lane < 0 or lane >= net.lane_count():
 		_note("Neplatný úsek.")
 		return false
-	if slot < 0 or slot >= net.slot_count():
+	if slot < 0 or slot >= net.slot_count(lane):
 		_note("Neplatné místo.")
 		return false
 	if bonus_at(lane, slot) != null:

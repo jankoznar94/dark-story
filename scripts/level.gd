@@ -54,8 +54,14 @@ const BASE_SPAWN := 1.9
 const BASE_LIVES := 12
 const BASE_GOLD := 260
 # Kolik bonusu se vejde na jeden usek. Neni to geometrie - je to pocet
-# mist, kam hrac muze klepnout.
+# mist, kam hrac muze klepnout. KAZDY USEK SI SVUJ POCET DRZI SAM
+# ("slots" v datech useku) - Jan: "Nekde jen 1, nekde 3, nekde i vice a
+# nekde uplne bez bonusu." SLOTS je jen vychozi hodnota pro nove useky.
 const SLOTS := 3
+# Strop poctu mist na jednom useku. Neni to geometrie (mista se vejdou i
+# vic), je to mez, za kterou uz by se klepnuti na jedno misto nedalo
+# odlisit od sousedniho. Editor cykluje 0..MAX_SLOTS.
+const MAX_SLOTS := 6
 
 var name: String = ""
 var cols: int = COLS
@@ -63,9 +69,10 @@ var rows: int = ROWS
 
 # UZLY: [{c:int, r:int, kind:int}]
 var nodes: Array = []
-# USEKY: [{cells: Array[Vector2i], elem:int, entry:bool}]
+# USEKY: [{cells: Array[Vector2i], elem:int, entry:bool, slots:int}]
 #   cells[0] je bunka pocatecniho uzlu, cells[-1] bunka koncoveho uzlu.
 #   entry = vede ze STARTu - neposkozuje (poutnik teprve prichazi).
+#   slots = kolik mist na bonus tenhle usek ma (0 = zadne bonusy).
 var lanes: Array = []
 
 var zone_dmg: float = BASE_ZONE_DMG
@@ -140,6 +147,27 @@ func lane_is_neutral(lane: int) -> bool:
 
 func lane_accepts(lane: int, element: int) -> bool:
 	return not lane_is_neutral(lane) and lane_element(lane) == element
+
+
+# KOLIK MIST NA BONUS TENHLE USEK MA. Neni to konstanta: Jan chce, aby si to
+# kazdy usek nesl sam ("nekde jen 1, nekde 3, nekde i vice a nekde uplne bez
+# bonusu"). Nula je platna hodnota - usek bez bonusu.
+func lane_slot_count(lane: int) -> int:
+	if lane < 0 or lane >= lanes.size():
+		return 0
+	return clampi(int(lanes[lane].get("slots", SLOTS)), 0, MAX_SLOTS)
+
+
+func set_lane_slots(lane: int, n: int) -> void:
+	if lane < 0 or lane >= lanes.size():
+		return
+	lanes[lane]["slots"] = clampi(n, 0, MAX_SLOTS)
+
+
+func set_lane_element(lane: int, element: int) -> void:
+	if lane < 0 or lane >= lanes.size():
+		return
+	lanes[lane]["elem"] = element
 
 
 # Usek, ze ktereho poutnici vstupuji - neposkozuje.
@@ -314,6 +342,7 @@ func clone() -> Level:
 			"cells": cells,
 			"elem": int(ln["elem"]),
 			"entry": bool(ln["entry"]),
+			"slots": clampi(int(ln.get("slots", SLOTS)), 0, MAX_SLOTS),
 		})
 	return lv
 
@@ -393,6 +422,12 @@ func validate() -> Array:
 			errs.append("úsek %d nezačíná v uzlu." % i)
 		if en < 0:
 			errs.append("úsek %d nekončí v uzlu." % i)
+		# Mista na bonus jsou DATA, ne konstanta - proto se kontroluji tady
+		# a ne pocitanim nekde v kresleni. Hodnota mimo rozsah znamena kod,
+		# ktery si nekdo vymyslel rucne.
+		var raw_slots: int = int(lanes[i].get("slots", SLOTS))
+		if raw_slots < 0 or raw_slots > MAX_SLOTS:
+			errs.append("úsek %d má %d míst na bonus (0 až %d)." % [i, raw_slots, MAX_SLOTS])
 		if sn >= 0 and sn == en:
 			errs.append("úsek %d se vrací do stejného uzlu." % i)
 		for k in range(cs.size()):
@@ -499,7 +534,15 @@ func to_dict() -> Dictionary:
 		for cell in cs:
 			var v: Vector2i = cell
 			cells.append([v.x, v.y])
-		ls.append([int(ln["elem"]), 1 if bool(ln["entry"]) else 0, cells])
+		# CTVRTY PRVEK JE POCET MIST NA BONUS a pise se JEN KDYBY SE LISI
+		# od vychoziho. Zakladni deska i vsechny drive ulozene levely tak
+		# maji kod PRESNE stejny jako predtim - a stara ulozena mapa se
+		# nacte (ctvrty prvek chybi -> vychozi hodnota).
+		var row: Array = [int(ln["elem"]), 1 if bool(ln["entry"]) else 0, cells]
+		var sl: int = clampi(int(ln.get("slots", SLOTS)), 0, MAX_SLOTS)
+		if sl != SLOTS:
+			row.append(sl)
+		ls.append(row)
 	return {
 		"v": 2,
 		"n": name,
@@ -540,7 +583,11 @@ static func from_dict(d: Dictionary) -> Level:
 			if b.size() < 2:
 				continue
 			cells.append(Vector2i(int(b[0]), int(b[1])))
-		lv.lanes.append({"cells": cells, "elem": int(a[0]), "entry": int(a[1]) == 1})
+		var slots: int = SLOTS
+		if a.size() >= 4:
+			slots = clampi(int(a[3]), 0, MAX_SLOTS)
+		lv.lanes.append({"cells": cells, "elem": int(a[0]), "entry": int(a[1]) == 1,
+			"slots": slots})
 	return lv
 
 
@@ -676,7 +723,7 @@ func add_lane(a: int, b: int, dirs: String, elem: int) -> int:
 			_:
 				continue
 		cells.append(cur)
-	lanes.append({"cells": cells, "elem": elem, "entry": false})
+	lanes.append({"cells": cells, "elem": elem, "entry": false, "slots": SLOTS})
 	return lanes.size() - 1
 
 

@@ -24,11 +24,12 @@ const TOOL_COUNT := 7
 
 # Tlacitka za nastroji.
 const BTN_ELEM := TOOL_COUNT
-const BTN_NEW := TOOL_COUNT + 1
-const BTN_LIST := TOOL_COUNT + 2
-const BTN_EXPORT := TOOL_COUNT + 3
-const BTN_PLAY := TOOL_COUNT + 4
-const BTN_COUNT := TOOL_COUNT + 5
+const BTN_SLOTS := TOOL_COUNT + 1
+const BTN_NEW := TOOL_COUNT + 2
+const BTN_LIST := TOOL_COUNT + 3
+const BTN_EXPORT := TOOL_COUNT + 4
+const BTN_PLAY := TOOL_COUNT + 5
+const BTN_COUNT := TOOL_COUNT + 6
 
 const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
 	Level.SPOJKA, Level.UZEL, Level.NEUTRAL]
@@ -38,6 +39,21 @@ enum { MODE_EDIT, MODE_LIST }
 var level: Level = null
 var tool: int = TOOL_ROAD
 var elem: int = Element.FIRE
+# KOLIK MIST DOSTANOU NOVE KRESLENE USEKY. Kazdy usek si svuj pocet drzi v
+# levelu (Level.lane_slot_count) - tohle je jen to, cim se zacina.
+var draw_slots: int = Level.SLOTS
+# VYBRANY USEK. Klepnuti na caru useku (ne na uzel) ho vybere a pak uz
+# "zivel" a "mista" meni JEHO vlastnosti, ne vlastnosti dalsi kresby.
+# Presne to Janovi chybelo: "upravovat jiz existujici zatim nejde".
+var sel_lane: int = -1
+# PRESOUVANI UZLU. Klepnuti na uzel mu zmeni druh, TAZENI z uzlu ho presune
+# na jinou bunku - a cesty, ktere do nej vedly, se prepoji (nebo prodlouzi).
+# Je to zamerne az od nastroju z palety: tazenim nastrojem "cesta" se kresli
+# nova cesta, takze by si obe gesta lezla pod rukama.
+var moving: bool = false
+var move_node: int = -1
+var move_from: Vector2i = Vector2i(-1, -1)
+var move_steps: int = 0
 var status: String = ""
 var code: String = ""
 var local_name: String = ""
@@ -75,6 +91,12 @@ func reset() -> void:
 	drawing = false
 	draw_cells = []
 	mark = Vector2i(-1, -1)
+	sel_lane = -1
+	draw_slots = Level.SLOTS
+	moving = false
+	move_node = -1
+	move_from = Vector2i(-1, -1)
+	move_steps = 0
 	level.save()
 
 
@@ -102,6 +124,7 @@ func open_last() -> void:
 		return
 	local_name = str(keys[keys.size() - 1])
 	if level.load_from_disk(local_name):
+		sel_lane = -1
 		status = "Načteno: %s" % level.name
 	else:
 		reset()
@@ -143,6 +166,7 @@ func pick(item: Dictionary) -> void:
 	var key: String = str(item["key"])
 	if level.load_from_disk(key):
 		local_name = key
+		sel_lane = -1
 		status = "Načteno: %s" % level.name
 	else:
 		status = "Level %s se nepodařilo načíst." % key
@@ -154,11 +178,20 @@ func button_labels() -> Array:
 	for t in TOOL_LABELS:
 		out.append(t)
 	out.append(Element.name_of(elem))
+	out.append("místa %d" % selected_slot_count())
 	out.append("nový")
 	out.append("seznam")
 	out.append("export")
 	out.append("hrát")
 	return out
+
+
+# KOLIK MIST UKAZUJE TLACITKO. Kdyz je vybrany usek, ukazuje JEHO pocet -
+# tlacitko nikdy nelze: co je na nem napsane, to se stiskem zmeni.
+func selected_slot_count() -> int:
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		return level.lane_slot_count(sel_lane)
+	return draw_slots
 
 
 # Je to tlačítko "hrát"? Pruh se kresli z jednoho seznamu a tohle je jedine
@@ -168,7 +201,13 @@ func is_play(button: int) -> bool:
 
 
 func sel_text() -> String:
-	return "úseků %d · uzlů %d" % [level.lane_count(), level.node_count()]
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		var el: String = "neutrální" if level.lane_is_neutral(sel_lane) \
+			else Element.name_of(level.lane_element(sel_lane))
+		return "úsek %d · %s · míst %d · (úseků %d · uzlů %d)" % [sel_lane, el,
+			level.lane_slot_count(sel_lane), level.lane_count(), level.node_count()]
+	return "úseků %d · uzlů %d — klepni na čáru úseku a vybereš ho" % [
+		level.lane_count(), level.node_count()]
 
 
 # =========================================================================
@@ -220,6 +259,16 @@ func end_draw() -> void:
 	var cs: Array = draw_cells
 	draw_cells = []
 	if cs.size() < 2:
+		# KLEPNUTI, NE TAH: nic se nekresli, ale kdyz hrac klepl na caru
+		# useku, VYBRAL si ho. Je to jedine gesto, ktere se nerozchazi
+		# s kladenim prvku: tazenim se kresli, klepnutim se vybira.
+		var sel: int = lane_through(cs[0])
+		if sel >= 0:
+			sel_lane = sel
+			_after_change()
+			status = "Vybran úsek %d (%s, míst %d)." % [sel, _lane_element_name(sel),
+				level.lane_slot_count(sel)]
+			return
 		status = "Cesta je krátká — nakresli aspoň dvě buňky."
 		return
 	var a: int = level.node_at_cell(cs[0])
@@ -227,12 +276,23 @@ func end_draw() -> void:
 	if a < 0 or b < 0:
 		status = "Cesta musí začínat i končit v uzlu (start, výhybka, spojka, uzel)."
 		return
-	level.lanes.append({"cells": cs, "elem": draw_elem, "entry": false})
+	level.lanes.append({"cells": cs, "elem": draw_elem, "entry": false,
+		"slots": draw_slots})
+	sel_lane = level.lane_count() - 1
 	_after_change()
 	if draw_elem == Level.NEUTRAL:
 		status = "Úsek %d je neutrální — nedá se na něm stavět." % level.lane_count()
 	else:
-		status = "Úsek %d (%s) přidán." % [level.lane_count(), Element.name_of(draw_elem)]
+		status = "Úsek %d (%s) přidán s %d místy." % [level.lane_count(),
+			Element.name_of(draw_elem), draw_slots]
+
+
+func _lane_element_name(lane: int) -> String:
+	if lane < 0 or lane >= level.lane_count():
+		return "?"
+	if level.lane_is_neutral(lane):
+		return "neutrální"
+	return Element.name_of(level.lane_element(lane))
 
 
 # =========================================================================
@@ -267,6 +327,7 @@ func _place_node(cell: Vector2i, kind: int) -> void:
 	var at: int = lane_through(cell)
 	if at >= 0:
 		_split_lane(at, cell)
+		sel_lane = at
 	level.nodes.append({"c": cell.x, "r": cell.y, "kind": kind})
 	_after_change()
 	status = "%s položen na %d,%d." % [level.kind_name(kind), cell.x, cell.y]
@@ -276,16 +337,245 @@ func _erase(cell: Vector2i) -> void:
 	var n: int = level.node_at_cell(cell)
 	if n >= 0:
 		level.nodes.remove_at(n)
+		sel_lane = -1
 		_after_change()
 		status = "Uzel smazán."
 		return
 	var l: int = lane_through(cell)
 	if l >= 0:
 		level.lanes.remove_at(l)
+		sel_lane = -1
 		_after_change()
 		status = "Úsek smazán."
 		return
 	status = "Tady nic není."
+
+
+# =========================================================================
+# PRESOUVANI UZLU
+# =========================================================================
+
+# Presouvat se da jen nastroji z palety. "cesta" kresli (tah = nova cesta)
+# a "guma" maze - u tech dvou by tah znamenal neco jineho.
+func can_move() -> bool:
+	return tool != TOOL_ROAD and tool != TOOL_GUMA
+
+
+# Zacatek tazeni na uzlu. Vraci true, kdyz se opravdu zacalo - klepnuti
+# (tah bez pohybu) se vyhodnoti az pri pusteni, aby se druh uzlu menil
+# stejne jako dosud.
+func begin_move(cell: Vector2i) -> bool:
+	if not can_move() or moving:
+		return false
+	var n: int = level.node_at_cell(cell)
+	if n < 0:
+		return false
+	moving = true
+	move_node = n
+	move_from = cell
+	move_steps = 0
+	status = "Tažením uzel přesuneš, klepnutím mu změníš druh."
+	return true
+
+
+# Tahnuti na jinou bunku. Uzel jde PO BUNKACH, proto se krokuje - diky tomu
+# se nikdy nepreskoci bunka a cesta zustane souvisla.
+func extend_move(target: Vector2i) -> bool:
+	if not moving:
+		return false
+	var moved := false
+	var guard: int = 0
+	while guard < 32:
+		guard += 1
+		var cur: Vector2i = level.node_cell(move_node)
+		if cur == target:
+			break
+		if not _move_step(cur, target):
+			break
+		moved = true
+		move_steps += 1
+	if moved:
+		var at: Vector2i = level.node_cell(move_node)
+		status = "Uzel %d přesunut na %d,%d." % [move_node, at.x, at.y]
+	return moved
+
+
+func end_move() -> void:
+	if not moving:
+		return
+	moving = false
+	var n: int = move_node
+	var from: Vector2i = move_from
+	move_node = -1
+	move_from = Vector2i(-1, -1)
+	if move_steps == 0:
+		# TAH BEZ POHYBU = KLEPNUTI. Uzel meni druh podle zvoleneho nastroje,
+		# presne jak to delalo pred tim, nez se dalo presouvat.
+		tap_cell(from)
+		return
+	_after_change()
+	var at: Vector2i = level.node_cell(n)
+	status = "Uzel %d je teď na %d,%d." % [n, at.x, at.y]
+	move_steps = 0
+
+
+func _move_step(cur: Vector2i, target: Vector2i) -> bool:
+	var dx: int = target.x - cur.x
+	var dy: int = target.y - cur.y
+	var tries: Array = []
+	# Vetsi odchylka prvni - uzel se tak po mrizce plazi, misto aby skakal.
+	if absi(dx) >= absi(dy):
+		if dx != 0:
+			tries.append(Vector2i(signi(dx), 0))
+		if dy != 0:
+			tries.append(Vector2i(0, signi(dy)))
+	else:
+		if dy != 0:
+			tries.append(Vector2i(0, signi(dy)))
+		if dx != 0:
+			tries.append(Vector2i(signi(dx), 0))
+	for t in tries:
+		if _try_move_node(move_node, cur + t):
+			return true
+	return false
+
+
+# Prestěhuje uzel na sousedni bunku a prepoji vsechny cesty, ktere se ho
+# dotykaji. Kdyz by tim mapa prisla o neco, co platilo (kontrola mapy), krok
+# se VZYZKOUSNE - presne jako u kazde jine chranene zmeny v tomto editoru.
+func _try_move_node(n: int, to: Vector2i) -> bool:
+	if not level.in_bounds(to.x, to.y):
+		return false
+	var other: int = level.node_at_cell(to)
+	if other >= 0 and other != n:
+		return false
+	var from: Vector2i = level.node_cell(n)
+	var touching: Array = level.lanes_at(n)
+	for item in touching:
+		var l: int = int(item)
+		# pres jinou cestu uzel prejet nesmi - cesty se v tomto modelu nekrizi
+		for j in range(level.lane_count()):
+			if j == l:
+				continue
+			if _lane_uses_cell(j, to):
+				return false
+	var keep: Level = level.clone()
+	level.nodes[n]["c"] = to.x
+	level.nodes[n]["r"] = to.y
+	for item in touching:
+		_reroute_lane(int(item), from, to)
+	var before: Array = keep.validate()
+	var after: Array = level.validate()
+	if after.size() > before.size():
+		level = keep
+		return false
+	return true
+
+
+# Prepojeni jednoho useku po presunu jeho krajniho uzlu.
+#   * uzel se posunul po sve vlastni ceste  -> usek se ZKRATI,
+#   * uzel se posunul mimo -> usek se prodlouzi o chybejici bunky, takze
+#     zustane souvisly (a ohne se, kdyz hrac taha do strany).
+func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
+	var cs: Array = level.lane_cells(lane)
+	if cs.size() < 2:
+		return
+	if cs[0] == from:
+		var k: int = _index_of(cs, to)
+		if k > 0:
+			level.lanes[lane]["cells"] = _slice(cs, k, cs.size())
+			return
+		var head: Array = [to]
+		head.append_array(_route_known(cs[1], to, cs))
+		head.append_array(_slice(cs, 1, cs.size()))
+		level.lanes[lane]["cells"] = head
+		return
+	var kk: int = _index_of(cs, to)
+	if kk >= 0 and kk < cs.size() - 1:
+		level.lanes[lane]["cells"] = _slice(cs, 0, kk + 1)
+		return
+	var tail: Array = _slice(cs, 0, cs.size() - 1)
+	tail.append_array(_route_known(cs[cs.size() - 2], to, cs))
+	tail.append(to)
+	level.lanes[lane]["cells"] = tail
+
+
+func _index_of(cells: Array, cell: Vector2i) -> int:
+	for i in range(cells.size()):
+		var c: Vector2i = cells[i]
+		if c == cell:
+			return i
+	return -1
+
+
+func _slice(cells: Array, a: int, b: int) -> Array:
+	var out: Array = []
+	for i in range(maxi(a, 0), mini(b, cells.size())):
+		out.append(cells[i])
+	return out
+
+
+# Bunky MEZI `from` a `to` (beznich) po ose. Pro sousedni bunky je to
+# prazdny seznam, pro vzdalenejsi se cesta prodlouzi a pro sikmy smer se ohne.
+#
+# PORADI OS SE VYBIRA: propojeni existuje ve dvou tvarech a ten, ktery
+# pouzije bunky, ktere v ceste UZ BYLY, je ten spravny - druhy by z cesty
+# udelal zbytecnou klucku tam a zpet.
+func _route(from: Vector2i, to: Vector2i) -> Array:
+	return _route_xy(from, to)
+
+
+func _route_known(from: Vector2i, to: Vector2i, known: Array) -> Array:
+	var a: Array = _route_xy(from, to)
+	var b: Array = _route_yx(from, to)
+	if _known_count(b, known) > _known_count(a, known):
+		return b
+	return a
+
+
+func _known_count(route: Array, known: Array) -> int:
+	var seen: int = 0
+	for c in route:
+		var v: Vector2i = c
+		if known.has(v):
+			seen += 1
+	return seen
+
+
+func _route_xy(from: Vector2i, to: Vector2i) -> Array:
+	var out: Array = []
+	var cur: Vector2i = from
+	while cur.x != to.x:
+		cur = Vector2i(cur.x + signi(to.x - cur.x), cur.y)
+		if cur != to:
+			out.append(cur)
+	while cur.y != to.y:
+		cur = Vector2i(cur.x, cur.y + signi(to.y - cur.y))
+		if cur != to:
+			out.append(cur)
+	return out
+
+
+func _route_yx(from: Vector2i, to: Vector2i) -> Array:
+	var out: Array = []
+	var cur: Vector2i = from
+	while cur.y != to.y:
+		cur = Vector2i(cur.x, cur.y + signi(to.y - cur.y))
+		if cur != to:
+			out.append(cur)
+	while cur.x != to.x:
+		cur = Vector2i(cur.x + signi(to.x - cur.x), cur.y)
+		if cur != to:
+			out.append(cur)
+	return out
+
+
+func _lane_uses_cell(lane: int, cell: Vector2i) -> bool:
+	for c in level.lane_cells(lane):
+		var v: Vector2i = c
+		if v == cell:
+			return true
+	return false
 
 
 # =========================================================================
@@ -323,8 +613,9 @@ func _split_lane(lane: int, cell: Vector2i) -> void:
 		right.append(cs[i])
 	var el: int = int(level.lanes[lane]["elem"])
 	var en: bool = bool(level.lanes[lane]["entry"])
+	var sl: int = level.lane_slot_count(lane)
 	level.lanes[lane]["cells"] = left
-	level.lanes.append({"cells": right, "elem": el, "entry": en})
+	level.lanes.append({"cells": right, "elem": el, "entry": en, "slots": sl})
 
 
 # =========================================================================
@@ -339,14 +630,17 @@ func press(button: int) -> void:
 		if button == TOOL_GUMA:
 			status = "Guma: klepni na uzel nebo na cestu."
 		elif button == TOOL_ROAD:
-			status = "Tažením prstu kresli cestu (%s)." % Element.name_of(elem)
+			status = "Tažením prstu kresli cestu (%s). Klepnutím na čáru úseku ho vybereš." \
+				% Element.name_of(elem)
 		else:
-			status = "Klepni, kam má %s přijít." % TOOL_LABELS[button]
+			status = "Klepni, kam má %s přijít. Tažením z uzlu ho přesuneš." \
+				% TOOL_LABELS[button]
 		return
 	match button:
 		BTN_ELEM:
-			elem = (elem + 1) % Element.COUNT
-			status = "Kreslím živel: %s." % Element.name_of(elem)
+			_elem_press()
+		BTN_SLOTS:
+			_slots_press()
 		BTN_NEW:
 			reset()
 		BTN_LIST:
@@ -355,6 +649,36 @@ func press(button: int) -> void:
 			_export()
 		BTN_PLAY:
 			pass
+
+
+# ZIVEL. Kdyz je vybrany usek, meni se ZIVEL TOHO USEKU - presne to, co
+# Janovi chybelo ("upravovat jiz existujici zatim nejde"). Bez vyberu to
+# je jen barva, kterou se kresli dalsi cesta.
+func _elem_press() -> void:
+	elem = (elem + 1) % Element.COUNT
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		level.set_lane_element(sel_lane, elem)
+		_after_change()
+		status = "Úsek %d je teď %s." % [sel_lane, Element.name_of(elem)]
+		return
+	status = "Kreslím živel: %s." % Element.name_of(elem)
+
+
+# MISTA NA BONUS. S vybranym usekem se meni POCET MIST TOHO USEKU (0 az
+# Level.MAX_SLOTS), bez vyberu se meni, s kolika misty se kresli dalsi cesta.
+func _slots_press() -> void:
+	var cur: int = selected_slot_count()
+	var nxt: int = (cur + 1) % (Level.MAX_SLOTS + 1)
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		level.set_lane_slots(sel_lane, nxt)
+		_after_change()
+		if nxt == 0:
+			status = "Úsek %d je bez bonusů (0 míst)." % sel_lane
+		else:
+			status = "Úsek %d má teď %d míst na bonus." % [sel_lane, nxt]
+		return
+	draw_slots = nxt
+	status = "Nové úseky se kreslí s %d místy." % draw_slots
 
 
 func _export() -> void:
@@ -376,6 +700,10 @@ func _export() -> void:
 #   * zkontroluje se cela mapa a prvni chyba jde do statusu,
 #   * ulozi se. Save tlacitko nema smysl: hrac uklada kazdou zmenu.
 func _after_change() -> void:
+	# Vybrany usek musi po kazde zmene ukazovat na neco, co existuje -
+	# po smazani useku by sel_lane visel na indexu, ktery uz neni.
+	if sel_lane >= level.lane_count():
+		sel_lane = -1
 	var st: int = level.first_start()
 	for i in range(level.lane_count()):
 		level.lanes[i]["entry"] = (st >= 0 and level.lane_start_node(i) == st)

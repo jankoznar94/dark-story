@@ -45,12 +45,14 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-# Trinact tlacitek. Na 640x360 dava kazde 44 px pri mezere 3.4 px - popisek
+# TRINACT tlacitek. Na 640x360 dava kazde 44 px pri mezere 3.4 px - popisek
 # "výhybka" se do nej vejde pri 11 px (meri to `ed_label_px`, stejnym cislem
-# jako kresleni). Ctvrté tlacitko navic ("cíl −") je posledni, ktere se do
-# jedne rady vejde; dalsi uz by si vyzadalo druhou radu, a ta bere misto
-# mrizce, kterou hrac upravuje.
-const ED_COUNT := 12
+# jako kresleni). Trinact je POSLEDNI pocet, ktery se do jedne rady vejde;
+# ctrnact uz by si vyzadalo druhou radu, a ta bere misto mrizce, kterou hrac
+# upravuje (mereno, ne odhadnuto). Tlacitko "místa" proto cykluje pocet mist
+# na vybranem useku (0..Level.MAX_SLOTS) - "+" a "−" by byla dve tlacitka a
+# ta se sem nevejdou.
+const ED_COUNT := 13
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
@@ -97,10 +99,12 @@ func compute(v: Vector2) -> void:
 	# je pryc - jeho vyska je ted hraci plocha.
 	board_bottom = v.y - 3.0 * s
 
-	# Arena si bere vsechno, co zbyde pod HUDem. Mezera pod panelem je jen
-	# mala: kazdy pixel tady je pixel, ktery hrac dostane na desku.
-	arena = Rect2(PAD * s, hud_h + 1.0 * s,
-		maxf(40.0, v.x - 2.0 * PAD * s),
+	# Arena si bere vsechno, co zbyde pod HUDem, a to CELE DO SIRKY: pole
+	# (mrizka) je pres celou sirku displeje a poutnici vstupuji z jeho
+	# okraje (Jan: "aby nepratele prichazeli jak kdyby zpoza displeje").
+	# Zadny PAD do stran - kazdy pixel u okraje je bunka mrizky.
+	arena = Rect2(0.0, hud_h + 1.0 * s,
+		maxf(40.0, v.x),
 		maxf(40.0, board_bottom - hud_h - 1.0 * s))
 
 	text_x = PAD * ui
@@ -167,8 +171,8 @@ func compute(v: Vector2) -> void:
 	# ARENA EDITORU KONCI NAD PRUHEM. Pruh se kresli od `editor_bar_top()`
 	# nahoru (kvuli popiskum nad tlacitky) - kdyby arena koncila az u tlacitek,
 	# prekryl by pruh spodni cast mrizky, kterou hrac upravuje.
-	editor_arena = Rect2(PAD * s, hud_h + 1.0 * s,
-		maxf(40.0, v.x - 2.0 * PAD * s),
+	editor_arena = Rect2(0.0, hud_h + 1.0 * s,
+		maxf(40.0, v.x),
 		maxf(40.0, editor_bar_top() - 2.0 * ui - hud_h - 1.0 * s))
 
 

@@ -53,6 +53,13 @@ func _check(cond: bool, msg: String) -> void:
 		fails.append(msg)
 
 
+# Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
+# maji prichazet z okraje a v cili z nej zase zmizet.
+func _on_border(p: Vector2, a: Rect2) -> bool:
+	return absf(p.x - a.position.x) < 1.0 or absf(p.x - a.end.x) < 1.0 \
+		or absf(p.y - a.position.y) < 1.0 or absf(p.y - a.end.y) < 1.0
+
+
 func _one(w: int, h: int) -> void:
 	var tag: String = "%dx%d" % [w, h]
 	var layout := ScreenLayout.new()
@@ -63,15 +70,20 @@ func _one(w: int, h: int) -> void:
 	g.auto_wave = false
 	g.setup(layout.arena, layout.s, layout.board_bottom, Level.base())
 
-	# --- mrizka a cesty zustanou v arene
+	# --- mrizka a cesty zustanou v arene. POLE VYPLNUJE ARENU CELOU:
+	# zadny okraj po stranach, jinak by hrac prisel o kus displeje a
+	# poutnici by se objevovali uprostred, ne na okraji.
 	var o: Vector2 = g.net.origin
-	var gw: float = g.net.cell * float(g.net.level.cols)
-	var gh: float = g.net.cell * float(g.net.level.rows)
-	_check(o.x >= layout.arena.position.x - 1.0, "%s: mrizka zacina vlevo od areny" % tag)
+	var gw: float = g.net.cell_w * float(g.net.level.cols)
+	var gh: float = g.net.cell_h * float(g.net.level.rows)
+	_check(absf(o.x - layout.arena.position.x) < 1.0,
+		"%s: pole nezacina na levem okraji (%.1f vs %.1f)" % [tag, o.x, layout.arena.position.x])
+	_check(absf(gw - layout.arena.size.x) < 1.5,
+		"%s: pole nevyplnuje sirku displeje (%.1f z %.1f)" % [tag, gw, layout.arena.size.x])
 	_check(o.y >= layout.arena.position.y - 1.0, "%s: mrizka zacina nad areny" % tag)
-	_check(o.x + gw <= layout.arena.end.x + 1.0, "%s: mrizka pretekla vpravo" % tag)
-	_check(o.y + gh <= layout.arena.end.y + 1.0, "%s: mrizka pretekla dolu" % tag)
-	_check(g.net.cell > 8.0, "%s: bunka je jen %.1f px" % [tag, g.net.cell])
+	_check(o.y + gh <= layout.arena.end.y + 1.5, "%s: mrizka pretekla dolu" % tag)
+	_check(minf(g.net.cell_w, g.net.cell_h) > 8.0,
+		"%s: bunka je jen %.1f x %.1f px" % [tag, g.net.cell_w, g.net.cell_h])
 	for lane in range(g.net.lane_count()):
 		var path: PackedVector2Array = g.net.lane_path[lane]
 		for p in path:
@@ -81,11 +93,36 @@ func _one(w: int, h: int) -> void:
 			_check(v.y >= layout.arena.position.y - 1.0 and v.y <= layout.arena.end.y + 1.0,
 				"%s: usek %d utíká z areny svisle" % [tag, lane])
 
+	# --- poutnici PRICHAZEJI Z OKRAJE DISPLEJE a v cili z nej zmizi.
+	# Je to videt: prvni bod vstupniho useku lezi na okraji a posledni bod
+	# useku, ktery konci v cili, take.
+	if g.net.entry_lane >= 0:
+		var ep: PackedVector2Array = g.net.lane_path[g.net.entry_lane]
+		_check(_on_border(ep[0], layout.arena),
+			"%s: poutnici nevstupuji z okraje displeje (%s)" % [tag, str(ep[0])])
+	var border_exits: int = 0
+	for lane in range(g.net.lane_count()):
+		var end_node: int = g.net.lane_end_node(lane)
+		if end_node < 0 or g.net.node_kind[end_node] != Level.CIL:
+			continue
+		var pth: PackedVector2Array = g.net.lane_path[lane]
+		_check(_on_border(pth[pth.size() - 1], layout.arena),
+			"%s: usek %d do cile nekonci na okraji displeje" % [tag, lane])
+		border_exits += 1
+	_check(border_exits > 0, "%s: v mape neni zadny cil" % tag)
+
 	# --- mista na bonusy se nesmi prekryvat
 	var min_d: float = g.net.min_cross_lane_slot_distance()
 	_check(min_d > g.net.bonus_r * 1.8,
 		"%s: mista na bonusy jsou u sebe (%.1f px, treba %.1f)" % [
 			tag, min_d, g.net.bonus_r * 1.8])
+	# a ani dve mista NA TOM SAME useku - pocet mist je libovolny, takze
+	# prave tohle je to, co drzi klepnuti od klepnuti na sousedni misto
+	var same_d: float = g.net.min_same_lane_slot_distance()
+	_check(same_d > g.net.bonus_r * 1.5,
+		"%s: dve mista na jednom useku jsou u sebe (%.1f px, treba %.1f)" % [
+			tag, same_d, g.net.bonus_r * 1.5])
+	_check(g.net.max_slot_count() > 0, "%s: zadny usek nema misto na bonus" % tag)
 
 	# --- hratelnost: klepnuti na uzel vyhybky prepne TU vyhybku
 	for j in range(g.net.junction_count()):
@@ -102,7 +139,7 @@ func _one(w: int, h: int) -> void:
 
 	# --- hratelnost: klepnuti na misto na bonus vybere to misto
 	for lane in range(g.net.lane_count()):
-		for slot in range(g.net.slot_count()):
+		for slot in range(g.net.slot_count(lane)):
 			var p: Vector2 = g.net.slot_world(lane, slot)
 			var hit: Vector2i = g.net.nearest_slot(p)
 			_check(hit.x == lane and hit.y == slot,

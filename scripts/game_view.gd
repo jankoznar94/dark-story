@@ -149,7 +149,8 @@ func _setup_shot() -> void:
 	for lane in range(game.net.lane_count()):
 		if game.net.lane_accepts(lane, game.net.lane_element(lane)):
 			game.try_build(lane, 0, game.net.lane_element(lane))
-			game.try_build(lane, 2, game.net.lane_element(lane))
+			if game.net.slot_count(lane) > 2:
+				game.try_build(lane, 2, game.net.lane_element(lane))
 	game.wave = 3
 	game.gold = 240
 	game.lives = 9
@@ -255,7 +256,7 @@ func _input(event: InputEvent) -> void:
 			var sd: InputEventScreenDrag = event
 			_editor_drag(sd.position)
 			return
-		if event is InputEventMouseMotion and editor.drawing:
+		if event is InputEventMouseMotion and (editor.drawing or editor.moving):
 			var mm: InputEventMouseMotion = event
 			_editor_drag(mm.position)
 			return
@@ -288,14 +289,22 @@ func _input(event: InputEvent) -> void:
 		if menu.is_editor() and editor.drawing:
 			editor.end_draw()
 			_push_editor_level()
+		elif menu.is_editor() and editor.moving:
+			# PUSTENI PRSTU UZAVRE I PRESUN UZLU. Kdyz se prst nehnul, je to
+			# klepnuti a uzel jen zmeni druh podle zvoleneho nastroje.
+			editor.end_move()
+			_push_editor_level()
 
 
 # Tahnuti prstu v editoru. Preskocene bunky doplni Editor sám, aby se cesta
-# pri rychlem tahu neroztrhla.
+# pri rychlem tahu neroztrhla. U uzlů se stejnym tahem uzel PRESOUVA - a do
+# site se kazdy krok posle hned, aby hrac videl, kam uzel leze.
 func _editor_drag(pos: Vector2) -> void:
-	if not editor.drawing:
+	if editor.drawing:
+		editor.extend_draw(game.net.cell_at(pos))
 		return
-	editor.extend_draw(game.net.cell_at(pos))
+	if editor.moving and editor.extend_move(game.net.cell_at(pos)):
+		_push_editor_level()
 
 
 func _handle_tap(pos: Vector2) -> void:
@@ -413,6 +422,11 @@ func _handle_editor_tap(pos: Vector2) -> void:
 	if editor.tool == Editor.TOOL_ROAD:
 		editor.draw_elem = editor.elem
 		editor.begin_draw(cell)
+		_push_editor_level()
+	elif editor.begin_move(cell):
+		# UZEL SE PRESOUVA TAZENIM. Klepnuti (tah bez pohybu) se vyhodnoti
+		# az pri pusteni prstu - do te doby se jeste nevi, co to bude.
+		pass
 	else:
 		editor.tap_cell(cell)
 		_push_editor_level()
@@ -460,6 +474,9 @@ func _draw_editor() -> void:
 	_draw_background()
 	_draw_grid()
 	_draw_lanes()
+	# MISTA NA BONUS se kresli i v editoru - hrac musi videt, kde vsude muze
+	# stavet a kolik jich tam je, jinak by pocet mist menil naslepo.
+	_draw_slots()
 	_draw_nodes()
 	_draw_editor_draft()
 	_draw_editor_bar()
@@ -494,21 +511,22 @@ func _draw_editor_list() -> void:
 # te doby je to jen kresba. Hrac tak vidi, co mu vznikne, a muze tazenim
 # pokracovat, i kdyz cestu omylem prejel.
 func _draw_editor_draft() -> void:
-	var c: float = game.net.cell
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
 	for cell in editor.draw_cells:
 		var v: Vector2i = cell
 		var col: Color = Color(0.55, 0.53, 0.48)
 		if editor.draw_elem != Level.NEUTRAL:
 			col = Element.color_of(editor.draw_elem)
-		var p: Vector2 = game.net.origin + Vector2((float(v.x) + 0.5) * c, (float(v.y) + 0.5) * c)
-		draw_rect(Rect2(p - Vector2(c, c) * 0.5, Vector2(c, c)),
+		var p: Vector2 = game.net.origin + Vector2((float(v.x) + 0.5) * cw, (float(v.y) + 0.5) * ch)
+		draw_rect(Rect2(p - Vector2(cw, ch) * 0.5, Vector2(cw, ch)),
 			Color(col.r, col.g, col.b, 0.38))
 	# BUNKA, KAM Hrac NAPOSLEDY KLEPL. Bez ni by si u posledniho položeného
 	# prvku nikdy nebyl jisty, kam to padlo.
 	if editor.level.in_bounds(editor.mark.x, editor.mark.y):
 		var mp: Vector2 = game.net.origin + Vector2(
-			(float(editor.mark.x) + 0.5) * c, (float(editor.mark.y) + 0.5) * c)
-		draw_rect(Rect2(mp - Vector2(c, c) * 0.5, Vector2(c, c)),
+			(float(editor.mark.x) + 0.5) * cw, (float(editor.mark.y) + 0.5) * ch)
+		draw_rect(Rect2(mp - Vector2(cw, ch) * 0.5, Vector2(cw, ch)),
 			Color(0.90, 0.87, 0.80), false, 2.0)
 
 
@@ -620,7 +638,6 @@ func _draw_battle() -> void:
 	_draw_lanes()
 	_draw_zones()
 	_draw_slots()
-	_draw_exits()
 	_draw_nodes()
 	_draw_bonuses()
 	_draw_enemies()
@@ -926,6 +943,17 @@ func _lane_color(lane: int) -> Color:
 	return Element.color_of(game.net.lane_element(lane))
 
 
+# JE TENHLE USEK PRAVE ZVYRAZNENY? V HRE je to usek, ktery posila vyhybka -
+# hrac tak vidi, kam poutniky posle. V EDITORU je to usek, ktery si hrac
+# VYBRAL klepnutim; tlacitka "zivel" a "mista" pak meni JEHO vlastnosti.
+# Jedno misto pro obe obrazovky: kdyby si to kazda pocitala sama, kreslil by
+# editor neco jineho, nez na co klepnuti opravdu sedi.
+func _lane_highlighted(lane: int) -> bool:
+	if menu.is_editor():
+		return editor.sel_lane == lane
+	return game.lane_selected(lane)
+
+
 func _draw_lanes() -> void:
 	var lw: float = maxf(2.0, 9.0 * layout.s)
 	for lane in range(game.net.lane_count()):
@@ -935,7 +963,7 @@ func _draw_lanes() -> void:
 		# kam poutniky posle, aniz by musel hadat, ktery element to je -
 		# barva ani runa se ne meni, meni se jen jas. Kazda vyhybka ma svuj
 		# vybrany usek, takze se svetlych useku kresli tolik, kolik je vyhybek.
-		var sel: bool = game.lane_selected(lane)
+		var sel: bool = _lane_highlighted(lane)
 		var faint := col
 		faint.a = 0.28 if not sel else 0.42
 		var bright := col
@@ -980,16 +1008,17 @@ func _draw_zones() -> void:
 func _draw_grid() -> void:
 	if game.net.level == null:
 		return
-	var c: float = game.net.cell
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
 	var o: Vector2 = game.net.origin
-	var gw: float = c * float(game.net.level.cols)
-	var gh: float = c * float(game.net.level.rows)
+	var gw: float = cw * float(game.net.level.cols)
+	var gh: float = ch * float(game.net.level.rows)
 	var col := Color(0.20, 0.185, 0.165, 0.75)
 	for i in range(game.net.level.cols + 1):
-		var x: float = o.x + c * float(i)
+		var x: float = o.x + cw * float(i)
 		draw_line(Vector2(x, o.y), Vector2(x, o.y + gh), col, 1.0)
 	for j in range(game.net.level.rows + 1):
-		var y: float = o.y + c * float(j)
+		var y: float = o.y + ch * float(j)
 		draw_line(Vector2(o.x, y), Vector2(o.x + gw, y), col, 1.0)
 	draw_rect(Rect2(o, Vector2(gw, gh)), Color(0.30, 0.28, 0.24, 0.9), false, 2.0)
 
@@ -1003,7 +1032,12 @@ func _draw_grid() -> void:
 #   SPOJKA  - krouzek s OBRACENYM Y. Cesty se tu SLIJI, nerozhoduje se tu
 #             nic - proto se nekresli jako volic.
 #   START   - plny krouzek. Sem poutnici vstupuji.
-#   CIL     - dira v mape, kresli ji _draw_exits.
+#   CIL     - dira v mape s krizkem. Kresli se TADY, ne ve zvlastni
+#             funkci pro herni desku: driv ji kreslila jen bitva, takze
+#             v editoru cil po položení zmizel (Jan: "cil nema zadnou
+#             znacku... a pak uz neni cil videt").
+#   UZEL    - maly plny ctverecek. Je to pruchozi bod; musi byt videt, ze
+#             tam neco je, i kdyz se v nem nerozhoduje.
 #
 # Y proti obracenemu Y je zamer: kriz proti krizi by se na malem displeji
 # slil a hrac by nepoznal, na co se kouka.
@@ -1015,6 +1049,11 @@ func _draw_nodes() -> void:
 		match int(game.net.node_kind[n]):
 			Level.START:
 				draw_circle(p, rr * 0.60, Color(0.62, 0.58, 0.50))
+			Level.CIL:
+				_draw_exit_mark(p)
+			Level.UZEL:
+				draw_rect(Rect2(p.x - rr * 0.45, p.y - rr * 0.45,
+					rr * 0.90, rr * 0.90), Color(0.62, 0.58, 0.50))
 			Level.VYHYBKA:
 				var lane: int = game.selected_lane(game.net.junction_index_of_node(n))
 				var col: Color = _lane_color(lane) if lane >= 0 else rim
@@ -1025,6 +1064,18 @@ func _draw_nodes() -> void:
 				draw_circle(p, rr, Color(0.10, 0.095, 0.085))
 				draw_arc(p, rr, 0.0, TAU, 24, rim, 3.0)
 				_draw_y(p, rr * 0.52, Color(0.68, 0.64, 0.56), true)
+
+
+# CIL: dira v mape s krizkem. Krizek je zamerne jiny tvar nez vsechny runy -
+# cili nikdo nevlastni a kdo tam dojde, stoji zivot. Popisek nema, deska je
+# bez textu.
+func _draw_exit_mark(p: Vector2) -> void:
+	var r: float = game.net.exit_r
+	draw_circle(p, r, Color(0.13, 0.12, 0.11))
+	draw_arc(p, r, 0.0, TAU, 32, Color(0.62, 0.58, 0.52), 3.0)
+	var d: float = r * 0.42
+	draw_line(p - Vector2(d, d), p + Vector2(d, d), Color(0.72, 0.68, 0.60), 3.0)
+	draw_line(p + Vector2(d, -d), p - Vector2(d, -d), Color(0.72, 0.68, 0.60), 3.0)
 
 
 func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:
@@ -1038,7 +1089,7 @@ func _draw_slots() -> void:
 	var r: float = game.net.bonus_r
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
-		for slot in range(game.net.slot_count()):
+		for slot in range(game.net.slot_count(lane)):
 			var p: Vector2 = game.net.slot_world(lane, slot)
 			var b: Bonus = game.bonus_at(lane, slot)
 			if b != null:
@@ -1070,18 +1121,10 @@ func _draw_bonuses() -> void:
 				6.0 * layout.s, 5.0 * layout.s), Color(0.95, 0.88, 0.6))
 
 
-# NEUTRALNI VYSTUP. Nema element a nikdo ho nevlastni - kazdy poutnik,
-# ktery tam dojde, stoji zivot. Krizek je zamerne jiny tvar nez vsechny
-# runy, aby se nepletl s elementem, a popisek nema - deska je bez textu.
-func _draw_exits() -> void:
-	var r: float = game.net.exit_r
-	for i in range(game.net.exit_pos.size()):
-		var p: Vector2 = game.net.exit_pos[i]
-		draw_circle(p, r, Color(0.13, 0.12, 0.11))
-		draw_arc(p, r, 0.0, TAU, 32, Color(0.62, 0.58, 0.52), 3.0)
-		var d: float = r * 0.42
-		draw_line(p - Vector2(d, d), p + Vector2(d, d), Color(0.72, 0.68, 0.60), 3.0)
-		draw_line(p + Vector2(d, -d), p - Vector2(d, -d), Color(0.72, 0.68, 0.60), 3.0)
+# NEUTRALNI VYSTUP uz ma vlastni kreslici funkci `_draw_exit_mark` a kresli
+# ho `_draw_nodes` - cil je uzel jako kazdy jiny a musi byt videt i v editoru.
+# Zvlastni funkce pro herni desku tu driv byla a byla to chyba: v editoru cil
+# po položení zmizel.
 
 
 func _draw_enemies() -> void:

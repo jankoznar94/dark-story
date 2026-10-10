@@ -18,6 +18,7 @@ func _init() -> void:
 	_run("geometrie", _test_base_geometry)
 	_run("volba ve vyhybce", _test_choices)
 	_run("kod levelu", _test_code_round_trip)
+	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
 	_run("mapa z nakresu", _test_jan_map_shape)
 	_run("diamant", _test_diamond_survives)
@@ -134,8 +135,63 @@ func _test_code_round_trip() -> void:
 		_check(back.validate().is_empty(), "nacteny level neprojde kontrolou")
 
 
-# ---------------------------------------------------------------- co ma spravne odmítnout
+# ---------------------------------------------------------------- mista na useku
 
+# POCET MIST NA BONUS JE DATA, NE KONSTANTA. Jan: "Nekde jen 1, nekde 3,
+# nekde i vice a nekde uplne bez bonusu." Testuje se to, co se neda poznat
+# okem: ze se pocet odnese v kodu levelu, ze nula je platna a ze rucne
+# vymysleny kod se stropem odmitne.
+func _test_lane_slots() -> void:
+	var lv := Level.base()
+	for i in range(lv.lane_count()):
+		_check(lv.lane_slot_count(i) == Level.SLOTS,
+			"usek %d nema vychozi pocet mist (%d)" % [i, lv.lane_slot_count(i)])
+	# ZAKLADNI DESKA SE NESMI ROZSIRIT: kod se pise po radcich a ctvrtý
+	# prvek (pocet mist) se pridava JEN kdyz se lisi od vychoziho. Kdyby se
+	# psal vzdy, zmenil by se kazdy ulozeny kod levelu.
+	var d0: Dictionary = lv.to_dict()
+	for row in d0["e"]:
+		var a: Array = row
+		_check(a.size() == 3, "kod zakladni desky se rozsiril o pocet mist")
+
+	lv.set_lane_slots(0, 0)
+	lv.set_lane_slots(1, 5)
+	_check(lv.lane_slot_count(0) == 0, "usek bez bonusu se neulozil")
+	_check(lv.lane_slot_count(1) == 5, "pet mist se neulozilo")
+	_check(lv.lane_slot_count(2) == Level.SLOTS, "sousednim usekum se pocet mist zmenil")
+	lv.set_lane_slots(3, 99)
+	_check(lv.lane_slot_count(3) == Level.MAX_SLOTS, "pocet mist se nezastavil na stropu")
+	_check(lv.validate().is_empty(), "mapa s jinym poctem mist neprojde: " + str(lv.validate()))
+
+	var code: String = lv.to_code()
+	_check(code.length() < 900, "kod s poctem mist je dlouhy %d znaku" % code.length())
+	var back := Level.from_code(code)
+	_check(back != null, "kod s jinym poctem mist se neda nacist zpatky")
+	if back != null:
+		_check(back.to_code() == code, "kod s poctem mist se po nacteni zmenil")
+		_check(back.lane_slot_count(0) == 0, "po nacteni nema usek 0 nula mist")
+		_check(back.lane_slot_count(1) == 5, "po nacteni nema usek 1 pet mist")
+		_check(back.lane_slot_count(2) == Level.SLOTS, "po nacteni se zmenil vychozi pocet")
+
+	# STROP: rucne vymysleny kod s devíti misty se pri nacteni ZASTAVI na
+	# stropu a primo v datech (bez nacteni) ho odmitne kontrola mapy.
+	var d: Dictionary = lv.to_dict()
+	var rows: Array = d["e"]
+	var bad_row: Array = rows[2]
+	bad_row.append(9)
+	rows[2] = bad_row
+	d["e"] = rows
+	var capped := Level.from_code("ZILY2;" + JSON.stringify(d))
+	_check(capped != null, "kod s poctem nad stropem se neda vubec nacist")
+	if capped != null:
+		_check(capped.lane_slot_count(2) == Level.MAX_SLOTS,
+			"pocet mist nad stropem se nezastavil (je %d)" % capped.lane_slot_count(2))
+	var raw := Level.base()
+	raw.lanes[0]["slots"] = 9
+	_check(not raw.validate().is_empty(), "kontrola mapy prosla s devíti misty")
+
+
+# ---------------------------------------------------------------- co ma spravne odmítnout
 func _test_rejects() -> void:
 	# dva starty
 	var lv := Level.base()
