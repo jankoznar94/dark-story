@@ -47,22 +47,33 @@ jobs:
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_scripts_load.gd 2>&1)
           echo "$OUT" | tail -20
-          echo "$OUT" | grep -q "SCRIPT_LOAD_ALL_PASS=true"
+          echo "$OUT" | grep -q "SCRIPTS_ALL_PASS=true"
 
-      # JADRO: geometrie site, matice zivlu, imunita vlastni koleje,
-      # protiklad, prepinani vyhybky, hromadeni, ekonomika, prubeh vlny.
-      - name: Core rules test
+      # MODEL MRIZKY: stupne uzlu, souvislost bunek, sikme lomy, krizeni,
+      # dosazitelnost ze startu a cesta z kazdeho useku do cile. Testuje se
+      # i mapa z Janova nakresu (dve U-trasy, ktere se vraceji a sliji se
+      # spojkou) a "diamant" (rozdel -> dve paralelni trasy -> spoj) - presne
+      # to, co stary stromovy model neumel vubec.
+      - name: Grid model test (graf v mrizce)
         run: |
           set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_core.gd 2>&1)
-          echo "$OUT" | tail -40
-          echo "$OUT" | grep -q "CORE_ALL_PASS=true"
+          OUT=$(./godot --headless --path . --script res://tools/test_grid.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "GRID_ALL_PASS=true"
 
-      # ROZVRZENI NA RŮZNÝCH DISPLEJÍCH. Hra se musi sama slozit na kazdem
-      # telefonu, ne jen na tom vyvojovem - prochazi 14 realnych rozliseni
-      # vcetne landscape telefonu, kde je pomer stran jiny nez 960x600.
-      # Kontroluje se i to, ze se na tom rozliseni hra PORAD DAHRAT:
-      # nepritel na protikladne koleji tam opravdu umre.
+      # HERNI LOGIKA: poskozeni na useku, imunita vlastniho zivlu, protiklad,
+      # prepnuti vyhybky, cesta do cile, mezera mezi poutniky, determinismus.
+      - name: Game rules test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_game.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "GAME_ALL_PASS=true"
+
+      # ROZVRZENI NA RŮZNÝCH DISPLEJÍCH. Mrizka ma pevny pocet bunek, takze
+      # se do areny vzdy vejde; test hlida to, co se opravdu kazi - ze cesty
+      # zustanou v arene, ze se mista na bonusy neprekryvaji a ze se klepnuti
+      # na vyhybku i na misto na bonus trefi to, co ma.
       - name: Layout test (14 realnych rozliseni)
         run: |
           set -e
@@ -81,12 +92,11 @@ jobs:
           echo "$OUT" | tail -20
           echo "$OUT" | grep -q "AUDIO_ALL_PASS=true"
 
-      # EDITOR. Level se stavi na telefonu, takze kazde tlacitko musi opravdu
-      # menit level, kod levelu musi projit tam i zpet znak po znaku a zakotvene
-      # levely musi davat smysl. Hlida i to, ze se vetev z vyhybky da napojit
-      # na vic nez jeden usek ("dalsi useky ignoruje") a ze se uzel napojeni
-      # srovna odbocenim ciloveho useku, misto aby napojeni zmizelo.
-      - name: Editor test (levely a jejich kod)
+      # EDITOR. Level se stavi na telefonu, takze se v nem kresli prstem.
+      # Test hlida, ze cesta mimo uzly se neprijme, ze se preskocene bunky
+      # pri rychlem tahu doplni, ze uzel polozeny doprostred cesty ji ROZDELI
+      # a ze kod levelu projde tam i zpet znak po znaku.
+      - name: Editor test (kresleni prstem)
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_editor.gd 2>&1)

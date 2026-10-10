@@ -1,2123 +1,722 @@
 class_name Level
 extends RefCounted
 
-# LEVEL. Jedno jezero dat: useky (lanes), jejich elementy, VYHYBKY (junctions),
-# vystupy a obtiznost. Hra, testy i EDITOR pracuji s timhle jedinym objektem
-# a Network z nej postavi geometrii.
+# =========================================================================
+# LEVEL JE GRAF V MRÍŽCE. Zadne automaticke rozvrhovani, zadne radky.
 #
-# SOURADNICE JSOU NORMALIZOVANE (0..1 v ose hraci plochy), takze level se sam
-# roztahne na displej hrace - a stejny level vypada na telefonu i na monitoru.
+# Jan (Oct 2026): "Cesty budu kreslit prstem, libovolneho smeru a tvaru.
+# Vzdy bude drzet rovinu. Bude se lamat v 90 stupnovych uhlech."
 #
-# Kdyz level chybi, pouzije se ZAKLADNI DESKA (base()) - presne ta, na ktere
-# je hra vyladena. Je to jen level mezi ostatnimi, zadna vyjimka v kodu.
+# Dve veci, ktere z toho plynou a ktere urcuji cely tento soubor:
 #
-# ---------------------------------------------------------------- TOPOLOGIE
-# Kmen vede do KORENOVE VYHYBKY (junction 0). Kazdy usek z ni vede bud do
-# VYSTUPU (to >= 0) nebo do dalsi VYHYBKY (to < 0, viz target encoding nize).
-# Z dalsi vyhybky vedou useky uz jen do vystupu - hloubka je omezena
-# (MAX_DEPTH), protoze mezi vyhybkou a vystupem musi zustat misto na rovny
-# usek, na kterem stoji bonusy.
+#   1. GRAF NENI STROM. Nekresli se jen "fan" z vyhybky do cile - cesta se
+#      ohne, vrati se zpatky a spoji se s jinou (v nakresu ma mapa DIAMANTY:
+#      rozdel -> dve paralelni trasy -> spoj). Proto ma usek SEZNAM PRITOKU,
+#      ne jednoho predchudce, a proto je "spojka" (N vstupu -> 1 vystup)
+#      rovnocenny prvek s "vyhybkou" (1 vstup -> N vystupu).
 #
-# VYHYBKA JE VZDY CELY VENTILATOR: hrac na ni klepne (klepnutim na usek, ktery
-# z ni vede) a dalsi poutnik po ni pujde. Vic vyhybek = vic nezavislych voleb,
-# kazda se prepina tim usekem, ktery pod ni vede - proto zadna tlacitka.
+#   2. UZEL JE BUNKA. Usek (hrana) zacina a konci ve STREDU bunky uzlu.
+#      Diky tomu staci na prechod poutnika z useku na usek jen "dosel jsem
+#      na konec useku -> v uzlu vyber dalsi usek", bez vstupniho bodu,
+#      bez lane_entry_s a bez TO_LANE (vlej se do jineho useku). Napojovani
+#      cest nahrazuje UZEL polozeny na cizi usek - usek se tam ROZDELI.
 #
-# ZADNA GEOMETRIE SE V LEVELU NEDRZI. Radky, hloubky i souradnice vyhybek
-# pocita relayout() - kdyby si je level drzel, rozejdou se s tim, co kresli
-# Network, a ulozeny level by nebyl ten, ktery hrac videl.
+# Co z puvodniho modelu zmizelo: relayout, rows_fit, MIN_ROW_GAP, NODE_FRACS,
+# run_frac_for, divert, MAX_DEPTH, span/_jspan, automaticke umistovani.
+# Co zustalo: damage model (Element + zone_dmg), bonusy na usek, rng a vlny
+# (ty jsou ve Game, ne tady).
+# =========================================================================
 
+# --------------------------------------------------------------- mrizka
+# Pomer 2:1 sedi mezi 16:9 a 21:9 telefonem. Bunka je VZDY ctvercova
+# (Network pocita velikost jako min(arena.w/cols, arena.h/rows) a mrizku
+# centruje) - natahovani po ose by z ohybu udelalo neco jineho, nez co
+# hrac nakreslil.
+const COLS := 20
+const ROWS := 10
+
+# --------------------------------------------------------------- druhy uzlu
+const START := 0      # vstup poutniku, 1 vystup
+const CIL := 1        # konec cesty, >= 1 vstup, zadny vystup
+const VYHYBKA := 2    # 1 vstup, >= 2 vystupy - hrac voli, kterym poutnik pujde
+const SPOJKA := 3     # >= 2 vstupy, 1 vystup - trasu slucuje, nerozhoduje
+const UZEL := 4       # 1 vstup, 1 vystup - pruchozi bod (bonus, pripojeni)
+
+const KIND_NAMES := ["start", "cíl", "výhybka", "spojka", "uzel"]
+
+# Element useku. Neutralni usek nema element a dava vsem 100 %.
 const NEUTRAL := -1
-const DEFAULT_NAME := "vlastni"
-# NEJMENSI ROZESTUP DRAH, pri kterem se bonusy na sousednich drahach jeste
-# neprekryvaji. Tohle je SKUTECNY strop levelu - pocet useku ani vyhybek sam
-# o sobe nic neomezuje, omezuje mrizka radku. Zmereno na nejmensi podporovane
-# obrazovce (640x360): pri 10 radcich je mezera 31 px a potreba 28 px,
-# jedenacty radek uz test rozvrzeni na vsech 14 rozlisenich odmita.
-const MIN_ROW_GAP := 0.095
-# Kolik useku muze level mit. NENI to hranice hratelnosti (tu drzi MIN_ROW_GAP
-# vyskovym mistem), je to jen pojistka pro cykly a pro to, aby se kod levelu
-# vešel do jedne rady Telegramu.
-const MAX_LANES := 24
-const MIN_LANES := 2
-# Kolik useku muze vest z jedne vyhybky. Vic nez se vejde radku na desku nema
-# kam - druha hranice je stejne MIN_ROW_GAP.
-const MAX_FAN := 10
-const MAX_EXITS := 24
-# Kolik kmenu (vstupu) muze do mapy vest. Kazdy kmen je jedna cesta, po ktere
-# poutnici do mapy vchazeji - vic kmenu znamena, ze hrac musi hlidat vic míst
-# najednou. Kazdy vlastni kmen si bere dva radky, takze driv nez tady zastavi
-# hrace plna deska.
-const MAX_ENTRIES := 8
-# Hloubka vyhybek. 0 = korenova, 1 = vyhybka na konci useku. Hloubka 2 by se
-# do mrizky jeste vesla, ale rovny usek za ni by mel jen 0.121 - presne na
-# hranici MIN_RUN, tedy bez rezervy na bonusy. Zustava proto 1 (a test to
-# hlida: "z vetve druhe vyhybky uz treti vest nesmi").
-const MAX_DEPTH := 1
 
-# CIL USEKU. Usek muze vest do vystupu, do dalsi vyhybky, nebo se NAPOJIT NA
-# JINY USEK (vetev se do druhe vetve vleje a poutnik po ni pokracuje dal).
-const TO_EXIT := 0
-const TO_JUNCTION := 1
-const TO_LANE := 2
-
-# Pas, do ktereho se mrizka radek rozmistuje. Nahore je HUD, dole okraj
-# displeje; mezi tim se radky VYSTREDI - kdyz je jich min, drzi se u sebe ve
-# stredu, a kdyz vic, mezera se zmensi. Diky tomu se prida usek, aniz by se
-# vsechny ostatni posunuly.
-const TOP := 0.03
-const BOTTOM := 0.93
-
-# --- ZAKLADNI DESKA -------------------------------------------------------
-# Vsechno, co bylo driv natvrdo v Network. Je to zakladni level a zaroven
-# zakladni deska balancu: na ni se ladi hratelnost, ne na novych levelech.
-const BASE_LANE_ELEMENTS := [0, 1, 2, 3, NEUTRAL]
-const BASE_EXITS := [0, 0, 1, 2, 3]
-# Rozestup pruhu. Byl 0.175; Jan chtel mezi useky vic mista, proto 0.22.
-const BASE_SPREAD := 0.22
-const BASE_EXIT_X := 0.945
-const BASE_DIVERT := 0.80
-
-# KORENOVA VYHYBKA a krok hloubky. Kazda dalsi vyhybka stoji o krok dal od
-# kraje, aby jeji useky mely pred vystupy misto na rovny usek.
-const BASE_JUNCTION_X := 0.25
-const DEPTH_DX := 0.24
-# Vzdalenost stredu ventilatoru od bodu, kde konci privodni usek. Kresli se
-# z toho "kratky kmen" uvnitr vyhybky.
-const MERGE_GAP := 0.03
-
-# Podil drahy, ktery zustava PRED rovným usekem a ZA nim. 0.22 z rozpeti
-# 0.25..0.945 da presne pas 0.40..0.80 zakladni desky, na ktere je hra
-# vyladena. Usek, ktery vede do dalsi vyhybky, je kratky - bere se skoro cely,
-# aby se na nem bonusy nemačkaly (0.06).
-# Podil delky rovneho useku, kde se ohne ke svemu cili.
-const RUN_FRAC := 0.22
-const RUN_FRAC_CONNECTOR := 0.06
-# UZLY USEKU. Kde presne se muze privodni vetev vlit do druheho useku: ne na
-# jeho zacatek, ale v nekolika bodech jeho rovneho useku. Kazdy usek ma
-# NODE_COUNT uzlu a hrac u napojeni vybira nejen KAM se vetev vleje, ale i
-# VE KTEREM UZLU - do jednoho useku se tak muze vlit vic vetvi, kazda jinam.
-#
-# Driv tu byl JEDEN bod (LAND_FRAC 0.30). Kdyz mel hrac pro vetev jedny dvere,
-# nemel jak resit, ze se do stejneho useku vleva vic vetvi: vsechny se slily
-# v jednom bode a rozdelit je neslo.
-#
-# Uzel MUSI lezet na ROVNEM useku ciloveho useku (za jeho zatackou uz rovny
-# usek neni a vetev by se vlekla do oblouku) - hlida to can_target pres
-# bend_x(). Kvuli tomu je prvni uzel 0.30 a posledni 0.74: vychozi odboceni je
-# 0.80, takze vsechny tri uzly lezi na rovine.
-# prvni uzel (0.30) je presne tam, kde byval jediny bod napojeni; kdo ho ma
-# v kodu, chova se znak po znaku jako driv
-const NODE_FRACS := [0.30, 0.52, 0.74]
-const NODE_COUNT := 3
-# UZLY ROZDĚLENÉHO ÚSEKU. Úsek, který vznikne rozdělením cesty (Jan: "Když se
-# jedna cesta napojí na uzel druhé cesty, tak by se druhá cesta měla tímto
-# napojením rozdělit na dva úseky."), začíná přesně v tom místě rozdělení -
-# nemá se odkud nabíhat. Jeho PRVNÍ UZEL je proto to rozdělení samo (podíl 0):
-# hráč se do něj napojí a napojení sedí přesně na dělicí bod. Další dva uzly
-# zůstávají tam, kde je mají ostatní úseky.
-const MERGE_NODE_FRACS := [0.0, 0.52, 0.74]
-# Nejmensi rovny usek, na ktery se jeste vejdou tri bonusy vedle sebe.
-const MIN_RUN := 0.12
-# Nejmensi rovny usek, ktery smi vzniknout ROZDELENIM. Jan: "Úsek se nemusí
-# dělit na dva stejně dlouhé úseky." - hráč si vybírá uzel, ve kterém se cesta
-# dělí, a díly proto mohou být krátké i nestejné. Musí jen zůstat dost místa na
-# to, aby se úsek dal nakreslit a nesl bonus (ne MIN_RUN, ten je pro bonusy).
-const MIN_RUN_DIVIDE := 0.06
-
-# Obtiznost. Cisla jsou zakladni deska; level si je muze prepsat.
+# --------------------------------------------------------------- zakladni cisla
 const BASE_ZONE_DMG := 30.0
 const BASE_SPEED := 52.0
-# Mezera mezi poutniky v sekundach. Byla 1.05, pak 1.35; Jan chtel jeste vic
-# mista ("o dost větší"), proto 1.9 (52 px/s * 1.9 = 99 px mezi poutniky).
 const BASE_SPAWN := 1.9
 const BASE_LIVES := 12
 const BASE_GOLD := 260
+# Kolik bonusu se vejde na jeden usek. Neni to geometrie - je to pocet
+# mist, kam hrac muze klepnout.
+const SLOTS := 3
 
-# Krok, o ktery se hybou rucky v editoru.
-const SPREAD_STEP := 0.01
-const ZONE_STEP := 2.0
-const SPEED_STEP := 2.0
-const SPAWN_STEP := 0.05
-const DIVERTS := [0.62, 0.72, 0.80, 0.88]
+var name: String = ""
+var cols: int = COLS
+var rows: int = ROWS
 
-var name: String = DEFAULT_NAME
-# Useky. Kazdy je slovnik:
-#   from   - z ktere vyhybky vede (index do junctions)
-#   el     - element (0..3) nebo NEUTRAL (-1)
-#   kind   - kam vede: TO_EXIT / TO_JUNCTION / TO_LANE
-#   to     - index vystupu, vyhybky, nebo jineho useku (podle `kind`)
-#   divert - podil delky rovneho useku, kde se usek ohne ke svemu cili
+# UZLY: [{c:int, r:int, kind:int}]
+var nodes: Array = []
+# USEKY: [{cells: Array[Vector2i], elem:int, entry:bool}]
+#   cells[0] je bunka pocatecniho uzlu, cells[-1] bunka koncoveho uzlu.
+#   entry = vede ze STARTu - neposkozuje (poutnik teprve prichazi).
 var lanes: Array = []
-# Vyhybky. Kazda je jen "ventilator" - seznam jejich useku se pocita z lanes
-# (kdo ma from == index). Vlastni stav (ktera vetev je vybrana) drzi az hra:
-# je to stav rozehrane partie, ne level.
-var junctions: Array = []
-# KMENY. Indexy vyhybek, do kterych vede VLASTNI kmen - tedy vstup do mapy.
-# Kdyz jich je vic, poutnici vchazeji na vic mist a hrac musi hlidat vic
-# front najednou. Kazdy kmen je vodorovna cara z leveho okraje.
-var entries: Array = []
-# Vystupy z mapy. Normalizovane souradnice [x, y]. Vystup je dira v mape -
-# nema element a nikdo ho "nevlastni".
-var exits: Array = []
-var spread: float = BASE_SPREAD
-var exit_x: float = BASE_EXIT_X
+
 var zone_dmg: float = BASE_ZONE_DMG
 var speed: float = BASE_SPEED
 var spawn: float = BASE_SPAWN
 var lives: int = BASE_LIVES
 var gold: int = BASE_GOLD
 
-# Vypoctena geometrie. NENI soucasti levelu - pocita ji relayout() a do
-# souboru se neuklada.
-# POZOR: useky a vyhybky maji kazde svuj slovnik rozpeti. Kdyby sdilely jeden,
-# prekryl by se usek 0 s vyhybkou 0 (oba maji index 0) - a prvni usek by se
-# prekreslil doprostred mrizky.
-var _row: Dictionary = {}      # usek -> normalizovana y rovneho useku
-var _jrow: Dictionary = {}     # vyhybka -> normalizovana y stredu ventilatoru
-var _span: Dictionary = {}     # usek -> [prvni radek, posledni radek]
-var _jspan: Dictionary = {}    # vyhybka -> [prvni radek, posledni radek]
-var _rows_total: int = 0
-# Radky cele mrizky: drahy i cile. Kazdy cil je dira na svem radku, takze
-# kdyz je cilu vic nez drah, mrizka ma vic radku nez kolik je drah.
-var _grid_rows: int = 0
-# Skutecna mezera radku po relayoutu. Neni to `spread`: kdyz se radky nevejdou,
-# zmensi se VSEM stejne - a prave tahle mezera rozhoduje o tom, jestli se
-# bonusy na sousednich drahach neprekryvaji (MIN_ROW_GAP).
-var _gap: float = BASE_SPREAD
-# VYSLEDEK POSLEDNIHO cycle_target: co se zmenilo. Napojeni umi cilovy usek
-# ROZDELIT (a klepnuti dal zase rozdeleni vratit) - hlaska editoru to hracovi
-# rekne, aby jen nevidel, ze mu pribyl usek, a nevedel proc.
-var last_cycle: Dictionary = {}
+# Stav posledni kontroly - editor i UI z nej ctou, co se prave stalo.
+var last_error: String = ""
 
 
-# ---------------------------------------------------------------- useky
+# =========================================================================
+# UZLY A USEKY - zakladni pristup
+# =========================================================================
+
+func node_count() -> int:
+	return nodes.size()
+
 
 func lane_count() -> int:
 	return lanes.size()
 
 
-func el_of(lane: int) -> int:
-	var l: Dictionary = lanes[lane]
-	return int(l["el"])
-
-
-# Kam usek vede. Druh cile je v `kind` - proto se da zamerit i na JINY USEK
-# (vetev se vleje do druhe vetve), ne jen do vystupu nebo vyhybky.
-func target_kind(lane: int) -> int:
-	var l: Dictionary = lanes[lane]
-	if l.has("kind"):
-		return int(l["kind"])
-	# Starsi kody "kind" nemely: >= 0 byl vzdy vystup a < 0 vyhybka.
-	return TO_EXIT if int(l["to"]) >= 0 else TO_JUNCTION
-
-
-func to_of(lane: int) -> int:
-	var l: Dictionary = lanes[lane]
-	return int(l["to"])
-
-
-func from_of(lane: int) -> int:
-	var l: Dictionary = lanes[lane]
-	return int(l.get("from", 0))
-
-
-func lane_is_exit(lane: int) -> bool:
-	return target_kind(lane) == TO_EXIT
-
-
-# Vystup, do ktereho usek usti. -1, kdyz vede jinam.
-func exit_of(lane: int) -> int:
-	return to_of(lane) if lane_is_exit(lane) else -1
-
-
-# Vyhybka, do ktere usek vede. -1, kdyz vede jinam.
-func junction_of(lane: int) -> int:
-	return to_of(lane) if target_kind(lane) == TO_JUNCTION else -1
-
-
-# Usek, na ktery se tenhle usek napojuje. -1, kdyz vede jinam.
-func lane_target_of(lane: int) -> int:
-	return to_of(lane) if target_kind(lane) == TO_LANE else -1
-
-
-# UZEL, DO KTEREHO SE TENHLE USEK NAPOJUJE. Ma vyznam jen u napojeni
-# (TO_LANE) - jinde se neuklada a neposila do kodu. Uzel je poradi diraveho
-# bodu na cilovem useku (viz NODE_FRACS).
-func lane_node(lane: int) -> int:
-	var l: Dictionary = lanes[lane]
-	return clampi(int(l.get("node", 0)), 0, NODE_COUNT - 1)
-
-
-func node_frac(node: int) -> float:
-	return float(NODE_FRACS[clampi(node, 0, NODE_COUNT - 1)])
-
-
-func node_name(node: int) -> String:
-	return "uzel %d/%d" % [clampi(node, 0, NODE_COUNT - 1) + 1, NODE_COUNT]
-
-
-func is_neutral(lane: int) -> bool:
-	return el_of(lane) == NEUTRAL
-
-
-# Na neutralni usek nema smysl stavet - uz bere vsem stejne.
-func accepts(lane: int, element: int) -> bool:
-	if is_neutral(lane):
-		return false
-	return element == el_of(lane)
-
-
-# Sirka useku v podilu delky rovneho useku, kde se ohne ke svemu cili.
-func divert_of(lane: int) -> float:
-	var l: Dictionary = lanes[lane]
-	return float(l.get("divert", BASE_DIVERT))
-
-
-# ---------------------------------------------------------------- vyhybky
-
-func junction_count() -> int:
-	return junctions.size()
-
-
-# Useky, ktere vedou Z te vyhybky - v poradi, v jakem jsou pod sebou.
-func lanes_of(j: int) -> Array:
-	var out: Array = []
-	for i in range(lanes.size()):
-		if from_of(i) == j:
-			out.append(i)
-	return out
-
-
-# Hloubka vyhybky: 0 = korenova (kmen), 1 = na konci useku, ... Vyhybka, do
-# ktere vede vlastni kmen, je VZDY korenova: jeji vstup je z leveho okraje,
-# ne z jine vyhybky.
-func junction_depth(j: int) -> int:
-	if has_entry(j):
-		return 0
-	var d := 0
-	var guard := 0
-	var cur := j
-	while cur > 0 and guard < 16:
-		var parent := -1
-		for i in range(lanes.size()):
-			if junction_of(i) == cur:
-				parent = from_of(i)
-				break
-		if parent < 0:
-			break
-		d += 1
-		# Vyhybka s vlastnim kmenem je korenova (hloubka 0), takze dite je
-		# o jedna hlubsi a dal se uz nahoru nechodi.
-		if has_entry(parent) or parent == cur:
-			break
-		cur = parent
-		guard += 1
-	return d
-
-
-# ---------------------------------------------------------------- kmeny
-
-func has_entry(j: int) -> bool:
-	for e in entries:
-		if int(e) == j:
-			return true
-	return false
-
-
-func add_entry(j: int) -> bool:
-	if j < 0 or j >= junctions.size():
-		return false
-	if has_entry(j):
-		return false
-	if entries.size() >= MAX_ENTRIES:
-		return false
-	# Do vyhybky, do ktere uz vede usek, vlastni kmen pridat nelze: kmen vede
-	# z leveho okraje a sel by pres vsechno, co je pred tou vyhybkou.
-	if not lanes_into(j).is_empty():
-		return false
-	entries.append(j)
-	relayout()
-	return true
-
-
-# NOVA SAMOSTATNA VETEV S VLASTNIM KMENEM. To je jedina cesta, jak udelat mapu
-# s druhym vstupem: nova vyhybka, ktera nikam nenavazuje, dostane vlastni kmen
-# a dva nove useky do vystupu. Kdyby se kmen jen "pripnul" k existujici
-# vyhybce, vedl by pres cely obrazek a krizil, co je pred ni.
-func add_tree() -> int:
-	if lanes.size() + 2 > MAX_LANES:
+func node_kind(n: int) -> int:
+	if n < 0 or n >= nodes.size():
 		return -1
-	if junctions.size() >= MAX_ENTRIES:
-		return -1
-	var j: int = junctions.size()
-	junctions.append({})
-	# Cile se nevyrabi: obe vetve noveho kmene konci v nekterem z EXISTUJICICH
-	# cilu. Novy cil si hrac prida sam, kdyz ho chce.
-	var e1: int = free_exit()
-	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": e1,
-		"divert": BASE_DIVERT})
-	var e2: int = free_exit(e1)
-	lanes.append({"from": j, "el": _free_element(), "kind": TO_EXIT, "to": e2,
-		"divert": BASE_DIVERT})
-	entries.append(j)
-	relayout()
-	return j
+	return int(nodes[n]["kind"])
 
 
-func remove_entry(j: int) -> bool:
-	if entries.size() <= 1:
-		return false
-	# Prvni kmen zustava: je to hlavni vstup mapy a jeho smazanim by zmizela
-	# i cela zakladni deska. Odebrat se da jen kmen, ktery hrac pridal.
-	if j <= 0:
-		return false
-	var at: int = entries.find(j)
-	if at < 0:
-		return false
-	entries.remove_at(at)
-	if lanes_into(j).is_empty() and not lanes_of(j).is_empty():
-		# Vetev, ktera ma jen svuj kmen, je bez nej nedostizna - zmizi cely
-		# strom (vyhybka i jeji useky).
-		_drop_junction(j)
-	else:
-		relayout()
-	return true
+func node_cell(n: int) -> Vector2i:
+	if n < 0 or n >= nodes.size():
+		return Vector2i(-1, -1)
+	return Vector2i(int(nodes[n]["c"]), int(nodes[n]["r"]))
 
 
-func junction_row(j: int) -> float:
-	return float(_jrow.get(j, TOP))
+func kind_name(kind: int) -> String:
+	if kind < 0 or kind >= KIND_NAMES.size():
+		return "?"
+	var s: String = KIND_NAMES[kind]
+	return s
 
 
-# MÍSTO ROZDĚLENÍ. Výhybka, která vznikla tím, že se na úsek něco napojilo
-# (viz split_at_join). Není to volič: vede z ní jediný úsek dál, takže se na ní
-# nedá nic přepínat - ale drží SVOU x-ovou souřadnici, tu, kde se napojení
-# opravdu stalo. Hloubka se pro ni nepoužívá (geometrie je daná souřadnicí),
-# proto si ji nese v datech.
-func is_division(j: int) -> bool:
-	if j < 0 or j >= junctions.size():
-		return false
-	return (junctions[j] as Dictionary).has("x")
-
-
-func junction_x(j: int) -> float:
-	if is_division(j):
-		return clampf(float((junctions[j] as Dictionary)["x"]), 0.02, 0.99)
-	return clampf(BASE_JUNCTION_X + float(junction_depth(j)) * DEPTH_DX, BASE_JUNCTION_X, 0.86)
-
-
-# Vystup, ktery nema zadny usek. Pouziva se pri pridavani useku - novy usek
-# ma jit nekam, kde jeste nikdo neni.
-func _exit_used(idx: int) -> bool:
-	return _exit_uses(idx) > 0
-
-
-# Kolik useku do toho vystupu usti.
-func _exit_uses(idx: int) -> int:
-	var n := 0
-	for i in range(lanes.size()):
-		if exit_of(i) == idx:
-			n += 1
-	return n
-
-
-# VYSTUPY SE NEPRIDAVAJI SAMY. Level si je drzi jako zdroj, ktery hrac
-# spravuje rucne ("cíl +"). Kdyz je kazda nova cesta vyrabela sama, mel hrac
-# v mape cile, ktere nezadal - a cyklus "cíl" se prodluzoval, takze se k
-# napojovani dvou useku skoro nedostal.
-# Novy vystup dostane vlastni radek mrizky (viz relayout), aby se dve diry
-# nekreslily pres sebe.
-func add_exit() -> int:
-	if exits.size() >= MAX_EXITS:
-		return -1
-	exits.append([exit_x, TOP])
-	relayout()
-	return exits.size() - 1
-
-
-# ZRUSENI CILE. Pouziva se, kdyz mizi CESTA: kdyz je cesta smazana a do
-# jejiho cile uz nic nevede, cil zmizi s ni. Rucne pridany cil (tlacitkem
-# "cíl +") zustava - ten si hrac hlida sam a muze docasne zustat bez cesty,
-# dokud ho nejaka cesta nepouzije.
-# Indexy vystupu se posunou, proto se vsechny odkazy na ne premapuji: jinak
-# by nejaky usek mířil na cil, ktery uz neexistuje.
-func remove_exit(idx: int) -> bool:
-	if idx < 0 or idx >= exits.size():
-		return false
-	if exits.size() <= 1:
-		return false
-	if _exit_uses(idx) > 0:
-		return false
-	exits.remove_at(idx)
-	for i in range(lanes.size()):
-		if target_kind(i) == TO_EXIT and to_of(i) > idx:
-			var l: Dictionary = lanes[i]
-			l["to"] = to_of(i) - 1
-			lanes[i] = l
-	relayout()
-	return true
-
-
-# Nejnizsi (a tedy nejdriv kresleny) cil, do ktereho nic nevede. -1, kdyz
-# takovy neni. Pouziva ho rucni mazani cile: kdyz vybrany usek do zadneho
-# cile nevede, maze se cil, ktery nikdo nepouziva.
-func unused_exit() -> int:
-	var best: int = -1
-	for i in range(exits.size()):
-		if _exit_uses(i) == 0:
-			best = i
-			break
-	return best
-
-
-# RUCNI ZRUSENI CILE. Jan: "cíle stále po smazání úseku nemizí. Přidáme tedy
-# možnost smazat cíl ručně." Automatika (remove_exit) maze jen cil, do
-# ktereho po smazane ceste nic nevede - a to je spravne: hrac nesmi prijit
-# o cil, ktery jeste pouziva. Rucni mazani je VEDOME rozhodnuti, takze maze
-# i cil, do ktereho jeste neco vede: useky, ktere do nej vedly, se prepoji na
-# jiny (volny) cil. Cisla useku se nemene, takze se prepojuje jen "to".
-#
-# Vraci {"ok": bool, "moved": [[usek, novy cil], ...]} - editor z toho dela
-# hlasku, aby hrac videl, co se stalo s cestami, ktere o cil prisly.
-func remove_exit_forced(idx: int) -> Dictionary:
-	var out := {"ok": false, "moved": []}
-	if idx < 0 or idx >= exits.size() or exits.size() <= 1:
-		return out
-	var users: Array = []
-	for i in range(lanes.size()):
-		if exit_of(i) == idx:
-			users.append(i)
-	exits.remove_at(idx)
-	for i in range(lanes.size()):
-		if target_kind(i) == TO_EXIT and to_of(i) > idx:
-			var l: Dictionary = lanes[i]
-			l["to"] = to_of(i) - 1
-			lanes[i] = l
-	# Prepojeni az PO premapovani: teprve ted je videt, ktere cile jsou volne.
-	for u in users:
-		var ui: int = int(u)
-		var l2: Dictionary = lanes[ui]
-		l2["kind"] = TO_EXIT
-		l2.erase("node")
-		l2["to"] = free_exit()
-		lanes[ui] = l2
-		out["moved"].append([ui, int(l2["to"])])
-	out["ok"] = true
-	relayout()
-	return out
-
-
-# Volny vystup pro novy usek: prednostne takovy, do ktereho nic neusta; kdyz
-# jsou vsechny obsazene, tak ten s nejmensim poctem useku (aby se cesty
-# nehrnuly vsechny do posledniho). `avoid` se pouzije, kdyz usek potrebuje
-# cil JINY, nez ma jeho sourozenec - jinak by obe vetve vedly do stejne diry
-# a vyhybka by nic nerozhodovala.
-func free_exit(avoid: int = -1) -> int:
-	var best: int = -1
-	var best_uses: int = 1 << 30
-	for i in range(exits.size()):
-		if i == avoid:
-			continue
-		var uses: int = _exit_uses(i)
-		if uses == 0:
+# Uzel lezi na te bunce? -1 kdyz tam nic neni.
+func node_at(c: int, r: int) -> int:
+	for i in range(nodes.size()):
+		if int(nodes[i]["c"]) == c and int(nodes[i]["r"]) == r:
 			return i
-		if uses < best_uses:
-			best_uses = uses
-			best = i
-	if best >= 0:
-		return best
-	return maxi(exits.size() - 1, 0)
+	return -1
 
 
-# ---------------------------------------------------------------- zmeny
-
-# Novy usek z dane vyhybky. Element se vybere tak, aby v mape nechybel
-# zadny zivly (a neutralni az kdyz uz vsechny jsou) - nova kolej tak nikdy
-# nerozbije matici zivlu.
-func _free_element() -> int:
-	var seen := {}
-	for i in range(lanes.size()):
-		seen[el_of(i)] = true
-	for e in range(Element.COUNT):
-		if not seen.has(e):
-			return e
-	return NEUTRAL
+func node_at_cell(cell: Vector2i) -> int:
+	return node_at(cell.x, cell.y)
 
 
-# ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Jan: "Když jsou na mapě jen úseky
-# s vodou a ohněm, tak budou pouze vodní a ohniví nepřátelé."
-#
-# Neni to kosmetika: poutnik, na ktereho v mape neni protiklad, se neda zabit
-# (vlastni zivel bere 0 %) a level by se nedal vyhrat. Dokud se posilaly
-# vsechny ctyri zivly, byla pulka poutniku neporazitelna na kazde mape, ktera
-# nemela vsechny ctyri useky.
-#
-# Neutralni usek sem nepatri: nema element, takze "neutralni poutnik" by
-# nemel na cem dostat vic nez 100 %.
-func spawn_elements() -> Array:
+func lane_cells(lane: int) -> Array:
+	if lane < 0 or lane >= lanes.size():
+		return []
+	var a: Array = lanes[lane]["cells"]
+	return a
+
+
+func lane_element(lane: int) -> int:
+	if lane < 0 or lane >= lanes.size():
+		return NEUTRAL
+	return int(lanes[lane]["elem"])
+
+
+func lane_is_neutral(lane: int) -> bool:
+	return lane_element(lane) == NEUTRAL
+
+
+func lane_accepts(lane: int, element: int) -> bool:
+	return not lane_is_neutral(lane) and lane_element(lane) == element
+
+
+# Usek, ze ktereho poutnici vstupuji - neposkozuje.
+func lane_is_entry(lane: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	return bool(lanes[lane]["entry"])
+
+
+func lane_start_node(lane: int) -> int:
+	var cs: Array = lane_cells(lane)
+	if cs.is_empty():
+		return -1
+	var c: Vector2i = cs[0]
+	return node_at_cell(c)
+
+
+func lane_end_node(lane: int) -> int:
+	var cs: Array = lane_cells(lane)
+	if cs.is_empty():
+		return -1
+	var c: Vector2i = cs[cs.size() - 1]
+	return node_at_cell(c)
+
+
+# Useky, ktere z uzlu VYCHAZEJI (zacina v nem jejich prvni bunka).
+func lanes_from(n: int) -> Array:
 	var out: Array = []
 	for i in range(lanes.size()):
-		var e: int = el_of(i)
-		if e != NEUTRAL and not out.has(e):
-			out.append(e)
-	out.sort()
-	return out
-
-
-func add_lane(from_j: int = 0) -> bool:
-	if lanes.size() >= MAX_LANES:
-		return false
-	var j: int = clampi(from_j, 0, maxi(junctions.size() - 1, 0))
-	if lanes_of(j).size() >= MAX_FAN:
-		return false
-	lanes.append({
-		"from": j,
-		"el": _free_element(),
-		"to": free_exit(),
-		"divert": BASE_DIVERT,
-	})
-	_ensure_junctions()
-	relayout()
-	return true
-
-
-# Odebere usek. Cil, do ktereho uz po nem nic nevede, zmizi s nim - cesta
-# i s cilem, kam vedla. Rucne pridany cil zustava (viz remove_exit).
-# Kdyz po nem zustane prazdna vyhybka, odebere se i ta (jinak by v mape
-# zustal ventilator, do ktereho nikdo nevede).
-func remove_lane(at: int = -1) -> bool:
-	if lanes.size() <= MIN_LANES:
-		return false
-	var i: int = at
-	if i < 0:
-		i = lanes.size() - 1
-	if i < 0 or i >= lanes.size():
-		return false
-	# ROZDĚLENÍ SE NESMÍ ROZPADNOUT. Obě jeho části drží jedna druhou:
-	#  * maže-li hráč DOLNÍ část, horní si vezme její cíl a rozdělení zmizí
-	#    (cesta se zkrátí zpět na jednu),
-	#  * horní část se maže až po sloučení (tlačítko "sloučit"), aby po ní
-	#    nezůstal viset úsek, ze kterého nikdo nevede.
-	var dj: int = from_of(i)
-	if is_division(dj) and lanes_of(dj).size() == 1 and int(lanes_of(dj)[0]) == i:
-		if lanes_into(dj).size() != 1:
-			return false
-		_collapse_division(dj)
-		# Obsah mazaného úseku se přelil do horního - tím je smazaný úsek pryč
-		# a celá operace hotová.
-		return true
-	if is_division(junction_of(i)):
-		return false
-	var j: int = from_of(i)
-	var gone_exit: int = exit_of(i)
-	lanes.remove_at(i)
-	# Cisla useku se posunula - odkazy "napojuje se na usek N" se musi posunout
-	# s nimi, jinak by se vetev vleva do JINEHO useku, nez hrac videl.
-	_shift_lane_refs(i)
-	if gone_exit >= 0:
-		remove_exit(gone_exit)
-	if j > 0 and lanes_of(j).is_empty():
-		_drop_junction(j)
-	else:
-		relayout()
-	return true
-
-
-# Po smazani useku `gone` se indexy ostatnich posunou. Kdo se na smazany usek
-# napojoval, zustal by s cilem do prazdna - z toho se stane vystup.
-func _shift_lane_refs(gone: int) -> void:
-	for i in range(lanes.size()):
-		if target_kind(i) != TO_LANE:
-			continue
-		var t: int = to_of(i)
-		var l: Dictionary = lanes[i]
-		if t == gone:
-			l["kind"] = TO_EXIT
-			l["to"] = free_exit()
-			lanes[i] = l
-		elif t > gone:
-			l["to"] = t - 1
-			lanes[i] = l
-	_fix_lane_refs()
-
-
-# ROZDĚLENÍ ÚSEKU. Vybrany usek prestane koncit ve vystupu a skonci v NOVE
-# vyhybce; z te vedou dva useky - jeden pokracuje tam, kam vedl puvodni usek
-# (a nese jeho element), druhy vede do noveho vystupu. Presne to je "rozdelit
-# usek": hrac si vyrobi dalsi volbu na ceste, ktera dosud volbu nemela.
-func split_lane(lane: int) -> int:
-	if lane < 0 or lane >= lanes.size():
-		return -1
-	if not lane_is_exit(lane):
-		return -1
-	if junction_depth(from_of(lane)) + 1 > MAX_DEPTH:
-		return -1
-	if lanes.size() + 2 > MAX_LANES:
-		return -1
-	var j_new: int = junctions.size()
-	var keep_el: int = el_of(lane)
-	var keep_to: int = to_of(lane)
-	var l: Dictionary = lanes[lane]
-	l["kind"] = TO_JUNCTION
-	l["to"] = j_new
-	lanes[lane] = l
-	# Druha vetev musi vest JINAM nez ta prvni - jinak by se hrac rozhodoval
-	# mezi dvema cestami do stejne diry. Novy cil se pritom nevyrabi.
-	var new_to: int = free_exit(keep_to)
-	junctions.append({})
-	lanes.append({"from": j_new, "el": keep_el, "kind": TO_EXIT, "to": keep_to, "divert": BASE_DIVERT})
-	lanes.append({"from": j_new, "el": _free_element(), "kind": TO_EXIT, "to": new_to,
-		"divert": BASE_DIVERT})
-	relayout()
-	return j_new
-
-
-# SLITÍ ÚSEKU ZPĚT. Vybrany usek vede do vyhybky, do ktere vede sam a jeji
-# useky konci ve vystupech: usek se prepoji na prvni z nich a vyhybka zmizi.
-# ROZDĚLENÍ se slévá taky takhle - jen se nevybírá mezi větvemi (vede z něj
-# jediná), horní úsek si vezme ten dolní.
-# PRAVIDLO JE NA JEDNOM MÍSTĚ (can_merge_lane): editor se ho ptá, když má
-# tlačítku říct "sloučit", a slévání podle něj jede.
-func can_merge_lane(lane: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	var j: int = junction_of(lane)
-	if j < 0:
-		return false
-	if lanes_into(j).size() != 1:
-		return false
-	var kids: Array = lanes_of(j)
-	if kids.is_empty():
-		return false
-	if is_division(j):
-		# Z rozdělení vede jediný úsek a nikdo se do něj nesmí vlévat - jinak
-		# by po slití zůstal viset ve vzduchu.
-		if kids.size() != 1:
-			return false
-		return not _joins_into_lane(int(kids[0]))
-	for k in kids:
-		if not lane_is_exit(int(k)):
-			return false
-	return true
-
-
-# Vlévá se do toho úseku někdo? (napojení = TO_LANE na ten úsek)
-func _joins_into_lane(d: int) -> bool:
-	for i in range(lanes.size()):
-		if target_kind(i) == TO_LANE and to_of(i) == d:
-			return true
-	return false
-
-
-func merge_lane(lane: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	var j: int = junction_of(lane)
-	if j < 0:
-		return false
-	if not can_merge_lane(lane):
-		return false
-	if is_division(j):
-		return _collapse_division(j)
-	var kids: Array = lanes_of(j)
-	var target: int = to_of(kids[0])
-	var l: Dictionary = lanes[lane]
-	l["kind"] = TO_EXIT
-	l["to"] = target
-	lanes[lane] = l
-	_drop_junction(j)
-	return true
-
-
-# Zrusi vyhybku a vsechny jeji useky. Indexy ostatnich vyhybek i useku se
-# posunou, proto se vsechny odkazy premapuji - jinak by nejaky usek mířil na
-# neco, co uz neexistuje (a hra by spadla az za behu).
-func _drop_junction(j: int) -> void:
-	var kids: Array = lanes_of(j)
-	kids.sort()
-	# Cile, ktere s tou vetvi zmizi. Sesbiraji se PRED smazanim useku a na
-	# konci se osirele cile zrusi - rucne pridane (nepouzite) zustavaji.
-	var gone_exits: Array = []
-	for k in kids:
-		var e: int = exit_of(int(k))
-		if e >= 0 and not gone_exits.has(e):
-			gone_exits.append(e)
-	# Stara -> nova cisla useku.
-	var remap := {}
-	var shift := 0
-	for i in range(lanes.size()):
-		if kids.has(i):
-			shift += 1
-			remap[i] = -1
-		else:
-			remap[i] = i - shift
-	for k in range(kids.size() - 1, -1, -1):
-		lanes.remove_at(int(kids[k]))
-	junctions.remove_at(j)
-	var new_entries: Array = []
-	for e in entries:
-		var ei: int = int(e)
-		if ei == j:
-			continue
-		new_entries.append(ei - 1 if ei > j else ei)
-	entries = new_entries
-	if entries.is_empty():
-		entries = [0]
-	for i in range(lanes.size()):
-		var l: Dictionary = lanes[i]
-		var kind: int = int(l.get("kind", TO_EXIT))
-		var to: int = int(l["to"])
-		if kind == TO_JUNCTION:
-			if to > j:
-				l["to"] = to - 1
-		elif kind == TO_LANE:
-			# Cil je usek: bud se posune, nebo (kdyz zmizel) se z toho stane
-			# vystup - neco rozumneho misto odkazu do prazdna.
-			var new_to: int = int(remap.get(to, -1))
-			if new_to < 0:
-				l["kind"] = TO_EXIT
-				l["to"] = clampi(to, 0, maxi(exits.size() - 1, 0))
-			else:
-				l["to"] = new_to
-		var f: int = int(l.get("from", 0))
-		if f > j:
-			l["from"] = f - 1
-		lanes[i] = l
-	_fix_lane_refs()
-	# Osirele cile te vetve zmizi. Indexy se posouvaji, proto az tady - vsechny
-	# odkazy na vystupy uz jsou premapovane na nove indexy useku. Maze se od
-	# nejvyssiho indexu, aby zbyvajici cisla zustala platna.
-	gone_exits.sort()
-	gone_exits.reverse()
-	for e2 in gone_exits:
-		remove_exit(int(e2))
-	relayout()
-
-
-# Po zruseni vyhybky (i jejich useku) se indexy useku posunou. Kazdy odkaz na
-# usek, ktery uz neexistuje, se prevede na vystup - radsi neco rozumneho nez
-# index mimo seznam. To same plati pro odkaz na vyhybku, ktera zmizela (stavaji
-# se to treba tim, ze nekdo smaze cast rozdeleni).
-func _fix_lane_refs() -> void:
-	for i in range(lanes.size()):
-		var kind: int = target_kind(i)
-		if kind == TO_LANE:
-			var t: int = int(lanes[i]["to"])
-			if t < 0 or t >= lanes.size():
-				var l: Dictionary = lanes[i]
-				l["kind"] = TO_EXIT
-				l["to"] = free_exit()
-				lanes[i] = l
-		elif kind == TO_JUNCTION:
-			var tj: int = int(lanes[i]["to"])
-			if tj < 0 or tj >= junctions.size():
-				var l2: Dictionary = lanes[i]
-				l2["kind"] = TO_EXIT
-				l2["to"] = free_exit()
-				lanes[i] = l2
-
-
-# CIL VYBRANEHO USEKU. Cykli se pres vsechny vystupy, pak pres ostatni useky
-# (vetev se vleje do druhe vetve) a nakonec pres vyhybky. Tim se daji useky
-# SPOJOVAT (dva useky do stejne vyhybky, nebo jeden na druhy) i ROZDELOVAT
-# (vyhybka sama). Preskakuji se cile, ktere by vyrobily smycku, moc hlubokou
-# vyhybku, nebo usek tak kratky, ze by se na nej nevesly bonusy.
-#
-# NAPOJENI MA VIC UZLU: kazdy pouzitelny uzel ciloveho useku je vlastni volba,
-# takze se do jednoho useku da vlit na vic mistech. Kazda volba si nese i
-# "node" - bez nej by se tri ruzna napojeni tvarila jako jedno a hrac by
-# nemel jak vybrat, do ktereho uzlu ma vetev spadnout.
-func target_choices(lane: int) -> Array:
-	var out: Array = []
-	# UZLY CÍLOVÉ CESTY SE NABÍZEJÍ VŠECHNY. Jan: "Teď jde napojit jeden úsek
-	# na druhý pouze v jednom uzlu. Mělo by být možné si vybrat z několika
-	# uzlů. Úsek se nemusí dělit na dva stejně dlouhé úseky." Každý uzel je
-	# vlastní volba a napojení se v něm ROZDĚLÍ (split_at_join).
-	#
-	# Jen u SVÉHO současného rozdělení se nabízí jen stav, na kterém hráč
-	# stojí: jinak by se cyklus nechal zamotat do "rozděl to zas o kus dál"
-	# a k ostatním cestám by se už nedostal. Rozdělení se po svém úseku
-	# posouvá tlačítky "uzel ±".
-	var own_kids: Array = []
-	if target_kind(lane) == TO_LANE:
-		var div: int = from_of(to_of(lane))
-		if is_division(div):
-			own_kids = lanes_of(div)
-	for e in range(exits.size()):
-		if can_target(lane, TO_EXIT, e):
-			out.append({"kind": TO_EXIT, "to": e})
-	for k in path_order():
-		for n in usable_nodes(lane, k):
-			if own_kids.has(k) and int(n) != lane_node(lane):
-				continue
-			out.append({"kind": TO_LANE, "to": k, "node": int(n)})
-	for j in range(junctions.size()):
-		# MÍSTO ROZDĚLENÍ SE NENABÍZÍ JAKO VÝHYBKA: napojit se do něj je totéž
-		# jako do prvního uzlu spodního úseku - a ten se nabízí hned vedle.
-		if is_division(j):
-			continue
-		if can_target(lane, TO_JUNCTION, j):
-			out.append({"kind": TO_JUNCTION, "to": j})
-	return out
-
-
-# ÚSEKY JEDNÉ CESTY, jak jdou za sebou. Cesta je řada úseků spojených místy
-# rozdělení: horní, spodní, další... (spodní má vyšší číslo, ale na cestě je
-# hned za horním).
-func path_chain(lane: int) -> Array:
-	var out: Array = []
-	if lane < 0 or lane >= lanes.size():
-		return out
-	# Nahoru na koren cesty.
-	var root: int = lane
-	var guard := 0
-	while is_division(from_of(root)) and guard < 64:
-		var ins: Array = lanes_into(from_of(root))
-		if ins.size() != 1:
-			break
-		root = int(ins[0])
-		guard += 1
-	# A zpet dolu pres vsechna rozdeleni.
-	var cur: int = root
-	guard = 0
-	while cur >= 0 and cur < lanes.size() and guard < 64:
-		out.append(cur)
-		guard += 1
-		var nxt: int = -1
-		if target_kind(cur) == TO_JUNCTION and is_division(to_of(cur)):
-			var kids: Array = lanes_of(to_of(cur))
-			if kids.size() == 1:
-				nxt = int(kids[0])
-		cur = nxt
-	return out
-
-
-# Úseky v pořadí, v jakém jdou po cestách za sebou. Cyklus "cíl" i nabídka
-# napojení jdou po cestách, ne po číslech úseků - jinak by spodní úsek
-# rozdělení (vyšší číslo) odskočil na konec seznamu.
-func path_order() -> Array:
-	var out: Array = []
-	var seen := {}
-	for i in range(lanes.size()):
-		if seen.has(i):
-			continue
-		for k in path_chain(i):
-			if not seen.has(k):
-				seen[k] = true
-				out.append(k)
-	return out
-
-
-# Popis cile lidsky. Tri druhy cile se chovaji jinak, takze hrac musi videt,
-# ktery z nich to je - a rika se to na JEDNOM miste (editor i hlaska).
-# U napojeni se rekne i uzel: kdyz jich je vic, hrac vidi, ktery z nich to je
-# a kolik jich jeste ma ("uzel 2/3").
-func choice_text(kind: int, to: int, node: int = -1, lane: int = -1) -> String:
-	if kind == TO_EXIT:
-		return "ústí do výstupu %d" % (to + 1)
-	if kind == TO_JUNCTION:
-		return "vede do výhybky %d" % (to + 1)
-	var n: int = clampi(node if node >= 0 else 0, 0, NODE_COUNT - 1)
-	if lane < 0:
-		return "napojuje se na úsek %d · %s" % [to + 1, node_name(n)]
-	if node_choice_count(lane, to) <= 1:
-		return "napojuje se na úsek %d" % (to + 1)
-	return "napojuje se na úsek %d · %s" % [to + 1, node_name(n)]
-
-
-# KTERY CIL BUDE NASLEDOVAT po dalsim klepnuti na "cíl". Jedno misto, kde se
-# to rozhoduje - ptá se ho samotny cyklus i napoveda v hlásce. Dve kopie by
-# se rozešly a napoveda by hracovi lhala.
-#
-# U napojeni se porovnava I UZEL: stejny cil ve dvou ruznych uzlech jsou dve
-# ruzne volby a cyklus musi vedet, na ktere z nich prave stoji.
-func next_choice_index(lane: int) -> int:
-	var choices: Array = target_choices(lane)
-	if choices.size() < 2:
-		return -1
-	var kind: int = target_kind(lane)
-	var node: int = lane_node(lane)
-	var at: int = -1
-	for i in range(choices.size()):
-		var c: Dictionary = choices[i]
-		if int(c["kind"]) != kind or int(c["to"]) != to_of(lane):
-			continue
-		if kind == TO_LANE and int(c.get("node", 0)) != node:
-			continue
-		at = i
-		break
-	if at < 0:
-		# Stav, ktery se v nabidce vubec neobjevuje (usek vede do mista
-		# rozdeleni): jiný cíl pro nej není - musi se nejdriv sloucit.
-		return -1
-	return (at + 1) % choices.size()
-
-
-func cycle_target(lane: int, skip: int = 0) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	var choices: Array = target_choices(lane)
-	var next: int = next_choice_index(lane)
-	if next < 0 or next >= choices.size():
-		return false
-	# `skip` preskoci dalsi volby: editor tim obchazi cile, ktere by rozbily
-	# rozdeleni (jinak by na nich cyklus zustal viset a hrac by videl porad
-	# tu samou hlasku).
-	if skip != 0:
-		next = (next + skip) % choices.size()
-	var pick: Dictionary = choices[next]
-	var l: Dictionary = lanes[lane]
-	var kind: int = int(pick["kind"])
-	var to: int = int(pick["to"])
-	var divs_before: int = _division_count()
-	last_cycle = {"ok": false, "created": false, "divided": -1, "collapsed": false}
-	# NAPOJENÍ ROZDĚLÍ CÍLOVÝ ÚSEK (Jan: "Když se jedna cesta napojí na uzel
-	# druhé cesty, tak by se druhá cesta měla tímto napojením rozdělit na dva
-	# úseky."). Napojení proto vstupuje do PRVNÍHO UZLU nového úseku - ten uzel
-	# JE to rozdělení. Když se rozdělení nevejde (plná deska), napojení se
-	# udělá i tak, jen bez rozdělení.
-	if kind == TO_LANE:
-		var r: Dictionary = split_at_join(to, int(pick.get("node", 0)))
-		if bool(r["ok"]):
-			to = int(r["lane"])
-			l["kind"] = TO_LANE
-			l["to"] = to
-			l["node"] = 0
-			last_cycle["created"] = bool(r["created"])
-			last_cycle["divided"] = int(r["divided"])
-		else:
-			l["kind"] = TO_LANE
-			l["to"] = to
-			l["node"] = int(pick.get("node", 0))
-	else:
-		l["kind"] = kind
-		l["to"] = to
-		# Uzel se drzi JEN u napojeni. Kdyz usek vede do vystupu nebo do vyhybky,
-		# uzel nema vyznam a v kodu by byl jen balast.
-		l.erase("node")
-	lanes[lane] = l
-	_prune_divisions()
-	relayout()
-	last_cycle["collapsed"] = _division_count() < divs_before
-	last_cycle["ok"] = true
-	return true
-
-
-# POSUN NAPOJENÍ NA JINÝ UZEL CÍLOVÉ CESTY. Napojení je zároveň místo
-# rozdělení, takže se s ním posune i rozdělení - o uzel dál po cílové cestě.
-# Tohle je ovládání tlačítek "uzel ±" (cyklus "cíl" vlastní cestu přeskočí).
-func move_join(lane: int, node: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	if target_kind(lane) != TO_LANE:
-		return false
-	return join_at(lane, to_of(lane), node)
-
-
-# POSUN ROZDĚLENÍ ZPĚT (blíž k výhybce, ze které cílová cesta vede). Napojený
-# úsek se přepne na HORNÍ úsek své cesty a rozdělí ho v jeho posledním uzlu -
-# rozdělení se tím posune doleva.
-func move_join_back(lane: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	if target_kind(lane) != TO_LANE:
-		return false
-	var to: int = to_of(lane)
-	var j: int = from_of(to)
-	if not is_division(j):
-		return false
-	var ins: Array = lanes_into(j)
-	if ins.size() != 1:
-		return false
-	var up: int = int(ins[0])
-	var ns: Array = usable_nodes(lane, up)
-	if ns.is_empty():
-		return false
-	return join_at(lane, up, int(ns[ns.size() - 1]))
-
-
-# NAPOJENÍ `lane` NA ÚSEK `to` V UZLU `node`. Napojení je zároveň místo
-# rozdělení, takže se `to` v tom místě rozdělí a napojený úsek vstoupí do
-# prvního uzlu spodního úseku (tím uzlem JE to rozdělení).
-func join_at(lane: int, to: int, node: int) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	if not can_target(lane, TO_LANE, to, node):
-		return false
-	var r: Dictionary = split_at_join(to, node)
-	if not bool(r["ok"]):
-		return false
-	var l: Dictionary = lanes[lane]
-	l["kind"] = TO_LANE
-	l["to"] = int(r["lane"])
-	l["node"] = 0
-	lanes[lane] = l
-	_prune_divisions()
-	relayout()
-	return true
-
-
-# Kolik je v levelu mist rozdeleni. Pouziva se pro hlášku ("rozdělení se
-# vrátilo zpět") - počítá se z dat, ne z toho, co si kdo pamatuje.
-func _division_count() -> int:
-	var n := 0
-	for j in range(junctions.size()):
-		if is_division(j):
-			n += 1
-	return n
-
-
-# VEJDE SE ROZDĚLENÍ TOHO ÚSEKU V TOM UZLU? Rozhoduje se na jednom místě:
-# ptá se ho can_target (co vůbec nabízet), split_at_join (co opravdu udělat) i
-# testy. Obě části potřebují místo na rovný úsek jako každý jiný úsek - horní
-# mezi svou výhybkou a dělicím bodem, dolní od dělicího bodu ke svému cíli.
-# Kdyby to nesedlo, hráč by si vyrobil level, který se mu nevyexportuje.
-func can_divide(at: int, node: int) -> bool:
-	if at < 0 or at >= lanes.size():
-		return false
-	if node < 0 or node >= NODE_COUNT:
-		return false
-	var x: float = node_x(at, node)
-	# Už se v tom místě dělí? Pak se nic nového nedělá a je to v pořádku.
-	if is_division(from_of(at)) and absf(x - junction_x(from_of(at))) < 0.001:
-		return true
-	if lanes.size() + 1 > MAX_LANES:
-		return false
-	# Horní část: z výhybky, ze které úsek vede, do dělicího bodu.
-	var up: float = (x - MERGE_GAP) - junction_x(from_of(at))
-	if up <= 0.0:
-		return false
-	if up * (1.0 - run_in_frac(at, TO_JUNCTION, up) - run_frac_for(TO_JUNCTION, up)) < MIN_RUN_DIVIDE:
-		return false
-	# Dolní část: od dělicího bodu ke svému cíli. Vzniká bez náběhu, takže
-	# rozhoduje jen zatáčka na konci (run_in_frac ji tam dá 0).
-	var kind: int = target_kind(at)
-	var down: float = _target_x(kind, to_of(at), 0, at, lane_node(at)) - x
-	if down <= 0.0:
-		return false
-	if down * (1.0 - run_frac_for(kind, down)) < MIN_RUN_DIVIDE:
-		return false
-	return true
-
-
-# ---------------------------------------------------------------- rozdělení
-
-# ÚSEK SE ROZDĚLÍ NAPOJENÍM. Cesta, do které se někdo vlévá, se v tom místě
-# rozdělí na dva úseky: horní zůstává tím úsekem (a končí v místě rozdělení),
-# nový dolní je PLNOHODNOTNÝ úsek - má vlastní cíl, vlastní element, vlastní
-# odbočení i vlastní uzly, do kterých se dá napojit (Jan: "Nový vzniklý úsek
-# by měl mít možnosti jako všechny ostatní.").
-#
-# Místo rozdělení je výhybka, ze které vede jediný úsek dál - nedá se na ní nic
-# přepínat (žádné rozhodnutí tam není), ale drží geometrii: stojí přesně tam,
-# kde se hráč napojil, a nový úsek z ní vychází bez náběhu (run_in_frac).
-#
-# Vrací {"ok", "junction", "lane", "created"}: `lane` je úsek, do kterého se
-# napojený úsek vlévá (nový, nebo ten stávající, když se v tom místě už dělí).
-func split_at_join(to: int, node: int) -> Dictionary:
-	var out := {"ok": false, "junction": -1, "lane": -1, "divided": to, "created": false}
-	if to < 0 or to >= lanes.size():
-		return out
-	if node < 0 or node >= NODE_COUNT:
-		return out
-	var x: float = node_x(to, node)
-	# Už se v tom místě dělí? Pak se žádné nové rozdělení nedělá - hráč se
-	# napojuje na to stávající místo rozdělení (je to stejný bod).
-	if is_division(from_of(to)) and absf(x - junction_x(from_of(to))) < 0.001:
-		out["ok"] = true
-		out["junction"] = from_of(to)
-		out["lane"] = to
-		return out
-	# Rozdeleni musi mit misto - same pravidlo, jakym se nabizi hracovi.
-	if not can_divide(to, node):
-		return out
-	if lanes.size() + 1 > MAX_LANES:
-		return out
-	var j: int = junctions.size()
-	junctions.append({"x": snappedf(x, 0.0001)})
-	var keep_kind: int = target_kind(to)
-	var keep_to: int = to_of(to)
-	var keep_node: int = lane_node(to)
-	var l: Dictionary = lanes[to]
-	l["kind"] = TO_JUNCTION
-	l["to"] = j
-	l.erase("node")
-	lanes[to] = l
-	var d: Dictionary = {
-		"from": j,
-		"el": el_of(to),
-		"kind": keep_kind,
-		"to": keep_to,
-		"divert": divert_of(to),
-	}
-	if keep_kind == TO_LANE:
-		d["node"] = keep_node
-	lanes.append(d)
-	out["ok"] = true
-	out["junction"] = j
-	out["lane"] = lanes.size() - 1
-	out["created"] = true
-	relayout()
-	return out
-
-
-# ROZDĚLENÍ ZŮSTÁVÁ, JEN DOKUD MÁ SMYSL. Rozdělení vzniká napojením; kdyby
-# zůstalo i potom, co hráč napojení posunul jinam, rozřezal by si klepáním na
-# "cíl" cestu na hromadu úseků. Proto se rozdělení, na které už nic nevede,
-# samo vrátí (obě části se slijí zpět) - KROMĚ případu, kdy si hráč nový úsek
-# upravil: jiný element je jeho rozhodnutí, ne dozvuk klepání.
-func _prune_divisions() -> void:
-	var guard := 0
-	while guard < 16:
-		guard += 1
-		var found := -1
-		for j in range(1, junctions.size()):
-			if not is_division(j):
-				continue
-			if _division_in_use(j):
-				continue
-			found = j
-			break
-		if found < 0:
-			return
-		_collapse_division(found)
-
-
-# Drží to rozdělení ještě něco? Rozhoduje se na jednom místě - ptá se ho
-# uklízení i testy.
-func _division_in_use(j: int) -> bool:
-	var kids: Array = lanes_of(j)
-	if kids.size() != 1:
-		return true
-	var d: int = int(kids[0])
-	if from_of(d) != j:
-		return true
-	var ins: Array = lanes_into(j)
-	if ins.size() != 1:
-		# Nikdo (nebo víc úseků) do místa rozdělení vede - to není stav, který
-		# by uklízení mělo řešit samo.
-		return true
-	# Někdo se vlévá do nového úseku? Pak rozdělení drží napojení.
-	if _joins_into_lane(d):
-		return true
-	# Hráč dal novému úseku jiný element? To je rozdělení, které má smysl samo.
-	if el_of(d) != el_of(int(ins[0])):
-		return true
-	return false
-
-
-# SLITÍ ROZDĚLENÍ ZPĚT. Horní úsek si vezme cíl (i odbočení) toho dolního,
-# místo rozdělení i dolní úsek zmizí. Přesně to se stane, když hráč zmáčkne
-# "sloučit" nebo když rozdělení zůstane bez napojení.
-func _collapse_division(j: int) -> bool:
-	var ins: Array = lanes_into(j)
-	var kids: Array = lanes_of(j)
-	if kids.size() != 1 or ins.size() != 1:
-		return false
-	var u: int = int(ins[0])
-	var d: int = int(kids[0])
-	if u == d:
-		return false
-	var dl: Dictionary = lanes[d]
-	var l: Dictionary = lanes[u]
-	l["el"] = int(dl["el"])
-	l["divert"] = divert_of(d)
-	l["kind"] = target_kind(d)
-	l["to"] = to_of(d)
-	if target_kind(d) == TO_LANE:
-		l["node"] = lane_node(d)
-	else:
-		l.erase("node")
-	lanes[u] = l
-	_drop_junction(j)
-	return true
-
-
-# ---------------------------------------------------------------- geometrie
-
-# Kdo vsechno vede do te vyhybky (jeji privodni usek).
-func lanes_into(j: int) -> Array:
-	var out: Array = []
-	for i in range(lanes.size()):
-		if junction_of(i) == j:
+		if lane_start_node(i) == n:
 			out.append(i)
 	return out
 
 
-# Vyhybky musi existovat, i kdyz o nich level jeste nic nevi (stare kody).
-func _ensure_junctions() -> void:
-	var need := 1
-	for i in range(lanes.size()):
-		need = maxi(need, from_of(i) + 1)
-		if not lane_is_exit(i):
-			need = maxi(need, junction_of(i) + 1)
-	while junctions.size() < need:
-		junctions.append({})
-	while junctions.size() > need:
-		junctions.remove_at(junctions.size() - 1)
-
-
-# Rozvrzi radky. Kazdy usek koncici ve vystupu je jeden radek; usek, ktery vede
-# do dalsi vyhybky, zabira tolik radku, kolik ma ta vyhybka useku - a sedi
-# uprostred nich (proto jeho vetve "rozkvetou" na obe strany presne jako
-# zakladni deska). Radky se VYSTREDI: pri peti usecich je mezera presne
-# `spread`, pri trech se neroztahne pres celou plochu, ale zustane uprostred.
-func relayout() -> void:
-	_ensure_junctions()
-	_row = {}
-	_jrow = {}
-	_span = {}
-	_jspan = {}
-	var cursor := 0
-	for root in _roots():
-		cursor = _walk(int(root), cursor, 0)
-	_rows_total = cursor
-	# Cile jsou radky ve STEJNE mrizce jako drahy: kazda dira potrebuje svuj
-	# radek, aby se dve nekreslily pres sebe. Kdyz je cilu vic nez drah, radky
-	# se pridaji - a mezera se zmensi vsem stejne (coz hlida rows_fit()).
-	var n: int = maxi(maxi(_rows_total, exits.size()), 1)
-	_grid_rows = n
-	var gap: float = spread
-	var span: float = gap * float(n - 1)
-	if span > BOTTOM - TOP:
-		gap = (BOTTOM - TOP) / float(maxi(n - 1, 1))
-		span = gap * float(n - 1)
-	_gap = gap
-	var y0: float = TOP + (BOTTOM - TOP - span) * 0.5
-	for j in _jspan:
-		var s: Array = _jspan[j]
-		_jrow[int(j)] = y0 + gap * (float(int(s[0])) + float(int(s[1]))) * 0.5
-	for i in range(lanes.size()):
-		# Usek sedi uprostred sveho vlastniho rozpeti. U useku do vystupu je to
-		# proste jeho radek; u useku do vyhybky prostredek jejich vetvi.
-		_row[i] = y0 + gap * _lane_row_index(i)
-	# VYSTUPY JSOU DIRY V MAPE: drzi si radek podle sveho indexu v mrizce, ale
-	# VYSTREDI SE JAKO SKUPINA - prvni dira neni na prvnim radku, ale pul radku
-	# nad stredem. Driv se cile skladaly OD SHORA: pri peti drahach a ctyrech
-	# vystupech sedela prvni dira u HUDu a dole zelo prazdno, takze deska
-	# vypadala nevyvazene. Vzorec je schvalne takovy, ze kdyz je cilu presne
-	# tolik co radku, vyjde znak po znaku to same co driv (idx 0..n-1).
-	for idx in range(exits.size()):
-		var e: Array = exits[idx]
-		var keep_x: float = float(e[0])
-		var row_i: float = float(n - 1) * 0.5 + (float(idx) - float(exits.size() - 1) * 0.5)
-		exits[idx] = [keep_x, y0 + gap * row_i]
-
-
-# Kolik radku mrizka zabira a jakou mezeru ma. Radky jsou to, co level
-# opravdu omezuje: bonusy na sousednich drahach se nesmi prekryvat.
-func rows_total() -> int:
-	return _grid_rows
-
-
-func row_gap() -> float:
-	return _gap
-
-
-# VEJDE SE MRIZKA JESTE NA DESKU? Jedno misto, kde se to rozhoduje - ptá se
-# ho editor (smí hrac pridat dalsi drahu nebo cil?) i validate (smí se level
-# vyvézt?). Dve kopie podminky by se rozešly: hrac by si postavil level, ktery
-# se mu nevyexportuje.
-func rows_fit() -> bool:
-	if _grid_rows <= 1:
-		return true
-	return _gap >= MIN_ROW_GAP
-
-
-# Z kterych vyhybek se mrizka sklada. Kmen (vstup) zaklada vlastni strom, takze
-# map se dvema kmeny ma dva stromy a kazdy si drzi sve radky. Kdyby se pocital
-# jen strom prvni vyhybky, druhy kmen by nemel kde byt.
-func _roots() -> Array:
-	var roots: Array = []
-	var covered := {}
-	var cands: Array = []
-	for e in entries:
-		cands.append(int(e))
-	for j in range(junctions.size()):
-		cands.append(j)
-	for c in cands:
-		var j: int = int(c)
-		if j < 0 or j >= junctions.size() or covered.has(j):
-			continue
-		roots.append(j)
-		_mark_reachable(j, covered)
-	return roots
-
-
-func _mark_reachable(j: int, covered: Dictionary) -> void:
-	var guard := 0
-	var stack: Array = [j]
-	while not stack.is_empty() and guard < 64:
-		guard += 1
-		var cur: int = int(stack.pop_back())
-		if covered.has(cur):
-			continue
-		covered[cur] = true
-		for i in range(lanes.size()):
-			var k: int = junction_of(i)
-			if k >= 0 and from_of(i) == cur and not covered.has(k):
-				stack.append(k)
-
-
-# Rekurzivni prichod mrizkou: kazdemu useku priridi rozpeti radku a vrati
-# index prvniho volneho radku. Usek, ktery se napojuje na JINY USEK, je
-# z pohledu mrizky list - ma svuj radek jako usek do vystupu.
-func _walk(j: int, cursor: int, depth: int) -> int:
-	var first: int = cursor
-	var jl: Array = lanes_of(j)
-	for lane in jl:
-		if lane_is_exit(lane) or depth >= MAX_DEPTH:
-			_span[lane] = [cursor, cursor]
-			cursor += 1
-		else:
-			var k: int = junction_of(lane)
-			if k < 0:
-				_span[lane] = [cursor, cursor]
-				cursor += 1
-			else:
-				cursor = _walk(k, cursor, depth + 1)
-				_span[lane] = _jspan.get(k, [cursor, cursor])
-	if jl.is_empty():
-		_jspan[j] = [cursor, cursor]
-	else:
-		_jspan[j] = [first, cursor - 1]
-	return cursor
-
-
-# Stred rozpeti daneho useku jako index radku.
-func _lane_row_index(lane: int) -> float:
-	var s: Array = _span.get(lane, [0, 0])
-	return (float(int(s[0])) + float(int(s[1]))) * 0.5
-
-
-func row_of(lane: int) -> float:
-	return float(_row.get(lane, TOP))
-
-
-func exit_row(idx: int) -> float:
-	var e: Array = exits[clampi(idx, 0, exits.size() - 1)]
-	return float(e[1])
-
-
-# Rovny usek toho useku v podilu sirky plochy: od bodu, kde se ohne z vyhybky,
-# k bodu, kde se ohne ke svemu cili. Pocita se v NORMALIZOVANYCH souradnicich
-# (level je nezavisly na displeji) - Network z toho jen prevede na pixely.
-#
-# JEDNO MISTO, ze ktereho to vi geometrie (run_x0/run_x1), can_target i
-# kresleni. Kdyby si to pocital can_target zvlast, nabizel by hracovi neco
-# jineho, nez co se pak opravdu nakresli.
-func run_frac_for(kind: int, span: float) -> float:
-	if kind == TO_JUNCTION:
-		return RUN_FRAC_CONNECTOR
-	if kind != TO_LANE:
-		return RUN_FRAC
-	# NAPOJENI: privodni usek musi mit svuj rovny usek mezi vyhybkou, ze ktere
-	# vychazi, a uzlem ciloveho useku. Kdyz je uzel blizko, staci kratsi rovny
-	# usek - jinak by se napojeni vubec nedalo udelat. Presne to driv platilo
-	# pro vetve z hlubsi vyhybky: zbyvala jim jen sourozenecka vetev a ostatni
-	# useky "ignorovaly". Cim delsi rozpeti, tim bliz je podil vychozimu
-	# RUN_FRAC, takze zakladni deska se pocita znak po znaku jako driv.
-	if span <= 0.0:
-		return RUN_FRAC
-	return clampf((1.0 - MIN_RUN / span) * 0.5, 0.0, RUN_FRAC)
-
-
-# ROZDĚLENÝ ÚSEK NEMÁ NÁBĚH. Úsek, který vznikl rozdělením, začíná přesně
-# v dělicím bodě - kdyby si nechal obvyklý náběh (run_frac_for), jeho rovný
-# úsek by začínal až kus za rozdělením a napojení v prvním uzlu by nesedlo na
-# dělicí bod. Proto je pro něj podíl náběhu 0 a jeho rovný úsek začíná
-# v rozdělení.
-func run_in_frac(lane: int, kind: int, span: float) -> float:
-	if is_division(from_of(lane)):
-		return 0.0
-	return run_frac_for(kind, span)
-
-
-# X-ova souradnice bodu, do ktereho usek vede. Pro cil = jiny usek je to
-# ZVOLENY UZEL toho druheho useku - tam se vetev vleje do te druhe.
-func target_x_of(lane: int, guard: int = 0) -> float:
-	return _target_x(target_kind(lane), to_of(lane), guard, lane, lane_node(lane))
-
-
-func _target_x(kind: int, to: int, guard: int, self_lane: int = -1, node: int = 0) -> float:
-	if kind == TO_EXIT:
-		return exit_x
-	if kind == TO_JUNCTION:
-		return junction_x(to) - MERGE_GAP
-	# Cil = jiny usek. Kdyby se useky odkazovaly dokola (rozbitý level),
-	# rekurze se zastavi - validate to stejne odmitne.
-	if guard > 8 or to < 0 or to >= lanes.size() or to == self_lane:
-		return exit_x
-	return run_land_x(to, node, guard + 1)
-
-
-# PODIL UZLU NA CILOVEM USEKU, KTERY SE SROVNA ODZBOCENIM. Uzel musi lezet na
-# rovném useku ciloveho useku (za jeho zatackou uz rovny usek neni). Kdyz hrac
-# cilovy usek ohne brzo, driv se tim VSEchna napojeni do nej zrusila - uzel
-# proste "nebyl". Ted se uzel posune pred zatacku: napojeni zustane, jen se
-# vleje o kus driv. Pri vychozim odboceni (0.80) vychazi znak po znaku to same
-# co driv (0.74), takze zakladni deska ani zakotvene levely se nemeni.
-const NODE_BEND_MARGIN := 0.06
-
-
-# UZLY USEKU. Rozdělený úsek (ten, který vznikl rozdělením) má první uzel
-# v dělicím bodě - tam, kde začíná - a další dva jako ostatní.
-func lane_node_frac(lane: int, node: int) -> float:
-	if is_division(from_of(lane)):
-		return float(MERGE_NODE_FRACS[clampi(node, 0, NODE_COUNT - 1)])
-	return node_frac(node)
-
-
-func node_frac_on(lane: int, node: int) -> float:
-	return minf(lane_node_frac(lane, node), maxf(0.05, divert_of(lane) - NODE_BEND_MARGIN))
-
-
-# Kde se do toho useku vleje privodni vetev: v uzlu `node` jeho rovneho useku.
-func run_land_x(lane: int, node: int = 0, guard: int = 0) -> float:
-	return node_x(lane, node, guard)
-
-
-# UZEL USEKU jako x-ova souradnice. Jedno misto, kde se to pocita - kresleni
-# sitě, geometrie napojeni i testy se musi ptat tady, jinak by se uzel, ktery
-# hrac vidi, rozešel s uzlem, do ktereho poutnik opravdu vstoupi.
-func node_x(lane: int, node: int, guard: int = 0) -> float:
-	var x0: float = run_x0(lane, guard)
-	var x1: float = run_x1(lane, guard)
-	return x0 + (x1 - x0) * node_frac_on(lane, node)
-
-
-# Kde se usek zacina stacet ke svemu cili. Za timhle bodem uz rovny usek neni,
-# takze tam zadny uzel lezet nemuze.
-func bend_x(lane: int, guard: int = 0) -> float:
-	var x0: float = run_x0(lane, guard)
-	var x1: float = run_x1(lane, guard)
-	return x0 + (x1 - x0) * clampf(divert_of(lane), 0.0, 0.98)
-
-
-# Kolik uzlu ciloveho useku je pro tenhle usek vubec pouzitelnych. Jedno
-# misto, kde se to pocita - hlaska editoru z toho dela "uzel 2/3".
-func node_choice_count(lane: int, to: int) -> int:
-	return usable_nodes(lane, to).size()
-
-
-# KTERE UZLY CILOVEHO USEKU JSOU POUZITELNE. Jedno misto pro editor (co
-# nabizet), pocitadlo "uzel 2/3" i cyklus cile. Uzly se srovnanim odboceni
-# mohou SPLYNOUT do jednoho bodu - dve volby na stejnem miste jsou jen dve
-# prazdna klepnuti, proto se druha zahodi.
-func usable_nodes(lane: int, to: int) -> Array:
+# Useky, ktere do uzlu USTI.
+func lanes_into(n: int) -> Array:
 	var out: Array = []
-	var seen: Array = []
-	for k in range(NODE_COUNT):
-		if not can_target(lane, TO_LANE, to, k):
-			continue
-		var x: float = node_x(to, k)
-		var dup := false
-		for s in seen:
-			if absf(float(s) - x) < 0.001:
-				dup = true
-				break
-		if dup:
-			continue
-		seen.append(x)
-		out.append(k)
+	for i in range(lanes.size()):
+		if lane_end_node(i) == n:
+			out.append(i)
 	return out
 
 
-func run_x0(lane: int, guard: int = 0) -> float:
-	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
-	if span <= 0.0:
-		return junction_x(from_of(lane))
-	return junction_x(from_of(lane)) + span * run_in_frac(lane, target_kind(lane), span)
+# Useky, ktere se uzlu dotykaji z jakekoli strany.
+func lanes_at(n: int) -> Array:
+	var out: Array = []
+	for i in range(lanes.size()):
+		if lane_start_node(i) == n or lane_end_node(i) == n:
+			out.append(i)
+	return out
 
 
-func run_x1(lane: int, guard: int = 0) -> float:
-	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
-	if span <= 0.0:
-		return junction_x(from_of(lane))
-	return target_x_of(lane, guard) - span * run_frac_for(target_kind(lane), span)
+func first_start() -> int:
+	for i in range(nodes.size()):
+		if int(nodes[i]["kind"]) == START:
+			return i
+	return -1
 
 
-func run_of(lane: int) -> float:
-	return run_x1(lane) - run_x0(lane)
+func exit_count() -> int:
+	var c := 0
+	for i in range(nodes.size()):
+		if int(nodes[i]["kind"]) == CIL:
+			c += 1
+	return c
 
 
-# Smi tenhle usek vest tam? Jedno misto, kde se to rozhoduje - ptá se ho
-# editor (co nabizet), validate (co proslo) i hra. Tri ruzne podminky by se
-# drive nebo pozdeji rozešly.
+func exit_nodes() -> Array:
+	var out: Array = []
+	for i in range(nodes.size()):
+		if int(nodes[i]["kind"]) == CIL:
+			out.append(i)
+	return out
+
+
+# =========================================================================
+# PRECHOD UZLEM - jedine misto, kde se rozhoduje, kam poutnik pujde dal
+# =========================================================================
+
+# Kolik voleb uzel nabizi. Pro hrace je to pocet vystupu z vyhybky.
+func node_choice_count(n: int) -> int:
+	return lanes_from(n).size()
+
+
+# Vystup c. `sel` z uzlu. -1 = nikam (slepota).
+func node_choice(n: int, sel: int) -> int:
+	var outs: Array = lanes_from(n)
+	if sel < 0 or sel >= outs.size():
+		return -1
+	return int(outs[sel])
+
+
+# Dalsi usek pri pruchodu uzlem. `sel` je volba hrace pro VYHYBKU;
+# start, spojka a uzel zadnou volbu nemaji - maji jeden vystup, takze se
+# `sel` ignoruje. -1 = poutnik dosel na konec (vstup do cile).
 #
-# `node` je uzel, do ktereho se vetev napoji (ma vyznam jen pro TO_LANE);
-# -1 znamena "ten, ktery je na useku nastaveny". Editor zkousi i jine uzly,
-# proto se sem uzel predava.
-func can_target(lane: int, kind: int, to: int, node: int = -1) -> bool:
-	if lane < 0 or lane >= lanes.size():
-		return false
-	var n: int = lane_node(lane) if node < 0 else node
-	if kind == TO_EXIT:
-		if to < 0 or to >= exits.size():
-			return false
-	elif kind == TO_JUNCTION:
-		if to < 0 or to >= junctions.size() or to == from_of(lane):
-			return false
-		# Usek vede o patro hloub, ale jen do meze MAX_DEPTH. MÍSTO ROZDĚLENÍ
-		# je vyjimka: jeho geometrie neni dana hloubkou, ale svoji souradnici
-		# (a rozdeleny usek z nej vede dal) - hlidá ji MIN_RUN nize.
-		if not is_division(to) and not is_division(from_of(lane)):
-			if junction_depth(from_of(lane)) + 1 > MAX_DEPTH:
-				return false
-			if junction_depth(to) > MAX_DEPTH:
-				return false
-	elif kind == TO_LANE:
-		if to < 0 or to >= lanes.size() or to == lane:
-			return false
-		if _chains_to(to, lane):
-			return false
-		if n < 0 or n >= NODE_COUNT:
-			return false
-		# UZEL MUSI LEZET NA ROVNEM USEKU CILOVEHO USEKU. Za jeho zatackou uz
-		# rovny usek neni - vetev by se vlekla do oblouku a na rovnem useku by
-		# zustalo min misto na bonusy, nez level potrebuje. Uzel se odboceni
-		# ciloveho useku SROVNA (node_frac_on), takze ohne-li hrac cilovy usek
-		# brzo, napojeni se posune pred zatacku - ne aby zmizelo.
-		if node_x(to, n) > bend_x(to) + 0.0001:
-			return false
-		# NAPOJENI ROZDĚLÍ CÍLOVÝ ÚSEK (split_at_join). Rozdeleni je soucast
-		# napojeni, takze se nabizi jen tehdy, kdyz se obe casti vejdou.
-		if not can_divide(to, n):
-			return false
-	else:
-		return false
-	# Geometrie: mezi vyhybkou a cilem musi zustat misto na rovny usek.
-	var span: float = _target_x(kind, to, 0, lane, n) - junction_x(from_of(lane))
-	if span <= 0.0:
-		return false
-	# Stejny podil, jakym se pak usek opravdu kresli (run_in_frac + run_frac_for)
-	# - dve kopie by se rozešly a editor by nabízel neco jineho, nez co vznikne.
-	if span * (1.0 - run_in_frac(lane, kind, span) - run_frac_for(kind, span)) < MIN_RUN:
-		return false
-	return true
+# START vystup MA: poutnici do mapy vstupuji prave tudy, takze se z nej
+# odchazi stejne jako ze spojky. Kdyby vracel -1, nikdo by se nikdy
+# nerozesel.
+func next_lane(n: int, sel: int = 0) -> int:
+	var kind: int = node_kind(n)
+	if kind == CIL:
+		return -1
+	if kind == VYHYBKA:
+		return node_choice(n, sel)
+	return node_choice(n, 0)
 
 
-# Vede z useku `from` cesta (pres napojovani na dalsi useky) az na usek `to`?
-# Presne to je smycka, ktera se nesmi stat: poutnik by po ni sel porad dokola.
-func _chains_to(from: int, to: int) -> bool:
-	var cur: int = from
-	var guard := 0
-	while cur >= 0 and guard <= lanes.size():
-		if cur == to:
-			return true
-		var nxt: int = lane_target_of(cur)
-		if nxt < 0:
-			return false
-		cur = nxt
-		guard += 1
-	return true
+# =========================================================================
+# ZIVLY V MAPE
+# =========================================================================
+
+# Zivly, ktere se v teto mape posilaji. Neutralni useky se nepocitaji.
+# Neni to kosmetika: poutnik s elementem, ktery v mape nema svuj protiklad,
+# se neda zabit (vlastni usek dava 0 %), takze by level byl nevyhratelny.
+func spawn_elements() -> Array:
+	var seen: Array = []
+	for i in range(lanes.size()):
+		var e: int = lane_element(i)
+		if e == NEUTRAL:
+			continue
+		if not seen.has(e):
+			seen.append(e)
+	seen.sort()
+	return seen
 
 
-# ---------------------------------------------------------------- zakladni
+# =========================================================================
+# ROZMERY
+# =========================================================================
 
-static func base() -> Level:
-	var l := Level.new()
-	l.name = "zakladni"
-	for i in range(BASE_LANE_ELEMENTS.size()):
-		l.lanes.append({
-			"from": 0,
-			"el": int(BASE_LANE_ELEMENTS[i]),
-			"kind": TO_EXIT,
-			"to": int(BASE_EXITS[i]),
-			"divert": BASE_DIVERT,
-		})
-	l.exits = []
-	for r in BASE_EXITS:
-		l.exits.append([BASE_EXIT_X, TOP])
-	l.junctions = [{}]
-	l.entries = [0]
-	l.relayout()
-	return l
+func cell_center(c: int, r: int) -> Vector2:
+	var cc: int = maxi(cols, 1)
+	var rr: int = maxi(rows, 1)
+	return Vector2((float(c) + 0.5) / float(cc), (float(r) + 0.5) / float(rr))
 
+
+# Sirka/vyska mrizky v normalizovanych jednotkach - Network z ni pocita
+# velikost bunky. Mrizka se do areny vejde CELA (bunka ctvercova), takze
+# na sirokem displeji zustanou po stranach okraje. To je zamer.
+func grid_aspect() -> float:
+	return float(cols) / float(maxi(rows, 1))
+
+
+func in_bounds(c: int, r: int) -> bool:
+	return c >= 0 and r >= 0 and c < cols and r < rows
+
+
+# =========================================================================
+# KOPIE
+# =========================================================================
 
 func clone() -> Level:
-	return Level.from_dict(to_dict())
+	var lv := Level.new()
+	lv.name = name
+	lv.cols = cols
+	lv.rows = rows
+	lv.zone_dmg = zone_dmg
+	lv.speed = speed
+	lv.spawn = spawn
+	lv.lives = lives
+	lv.gold = gold
+	lv.last_error = last_error
+	for n in nodes:
+		lv.nodes.append({"c": int(n["c"]), "r": int(n["r"]), "kind": int(n["kind"])})
+	for ln in lanes:
+		var cells: Array = []
+		for cell in ln["cells"]:
+			var v: Vector2i = cell
+			cells.append(Vector2i(v.x, v.y))
+		lv.lanes.append({
+			"cells": cells,
+			"elem": int(ln["elem"]),
+			"entry": bool(ln["entry"]),
+		})
+	return lv
 
 
-# ---------------------------------------------------------------- data
+# =========================================================================
+# KONTROLA MAPY
+#
+# Vsechno, co kdy mohlo vzniknout jen rukou, se kontroluje tady. Editor
+# a nacteni kodu se ptaji teto jedne funkce - kdyby si kazdy kontroloval
+# sve, casem se rozejdou a mapa, ktera se v editoru tvari dobre, se ve
+# hre neda dohrat.
+#
+# Navratova hodnota je seznam ceskych vet - prazdny = mapa je v poradku.
+# =========================================================================
+
+func validate() -> Array:
+	var errs: Array = []
+	var starts: int = 0
+	for n in range(nodes.size()):
+		if node_kind(n) == START:
+			starts += 1
+	if starts != 1:
+		errs.append("mapa musí mít právě jeden start (má %d)." % starts)
+	if exit_count() < 1:
+		errs.append("mapa nemá žádný cíl.")
+
+	# --- rozmery a poloha
+	for n in range(nodes.size()):
+		var c: Vector2i = node_cell(n)
+		if not in_bounds(c.x, c.y):
+			errs.append("uzel %d leží mimo mřížku." % n)
+	if nodes.size() > cols * rows:
+		errs.append("uzlů je víc než buněk.")
+
+	# --- kolik ma ktery uzel vstupu a vystupu
+	for n in range(nodes.size()):
+		var ins: int = lanes_into(n).size()
+		var outs: int = lanes_from(n).size()
+		var kn: String = kind_name(node_kind(n))
+		match node_kind(n):
+			START:
+				if ins != 0:
+					errs.append("start má %d vstupních úseků (má jich být 0)." % ins)
+				if outs != 1:
+					errs.append("start má %d výstupních úseků (má být 1)." % outs)
+			CIL:
+				if outs != 0:
+					errs.append("cíl má %d výstupních úseků (má jich být 0)." % outs)
+				if ins < 1:
+					errs.append("do cíle nevede žádný úsek.")
+			VYHYBKA:
+				if ins != 1:
+					errs.append("výhybka má %d vstupních úseků (má být 1)." % ins)
+				if outs < 2:
+					errs.append("výhybka má %d výstupních úseků (mají být aspoň 2)." % outs)
+			SPOJKA:
+				if ins < 2:
+					errs.append("spojka má %d vstupních úseků (mají být aspoň 2)." % ins)
+				if outs != 1:
+					errs.append("spojka má %d výstupních úseků (má být 1)." % outs)
+			UZEL:
+				if ins != 1 or outs != 1:
+					errs.append("uzel %d má %d vstupů a %d výstupů (má být 1 a 1)." % [n, ins, outs])
+			_:
+				errs.append("uzel %d má neznámý druh %s." % [n, kn])
+
+	# --- kazdy usek: souvisla cesta po mrizce, z uzlu do uzlu
+	var used: Dictionary = {}
+	for i in range(lanes.size()):
+		var cs: Array = lane_cells(i)
+		if cs.size() < 2:
+			errs.append("úsek %d je kratší než jedna buňka." % i)
+			continue
+		var sn: int = lane_start_node(i)
+		var en: int = lane_end_node(i)
+		if sn < 0:
+			errs.append("úsek %d nezačíná v uzlu." % i)
+		if en < 0:
+			errs.append("úsek %d nekončí v uzlu." % i)
+		if sn >= 0 and sn == en:
+			errs.append("úsek %d se vrací do stejného uzlu." % i)
+		for k in range(cs.size()):
+			var cell: Vector2i = cs[k]
+			if not in_bounds(cell.x, cell.y):
+				errs.append("úsek %d vede mimo mřížku." % i)
+				break
+			# sousedni bunky se lisi presne v jedne ose o 1 - jinak by
+			# se cesta lámala šikmo nebo skákala
+			if k > 0:
+				var prev: Vector2i = cs[k - 1]
+				var dx: int = absi(cell.x - prev.x)
+				var dy: int = absi(cell.y - prev.y)
+				if dx + dy != 1:
+					errs.append("úsek %d se v buňce %d láme šikmo nebo skáče." % [i, k])
+					break
+			# bunka uzlu smi byt sdilena (je to uzel) - ostatni ne
+			if node_at_cell(cell) >= 0:
+				continue
+			if used.has(cell):
+				errs.append("úsek %d se kříží s úsekem %d v buňce %d,%d." % [
+					i, int(used[cell]), cell.x, cell.y])
+				break
+			used[cell] = i
+		if sn >= 0 and sn == en:
+			continue
+		# bunky uzlu nesmi lezet UPROSTRED useku - usek by se musel rozdelit
+		for k in range(1, maxi(cs.size() - 1, 1)):
+			var mid: Vector2i = cs[k]
+			var mn: int = node_at_cell(mid)
+			if mn >= 0 and k != cs.size() - 1:
+				errs.append("úsek %d prochází uzlem %d, aniž by tam končil." % [i, mn])
+				break
+
+	# --- dosazitelnost: ze startu se musi dat dojit na kazdy usek i cil
+	var st: int = first_start()
+	if st >= 0:
+		var seen_nodes: Dictionary = {}
+		var seen_lanes: Dictionary = {}
+		var queue: Array = [st]
+		seen_nodes[st] = true
+		while not queue.is_empty():
+			var n: int = int(queue.pop_front())
+			for ln in lanes_from(n):
+				var l: int = int(ln)
+				if seen_lanes.has(l):
+					continue
+				seen_lanes[l] = true
+				var en: int = lane_end_node(l)
+				if en >= 0 and not seen_nodes.has(en):
+					seen_nodes[en] = true
+					queue.append(en)
+		for i in range(lanes.size()):
+			if not seen_lanes.has(i):
+				errs.append("úsek %d se nedá ze startu vůbec dojít." % i)
+		for n in range(nodes.size()):
+			if node_kind(n) == CIL and not seen_nodes.has(n):
+				errs.append("do cíle %d se nedá dojít." % n)
+				break
+		# ze zadneho useku nesmi vest slepa ulicka - kazdy musi mit
+		# cestu do nejakeho cile
+		var reaches: Dictionary = {}
+		for i in range(lanes.size()):
+			if not _reaches_exit(i):
+				errs.append("úsek %d nevede do žádného cíle." % i)
+				break
+	return errs
+
+
+# Dá se z tohohle useku vubec dojit k cili?
+func _reaches_exit(lane: int) -> bool:
+	var seen: Dictionary = {}
+	var stack: Array = [lane]
+	while not stack.is_empty():
+		var l: int = int(stack.pop_back())
+		if seen.has(l):
+			continue
+		seen[l] = true
+		var en: int = lane_end_node(l)
+		if en < 0:
+			continue
+		if node_kind(en) == CIL:
+			return true
+		for ln in lanes_from(en):
+			stack.append(int(ln))
+	return false
+
+
+# =========================================================================
+# SERIALIZACE
+#
+# Kod je to, jak level cestuje z telefonu - Jan ho vlozi do zpravy a
+# vlozi zpatky. Jedna minifikovana radka, zadne odsazovani.
+# =========================================================================
 
 func to_dict() -> Dictionary:
-	# Radky, hloubky ani souradnice vyhybek se NEUKLADaji: pocita je relayout().
-	# V souboru by byly jen balast a kod levelu by se zbytecne prodlouzil -
-	# pritom se musi vejit do jedne rady Telegramu.
-	var brief: Array = []
-	for i in range(lanes.size()):
-		var l: Dictionary = lanes[i]
-		var one: Dictionary = {
-			"from": from_of(i),
-			"el": int(l["el"]),
-			"kind": target_kind(i),
-			"to": to_of(i),
-			"divert": float(l.get("divert", BASE_DIVERT)),
-		}
-		# UZEL SE POSILA JEN KDYBY NENI NULA. Kod levelu musi zustat kratky
-		# (vejde se do Telegramu) a zakotvene levely musi mit kod znak po
-		# znaku stejny - kdyby se uzel psal vzdy, zmenil by se kazdy level,
-		# ktery uzel vubec nepouziva.
-		if target_kind(i) == TO_LANE and lane_node(i) > 0:
-			one["node"] = lane_node(i)
-		brief.append(one)
-	# MÍSTA ROZDĚLENÍ. Výhybka, která vznikla napojením, si drží SVOU souřadnici
-	# (jinde by se počítala z hloubky a rozdělení by skočilo jinam) - a to je
-	# součást levelu, ne geometrie. Ukládá se jen když nějaké je, aby zakotvené
-	# levely a staré kódy zůstaly znak po znaku stejné.
-	var divs: Array = []
-	for j in range(junctions.size()):
-		if is_division(j):
-			divs.append([j, float((junctions[j] as Dictionary)["x"])])
-	var data := {
-		"name": name,
-		"lanes": brief,
-		"junctions": junctions.size(),
-		"entries": entries.duplicate(),
-		"exits": exits.duplicate(true),
-		"spread": spread,
-		"exit_x": exit_x,
-		"zone_dmg": zone_dmg,
-		"speed": speed,
-		"spawn": spawn,
-		"lives": lives,
-		"gold": gold,
+	var ns: Array = []
+	for n in nodes:
+		ns.append([int(n["c"]), int(n["r"]), int(n["kind"])])
+	var ls: Array = []
+	for ln in lanes:
+		var cells: Array = []
+		var cs: Array = ln["cells"]
+		for cell in cs:
+			var v: Vector2i = cell
+			cells.append([v.x, v.y])
+		ls.append([int(ln["elem"]), 1 if bool(ln["entry"]) else 0, cells])
+	return {
+		"v": 2,
+		"n": name,
+		"w": cols,
+		"h": rows,
+		"z": zone_dmg,
+		"s": speed,
+		"p": spawn,
+		"l": lives,
+		"g": gold,
+		"u": ns,
+		"e": ls,
 	}
-	if not divs.is_empty():
-		data["jx"] = divs
-	return data
 
 
 static func from_dict(d: Dictionary) -> Level:
-	var l := Level.new()
-	l.name = str(d.get("name", DEFAULT_NAME))
-	var raw: Array = d.get("lanes", [])
-	for item in raw:
-		var m: Dictionary = item
-		# "exit" je stary nazev klice pro cil useku a chybejici "kind" znamena
-		# stary format (>= 0 byl vystup, < 0 vyhybka). Stare levely se musi
-		# nacist taky, jinak by hrac prisel o to, co ma ulozene.
-		if m.has("kind"):
-			var kind: int = int(m["kind"])
-			l.lanes.append({
-				"from": int(m.get("from", 0)),
-				"el": int(m.get("el", NEUTRAL)),
-				"kind": kind,
-				"to": int(m.get("to", 0)),
-				"divert": float(m.get("divert", BASE_DIVERT)),
-				"node": clampi(int(m.get("node", 0)), 0, NODE_COUNT - 1),
-			})
-		else:
-			var to: int = int(m.get("to", m.get("exit", 0)))
-			l.lanes.append({
-				"from": int(m.get("from", 0)),
-				"el": int(m.get("el", NEUTRAL)),
-				"kind": TO_EXIT if to >= 0 else TO_JUNCTION,
-				"to": to if to >= 0 else (-1 - to),
-				"divert": float(m.get("divert", BASE_DIVERT)),
-				"node": clampi(int(m.get("node", 0)), 0, NODE_COUNT - 1),
-			})
-	if l.lanes.is_empty():
-		return Level.base()
-	var ex: Array = d.get("exits", [])
-	for item in ex:
-		var p: Array = item
-		l.exits.append([float(p[0]), float(p[1])])
-	if l.exits.is_empty():
-		l.exits.append([BASE_EXIT_X, TOP])
-	var jn: int = maxi(int(d.get("junctions", 0)), 0)
-	# Místa rozdělení se čtou PŘED výhybkami: index rozdělení může být i za
-	# počtem, který si level nese ("junctions") - pak musí vzniknout i ta.
-	var jx: Array = d.get("jx", [])
-	for item in jx:
-		var p: Array = item
-		if p.size() >= 2:
-			jn = maxi(jn, int(p[0]) + 1)
-	while l.junctions.size() < jn:
-		l.junctions.append({})
-	for item2 in jx:
-		var p2: Array = item2
-		if p2.size() < 2:
+	var lv := Level.new()
+	lv.name = str(d.get("n", ""))
+	lv.cols = int(d.get("w", COLS))
+	lv.rows = int(d.get("h", ROWS))
+	lv.zone_dmg = float(d.get("z", BASE_ZONE_DMG))
+	lv.speed = float(d.get("s", BASE_SPEED))
+	lv.spawn = float(d.get("p", BASE_SPAWN))
+	lv.lives = int(d.get("l", BASE_LIVES))
+	lv.gold = int(d.get("g", BASE_GOLD))
+	for raw in d.get("u", []):
+		var a: Array = raw
+		if a.size() < 3:
 			continue
-		var ji: int = int(p2[0])
-		if ji >= 0 and ji < l.junctions.size():
-			l.junctions[ji] = {"x": float(p2[1])}
-	var ent: Array = d.get("entries", [])
-	for e in ent:
-		var ei: int = int(e)
-		if ei >= 0 and ei < jn and not l.has_entry(ei):
-			l.entries.append(ei)
-	if l.entries.is_empty():
-		l.entries = [0]
-	l.spread = float(d.get("spread", BASE_SPREAD))
-	l.exit_x = float(d.get("exit_x", BASE_EXIT_X))
-	l.zone_dmg = float(d.get("zone_dmg", BASE_ZONE_DMG))
-	l.speed = float(d.get("speed", BASE_SPEED))
-	l.spawn = float(d.get("spawn", BASE_SPAWN))
-	l.lives = int(d.get("lives", BASE_LIVES))
-	l.gold = int(d.get("gold", BASE_GOLD))
-	l.clamp_all()
-	l.relayout()
-	return l
+		lv.nodes.append({"c": int(a[0]), "r": int(a[1]), "kind": int(a[2])})
+	for raw in d.get("e", []):
+		var a: Array = raw
+		if a.size() < 3:
+			continue
+		var cells: Array = []
+		for rc in a[2]:
+			var b: Array = rc
+			if b.size() < 2:
+				continue
+			cells.append(Vector2i(int(b[0]), int(b[1])))
+		lv.lanes.append({"cells": cells, "elem": int(a[0]), "entry": int(a[1]) == 1})
+	return lv
 
 
 func to_json() -> String:
 	return JSON.stringify(to_dict())
 
 
-# KOD LEVELU pro predani mimo hru. Je to stejny JSON, jen zbaveny mezer,
-# aby se vesel do jedne rady Telegramu i z telefonu:
-#   ZILY1;{"name":"...","lanes":[...],...}
-# Cislo za ZILY je verze formatu - kdyby se data jednou zmenila, stary kod
-# se pozna a necte se naslepo.
-const CODE_PREFIX := "ZILY1;"
+static func from_json(text: String) -> Level:
+	var d = JSON.parse_string(text)
+	if typeof(d) != TYPE_DICTIONARY:
+		return null
+	var lv := from_dict(d)
+	return lv
 
 
 func to_code() -> String:
-	var t: String = to_json()
-	t = t.replace(": ", ":").replace(", ", ",")
-	return CODE_PREFIX + t
+	return "ZILY2;" + to_json()
 
 
 static func from_code(code: String) -> Level:
 	var t: String = code.strip_edges()
-	# Hrac muze poslat i cely JSON ze souboru - oboji je stejny format.
-	if t.begins_with(CODE_PREFIX):
-		t = t.substr(CODE_PREFIX.length())
-	if not t.begins_with("{"):
-		return Level.base()
-	return Level.from_json(t)
+	if not t.begins_with("ZILY2;"):
+		return null
+	var lv := from_json(t.substr(6))
+	if lv == null:
+		return null
+	if not lv.validate().is_empty():
+		return null
+	return lv
 
 
-# LEVEL ZAKOTVENY VE HRE. Cte se z BuiltinLevels - to je jedina cesta, jak
-# se level dostane natrvalo do hry na vsechny platformy. Vraci null, kdyz
-# takovy level neni (pak se hleda lokalne ulozeny).
-static func builtin(n: String) -> Level:
-	for item in BuiltinLevels.LEVELS:
-		var d: Dictionary = item
-		if str(d.get("name", "")) != n:
-			continue
-		var lv := from_code(str(d.get("code", "")))
-		lv.name = n
-		return lv
-	return null
+# =========================================================================
+# UKLADANI - lokalne, na server se neposila nic
+# =========================================================================
 
-
-static func builtin_names() -> Array:
-	var out: Array = []
-	for item in BuiltinLevels.LEVELS:
-		var d: Dictionary = item
-		out.append(str(d.get("name", "")))
-	return out
-
-
-static func from_json(text: String) -> Level:
-	var parsed: Variant = JSON.parse_string(text)
-	if typeof(parsed) != TYPE_DICTIONARY:
-		return Level.base()
-	var d: Dictionary = parsed
-	return Level.from_dict(d)
-
-
-# Rucky se daji utect mimo rozumne meze; level se po kazde zmene srovna, aby
-# se z nej nedal vyrobit level, ktery se nevejde na displej.
-func clamp_all() -> void:
-	spread = clampf(spread, 0.06, 0.30)
-	exit_x = clampf(exit_x, 0.80, 0.99)
-	zone_dmg = clampf(zone_dmg, 10.0, 90.0)
-	speed = clampf(speed, 20.0, 120.0)
-	spawn = clampf(spawn, 0.6, 3.0)
-	lives = clampi(lives, 3, 40)
-	gold = clampi(gold, 0, 5000)
-	for i in range(lanes.size()):
-		var l: Dictionary = lanes[i]
-		l["from"] = clampi(int(l.get("from", 0)), 0, MAX_LANES - 1)
-		l["el"] = clampi(int(l["el"]), NEUTRAL, Element.COUNT - 1)
-		var kind: int = int(l.get("kind", TO_EXIT))
-		if kind < TO_EXIT or kind > TO_LANE:
-			kind = TO_EXIT
-		l["kind"] = kind
-		var to: int = int(l["to"])
-		if kind == TO_EXIT:
-			l["to"] = clampi(to, 0, maxi(exits.size() - 1, 0))
-		elif kind == TO_JUNCTION:
-			l["to"] = clampi(to, 0, maxi(junctions.size() - 1, 0))
-		else:
-			l["to"] = clampi(to, 0, maxi(lanes.size() - 1, 0))
-		l["divert"] = clampf(float(l.get("divert", BASE_DIVERT)), 0.0, 0.98)
-		# Uzel ma vyznam jen u napojeni - jinde se zahodi, aby v datech
-		# nezustaval balast, ktery by se jednou mohl zacit cist.
-		if kind == TO_LANE:
-			l["node"] = clampi(int(l.get("node", 0)), 0, NODE_COUNT - 1)
-		else:
-			l.erase("node")
-		lanes[i] = l
-	# Kmeny: prvni musi existovat vzdy, jinak by do mapy nikdo nevstoupil.
-	var clean: Array = []
-	for e in entries:
-		var ei: int = int(e)
-		if ei >= 0 and ei < junctions.size() and not clean.has(ei):
-			clean.append(ei)
-	entries = clean
-	if entries.is_empty():
-		entries = [0]
-	# Mista rozdeleni si drzi souradnici v plose - i kdyz je level z ruky.
-	for j in range(junctions.size()):
-		var jd: Dictionary = junctions[j]
-		if jd.has("x"):
-			jd["x"] = clampf(float(jd["x"]), 0.02, 0.99)
-			junctions[j] = jd
-
-
-# ---------------------------------------------------------------- ulozeni
-
-# Levely se ukladaji jako JSON. Ve webovem exportu do localStorage (aby hrac
-# o svou praci neprisel zavrenim panelu), na desktopu do user://.
-# Cteni i zapis jsou synchronni, takze k nim nepotrebujeme zadny callback.
-const WEB_PREFIX := "zily.level."
-const DIR := "user://levels"
-const INDEX_KEY := "zily.levels"
-const LAST_KEY := "zily.last"
+# Staticka proto, ze ji pouziva i staticka saved_keys().
+static func storage_dir() -> String:
+	return "user://levels/"
 
 
 func storage_key() -> String:
-	return WEB_PREFIX + name
-
-
-static func _web() -> Object:
-	if not OS.has_feature("web"):
-		return null
-	return Engine.get_singleton("JavaScriptBridge")
-
-
-static func _js_get(key: String) -> String:
-	var jb: Object = _web()
-	if jb == null:
-		return ""
-	var t: Variant = jb.call("eval", "localStorage.getItem(%s)||''" % JSON.stringify(key), false)
-	if typeof(t) == TYPE_STRING:
-		return str(t)
-	return ""
-
-
-static func _js_set(key: String, value: String) -> void:
-	var jb: Object = _web()
-	if jb != null:
-		jb.call("eval", "localStorage.setItem(%s,%s)" % [
-			JSON.stringify(key), JSON.stringify(value)], false)
-
-
-func save() -> bool:
-	var text: String = to_json()
-	if _web() != null:
-		_js_set(storage_key(), text)
-		_remember(str(name))
-		save_last(str(name))
-		return true
-	DirAccess.make_dir_recursive_absolute(DIR)
-	var f: FileAccess = FileAccess.open(DIR + "/" + name + ".json", FileAccess.WRITE)
-	if f == null:
-		return false
-	f.store_string(text)
-	f.close()
-	_remember(str(name))
-	save_last(str(name))
-	return true
-
-
-static func load_named(n: String) -> Level:
-	var t: String = _js_get(WEB_PREFIX + n)
-	if not t.is_empty():
-		var lv := Level.from_json(t)
-		lv.name = n
-		return lv
-	if _web() != null:
-		return Level.base()
-	var f: FileAccess = FileAccess.open(DIR + "/" + n + ".json", FileAccess.READ)
-	if f == null:
-		return Level.base()
-	var text: String = f.get_as_text()
-	f.close()
-	var lv2 := Level.from_json(text)
-	lv2.name = n
-	return lv2
-
-
-static func _remember(n: String) -> void:
-	if _web() != null:
-		var jb: Object = _web()
-		jb.call("eval", "(function(){var k=%s;var l=JSON.parse(localStorage.getItem(k)||'[]');" % INDEX_KEY +
-			"if(l.indexOf(%s)<0){l.push(%s);localStorage.setItem(k,JSON.stringify(l));}})()" % [
-				JSON.stringify(n), JSON.stringify(n)], false)
-		return
-	DirAccess.make_dir_recursive_absolute(DIR)
-	var f: FileAccess = FileAccess.open(DIR + "/_index.txt", FileAccess.READ)
-	var known: String = f.get_as_text() if f != null else ""
-	if f != null:
-		f.close()
-	if not known.contains("\n" + n + "\n"):
-		var w: FileAccess = FileAccess.open(DIR + "/_index.txt", FileAccess.WRITE)
-		if w != null:
-			w.store_string(known + "\n" + n + "\n")
-			w.close()
-
-
-# Seznam ulozenych levelu. Pouziva ho editor v seznamu.
-static func saved_names() -> Array:
-	var out: Array = []
-	var t: String = _js_get(INDEX_KEY)
-	if _web() != null:
-		var parsed: Variant = JSON.parse_string(t)
-		if typeof(parsed) == TYPE_ARRAY:
-			for x in parsed:
-				out.append(str(x))
-		return out
-	var f: FileAccess = FileAccess.open(DIR + "/_index.txt", FileAccess.READ)
-	if f == null:
-		return out
-	var text: String = f.get_as_text()
-	f.close()
-	for line in text.split("\n", false):
-		out.append(str(line))
+	var s: String = name if name != "" else "vlastni"
+	var out := ""
+	for ch in s:
+		if ch == "/" or ch == "\\" or ch == ":":
+			out += "_"
+		else:
+			out += ch
+	if out == "":
+		out = "vlastni"
 	return out
 
 
-# Posledni otevreny level. Editor se po otevreni vrati presne tam, kde hrac
-# skoncil - jinak by pri kazdem vstupu do editoru prisel o to, co delal.
-static func save_last(n: String) -> void:
-	if _web() != null:
-		_js_set(LAST_KEY, n)
-		return
-	DirAccess.make_dir_recursive_absolute(DIR)
-	var f: FileAccess = FileAccess.open(DIR + "/_last.txt", FileAccess.WRITE)
-	if f != null:
-		f.store_string(n)
-		f.close()
-
-
-static func last_name() -> String:
-	if _web() != null:
-		return _js_get(LAST_KEY)
-	var f: FileAccess = FileAccess.open(DIR + "/_last.txt", FileAccess.READ)
+func save() -> bool:
+	if name == "": 
+		name = "vlastni"
+	DirAccess.make_dir_recursive_absolute(storage_dir())
+	var f := FileAccess.open(storage_dir() + storage_key() + ".zily", FileAccess.WRITE)
 	if f == null:
-		return ""
-	var t: String = f.get_as_text()
+		return false
+	f.store_string(to_code())
 	f.close()
-	return t.strip_edges()
+	return true
 
 
-# Jmeno pro novy level: "level-1", "level-2", ... Prvni, ktere jeste nikdo
-# nepouziva. Nahodne jmeno by se v seznamu nedalo najit.
-static func next_free_name() -> String:
-	var used := {}
-	for n in saved_names():
-		used[str(n)] = true
-	var i := 1
-	while used.has("level-%d" % i):
-		i += 1
-	return "level-%d" % i
-
-
-# Export levelu do souboru, ktery si hrac muze poslat. Ve webu se soubor
-# stahne (blob), na desktopu se zapise do user://export.
-func export_to_file() -> String:
-	var text: String = to_json()
-	if _web() != null:
-		var js := """
-		(() => {
-		  const blob = new Blob([%s], {type: 'application/json'});
-		  const a = document.createElement('a');
-		  a.href = URL.createObjectURL(blob);
-		  a.download = 'zily-%s.json';
-		  document.body.appendChild(a); a.click(); a.remove();
-		  return 'ok';
-		})()
-		""" % [JSON.stringify(text), name]
-		var jb: Object = _web()
-		jb.call("eval", js, false)
-		return "zily-%s.json (staženo)" % name
-	DirAccess.make_dir_recursive_absolute("user://export")
-	var path: String = "user://export/zily-%s.json" % name
-	var f: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+func load_from_disk(key: String) -> bool:
+	var path: String = storage_dir() + key + ".zily"
+	if not FileAccess.file_exists(path):
+		return false
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
-		return ""
-	f.store_string(text)
+		return false
+	var text: String = f.get_as_text()
 	f.close()
-	return ProjectSettings.globalize_path(path)
+	var lv := Level.from_code(text)
+	if lv == null:
+		return false
+	name = lv.name
+	cols = lv.cols
+	rows = lv.rows
+	zone_dmg = lv.zone_dmg
+	speed = lv.speed
+	spawn = lv.spawn
+	lives = lv.lives
+	gold = lv.gold
+	nodes = lv.nodes
+	lanes = lv.lanes
+	return true
 
 
-# Rychla kontrola, ze level dava smysl. Editor ji pousti pred exportem -
-# prazdny nebo rozbity level by hrac poznal az ve hre.
-func validate() -> Array:
-	var errs: Array = []
-	if lanes.size() < MIN_LANES:
-		errs.append("méně než %d úseky" % MIN_LANES)
-	if lanes.size() > MAX_LANES:
-		errs.append("více než %d úseků" % MAX_LANES)
-	if exits.is_empty():
-		errs.append("žádný výstup")
-	for i in range(exits.size()):
-		if exits[i].size() < 2:
-			errs.append("výstup %d nemá souřadnice" % (i + 1))
-	# MRIZKA SE MUSI VEJIT NA DESKU. Tohle je strop, na ktery hrac narazi pri
-	# pridavani drah i kmenu - ne pocet useku sam o sobe.
-	if not rows_fit():
-		errs.append("na desku se tolik drah nevejde (%d řádků, mezera %.3f, potřeba %.3f)" % [
-			_grid_rows, _gap, MIN_ROW_GAP])
-	if entries.is_empty():
-		errs.append("do mapy nevede žádný kmen")
-	for j in entries:
-		if int(j) < 0 or int(j) >= junctions.size():
-			errs.append("kmen vede do neexistující výhybky")
-		elif not lanes_into(int(j)).is_empty():
-			errs.append("do výhybky %d vede kmen i úsek" % (int(j) + 1))
-	# Kazdy usek musi mit platny cil. Rozhoduje o tom JEDNA funkce - stejna,
-	# kterou se ptá editor, kdyz cile nabizi.
-	for i in range(lanes.size()):
-		if from_of(i) < 0 or from_of(i) >= junctions.size():
-			errs.append("úsek %d vede z neexistující výhybky" % (i + 1))
-		elif not can_target(i, target_kind(i), to_of(i)):
-			var kind: int = target_kind(i)
-			if kind == TO_EXIT:
-				errs.append("úsek %d míří na neexistující výstup" % (i + 1))
-			elif kind == TO_JUNCTION:
-				errs.append("úsek %d vede do výhybky, která je moc hluboko, nebo do sebe" % (i + 1))
-			else:
-				var t: int = to_of(i)
-				if t < 0 or t >= lanes.size():
-					errs.append("úsek %d se napojuje na neexistující úsek" % (i + 1))
-				elif _chains_to(t, i):
-					errs.append("úseky %d a %d se napojují dokola" % [i + 1, t + 1])
-				elif node_x(t, lane_node(i)) > bend_x(t) + 0.0001:
-					errs.append("úsek %d se napojuje do zatáčky úseku %d — uzel leží za jeho odbočením" % [
-						i + 1, t + 1])
-				else:
-					errs.append("úsek %d je moc krátký na to, aby na něm stály bonusy" % (i + 1))
-		if lanes_of(from_of(i)).size() > MAX_FAN:
-			errs.append("z výhybky %d vede víc než %d úseků" % [from_of(i) + 1, MAX_FAN])
-	for j in range(1, junctions.size()):
-		var kids: Array = lanes_of(j)
-		# ROZDĚLENÍ NENÍ VOLIČ. Vede z něj jediný úsek dál (nic se na něm
-		# nepřepíná) - vzniklo napojením a drží dělicí bod. Požadavek "aspoň
-		# dva úseky" proto platí jen pro opravdové výhybky.
-		if kids.size() < 2 and not is_division(j):
-			errs.append("výhybka %d má míň než dva úseky" % (j + 1))
-		if lanes_into(j).is_empty() and not has_entry(j):
-			errs.append("do výhybky %d nikdo nevede" % (j + 1))
-		for k in kids:
-			# Úsek z rozdělení vede do dalšího místa rozdělení - to je řetěz
-			# rozdělení za sebou, ne výhybka za výhybkou (geometrii drží
-			# souřadnice rozdělení, ne hloubka).
-			if target_kind(k) == TO_JUNCTION and not is_division(from_of(k)):
-				errs.append("z výhybky %d vede úsek do další výhybky" % (j + 1))
-	if lanes_of(0).size() < MIN_LANES:
-		errs.append("z první výhybky nevedou aspoň dva úseky")
-	if not has_entry(0) and lanes_into(0).is_empty():
-		errs.append("do první výhybky nevede kmen")
-	var killable := 0
-	for i in range(lanes.size()):
-		if not is_neutral(i):
-			killable += 1
-	if killable < 2:
-		errs.append("v mapě není dost úseků, které umí zabíjet")
-	return errs
+static func saved_keys() -> Array:
+	var out: Array = []
+	var d := DirAccess.open(storage_dir())
+	if d == null:
+		return out
+	d.list_dir_begin()
+	var f: String = d.get_next()
+	while f != "":
+		if not d.current_is_dir() and f.ends_with(".zily"):
+			out.append(f.substr(0, f.length() - 5))
+		f = d.get_next()
+	d.list_dir_end()
+	out.sort()
+	return out
+
+
+# =========================================================================
+# POMOCNIK PRO STAVBU - pouziva ho zakladni deska i testy
+# =========================================================================
+
+func add_node(c: int, r: int, kind: int) -> int:
+	nodes.append({"c": c, "r": r, "kind": kind})
+	return nodes.size() - 1
+
+
+# Nakresli usek z uzlu `a` do uzlu `b` po zadanych smerech.
+# `dirs` je retezec "U R D L" - kde se cesta ohne. Zapisuje se bez pocatecni
+# bunky (ta je bunka uzlu `a`) a bez koncove (ta je bunka uzlu `b`).
+func add_lane(a: int, b: int, dirs: String, elem: int) -> int:
+	var cells: Array = []
+	var cur: Vector2i = node_cell(a)
+	cells.append(cur)
+	for ch in dirs:
+		match ch:
+			"U":
+				cur = Vector2i(cur.x, cur.y - 1)
+			"D":
+				cur = Vector2i(cur.x, cur.y + 1)
+			"L":
+				cur = Vector2i(cur.x - 1, cur.y)
+			"R":
+				cur = Vector2i(cur.x + 1, cur.y)
+			_:
+				continue
+		cells.append(cur)
+	lanes.append({"cells": cells, "elem": elem, "entry": false})
+	return lanes.size() - 1
+
+
+# =========================================================================
+# ZAKLADNI DESKA - na ni se kalibruje obtiznost
+# =========================================================================
+
+static func base() -> Level:
+	var lv := Level.new()
+	lv.name = "zakladni"
+	# START vlevo, dve vyhybky v sérii, pet cílu vpravo.
+	#
+	#   rada 1  ohen     (4,1) --------------------> (15,1)
+	#   rada 3                 zeme (8,3) ---------> (15,3)
+	#   rada 5  start (1,5) -> j1 (4,5) -> j2 (8,5) --- neutr ---> (15,5)
+	#   rada 7                 vzduch (8,7) -------> (15,7)
+	#   rada 9  voda     (4,9) --------------------> (15,9)
+	#
+	# Poradi je dane tim, aby se cesty NEKRIZILY: kdo odbocuje vys, musi
+	# odbocit drive (nalevo), a sestup zpet dolu ma vlastni sloupec.
+	# Vsechny ctyri zivly + neutralni usek - na te same desce se da
+	# kalibrovat cela matice poskozeni.
+	var start := lv.add_node(1, 5, START)
+	var j1 := lv.add_node(4, 5, VYHYBKA)
+	var j2 := lv.add_node(8, 5, VYHYBKA)
+	var e_fire := lv.add_node(15, 1, CIL)
+	var e_earth := lv.add_node(15, 3, CIL)
+	var e_neutral := lv.add_node(15, 5, CIL)
+	var e_air := lv.add_node(15, 7, CIL)
+	var e_water := lv.add_node(15, 9, CIL)
+
+	lv.add_lane(start, j1, "R R R", NEUTRAL)
+	lv.add_lane(j1, e_fire, "U U U U R R R R R R R R R R R", Element.FIRE)
+	lv.add_lane(j1, j2, "R R R R", NEUTRAL)
+	lv.add_lane(j1, e_water, "D D D D R R R R R R R R R R R", Element.WATER)
+	lv.add_lane(j2, e_earth, "U U R R R R R R R", Element.EARTH)
+	lv.add_lane(j2, e_air, "D D R R R R R R R", Element.AIR)
+	lv.add_lane(j2, e_neutral, "R R R R R R R", NEUTRAL)
+
+	for i in range(lv.lanes.size()):
+		var ln: Dictionary = lv.lanes[i]
+		ln["entry"] = lv.lane_start_node(i) == start
+	return lv

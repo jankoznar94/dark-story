@@ -30,7 +30,7 @@ const BLOCKS := [
 	{
 		"art": "_guide_switch",
 		"title": "Výhybka",
-		"text": "Klepni na úsek. Poutníci půjdou tam.",
+		"text": "Klepni na úsek nebo výhybku. Poutníci jdou tam.",
 	},
 	{
 		"art": "_guide_damage",
@@ -44,7 +44,7 @@ const BLOCKS := [
 	},
 	{
 		"art": "_guide_exit",
-		"title": "Výstup",
+		"title": "Cíl",
 		"text": "Kdo dojde, stojí život.",
 	},
 	{

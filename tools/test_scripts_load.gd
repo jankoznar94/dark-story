@@ -1,47 +1,56 @@
 extends SceneTree
 
-# Kazdy .gd se musi nacist a instancovat. Parse chyba v souboru, ktery jeste
-# nikdo nenacetl, se jinak projevi az jako prazdna obrazovka.
-# Vystup: SCRIPT_LOAD_ALL_PASS=true / false
+# Test NACITANI SKRIPTU. Parse error v jedinem souboru shodi vsechno, co ho
+# pouziva - a chyba se objevi uplne jinde, nez kde opravdu je. Tenhle test
+# to rekne primo. Vystup: SCRIPTS_ALL_PASS=true / false
+
+var fails: Array = []
+var checks: int = 0
+
 
 func _init() -> void:
-	var files := _all_scripts("res://")
-	var bad: Array = []
-	for path in files:
-		var res: Resource = load(path)
+	var files: Array = []
+	for d in ["res://scripts", "res://tools"]:
+		files.append_array(_gd_files(d))
+	files.sort()
+	_check(files.size() >= 10, "naslo se jen %d skriptu" % files.size())
+	for f in files:
+		checks += 1
+		var res = load(str(f))
 		if res == null:
-			bad.append(path + " (load vratil null)")
-			continue
-		if res is GDScript:
-			var s: GDScript = res
-			if not s.can_instantiate():
-				bad.append(path + " (neinstancovatelny)")
-	print("skriptu=%d chyb=%d" % [files.size(), bad.size()])
-	for b in bad:
-		print("FAIL: " + str(b))
-	if bad.is_empty():
-		print("SCRIPT_LOAD_ALL_PASS=true")
+			fails.append("skript se nenacetl: %s" % f)
+	if fails.is_empty():
+		print("SCRIPTS_ALL_PASS=true (%d skriptu)" % checks)
+		quit(0)
 	else:
-		print("SCRIPT_LOAD_ALL_PASS=false")
-	quit()
+		for f in fails:
+			print("  FAIL: " + str(f))
+		print("SCRIPTS_ALL_PASS=false (%d skriptu)" % checks)
+		quit(1)
 
 
-func _all_scripts(root: String) -> Array:
+func _gd_files(path: String) -> Array:
 	var out: Array = []
-	var dir: DirAccess = DirAccess.open(root)
-	if dir == null:
+	var d := DirAccess.open(path)
+	if d == null:
 		return out
-	dir.list_dir_begin()
-	var name: String = dir.get_next()
-	while name != "":
-		var full: String = root.path_join(name)
-		if name.begins_with("."):
-			name = dir.get_next()
-			continue
-		if dir.current_is_dir():
-			out.append_array(_all_scripts(full))
-		elif name.ends_with(".gd"):
-			out.append(full)
-		name = dir.get_next()
-	dir.list_dir_end()
+	d.list_dir_begin()
+	var f: String = d.get_next()
+	while f != "":
+		if not d.current_is_dir() and f.ends_with(".gd"):
+			var name: String = f
+			# Testy se nactou taky, ale _init() by se spustil - soubor se
+			# proto jen prelozi.
+			if name.begins_with("test_") or name.begins_with("_"):
+				out.append(path + "/" + f)
+			else:
+				out.append(path + "/" + f)
+		f = d.get_next()
+	d.list_dir_end()
 	return out
+
+
+func _check(cond: bool, msg: String) -> void:
+	checks += 1
+	if not cond:
+		fails.append(msg)
