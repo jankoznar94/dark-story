@@ -109,6 +109,13 @@ const RUN_FRAC_CONNECTOR := 0.06
 # v kodu, chova se znak po znaku jako driv
 const NODE_FRACS := [0.30, 0.52, 0.74]
 const NODE_COUNT := 3
+# UZLY ROZDĚLENÉHO ÚSEKU. Úsek, který vznikne rozdělením cesty (Jan: "Když se
+# jedna cesta napojí na uzel druhé cesty, tak by se druhá cesta měla tímto
+# napojením rozdělit na dva úseky."), začíná přesně v tom místě rozdělení -
+# nemá se odkud nabíhat. Jeho PRVNÍ UZEL je proto to rozdělení samo (podíl 0):
+# hráč se do něj napojí a napojení sedí přesně na dělicí bod. Další dva uzly
+# zůstávají tam, kde je mají ostatní úseky.
+const MERGE_NODE_FRACS := [0.0, 0.52, 0.74]
 # Nejmensi rovny usek, na ktery se jeste vejdou tri bonusy vedle sebe.
 const MIN_RUN := 0.12
 
@@ -172,6 +179,10 @@ var _grid_rows: int = 0
 # zmensi se VSEM stejne - a prave tahle mezera rozhoduje o tom, jestli se
 # bonusy na sousednich drahach neprekryvaji (MIN_ROW_GAP).
 var _gap: float = BASE_SPREAD
+# VYSLEDEK POSLEDNIHO cycle_target: co se zmenilo. Napojeni umi cilovy usek
+# ROZDELIT (a klepnuti dal zase rozdeleni vratit) - hlaska editoru to hracovi
+# rekne, aby jen nevidel, ze mu pribyl usek, a nevedel proc.
+var last_cycle: Dictionary = {}
 
 
 # ---------------------------------------------------------------- useky
@@ -372,7 +383,20 @@ func junction_row(j: int) -> float:
 	return float(_jrow.get(j, TOP))
 
 
+# MÍSTO ROZDĚLENÍ. Výhybka, která vznikla tím, že se na úsek něco napojilo
+# (viz split_at_join). Není to volič: vede z ní jediný úsek dál, takže se na ní
+# nedá nic přepínat - ale drží SVOU x-ovou souřadnici, tu, kde se napojení
+# opravdu stalo. Hloubka se pro ni nepoužívá (geometrie je daná souřadnicí),
+# proto si ji nese v datech.
+func is_division(j: int) -> bool:
+	if j < 0 or j >= junctions.size():
+		return false
+	return (junctions[j] as Dictionary).has("x")
+
+
 func junction_x(j: int) -> float:
+	if is_division(j):
+		return clampf(float((junctions[j] as Dictionary)["x"]), 0.02, 0.99)
 	return clampf(BASE_JUNCTION_X + float(junction_depth(j)) * DEPTH_DX, BASE_JUNCTION_X, 0.86)
 
 
@@ -563,6 +587,21 @@ func remove_lane(at: int = -1) -> bool:
 		i = lanes.size() - 1
 	if i < 0 or i >= lanes.size():
 		return false
+	# ROZDĚLENÍ SE NESMÍ ROZPADNOUT. Obě jeho části drží jedna druhou:
+	#  * maže-li hráč DOLNÍ část, horní si vezme její cíl a rozdělení zmizí
+	#    (cesta se zkrátí zpět na jednu),
+	#  * horní část se maže až po sloučení (tlačítko "sloučit"), aby po ní
+	#    nezůstal viset úsek, ze kterého nikdo nevede.
+	var dj: int = from_of(i)
+	if is_division(dj) and lanes_of(dj).size() == 1 and int(lanes_of(dj)[0]) == i:
+		if lanes_into(dj).size() != 1:
+			return false
+		_collapse_division(dj)
+		# Obsah mazaného úseku se přelil do horního - tím je smazaný úsek pryč
+		# a celá operace hotová.
+		return true
+	if is_division(junction_of(i)):
+		return false
 	var j: int = from_of(i)
 	var gone_exit: int = exit_of(i)
 	lanes.remove_at(i)
@@ -629,24 +668,52 @@ func split_lane(lane: int) -> int:
 
 # SLITÍ ÚSEKU ZPĚT. Vybrany usek vede do vyhybky, do ktere vede sam a jeji
 # useky konci ve vystupech: usek se prepoji na prvni z nich a vyhybka zmizi.
+# ROZDĚLENÍ se slévá taky takhle - jen se nevybírá mezi větvemi (vede z něj
+# jediná), horní úsek si vezme ten dolní.
+# PRAVIDLO JE NA JEDNOM MÍSTĚ (can_merge_lane): editor se ho ptá, když má
+# tlačítku říct "sloučit", a slévání podle něj jede.
+func can_merge_lane(lane: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	var j: int = junction_of(lane)
+	if j < 0:
+		return false
+	if lanes_into(j).size() != 1:
+		return false
+	var kids: Array = lanes_of(j)
+	if kids.is_empty():
+		return false
+	if is_division(j):
+		# Z rozdělení vede jediný úsek a nikdo se do něj nesmí vlévat - jinak
+		# by po slití zůstal viset ve vzduchu.
+		if kids.size() != 1:
+			return false
+		return not _joins_into_lane(int(kids[0]))
+	for k in kids:
+		if not lane_is_exit(int(k)):
+			return false
+	return true
+
+
+# Vlévá se do toho úseku někdo? (napojení = TO_LANE na ten úsek)
+func _joins_into_lane(d: int) -> bool:
+	for i in range(lanes.size()):
+		if target_kind(i) == TO_LANE and to_of(i) == d:
+			return true
+	return false
+
+
 func merge_lane(lane: int) -> bool:
 	if lane < 0 or lane >= lanes.size():
 		return false
 	var j: int = junction_of(lane)
 	if j < 0:
 		return false
-	var incoming: Array = []
-	for i in range(lanes.size()):
-		if junction_of(i) == j:
-			incoming.append(i)
-	if incoming.size() != 1:
+	if not can_merge_lane(lane):
 		return false
+	if is_division(j):
+		return _collapse_division(j)
 	var kids: Array = lanes_of(j)
-	if kids.is_empty():
-		return false
-	for k in kids:
-		if not lane_is_exit(k):
-			return false
 	var target: int = to_of(kids[0])
 	var l: Dictionary = lanes[lane]
 	l["kind"] = TO_EXIT
@@ -723,17 +790,25 @@ func _drop_junction(j: int) -> void:
 
 # Po zruseni vyhybky (i jejich useku) se indexy useku posunou. Kazdy odkaz na
 # usek, ktery uz neexistuje, se prevede na vystup - radsi neco rozumneho nez
-# index mimo seznam.
+# index mimo seznam. To same plati pro odkaz na vyhybku, ktera zmizela (stavaji
+# se to treba tim, ze nekdo smaze cast rozdeleni).
 func _fix_lane_refs() -> void:
 	for i in range(lanes.size()):
-		if target_kind(i) != TO_LANE:
-			continue
-		var t: int = int(lanes[i]["to"])
-		if t < 0 or t >= lanes.size():
-			var l: Dictionary = lanes[i]
-			l["kind"] = TO_EXIT
-			l["to"] = clampi(t, 0, maxi(exits.size() - 1, 0))
-			lanes[i] = l
+		var kind: int = target_kind(i)
+		if kind == TO_LANE:
+			var t: int = int(lanes[i]["to"])
+			if t < 0 or t >= lanes.size():
+				var l: Dictionary = lanes[i]
+				l["kind"] = TO_EXIT
+				l["to"] = free_exit()
+				lanes[i] = l
+		elif kind == TO_JUNCTION:
+			var tj: int = int(lanes[i]["to"])
+			if tj < 0 or tj >= junctions.size():
+				var l2: Dictionary = lanes[i]
+				l2["kind"] = TO_EXIT
+				l2["to"] = free_exit()
+				lanes[i] = l2
 
 
 # CIL VYBRANEHO USEKU. Cykli se pres vsechny vystupy, pak pres ostatni useky
@@ -748,15 +823,79 @@ func _fix_lane_refs() -> void:
 # nemel jak vybrat, do ktereho uzlu ma vetev spadnout.
 func target_choices(lane: int) -> Array:
 	var out: Array = []
+	# VLASTNÍ CESTA SE V CYKLU PŘESKAKUJE. Rozdělení se po ní posouvá tlačítky
+	# "uzel ±" - kdyby se cyklus vracel na uzly té cesty, na které hráč už je,
+	# zasekl by se na ní (spodní úsek má vyšší číslo, ale na cestě je hned za
+	# horním) a k ostatním cestám by se nedostal.
+	var own: Array = []
+	if target_kind(lane) == TO_LANE:
+		own = path_chain(to_of(lane))
 	for e in range(exits.size()):
 		if can_target(lane, TO_EXIT, e):
 			out.append({"kind": TO_EXIT, "to": e})
-	for k in range(lanes.size()):
+	for k in path_order():
 		for n in usable_nodes(lane, k):
+			# VLASTNÍ CESTA SE V NABÍDCE NEOBJEVUJE - kromě stavu, na kterém
+			# hráč právě stojí. Rozdělení se po své cestě posouvá tlačítky
+			# "uzel ±"; kdyby se na ni cyklus vracel, zasekl by se na ní
+			# (spodní úsek má vyšší číslo, ale na cestě je hned za horním).
+			if own.has(k) and not (k == to_of(lane) and int(n) == lane_node(lane)):
+				continue
 			out.append({"kind": TO_LANE, "to": k, "node": int(n)})
 	for j in range(junctions.size()):
+		# MÍSTO ROZDĚLENÍ SE NENABÍZÍ JAKO VÝHYBKA: napojit se do něj je totéž
+		# jako do prvního uzlu spodního úseku - a ten se nabízí hned vedle.
+		if is_division(j):
+			continue
 		if can_target(lane, TO_JUNCTION, j):
 			out.append({"kind": TO_JUNCTION, "to": j})
+	return out
+
+
+# ÚSEKY JEDNÉ CESTY, jak jdou za sebou. Cesta je řada úseků spojených místy
+# rozdělení: horní, spodní, další... (spodní má vyšší číslo, ale na cestě je
+# hned za horním).
+func path_chain(lane: int) -> Array:
+	var out: Array = []
+	if lane < 0 or lane >= lanes.size():
+		return out
+	# Nahoru na koren cesty.
+	var root: int = lane
+	var guard := 0
+	while is_division(from_of(root)) and guard < 64:
+		var ins: Array = lanes_into(from_of(root))
+		if ins.size() != 1:
+			break
+		root = int(ins[0])
+		guard += 1
+	# A zpet dolu pres vsechna rozdeleni.
+	var cur: int = root
+	guard = 0
+	while cur >= 0 and cur < lanes.size() and guard < 64:
+		out.append(cur)
+		guard += 1
+		var nxt: int = -1
+		if target_kind(cur) == TO_JUNCTION and is_division(to_of(cur)):
+			var kids: Array = lanes_of(to_of(cur))
+			if kids.size() == 1:
+				nxt = int(kids[0])
+		cur = nxt
+	return out
+
+
+# Úseky v pořadí, v jakém jdou po cestách za sebou. Cyklus "cíl" i nabídka
+# napojení jdou po cestách, ne po číslech úseků - jinak by spodní úsek
+# rozdělení (vyšší číslo) odskočil na konec seznamu.
+func path_order() -> Array:
+	var out: Array = []
+	var seen := {}
+	for i in range(lanes.size()):
+		if seen.has(i):
+			continue
+		for k in path_chain(i):
+			if not seen.has(k):
+				seen[k] = true
+				out.append(k)
 	return out
 
 
@@ -798,7 +937,11 @@ func next_choice_index(lane: int) -> int:
 			continue
 		at = i
 		break
-	return 0 if at < 0 else (at + 1) % choices.size()
+	if at < 0:
+		# Stav, ktery se v nabidce vubec neobjevuje (usek vede do mista
+		# rozdeleni): jiný cíl pro nej není - musi se nejdriv sloucit.
+		return -1
+	return (at + 1) % choices.size()
 
 
 func cycle_target(lane: int) -> bool:
@@ -811,16 +954,268 @@ func cycle_target(lane: int) -> bool:
 	var pick: Dictionary = choices[next]
 	var l: Dictionary = lanes[lane]
 	var kind: int = int(pick["kind"])
-	l["kind"] = kind
-	l["to"] = int(pick["to"])
-	# Uzel se drzi JEN u napojeni. Kdyz usek vede do vystupu nebo do vyhybky,
-	# uzel nema vyznam a v kodu by byl jen balast.
+	var to: int = int(pick["to"])
+	var divs_before: int = _division_count()
+	last_cycle = {"ok": false, "created": false, "divided": -1, "collapsed": false}
+	# NAPOJENÍ ROZDĚLÍ CÍLOVÝ ÚSEK (Jan: "Když se jedna cesta napojí na uzel
+	# druhé cesty, tak by se druhá cesta měla tímto napojením rozdělit na dva
+	# úseky."). Napojení proto vstupuje do PRVNÍHO UZLU nového úseku - ten uzel
+	# JE to rozdělení. Když se rozdělení nevejde (plná deska), napojení se
+	# udělá i tak, jen bez rozdělení.
 	if kind == TO_LANE:
-		l["node"] = int(pick.get("node", 0))
+		var r: Dictionary = split_at_join(to, int(pick.get("node", 0)))
+		if bool(r["ok"]):
+			to = int(r["lane"])
+			l["kind"] = TO_LANE
+			l["to"] = to
+			l["node"] = 0
+			last_cycle["created"] = bool(r["created"])
+			last_cycle["divided"] = int(r["divided"])
+		else:
+			l["kind"] = TO_LANE
+			l["to"] = to
+			l["node"] = int(pick.get("node", 0))
 	else:
+		l["kind"] = kind
+		l["to"] = to
+		# Uzel se drzi JEN u napojeni. Kdyz usek vede do vystupu nebo do vyhybky,
+		# uzel nema vyznam a v kodu by byl jen balast.
 		l.erase("node")
 	lanes[lane] = l
+	_prune_divisions()
 	relayout()
+	last_cycle["collapsed"] = _division_count() < divs_before
+	last_cycle["ok"] = true
+	return true
+
+
+# POSUN NAPOJENÍ NA JINÝ UZEL CÍLOVÉ CESTY. Napojení je zároveň místo
+# rozdělení, takže se s ním posune i rozdělení - o uzel dál po cílové cestě.
+# Tohle je ovládání tlačítek "uzel ±" (cyklus "cíl" vlastní cestu přeskočí).
+func move_join(lane: int, node: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	if target_kind(lane) != TO_LANE:
+		return false
+	return join_at(lane, to_of(lane), node)
+
+
+# POSUN ROZDĚLENÍ ZPĚT (blíž k výhybce, ze které cílová cesta vede). Napojený
+# úsek se přepne na HORNÍ úsek své cesty a rozdělí ho v jeho posledním uzlu -
+# rozdělení se tím posune doleva.
+func move_join_back(lane: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	if target_kind(lane) != TO_LANE:
+		return false
+	var to: int = to_of(lane)
+	var j: int = from_of(to)
+	if not is_division(j):
+		return false
+	var ins: Array = lanes_into(j)
+	if ins.size() != 1:
+		return false
+	var up: int = int(ins[0])
+	var ns: Array = usable_nodes(lane, up)
+	if ns.is_empty():
+		return false
+	return join_at(lane, up, int(ns[ns.size() - 1]))
+
+
+# NAPOJENÍ `lane` NA ÚSEK `to` V UZLU `node`. Napojení je zároveň místo
+# rozdělení, takže se `to` v tom místě rozdělí a napojený úsek vstoupí do
+# prvního uzlu spodního úseku (tím uzlem JE to rozdělení).
+func join_at(lane: int, to: int, node: int) -> bool:
+	if lane < 0 or lane >= lanes.size():
+		return false
+	if not can_target(lane, TO_LANE, to, node):
+		return false
+	var r: Dictionary = split_at_join(to, node)
+	if not bool(r["ok"]):
+		return false
+	var l: Dictionary = lanes[lane]
+	l["kind"] = TO_LANE
+	l["to"] = int(r["lane"])
+	l["node"] = 0
+	lanes[lane] = l
+	_prune_divisions()
+	relayout()
+	return true
+
+
+# Kolik je v levelu mist rozdeleni. Pouziva se pro hlášku ("rozdělení se
+# vrátilo zpět") - počítá se z dat, ne z toho, co si kdo pamatuje.
+func _division_count() -> int:
+	var n := 0
+	for j in range(junctions.size()):
+		if is_division(j):
+			n += 1
+	return n
+
+
+# VEJDE SE ROZDĚLENÍ TOHO ÚSEKU V TOM UZLU? Rozhoduje se na jednom místě:
+# ptá se ho can_target (co vůbec nabízet), split_at_join (co opravdu udělat) i
+# testy. Obě části potřebují místo na rovný úsek jako každý jiný úsek - horní
+# mezi svou výhybkou a dělicím bodem, dolní od dělicího bodu ke svému cíli.
+# Kdyby to nesedlo, hráč by si vyrobil level, který se mu nevyexportuje.
+func can_divide(at: int, node: int) -> bool:
+	if at < 0 or at >= lanes.size():
+		return false
+	if node < 0 or node >= NODE_COUNT:
+		return false
+	var x: float = node_x(at, node)
+	# Už se v tom místě dělí? Pak se nic nového nedělá a je to v pořádku.
+	if is_division(from_of(at)) and absf(x - junction_x(from_of(at))) < 0.001:
+		return true
+	if lanes.size() + 1 > MAX_LANES:
+		return false
+	# Horní část: z výhybky, ze které úsek vede, do dělicího bodu.
+	var up: float = (x - MERGE_GAP) - junction_x(from_of(at))
+	if up <= 0.0:
+		return false
+	if up * (1.0 - run_in_frac(at, TO_JUNCTION, up) - run_frac_for(TO_JUNCTION, up)) < MIN_RUN:
+		return false
+	# Dolní část: od dělicího bodu ke svému cíli. Vzniká bez náběhu, takže
+	# rozhoduje jen zatáčka na konci (run_in_frac ji tam dá 0).
+	var kind: int = target_kind(at)
+	var down: float = _target_x(kind, to_of(at), 0, at, lane_node(at)) - x
+	if down <= 0.0:
+		return false
+	if down * (1.0 - run_frac_for(kind, down)) < MIN_RUN:
+		return false
+	return true
+
+
+# ---------------------------------------------------------------- rozdělení
+
+# ÚSEK SE ROZDĚLÍ NAPOJENÍM. Cesta, do které se někdo vlévá, se v tom místě
+# rozdělí na dva úseky: horní zůstává tím úsekem (a končí v místě rozdělení),
+# nový dolní je PLNOHODNOTNÝ úsek - má vlastní cíl, vlastní element, vlastní
+# odbočení i vlastní uzly, do kterých se dá napojit (Jan: "Nový vzniklý úsek
+# by měl mít možnosti jako všechny ostatní.").
+#
+# Místo rozdělení je výhybka, ze které vede jediný úsek dál - nedá se na ní nic
+# přepínat (žádné rozhodnutí tam není), ale drží geometrii: stojí přesně tam,
+# kde se hráč napojil, a nový úsek z ní vychází bez náběhu (run_in_frac).
+#
+# Vrací {"ok", "junction", "lane", "created"}: `lane` je úsek, do kterého se
+# napojený úsek vlévá (nový, nebo ten stávající, když se v tom místě už dělí).
+func split_at_join(to: int, node: int) -> Dictionary:
+	var out := {"ok": false, "junction": -1, "lane": -1, "divided": to, "created": false}
+	if to < 0 or to >= lanes.size():
+		return out
+	if node < 0 or node >= NODE_COUNT:
+		return out
+	var x: float = node_x(to, node)
+	# Už se v tom místě dělí? Pak se žádné nové rozdělení nedělá - hráč se
+	# napojuje na to stávající místo rozdělení (je to stejný bod).
+	if is_division(from_of(to)) and absf(x - junction_x(from_of(to))) < 0.001:
+		out["ok"] = true
+		out["junction"] = from_of(to)
+		out["lane"] = to
+		return out
+	# Rozdeleni musi mit misto - same pravidlo, jakym se nabizi hracovi.
+	if not can_divide(to, node):
+		return out
+	if lanes.size() + 1 > MAX_LANES:
+		return out
+	var j: int = junctions.size()
+	junctions.append({"x": snappedf(x, 0.0001)})
+	var keep_kind: int = target_kind(to)
+	var keep_to: int = to_of(to)
+	var keep_node: int = lane_node(to)
+	var l: Dictionary = lanes[to]
+	l["kind"] = TO_JUNCTION
+	l["to"] = j
+	l.erase("node")
+	lanes[to] = l
+	var d: Dictionary = {
+		"from": j,
+		"el": el_of(to),
+		"kind": keep_kind,
+		"to": keep_to,
+		"divert": divert_of(to),
+	}
+	if keep_kind == TO_LANE:
+		d["node"] = keep_node
+	lanes.append(d)
+	out["ok"] = true
+	out["junction"] = j
+	out["lane"] = lanes.size() - 1
+	out["created"] = true
+	relayout()
+	return out
+
+
+# ROZDĚLENÍ ZŮSTÁVÁ, JEN DOKUD MÁ SMYSL. Rozdělení vzniká napojením; kdyby
+# zůstalo i potom, co hráč napojení posunul jinam, rozřezal by si klepáním na
+# "cíl" cestu na hromadu úseků. Proto se rozdělení, na které už nic nevede,
+# samo vrátí (obě části se slijí zpět) - KROMĚ případu, kdy si hráč nový úsek
+# upravil: jiný element je jeho rozhodnutí, ne dozvuk klepání.
+func _prune_divisions() -> void:
+	var guard := 0
+	while guard < 16:
+		guard += 1
+		var found := -1
+		for j in range(1, junctions.size()):
+			if not is_division(j):
+				continue
+			if _division_in_use(j):
+				continue
+			found = j
+			break
+		if found < 0:
+			return
+		_collapse_division(found)
+
+
+# Drží to rozdělení ještě něco? Rozhoduje se na jednom místě - ptá se ho
+# uklízení i testy.
+func _division_in_use(j: int) -> bool:
+	var kids: Array = lanes_of(j)
+	if kids.size() != 1:
+		return true
+	var d: int = int(kids[0])
+	if from_of(d) != j:
+		return true
+	var ins: Array = lanes_into(j)
+	if ins.size() != 1:
+		# Nikdo (nebo víc úseků) do místa rozdělení vede - to není stav, který
+		# by uklízení mělo řešit samo.
+		return true
+	# Někdo se vlévá do nového úseku? Pak rozdělení drží napojení.
+	if _joins_into_lane(d):
+		return true
+	# Hráč dal novému úseku jiný element? To je rozdělení, které má smysl samo.
+	if el_of(d) != el_of(int(ins[0])):
+		return true
+	return false
+
+
+# SLITÍ ROZDĚLENÍ ZPĚT. Horní úsek si vezme cíl (i odbočení) toho dolního,
+# místo rozdělení i dolní úsek zmizí. Přesně to se stane, když hráč zmáčkne
+# "sloučit" nebo když rozdělení zůstane bez napojení.
+func _collapse_division(j: int) -> bool:
+	var ins: Array = lanes_into(j)
+	var kids: Array = lanes_of(j)
+	if kids.size() != 1 or ins.size() != 1:
+		return false
+	var u: int = int(ins[0])
+	var d: int = int(kids[0])
+	if u == d:
+		return false
+	var dl: Dictionary = lanes[d]
+	var l: Dictionary = lanes[u]
+	l["el"] = int(dl["el"])
+	l["divert"] = divert_of(d)
+	l["kind"] = target_kind(d)
+	l["to"] = to_of(d)
+	if target_kind(d) == TO_LANE:
+		l["node"] = lane_node(d)
+	else:
+		l.erase("node")
+	lanes[u] = l
+	_drop_junction(j)
 	return true
 
 
@@ -1013,8 +1408,15 @@ func run_frac_for(kind: int, span: float) -> float:
 	return clampf((1.0 - MIN_RUN / span) * 0.5, 0.0, RUN_FRAC)
 
 
-func run_frac(lane: int, guard: int = 0) -> float:
-	return run_frac_for(target_kind(lane), target_x_of(lane, guard) - junction_x(from_of(lane)))
+# ROZDĚLENÝ ÚSEK NEMÁ NÁBĚH. Úsek, který vznikl rozdělením, začíná přesně
+# v dělicím bodě - kdyby si nechal obvyklý náběh (run_frac_for), jeho rovný
+# úsek by začínal až kus za rozdělením a napojení v prvním uzlu by nesedlo na
+# dělicí bod. Proto je pro něj podíl náběhu 0 a jeho rovný úsek začíná
+# v rozdělení.
+func run_in_frac(lane: int, kind: int, span: float) -> float:
+	if is_division(from_of(lane)):
+		return 0.0
+	return run_frac_for(kind, span)
 
 
 # X-ova souradnice bodu, do ktereho usek vede. Pro cil = jiny usek je to
@@ -1044,8 +1446,16 @@ func _target_x(kind: int, to: int, guard: int, self_lane: int = -1, node: int = 
 const NODE_BEND_MARGIN := 0.06
 
 
+# UZLY USEKU. Rozdělený úsek (ten, který vznikl rozdělením) má první uzel
+# v dělicím bodě - tam, kde začíná - a další dva jako ostatní.
+func lane_node_frac(lane: int, node: int) -> float:
+	if is_division(from_of(lane)):
+		return float(MERGE_NODE_FRACS[clampi(node, 0, NODE_COUNT - 1)])
+	return node_frac(node)
+
+
 func node_frac_on(lane: int, node: int) -> float:
-	return minf(node_frac(node), maxf(0.05, divert_of(lane) - NODE_BEND_MARGIN))
+	return minf(lane_node_frac(lane, node), maxf(0.05, divert_of(lane) - NODE_BEND_MARGIN))
 
 
 # Kde se do toho useku vleje privodni vetev: v uzlu `node` jeho rovneho useku.
@@ -1103,7 +1513,7 @@ func run_x0(lane: int, guard: int = 0) -> float:
 	var span: float = target_x_of(lane, guard) - junction_x(from_of(lane))
 	if span <= 0.0:
 		return junction_x(from_of(lane))
-	return junction_x(from_of(lane)) + span * run_frac_for(target_kind(lane), span)
+	return junction_x(from_of(lane)) + span * run_in_frac(lane, target_kind(lane), span)
 
 
 func run_x1(lane: int, guard: int = 0) -> float:
@@ -1134,11 +1544,14 @@ func can_target(lane: int, kind: int, to: int, node: int = -1) -> bool:
 	elif kind == TO_JUNCTION:
 		if to < 0 or to >= junctions.size() or to == from_of(lane):
 			return false
-		# Usek vede o patro hloub, ale jen do meze MAX_DEPTH.
-		if junction_depth(from_of(lane)) + 1 > MAX_DEPTH:
-			return false
-		if junction_depth(to) > MAX_DEPTH:
-			return false
+		# Usek vede o patro hloub, ale jen do meze MAX_DEPTH. MÍSTO ROZDĚLENÍ
+		# je vyjimka: jeho geometrie neni dana hloubkou, ale svoji souradnici
+		# (a rozdeleny usek z nej vede dal) - hlidá ji MIN_RUN nize.
+		if not is_division(to) and not is_division(from_of(lane)):
+			if junction_depth(from_of(lane)) + 1 > MAX_DEPTH:
+				return false
+			if junction_depth(to) > MAX_DEPTH:
+				return false
 	elif kind == TO_LANE:
 		if to < 0 or to >= lanes.size() or to == lane:
 			return false
@@ -1153,15 +1566,19 @@ func can_target(lane: int, kind: int, to: int, node: int = -1) -> bool:
 		# brzo, napojeni se posune pred zatacku - ne aby zmizelo.
 		if node_x(to, n) > bend_x(to) + 0.0001:
 			return false
+		# NAPOJENI ROZDĚLÍ CÍLOVÝ ÚSEK (split_at_join). Rozdeleni je soucast
+		# napojeni, takze se nabizi jen tehdy, kdyz se obe casti vejdou.
+		if not can_divide(to, n):
+			return false
 	else:
 		return false
 	# Geometrie: mezi vyhybkou a cilem musi zustat misto na rovny usek.
 	var span: float = _target_x(kind, to, 0, lane, n) - junction_x(from_of(lane))
 	if span <= 0.0:
 		return false
-	# Stejny podil, jakym se pak usek opravdu kresli (run_frac_for) - dve
-	# kopie by se rozešly a editor by nabizel neco jineho, nez co vznikne.
-	if span * (1.0 - 2.0 * run_frac_for(kind, span)) < MIN_RUN:
+	# Stejny podil, jakym se pak usek opravdu kresli (run_in_frac + run_frac_for)
+	# - dve kopie by se rozešly a editor by nabízel neco jineho, nez co vznikne.
+	if span * (1.0 - run_in_frac(lane, kind, span) - run_frac_for(kind, span)) < MIN_RUN:
 		return false
 	return true
 
@@ -1231,7 +1648,15 @@ func to_dict() -> Dictionary:
 		if target_kind(i) == TO_LANE and lane_node(i) > 0:
 			one["node"] = lane_node(i)
 		brief.append(one)
-	return {
+	# MÍSTA ROZDĚLENÍ. Výhybka, která vznikla napojením, si drží SVOU souřadnici
+	# (jinde by se počítala z hloubky a rozdělení by skočilo jinam) - a to je
+	# součást levelu, ne geometrie. Ukládá se jen když nějaké je, aby zakotvené
+	# levely a staré kódy zůstaly znak po znaku stejné.
+	var divs: Array = []
+	for j in range(junctions.size()):
+		if is_division(j):
+			divs.append([j, float((junctions[j] as Dictionary)["x"])])
+	var data := {
 		"name": name,
 		"lanes": brief,
 		"junctions": junctions.size(),
@@ -1245,6 +1670,9 @@ func to_dict() -> Dictionary:
 		"lives": lives,
 		"gold": gold,
 	}
+	if not divs.is_empty():
+		data["jx"] = divs
+	return data
 
 
 static func from_dict(d: Dictionary) -> Level:
@@ -1285,8 +1713,22 @@ static func from_dict(d: Dictionary) -> Level:
 	if l.exits.is_empty():
 		l.exits.append([BASE_EXIT_X, TOP])
 	var jn: int = maxi(int(d.get("junctions", 0)), 0)
+	# Místa rozdělení se čtou PŘED výhybkami: index rozdělení může být i za
+	# počtem, který si level nese ("junctions") - pak musí vzniknout i ta.
+	var jx: Array = d.get("jx", [])
+	for item in jx:
+		var p: Array = item
+		if p.size() >= 2:
+			jn = maxi(jn, int(p[0]) + 1)
 	while l.junctions.size() < jn:
 		l.junctions.append({})
+	for item2 in jx:
+		var p2: Array = item2
+		if p2.size() < 2:
+			continue
+		var ji: int = int(p2[0])
+		if ji >= 0 and ji < l.junctions.size():
+			l.junctions[ji] = {"x": float(p2[1])}
 	var ent: Array = d.get("entries", [])
 	for e in ent:
 		var ei: int = int(e)
@@ -1406,6 +1848,12 @@ func clamp_all() -> void:
 	entries = clean
 	if entries.is_empty():
 		entries = [0]
+	# Mista rozdeleni si drzi souradnici v plose - i kdyz je level z ruky.
+	for j in range(junctions.size()):
+		var jd: Dictionary = junctions[j]
+		if jd.has("x"):
+			jd["x"] = clampf(float(jd["x"]), 0.02, 0.99)
+			junctions[j] = jd
 
 
 # ---------------------------------------------------------------- ulozeni
@@ -1636,12 +2084,18 @@ func validate() -> Array:
 			errs.append("z výhybky %d vede víc než %d úseků" % [from_of(i) + 1, MAX_FAN])
 	for j in range(1, junctions.size()):
 		var kids: Array = lanes_of(j)
-		if kids.size() < 2:
+		# ROZDĚLENÍ NENÍ VOLIČ. Vede z něj jediný úsek dál (nic se na něm
+		# nepřepíná) - vzniklo napojením a drží dělicí bod. Požadavek "aspoň
+		# dva úseky" proto platí jen pro opravdové výhybky.
+		if kids.size() < 2 and not is_division(j):
 			errs.append("výhybka %d má míň než dva úseky" % (j + 1))
 		if lanes_into(j).is_empty() and not has_entry(j):
 			errs.append("do výhybky %d nikdo nevede" % (j + 1))
 		for k in kids:
-			if target_kind(k) == TO_JUNCTION:
+			# Úsek z rozdělení vede do dalšího místa rozdělení - to je řetěz
+			# rozdělení za sebou, ne výhybka za výhybkou (geometrii drží
+			# souřadnice rozdělení, ne hloubka).
+			if target_kind(k) == TO_JUNCTION and not is_division(from_of(k)):
 				errs.append("z výhybky %d vede úsek do další výhybky" % (j + 1))
 	if lanes_of(0).size() < MIN_LANES:
 		errs.append("z první výhybky nevedou aspoň dva úseky")

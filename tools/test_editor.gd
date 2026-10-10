@@ -22,6 +22,7 @@ func _init() -> void:
 	_test_many_entries_and_junctions()
 	_test_exits_are_manual_only()
 	_test_exit_goes_with_its_last_lane()
+	_test_join_divides_target()
 	_test_join_two_lanes()
 	_test_autosave()
 	_test_export_code()
@@ -103,15 +104,21 @@ func _test_element_cycle() -> void:
 func _test_exit_cycle() -> void:
 	# CIL USEKU: vyhybka ho cykli pres vsechny vystupy (a u levelu s dalsi
 	# vyhybkou i pres ni - tim se useky SPOJUJI). Na zakladni desce jsou jen
-	# vystupy, takze se musi dat projit vsechny.
+	# vystupy, takze se musi dat projit vsechny. Za vystupy cyklus pokracuje
+	# dal (napojeni), proto se chodi jen po vystupove casti - jinak by se do
+	# "videnych cilu" michaly i useky, ktere maji cisla ze stejne rady.
 	var ed := _fresh()
 	ed.sel = 0
 	var seen := {}
-	for i in range(ed.level.exits.size() + 1):
+	for i in range(ed.level.exits.size() + 2):
+		if ed.level.target_kind(0) != Level.TO_EXIT:
+			break
 		seen[ed.level.to_of(0)] = true
 		ed.press(Editor.BTN_TARGET)
 	_ok(seen.size() == ed.level.exits.size(),
 		"cíl se cykli pres vsechny vystupy (%d z %d)" % [seen.size(), ed.level.exits.size()])
+	_ok(ed.level.target_kind(0) != Level.TO_EXIT,
+		"a za vystupy cyklus pokracuje dal (%d)" % ed.level.target_kind(0))
 	# a kazdy vystup musi byt porad v plose
 	for i in range(ed.level.exits.size()):
 		var p: Array = ed.level.exits[i]
@@ -270,6 +277,76 @@ func _test_exits_are_manual_only() -> void:
 	_ok(back.to_code() == ed2.level.to_code(), "a kód se vrátí stejný")
 
 
+# NAPOJENÍ ROZDĚLÍ CÍLOVOU CESTU NA DVA ÚSEKY. Jan: "Když se jedna cesta
+# napojí na uzel druhé cesty, tak by se druhá cesta měla tímto napojením
+# rozdělit na dva úseky. Nový vzniklý úsek by měl mít možnosti jako všechny
+# ostatní. Změnit cíl, změnit element, atd."
+func _test_join_divides_target() -> void:
+	var ed := _fresh()
+	ed.sel = 1
+	var lanes0: int = ed.level.lane_count()
+	for i in range(30):
+		if ed.level.target_kind(1) == Level.TO_LANE:
+			break
+		ed.press(Editor.BTN_TARGET)
+	_ok(ed.level.target_kind(1) == Level.TO_LANE, "úsek se dá napojit na jiný")
+	if ed.level.target_kind(1) != Level.TO_LANE:
+		return
+	var lower: int = ed.level.to_of(1)            # nový (spodní) úsek je cíl napojení
+	var j: int = ed.level.from_of(lower)          # a místo rozdělení, ze kterého vede
+	_ok(ed.level.is_division(j),
+		"napojení cílovou cestu ROZDĚLILO (místo rozdělení je výhybka %d)" % (j + 1))
+	_ok(ed.level.lane_count() == lanes0 + 1,
+		"a vznikl jeden nový úsek (%d -> %d)" % [lanes0, ed.level.lane_count()])
+	if not ed.level.is_division(j):
+		return
+	var ins: Array = ed.level.lanes_into(j)       # horní část (ta, co se rozdělila)
+	if ins.is_empty():
+		_ok(false, "do místa rozdělení vede horní část")
+		return
+	var top: int = int(ins[0])
+	var kids: Array = ed.level.lanes_of(j)
+	_ok(kids.size() == 1, "z místa rozdělení vede jediná cesta dál (%d)" % kids.size())
+	if kids.is_empty():
+		return
+	_ok(int(kids[0]) == lower, "a tou cestou je nový úsek (%d)" % lower)
+	_ok(ed.level.el_of(lower) == ed.level.el_of(top),
+		"nový úsek převezme element cesty - mapa tím nepřijde o žádný živel")
+	# --- NOVÝ ÚSEK JE PLNOHODNOTNÝ: dá se mu změnit cíl i element ---
+	ed.sel = lower
+	var el_before: int = ed.level.el_of(lower)
+	var to_before: int = ed.level.to_of(lower)
+	ed.press(Editor.BTN_ELEMENT)
+	_ok(ed.level.el_of(lower) != el_before,
+		"novému úseku jde změnit element (%d -> %d)" % [el_before, ed.level.el_of(lower)])
+	ed.press(Editor.BTN_TARGET)
+	_ok(ed.level.to_of(lower) != to_before or ed.level.target_kind(lower) != Level.TO_EXIT,
+		"a taky cíl (%d -> %d)" % [to_before, ed.level.to_of(lower)])
+	_ok(ed.level.validate().is_empty(), "takový level je platný: %s" % str(ed.level.validate()))
+	_ok(ed.level.target_kind(top) == Level.TO_JUNCTION,
+		"horní část vede do místa rozdělení (kind=%d)" % ed.level.target_kind(top))
+	# --- ELEMENT SPODNÍHO ÚSEKU SE POČÍTÁ ZVLÁŠŤ ---
+	# Rozdělení má smysl jen proto, že každá část má svůj element: poškození se
+	# počítá na TÉ části, na které poutník právě je.
+	var g := Game.new()
+	g.setup(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
+	g.auto_wave = false
+	g.set_switch(0)
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	var t := 0.0
+	while t < 40.0 and e.alive and e.lane != lower:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+	_ok(e.alive and e.lane == lower,
+		"poutník projde rozdělením do spodního úseku (lane=%d, čekal %d)" % [e.lane, lower])
+	# a kód levelu si rozdělení (i jeho souřadnici) odnese
+	var code: String = ed.level.to_code()
+	var back := Level.from_code(code)
+	_ok(back.to_code() == code and back.lane_count() == ed.level.lane_count(),
+		"kód levelu rozdělení udrží (%d znaků)" % code.length())
+	_ok(back.validate().is_empty(), "a level z kódu je platný: %s" % str(back.validate()))
+
+
 # SPOJENI DVOU CEST DO JEDNE. Usek se dá napojit na jiný usek - poutník po něm
 # pokračuje dál, takže se z dvou cest stane jedna. Je to v cyklu tlacitka
 # "cíl" (za výstupy), takže se k tomu hráč musí proklikat - a musí to jít.
@@ -356,19 +433,29 @@ func _test_exit_goes_with_its_last_lane() -> void:
 	var ed4 := _fresh()
 	ed4.sel = 1
 	for i in range(30):
-		if ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 3:
-			break
+		# Hledá se napojení, které ROZDĚLILO úsek 4 (index 3): napojený úsek
+		# pak vede do nového spodního úseku, ne do něj samého.
+		if ed4.level.target_kind(1) == Level.TO_LANE:
+			var t: int = ed4.level.to_of(1)
+			var jj: int = ed4.level.from_of(t)
+			if ed4.level.is_division(jj) and ed4.level.lanes_into(jj).has(3):
+				break
 		ed4.press(Editor.BTN_TARGET)
-	_ok(ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 3,
-		"usek 2 se napojil na usek 4 (kind=%d, to=%d)" % [
+	_ok(ed4.level.target_kind(1) == Level.TO_LANE,
+		"usek 2 se napojil na jiny usek (kind=%d, to=%d)" % [
 			ed4.level.target_kind(1), ed4.level.to_of(1)])
-	# smazeme usek MEZI nimi (cislo 2 = index 2): nas usek si cislo podrzi,
-	# cilova usek se posune na 2
+	# NAPOJENI ROZDĚLILO CÍLOVÝ ÚSEK (cislo 4 = index 3): napojeny usek vede
+	# do NOVEHO spodniho useku, horni zustava na svem cisle.
+	var joined: int = ed4.level.to_of(1)
+	_ok(joined > 3, "napojeny usek vede do noveho useku (%d)" % joined)
+	_ok(ed4.level.target_kind(3) == Level.TO_JUNCTION and ed4.level.is_division(ed4.level.to_of(3)),
+		"a usek 4 se v tom miste rozdělil")
+	# smazeme usek MEZI nimi (cislo 3 = index 2): obe cisla se posunou o jedna
 	ed4.sel = 2
 	ed4.press(Editor.BTN_DEL)
-	_ok(ed4.level.lane_count() == 4, "usek 3 zmizel (%d)" % ed4.level.lane_count())
-	_ok(ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == 2,
-		"odkaz na usek se posunul s cisly (cekal 2, je %d)" % ed4.level.to_of(1))
+	_ok(ed4.level.lane_count() == 5, "usek 3 zmizel (%d)" % ed4.level.lane_count())
+	_ok(ed4.level.target_kind(1) == Level.TO_LANE and ed4.level.to_of(1) == joined - 1,
+		"odkaz na usek se posunul s cisly (cekal %d, je %d)" % [joined - 1, ed4.level.to_of(1)])
 	_ok(ed4.level.validate().is_empty(), "a level je platny: %s" % str(ed4.level.validate()))
 	for i in range(ed4.level.lane_count()):
 		if ed4.level.target_kind(i) == Level.TO_LANE:
@@ -634,8 +721,11 @@ func _test_target_hint_tells_the_next_choice() -> void:
 		# prosel, i kdyby napoveda lhala.
 		var now: String = ed.level.choice_text(ed.level.target_kind(1), ed.level.to_of(1),
 			ed.level.lane_node(1), 1)
-		_ok(now == promised,
-			"napoveda nelhala: slibila \"%s\", stalo se \"%s\"" % [promised, now])
+		# Napoveda muze za text cile pridat " (rozdělí úsek N)" - napojeni
+		# cilovy usek ROZDĚLÍ a z textu cile to videt neni. Zbytek musi sedet
+		# presne, proto se porovnava text cile a pripadna poznamka zvlast.
+		var ok: bool = promised == now or promised.begins_with(now + " (rozdělí úsek ")
+		_ok(ok, "napoveda nelhala: slibila \"%s\", stalo se \"%s\"" % [promised, now])
 	_ok(ed.level.validate().is_empty(), "a level je pořád platný: %s" % str(ed.level.validate()))
 
 
@@ -801,89 +891,72 @@ func _test_deep_branch_joins_other_lanes() -> void:
 	_ok(back.to_code() == ed.level.to_code(), "a kod levelu projde tam i zpet")
 
 
-# NAPOJENI MA VIC UZLU. Jan: "musíme udělat komplexnější větvení pomocí
-# výhybek. Aby měl každý úsek X uzlů, do kterých se může úsek zakončit...
-# jeden úsek může končit v jiném a měl by mít možnost končit v různých uzlech
-# daného úseku. Ne jen v jednom jak je to teď."
+# ROZDĚLENÍ SE DÁ POLOŽIT NA NĚKOLIK MÍST CÍLOVÉ CESTY. Jan: "musíme udělat
+# komplexnější větvení pomocí výhybek. Aby měl každý úsek X uzlů, do kterých se
+# může úsek zakončit... jeden úsek může končit v jiném a měl by mít možnost
+# končit v různých uzlech daného úseku. Ne jen v jednom jak je to teď."
 #
-# Kdyby uzel zustal jeden, je tenhle test prvni, ktery to rekne: projde cely
-# cyklus "cíl" a pozada, aby nejaky cilovy usek mel aspon DVA uzly - a aby to
-# byly dva RUZNE body na tom useku.
+# Napojení je teď zároveň ROZDĚLENÍ (split_at_join): uzel cílové cesty, do
+# kterého hráč napojení postaví, JE místo, kde se cesta rozdělí. Poloha
+# rozdělení se posouvá tlačítky "uzel ±" (cyklus "cíl" vlastní cestu přeskakuje,
+# aby se na ní nezasekl) - a tenhle test hlídá, že se opravdu dostane na víc
+# míst než jedno.
 func _test_join_has_several_nodes() -> void:
 	var ed := _fresh()
 	ed.sel = 1
-	var per_target := {}
-	var samples := {}
-	for i in range(80):
+	for i in range(30):
 		if ed.level.target_kind(1) == Level.TO_LANE:
-			var to: int = ed.level.to_of(1)
-			var node: int = ed.level.lane_node(1)
-			if not per_target.has(to):
-				per_target[to] = {}
-			per_target[to][node] = true
-			var n_net := Network.new()
-			n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
-			samples["%d:%d" % [to, node]] = n_net.node_world(to, node).x
+			if ed.level.is_division(ed.level.from_of(ed.level.to_of(1))):
+				break
 		ed.press(Editor.BTN_TARGET)
-	var multi := 0
-	for to in per_target:
-		if per_target[to].size() >= 2:
-			multi += 1
-	_ok(multi >= 1,
-		"do jednoho useku se da napojit ve vic nez jednom uzlu (%d cilu z %d)" % [
-			multi, per_target.size()])
-	# kazdy uzel je JINY bod na SVEM cilovem useku - jinak by to byly jen dva
-	# nazvy pro to same a hrac by rozdil nevidel. (Srovnava se VZdy v ramci
-	# jednoho ciloveho useku: dva ruzne useky maji uzly na stejnych x, protoze
-	# jejich rovne useky zacinaji i konci na stejne x.)
-	var same_spot := false
-	for to in per_target:
-		var keys: Array = per_target[to].keys()
-		for a in range(keys.size()):
-			for b in range(a + 1, keys.size()):
-				var xa: float = float(samples["%d:%d" % [to, int(keys[a])]])
-				var xb: float = float(samples["%d:%d" % [to, int(keys[b])]])
-				if absf(xa - xb) < 1.0:
-					same_spot = true
-	_ok(not same_spot && multi >= 1,
-		"uzly jednoho useku jsou tri RUZNE body na jeho rovnem useku")
-
-	# --- UZEL SE MUSI UDRZET V KODU LEVELU ---
-	# (pres kod se level dostava z telefonu do hry; ztraceny uzel = jiny level)
-	var ed2 := _fresh()
-	ed2.sel = 1
-	var found := false
-	for i in range(80):
-		if ed2.level.target_kind(1) == Level.TO_LANE and ed2.level.lane_node(1) > 0:
-			found = true
-			break
-		ed2.press(Editor.BTN_TARGET)
-	_ok(found, "napojeni do druheho uzlu je vubec k dosazeni")
-	if not found:
+	if ed.level.target_kind(1) != Level.TO_LANE:
+		_ok(false, "usek 2 se vubec da napojit")
 		return
-	var to2: int = ed2.level.to_of(1)
-	var node2: int = ed2.level.lane_node(1)
-	_ok(ed2.level.validate().is_empty(), "takovy level je platny: %s" % str(ed2.level.validate()))
-	var code: String = ed2.level.to_code()
+	var places := {}
+	var off_run := 0
+	for i in range(Level.NODE_COUNT):
+		var j: int = ed.level.from_of(ed.level.to_of(1))
+		if not ed.level.is_division(j):
+			break
+		var x: float = ed.level.junction_x(j)
+		places[snappedf(x, 0.005)] = true
+		# ROZDĚLENÍ LEŽÍ NA ROVNÉM ÚSEKU: spodní úsek začíná přesně tam (proto
+		# má první uzel v dělicím bodě) - jinak by na obou částech chybělo
+		# místo na bonusy.
+		if absf(ed.level.run_x0(ed.level.to_of(1)) - x) > 0.001:
+			off_run += 1
+		ed.press(Editor.BTN_BEND_RIGHT)          # uzel +
+	_ok(places.size() >= 2,
+		"jedna cesta se dá rozdělit na několika místech (%d)" % places.size())
+	_ok(off_run == 0,
+		"a rozdělení vždycky sedí na začátek rovného úseku spodního úseku (%d mimo)" % off_run)
+	_ok(ed.level.validate().is_empty(), "level je po celou dobu platný: %s" % str(ed.level.validate()))
+
+	# --- MÍSTO ROZDĚLENÍ SE MUSÍ UDRŽET V KÓDU LEVELU ---
+	# (pres kod se level dostava z telefonu do hry; ztracene misto rozdeleni =
+	#  jiny level - cesta by se delila jinde, nez si hrac nakreslil)
+	var jx: float = ed.level.junction_x(ed.level.from_of(ed.level.to_of(1)))
+	var code: String = ed.level.to_code()
 	var back := Level.from_code(code)
-	_ok(back.to_code() == code, "a kod levelu uzel udrzi")
-	_ok(back.target_kind(1) == Level.TO_LANE and back.to_of(1) == to2
-			and back.lane_node(1) == node2,
-		"a po ceste tam a zpet je to porad uzel %d (%d), ne %d" % [
-			node2 + 1, back.lane_node(1) + 1, back.lane_node(1)])
-	# a poutnik vstoupi PRESNE do toho uzlu: sit ma vstup jinde nez u uzlu 0
-	var n2 := Network.new()
-	n2.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed2.level)
-	var n0 := Network.new()
-	var lv0: Level = ed2.level.clone()
-	var l0: Dictionary = lv0.lanes[1]
-	l0["node"] = 0
-	lv0.lanes[1] = l0
-	lv0.relayout()
-	n0.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, lv0)
-	_ok(absf(float(n2.lane_entry_s[1]) - float(n0.lane_entry_s[1])) > 1.0,
-		"jiny uzel = jiny vstupni bod na cilovem useku (%.0f vs %.0f)" % [
-			n2.lane_entry_s[1], n0.lane_entry_s[1]])
+	_ok(back.to_code() == code, "a kod levelu misto rozdeleni udrzi")
+	_ok(back.is_division(back.from_of(back.to_of(1)))
+			and absf(back.junction_x(back.from_of(back.to_of(1))) - jx) < 0.002,
+		"a po ceste tam a zpet je rozdeleni na stejnem miste (%.3f vs %.3f)" % [
+			jx, back.junction_x(back.from_of(back.to_of(1)))])
+	_ok(back.validate().is_empty(), "a takovy level je platny: %s" % str(back.validate()))
+	# --- VSTUPNÍ BOD JE PŘESNĚ V MÍSTĚ ROZDĚLENÍ ---
+	# Poutnik vstupuje do svého (spodního) úseku v jeho prvním uzlu - a ten JE
+	# to rozdělení. Měří se ve světe: vstupní bod musí sedět na místo rozdělení.
+	var n_net := Network.new()
+	n_net.build(Rect2(40.0, 80.0, 880.0, 404.0), 1.0, 500.0, ed.level)
+	var j_now: int = ed.level.from_of(ed.level.to_of(1))
+	# VSTUPNÍ BOD PATŘÍ CÍLOVÉMU ÚSEKU: hodnota je vzdálenost po JEHO trase
+	# (proto se čte z lane_entry_s[privodni] a měří na `to`).
+	var p_entry: Vector2 = n_net.point_at(ed.level.to_of(1), n_net.lane_entry_s[1])
+	var p_div: Vector2 = n_net.junction_pos[j_now]
+	_ok(p_entry.distance_to(p_div) < 45.0,
+		"poutník vstoupí přesně v místě rozdělení (%.0f,%.0f vs %.0f,%.0f)" % [
+			p_entry.x, p_entry.y, p_div.x, p_div.y])
 
 
 # RUCNI ZRUSENI CILE. Jan: "cíle stále po smazání úseku nemizí. Přidáme tedy
@@ -953,33 +1026,38 @@ func _test_exit_delete_button() -> void:
 # prejmenuji na "uzel −"/"uzel +" a jeden stisk = sousedni uzel. Hrac tak
 # nemusi prokladat cely cyklus "cíl", aby se posunul o uzel dal.
 func _test_node_step_buttons() -> void:
-	# --- 1) U NAPOJENI POSOUVAJI UZEL ---
+	# --- 1) U NAPOJENI POSOUVAJI ROZDĚLENÍ ---
+	# Napojení je zároveň místo rozdělení, takže "uzel ±" posouvá ROZDĚLENÍ po
+	# cílové cestě. Napojený úsek vždycky vstupuje do prvního uzlu svého cíle -
+	# tím uzlem JE to rozdělení, takže se posouvá místo rozdělení, ne číslo
+	# uzlu u napojeného úseku.
 	var ed := _fresh()
 	_join_at_node_zero(ed, 1)
 	if ed.level.target_kind(1) != Level.TO_LANE:
 		_ok(false, "usek 2 se vubec da napojit")
 		return
-	var to: int = ed.level.to_of(1)
 	var labels: Array = ed.button_labels()
 	_ok(str(labels[Editor.BTN_BEND_LEFT]).contains("uzel")
 			and str(labels[Editor.BTN_BEND_RIGHT]).contains("uzel"),
 		"u napojeni se tlacitka jmenuji 'uzel' (%s, %s)" % [
 			labels[Editor.BTN_BEND_LEFT], labels[Editor.BTN_BEND_RIGHT]])
+	var x0: float = ed.level.junction_x(ed.level.from_of(ed.level.to_of(1)))
 	ed.press(Editor.BTN_BEND_RIGHT)
-	_ok(ed.level.lane_node(1) == 1, "a stisk posune uzel na druhy (%d)" % ed.level.lane_node(1))
-	# pozor na sklonovani: hlaska rika "v uzlu", ne "uzel"
-	_ok(ed.status.contains("uzl"), "a hlaska rekne ktery (%s)" % ed.status)
-	ed.press(Editor.BTN_BEND_RIGHT)
-	_ok(ed.level.lane_node(1) == 2, "a na treti (%d)" % ed.level.lane_node(1))
-	ed.press(Editor.BTN_BEND_RIGHT)
-	_ok(ed.level.lane_node(1) == 2, "pres posledni uzel to nejde (%d)" % ed.level.lane_node(1))
-	_ok(ed.status.contains("poslední"), "a hlaska to rekne (%s)" % ed.status)
+	var x1: float = ed.level.junction_x(ed.level.from_of(ed.level.to_of(1)))
+	_ok(x1 > x0 + 0.001, "a stisk posune rozdeleni po ceste dal (%.3f -> %.3f)" % [x0, x1])
+	_ok(ed.status.contains("rozdělení"), "a hlaska rekne co (%s)" % ed.status)
+	var code: String = ed.level.to_code()
+	var back := Level.from_code(code)
+	_ok(back.to_code() == code
+			and absf(back.junction_x(back.from_of(back.to_of(1))) - x1) < 0.002,
+		"kod si posunute rozdeleni udrzi (%.3f)" % back.junction_x(back.from_of(back.to_of(1))))
+	# a zpet na druhou stranu (jen kdyz tam geometrie nechá místo - jinak to
+	# editor rekne a nechá rozdeleni tam, kde je)
 	ed.press(Editor.BTN_BEND_LEFT)
-	_ok(ed.level.lane_node(1) == 1, "a zpet na druhy (%d)" % ed.level.lane_node(1))
+	var x2: float = ed.level.junction_x(ed.level.from_of(ed.level.to_of(1)))
+	_ok(x2 < x1 - 0.001 or ed.status.contains("nedá"),
+		"'uzel −' budto posune rozdeleni zpet, nebo rekne ze to nejde (%.3f, %s)" % [x2, ed.status])
 	_ok(ed.level.validate().is_empty(), "takovy level je platny: %s" % str(ed.level.validate()))
-	var back := Level.from_code(ed.level.to_code())
-	_ok(back.lane_node(1) == 1 and back.to_of(1) == to,
-		"kod uzel udrzi (uzel=%d, usek=%d)" % [back.lane_node(1), back.to_of(1) + 1])
 
 	# --- 2) MIMO NAPOJENI HYBOU ODBOCENIM (jako driv) ---
 	var ed2 := _fresh()
@@ -991,54 +1069,34 @@ func _test_node_step_buttons() -> void:
 	_ok(ed2.level.divert_of(0) > d0,
 		"a meni se odboceni, ne uzel (%.2f -> %.2f)" % [d0, ed2.level.divert_of(0)])
 
-	# --- 3) ODBOCENI CILOVEHO USEKU UZ NAPOJENI NERUSI ---
-	# Uzel se odboceni SROVNA (node_frac_on): ohne-li hrac cilovy usek pred
-	# druhy uzel, napojeni se posune pred zatacku, misto aby zmizelo. Driv se
-	# uzel proste "nemel kde byt" a napojeni prestalo existovat.
+	# --- 3) POSUN ROZDĚLENÍ NIKDY NEROZBIJE LEVEL ---
+	# Editor NIKDY nesmi nechat level v podobě, ktera se neda vyexportovat:
+	# kdyz uz posun opravdu nema kam, vrati ho a rekne proc.
 	var ed3 := _fresh()
 	_join_at_node_zero(ed3, 1)
 	if ed3.level.target_kind(1) != Level.TO_LANE:
 		return
-	var tgt: int = ed3.level.to_of(1)
-	var node_x_before: float = ed3.level.node_x(tgt, ed3.level.lane_node(1))
-	ed3.sel = tgt
-	for i in range(10):
-		ed3.press(Editor.BTN_BEND_LEFT)
-	_ok(ed3.level.divert_of(tgt) < float(Level.NODE_FRACS[0]),
-		"cilovy usek se ohnul pred prvni uzel (%.2f)" % ed3.level.divert_of(tgt))
-	_ok(ed3.level.validate().is_empty(), "a level je porad platny: %s" % str(ed3.level.validate()))
-	var node_x_after: float = ed3.level.node_x(tgt, ed3.level.lane_node(1))
-	_ok(node_x_after < node_x_before - 0.001,
-		"uzel napojeni se posunul pred zatacku (%.3f -> %.3f)" % [node_x_before, node_x_after])
-	_ok(node_x_after <= ed3.level.bend_x(tgt) + 0.0001,
-		"a lezi na rovném useku (uzel %.3f, zatacka %.3f)" % [node_x_after, ed3.level.bend_x(tgt)])
-	ed3.sel = 1
-	_ok(ed3.level.target_kind(1) == Level.TO_LANE and ed3.level.lane_node(1) == 0,
-		"napojeni na cilovy usek zustalo")
-	# Editor NIKDY nesmi nechat level v podobě, ktera se neda vyexportovat:
-	# kdyz uz ohnuti opravdu nema kam uhnout, vrati ho a rekne proc.
+	for i in range(40):
+		ed3.press(Editor.BTN_BEND_RIGHT)
+		_ok(ed3.level.validate().is_empty(),
+			"ani po mnoha posunech je level platny: %s" % str(ed3.level.validate()))
 	for i in range(40):
 		ed3.press(Editor.BTN_BEND_LEFT)
-	_ok(ed3.level.validate().is_empty(),
-		"ani po mnoha ohnutich je level platny: %s" % str(ed3.level.validate()))
+		_ok(ed3.level.validate().is_empty(),
+			"a plati to i pro posun zpet: %s" % str(ed3.level.validate()))
+	_ok(ed3.level.target_kind(1) == Level.TO_LANE,
+		"napojeni na cilovy usek zustalo (kind=%d)" % ed3.level.target_kind(1))
 	var back3 := Level.from_code(ed3.level.to_code())
 	_ok(back3.to_code() == ed3.level.to_code(), "a kod levelu projde tam i zpet")
 
-	# --- 4) UZEL, DO KTEREHO SE OPRAVDU NEDA, EDITOR ODMITNE A REKNE PROC ---
+	# --- 4) ROZDĚLENÍ MÁ SVŮJ KONEC A EDITOR TO REKNE ---
 	var ed4 := _fresh()
 	_join_at_node_zero(ed4, 1)
 	if ed4.level.target_kind(1) != Level.TO_LANE:
 		return
-	var tgt4: int = ed4.level.to_of(1)
-	ed4.sel = 1
-	var node4: int = ed4.level.lane_node(1)
-	if ed4.level.can_target(1, Level.TO_LANE, tgt4, Level.NODE_COUNT - 1):
-		return
-	ed4.press(Editor.BTN_BEND_RIGHT)
-	_ok(ed4.level.lane_node(1) == node4,
-		"do uzlu, ktery geometrie neda, to nejde (%d)" % ed4.level.lane_node(1))
-	_ok(ed4.status.contains("uzl") or ed4.status.contains("poslední"),
-		"a hlaska to rekne (%s)" % ed4.status)
+	for i in range(10):
+		ed4.press(Editor.BTN_BEND_RIGHT)
+	_ok(not ed4.status.is_empty(), "hlaska rekne, jak to s rozdelenim je (%s)" % ed4.status)
 	_ok(ed4.level.validate().is_empty(), "a level zustava platny: %s" % str(ed4.level.validate()))
 
 

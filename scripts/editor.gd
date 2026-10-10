@@ -160,6 +160,10 @@ func press(button: int) -> int:
 				_clamp_sel()
 				status = "odebrán úsek"
 				_after_change()
+			elif at_division():
+				# Horní část rozdělení se neodebírá rovnou: rozdělení drží obě
+				# části a bez jedné by ta druhá zůstala viset ve vzduchu.
+				status = "úsek drží rozdělení — nejdřív ho sluč (tlačítko sloučit)"
 			else:
 				status = "úsek nejde odebrat"
 		BTN_ELEMENT:
@@ -256,24 +260,60 @@ func _cycle_element() -> void:
 func _cycle_target() -> void:
 	if level.lane_count() == 0:
 		return
+	# ZMENA SE OVERI: cil muze vest i do vystupu, ktery by nechal rozdeleni
+	# bez horni casti (rozdeleni drzi obe casti, jedna bez druhe nema smysl).
+	var before: Array = level.validate()
+	var keep: Level = level.clone()
 	if not level.cycle_target(sel):
 		status = "jiný cíl pro tenhle úsek není"
 		return
+	if before.is_empty() and not level.validate().is_empty():
+		level = keep
+		status = "tenhle cíl by rozbil rozdělení úseku — nejdřív ho sluč"
+		return
 	level.relayout()
+	# NAPOJENÍ ROZDĚLÍ CÍLOVÝ ÚSEK. Kdyz to je to, co se stalo, hlaska to
+	# rekne - jinak by hrac jen videl, ze mu pribyl usek, a nevedel proc.
+	var note: String = ""
+	if bool(level.last_cycle.get("created", false)):
+		note = " · úsek %d se rozdělil" % (int(level.last_cycle.get("divided", 0)) + 1)
+	elif bool(level.last_cycle.get("collapsed", false)):
+		note = " · rozdělení se vrátilo zpět"
 	# NAPOVEDA, CO BUDE NASLEDOVAT. Bez ni se k napojeni dvou useku (dve cesty
 	# se sliji v jednu, "vidlicka") dostane jen ten, kdo vi, ze za vystupy
 	# cyklus pokracuje dal - a to je presne otazka "jak se dve cesty spoji".
-	status = "úsek %d: %s · další cíl: %s" % [sel + 1, _target_text(sel), _next_text(sel)]
+	status = "úsek %d: %s%s · další cíl: %s" % [sel + 1, _target_text(sel), note, _next_text(sel)]
 	_after_change()
 
 
-# Co bude nasledovat po dalsim klepnuti. Kdyz uz nic dalsiho neni, rekne to.
+# Je vybrany usek napojeny na jiny usek? (a nema u sebe cislo ciloveho useku)
+func target_kind_is_join(lane: int) -> bool:
+	if lane < 0 or lane >= level.lane_count():
+		return false
+	return level.target_kind(lane) == Level.TO_LANE
+
+
+# Co bude nasledovat po dalsim klepnuti. NEDOVOZUJE SE to z poradi voleb:
+# napojeni cilovy usek ROZDĚLÍ (vznikne novy usek s novym cislem), takze text,
+# ktery hrac uvidi, se z aktualniho stavu slozit neda. Zkusi se to na KOPII
+# levelu - stejnym kodem, jakym klepnuti opravdu probehne, takze napoveda
+# nemuze lhat. Kopie je levna (par usek, par radku).
 func _next_text(lane: int) -> String:
-	var nxt: int = level.next_choice_index(lane)
-	if nxt < 0:
+	if lane < 0 or lane >= level.lane_count():
 		return "žádný"
-	var c: Dictionary = level.target_choices(lane)[nxt]
-	return level.choice_text(int(c["kind"]), int(c["to"]), int(c.get("node", -1)), lane)
+	var probe: Level = level.clone()
+	if not probe.cycle_target(lane):
+		return "žádný"
+	if lane >= probe.lane_count():
+		return "žádný"
+	var text: String = probe.choice_text(probe.target_kind(lane), probe.to_of(lane),
+		probe.lane_node(lane), lane)
+	# Napojení cílový úsek ROZDĚLÍ - a to se z textu cíle nepozná (číslo
+	# spodního úseku je stejné jako u předchozího napojení). Řekne se to proto
+	# zvlášť, aby hráč věděl, co se vlastně stane.
+	if bool(probe.last_cycle.get("created", false)):
+		text += " (rozdělí úsek %d)" % (int(probe.last_cycle.get("divided", 0)) + 1)
+	return text
 
 
 # Popis cile vybraneho useku. Tri druhy cile - a hrac musi videt, ktery z nich
@@ -414,30 +454,23 @@ func _bend_or_node(dir: int) -> void:
 # by mohl vzit misto napojeni, ktere do nej vede odjinud. Kdyby level prestal
 # byt platny, zmena se vrati (stejna mez jako u odboceni a pridavani drah).
 func _node_step(dir: int) -> void:
-	var to: int = level.to_of(sel)
-	var cur: int = level.lane_node(sel)
-	var nxt: int = cur + dir
-	if nxt < 0 or nxt >= Level.NODE_COUNT:
-		status = "úsek %d: %s je %s" % [sel + 1, level.node_name(cur),
-			"první" if dir < 0 else "poslední"]
-		return
-	if not level.can_target(sel, Level.TO_LANE, to, nxt):
-		status = "úsek %d: do uzlu %d/%d to nejde — leží za odbočením úseku %d" % [
-			sel + 1, nxt + 1, Level.NODE_COUNT, to + 1]
-		return
 	var before: Array = level.validate()
 	var keep: Level = level.clone()
-	var l: Dictionary = level.lanes[sel]
-	l["node"] = nxt
-	level.lanes[sel] = l
-	level.relayout()
+	# NAPOJENÍ JE ZÁROVEŇ MÍSTO ROZDĚLENÍ: tlačítka posouvají ROZDĚLENÍ po
+	# cílové cestě - "uzel +" o uzel dál, "uzel −" zase zpět. (Napojený úsek
+	# proto vždycky vstupuje do prvního uzlu svého cíle: tím uzlem JE to
+	# rozdělení.) Cyklus "cíl" vlastní cestu přeskakuje, takže tohle je jediné
+	# ovládání polohy rozdělení.
+	var ok: bool = level.move_join(sel, 1) if dir > 0 else level.move_join_back(sel)
+	if not ok:
+		level = keep
+		status = "úsek %d: rozdělení se na tuhle stranu posunout nedá" % (sel + 1)
+		return
 	if before.is_empty() and not level.validate().is_empty():
 		level = keep
-		status = "úsek %d: tenhle uzel by rozbil jiné napojení — zůstává %s" % [
-			sel + 1, level.node_name(cur)]
+		status = "úsek %d: tenhle posun by rozbil jiné napojení" % (sel + 1)
 		return
-	status = "úsek %d: napojení v uzlu %d/%d → úsek %d" % [
-		sel + 1, nxt + 1, Level.NODE_COUNT, to + 1]
+	status = "úsek %d: rozdělení posunuto %s" % [sel + 1, "dopředu" if dir > 0 else "zpět"]
 	_after_change()
 
 
@@ -486,21 +519,19 @@ func can_split() -> bool:
 
 # SLITI: vybrany usek vede do vyhybky, do ktere vede sam a jeji vetve konci
 # ve vystupech. Usek se prepoji na prvni z nich a vyhybka zmizi.
+# ROZDĚLENÍ se slévá stejnym tlacitkem - jen se u nej nevybira mezi vetvemi
+# (vede z nej jedina). PRAVIDLO JE V LEVELU (can_merge_lane): kdyby si ho
+# editor pamatoval sam, rozešlo by se s tim, co slévání opravdu udela.
 func can_merge() -> bool:
-	if level.lane_count() == 0 or sel < 0 or sel >= level.lane_count():
+	return level.can_merge_lane(sel)
+
+
+# Rozděluje se zrovna vybraný úsek? (místo rozdělení = výhybka, ze které vede
+# jediný úsek dál; hráč na ní nic nepřepíná)
+func at_division() -> bool:
+	if sel < 0 or sel >= level.lane_count():
 		return false
-	var j: int = level.junction_of(sel)
-	if j < 0:
-		return false
-	if level.lanes_into(j).size() != 1:
-		return false
-	var kids: Array = level.lanes_of(j)
-	if kids.is_empty():
-		return false
-	for k in kids:
-		if level.target_kind(k) != Level.TO_EXIT:
-			return false
-	return true
+	return level.is_division(level.junction_of(sel))
 
 
 func _junction() -> void:
@@ -523,11 +554,17 @@ func _junction() -> void:
 		return
 	if can_merge():
 		var j2: int = level.junction_of(sel)
+		var was_div: bool = level.is_division(j2)
 		if level.merge_lane(sel):
-			status = "výhybka %d se slila zpět do úseku %d" % [j2 + 1, sel + 1]
+			if was_div:
+				status = "rozdělení se slilo zpět do úseku %d" % (sel + 1)
+			else:
+				status = "výhybka %d se slila zpět do úseku %d" % [j2 + 1, sel + 1]
 			_after_change()
 			return
-	if level.lane_count() > 0 and not level.lane_is_exit(sel):
+	if at_division():
+		status = "do nového úseku se napojuje jiný úsek — nejdřív zruš to napojení"
+	elif level.lane_count() > 0 and not level.lane_is_exit(sel):
 		status = "do té výhybky vede víc úseků, nedá se zrušit"
 	elif level.lane_count() + 2 > Level.MAX_LANES:
 		status = "víc než %d úseků nejde" % Level.MAX_LANES

@@ -1024,10 +1024,17 @@ func _draw_bonuses() -> void:
 # vybrany - takze hrac vidi, kam posle dalsiho poutnika, u KAZDE vyhybky.
 func _draw_switch() -> void:
 	for j in range(game.net.junction_count()):
-		var lane: int = game.selected_lane(j)
-		var col: Color = _lane_color(lane) if lane >= 0 else Color(0.55, 0.53, 0.48)
 		var m: Vector2 = game.net.junction_merge[j]
 		var h: Vector2 = game.net.junction_pos[j]
+		if game.net.junction_is_division(j):
+			# MÍSTO ROZDĚLENÍ NENÍ VOLIČ. Vede z něj jediný úsek dál, takže se
+			# na něm nedá nic přepnout - kreslí se jen krátká příčka (kde se
+			# cesta dělí). Hráč to potká, když se na úsek něco napojí.
+			draw_line(Vector2(h.x, h.y - 13.0 * layout.s), Vector2(h.x, h.y + 13.0 * layout.s),
+				Color(0.68, 0.64, 0.56), 2.0)
+			continue
+		var lane: int = game.selected_lane(j)
+		var col: Color = _lane_color(lane) if lane >= 0 else Color(0.55, 0.53, 0.48)
 		draw_circle(m, 15.0 * layout.s, Color(0.10, 0.095, 0.085))
 		draw_arc(m, 15.0 * layout.s, 0.0, TAU, 28, col, 3.0)
 		draw_circle(h, 9.0 * layout.s, col)

@@ -350,6 +350,13 @@ func junction_count() -> int:
 	return junction_lanes.size()
 
 
+# Je ta výhybka MÍSTEM ROZDĚLENÍ (vznikla napojením, vede z ní jediný úsek)?
+# Hra to potřebuje jen ke kreslení: rozdělení není volič, takže se nekreslí
+# jako kruh, na který se klepá.
+func junction_is_division(j: int) -> bool:
+	return level.is_division(j)
+
+
 # Je ta kolej neutralni? Nema element, elementarni bonus na ni
 # stat nemuze, poskozuje vsechny stejne.
 func lane_is_neutral(lane: int) -> bool:
