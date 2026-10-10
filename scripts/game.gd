@@ -215,6 +215,10 @@ func dps_on(e: Enemy) -> float:
 	if not e.on_lane():
 		return 0.0
 	var lane: int = e.lane
+	# VSTUPNI USEK NEPOSKOZUJE. Poutnik po nem teprve prichazi - hrac jeste
+	# nemel jakkoli sanci neco udelat, takze by to bylo poskozeni "zdarma".
+	if net.lane_is_entry(lane):
+		return 0.0
 	var len_px: float = float(net.lane_len[lane])
 	if len_px <= 0.001 or e.speed <= 0.0:
 		return 0.0
@@ -284,13 +288,11 @@ func _spawn(enemy_el: int) -> void:
 	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(wave - 1))
 	e.hp = e.max_hp
 	e.speed = level.speed if level != null else ENEMY_SPEED
-	e.lane = -1
+	# POUTNIK VSTUPUJE NA VSTUPNI USEK. Zadny kmen uz neni: v mrizce je
+	# vstup do mapy normalni usek ze startu, ktery neposkozuje (lane_is_entry).
+	# Kdyby mapa zadny start nemela, poutnik se neobjevi vubec.
+	e.lane = net.entry_lane
 	e.s = 0.0
-	# KMENY SE STRIDAJI. Kdyby chodili vsichni jednim, prisel by druhy kmen
-	# nazmar - a hrac by se musel ucit, ktery je ktery. Takto je tlak
-	# rozlozeny rovnomerne a je to predvidatelne (i pro testy).
-	var trunks: int = maxi(net.trunk_lens.size(), 1)
-	e.trunk = spawn_index % trunks
 	spawn_index += 1
 	enemies.append(e)
 
@@ -360,53 +362,43 @@ func _move_enemies(delta: float) -> void:
 		var e: Enemy = item
 		if not e.alive:
 			continue
-		e.s += e.speed * delta
+		# Poutnik mimo trasu znamena, ze mapa nema start. Nema kam jit.
 		if not e.on_lane():
-			var ti: int = clampi(e.trunk, 0, maxi(net.trunk_lens.size() - 1, 0))
-			var tlen: float = float(net.trunk_lens[ti]) if not net.trunk_lens.is_empty() else net.trunk_len
-			if e.s >= tlen:
-				e.s -= tlen
-				e.lane = selected_lane(int(net.trunk_to[ti])) if not net.trunk_to.is_empty() else selected_lane(0)
-		else:
-			if e.s >= net.lane_len[e.lane]:
-				# Konec useku. Podle druhu cile:
-				#   VYSTUP   - stoji zivot,
-				#   VYHYBKA  - poutnik vstoupi na usek, ktery je na ni prave
-				#              vybrany (rozhoduje se az v okamziku pruchodu),
-				#   JINY USEK - vleje se do nej v miste, kde ten druhy zacina
-				#              svuj rovny usek.
-				var kind: int = int(net.lane_kind[e.lane])
-				var to: int = int(net.lane_to[e.lane])
-				if kind == Level.TO_JUNCTION:
-					e.lane = selected_lane(to)
-					e.s = 0.0
-					if e.lane < 0:
-						e.leaked = true
-						e.alive = false
-						lives -= 1
-						continue
-					still.append(e)
-					continue
-				if kind == Level.TO_LANE and to >= 0 and to < net.lane_count():
-					# Vstupni bod patri PRIVODNIMU useku (tomu, kdo se
-					# napojuje): do ciloveho useku se jich muze vlit vic
-					# a kazda vetev vstupuje v jinem uzlu. Proto se cte
-					# jeste PRED prepsanim e.lane.
-					var entry: float = float(net.lane_entry_s[e.lane])
-					e.lane = to
-					e.s = entry
-					still.append(e)
-					continue
-				e.leaked = true
-				e.alive = false
-				lives -= 1
-				if net.lane_is_neutral(e.lane):
-					_note("Poutnik %s došel na neutrální výstup (-1 život)." %
-						Element.name_of(e.element))
-				else:
-					_note("Poutnik %s došel na konec úseku (-1 život)." %
-						Element.name_of(e.element))
-				continue
+			e.leaked = true
+			e.alive = false
+			lives -= 1
+			continue
+		e.s += e.speed * delta
+		if e.s < float(net.lane_len[e.lane]):
+			still.append(e)
+			continue
+		# KONEC USEKU = POUTNIK JE V UZLU. Tam se rozhodne:
+		#   vyhybka             - hrac svou volbou posle poutnika na jeden
+		#                         ze svych vystupu (rozhoduje se az ted,
+		#                         v okamziku pruchodu),
+		#   spojka / uzel / start - jediny vystup, zadne rozhodovani,
+		#   cil                - konec cesty, stoji zivot.
+		var nd: int = net.lane_end_node(e.lane)
+		var nxt: int = -1
+		if nd >= 0:
+			var j: int = net.junction_index_of_node(nd)
+			var sel: int = 0
+			if j >= 0:
+				if switch_sel.size() != net.junction_count():
+					_sync_switch()
+				sel = int(switch_sel[j])
+			nxt = level.next_lane(nd, sel)
+		if nxt < 0 or nxt >= net.lane_count():
+			e.leaked = true
+			e.alive = false
+			lives -= 1
+			if nd >= 0 and int(net.node_kind[nd]) == Level.CIL:
+				_note("Poutnik %s došel do cíle (-1 život)." % Element.name_of(e.element))
+			else:
+				_note("Poutnik %s zabloudil (-1 život)." % Element.name_of(e.element))
+			continue
+		e.lane = nxt
+		e.s = 0.0
 		still.append(e)
 	enemies = still
 
