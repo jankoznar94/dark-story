@@ -111,7 +111,13 @@ func rebuild_network(r: Rect2, scale_hint: float = -1.0, bar_top: float = -1.0) 
 	var bt: float = bar_top
 	if bt < 0.0:
 		bt = net.bar_top
-	var lv: Level = level if level != null else Level.base()
+	var lv: Level = level
+	if lv == null:
+		# Hra si musi level drzet, ne jen pouzit. Kdyby si ho jen pujcila
+		# do lokalni promenne, zustal by `level` prazdny a kazdy, kdo se ho
+		# zepta (trefa do vyhybky, poskozeni, jmeno v HUD), by spadl.
+		lv = Level.base()
+		level = lv
 	net = Network.new()
 	net.build(r, sc, bt, lv)
 	# Zivly, ktere level posila. Bere se z LEVELU, ne z konstanty: hra se
@@ -247,13 +253,34 @@ func set_switch(lane: int) -> void:
 		_note("Výhybka %d nastavena na %s." % [j + 1, Element.name_of(net.lane_element(lane))])
 
 
-# Ktery usek vyhybka posila. Hra to potrebuje pri kazdem pruchodu poutnika.
+# Který usek vyhybka posila. Hra to potrebuje pri kazdem pruchodu poutnika.
 func selected_lane(j: int) -> int:
 	if j < 0 or j >= net.junction_count():
 		return -1
 	if switch_sel.size() != net.junction_count():
 		_sync_switch()
 	return net.junction_lane(j, int(switch_sel[j]))
+
+
+# POSUN VYHYBKOU NA DALSÍ VETEV. Pouziva ji klepnuti na uzel vyhybky -
+# klepnuti na usek vybere presne ten usek, klepnuti na kruh jde na dalsi.
+# Dve ruzna gesta na dve ruzne veci: hrac na malem displeji nemusi trefovat
+# konkretni caru, kdyz chce jen "posli je jinam".
+func cycle_switch(j: int) -> void:
+	if j < 0 or j >= net.junction_count():
+		return
+	var lanes: Array = net.junction_lanes[j]
+	if lanes.is_empty():
+		return
+	if switch_sel.size() != net.junction_count():
+		_sync_switch()
+	var cur: int = int(switch_sel[j])
+	switch_sel[j] = (cur + 1) % lanes.size()
+	var lane: int = net.junction_lane(j, int(switch_sel[j]))
+	if net.lane_is_neutral(lane):
+		_note("Výhybka %d: neutrální úsek." % (j + 1))
+	else:
+		_note("Výhybka %d: %s." % [j + 1, Element.name_of(net.lane_element(lane))])
 
 
 # Usek vybrany na PRVNI vyhybce. HUD v nem ukazuje nasobek poskozeni.

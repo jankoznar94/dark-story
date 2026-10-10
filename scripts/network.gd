@@ -171,6 +171,14 @@ func _cell_center(c: int, r: int) -> Vector2:
 	return origin + Vector2((float(c) + 0.5) * cell, (float(r) + 0.5) * cell)
 
 
+# Ktera bunka mrizky je pod timhle bodem. Editor z toho kresli - hrac
+# klepne nebo taha prstem a hra potrebuje vedet, na kterou bunku to padlo.
+func cell_at(world: Vector2) -> Vector2i:
+	var cs: float = maxf(cell, 0.001)
+	return Vector2i(int(floor((world.x - origin.x) / cs)),
+		int(floor((world.y - origin.y) / cs)))
+
+
 # =========================================================================
 # POHYB PO TRASE
 # =========================================================================
@@ -294,13 +302,45 @@ func nearest_slot(world: Vector2) -> Vector2i:
 # prepnout vyhybku - tlacitka nejsou, protoze casem bude vyhybek vic, nez
 # se jich do pruhu vejde. Vraci -1, kdyz je klepnuto mimo vsechny useky.
 func lane_tap_at(world: Vector2, tol: float = 14.0) -> int:
+	# NEJDRIV MEZI USEKY, KTERE VEDOU Z VYHYBKY. Ve stredu uzlu se potkava
+	# vstupni usek s vystupnimi a vsechny jsou od nej stejne daleko - bez
+	# tohoto poradi klepnuti na vyhybku trefí usek, ktery do ni jen vstupuje,
+	# a hrac prepne neco jineho, nez na co klepnul.
 	var best := -1
 	var best_d: float = tol
+	for lane in range(lane_path.size()):
+		if lane_junction(lane) < 0:
+			continue
+		var d: float = _dist_to_path(lane, world)
+		if d < best_d:
+			best_d = d
+			best = lane
+	if best >= 0:
+		return best
+	# Vstupy do mapy a podobne se hledaji az potom - neda se na nich nic
+	# prepnout, ale hrac na ne muze klepnout a nesmi to spadnout.
 	for lane in range(lane_path.size()):
 		var d: float = _dist_to_path(lane, world)
 		if d < best_d:
 			best_d = d
 			best = lane
+	return best
+
+
+# KLEPNUTI NA UZEL VYHYBKY. Kruh je to, co hrac vidi jako tlacitko, takze
+# klepnuti na nej musi zabrat na prvni pokus. Hledat pritom nejblizsi usek
+# by nestacilo: v uzlu se vstupni usek potkava s vystupnimi a vsechny jsou
+# od stredu stejne daleko, takze by klepnuti mohlo trefit usek, ktery do
+# vyhybky jen vstupuje.
+func junction_tap_at(world: Vector2, tol: float = 30.0) -> int:
+	var best := -1
+	var best_d: float = tol
+	for j in range(junction_nodes.size()):
+		var p: Vector2 = node_pos[int(junction_nodes[j])]
+		var d: float = p.distance_to(world)
+		if d < best_d:
+			best_d = d
+			best = j
 	return best
 
 

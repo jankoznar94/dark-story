@@ -50,7 +50,7 @@ const ED_GAP := 4.0
 # jako kresleni). Ctvrté tlacitko navic ("cíl −") je posledni, ktere se do
 # jedne rady vejde; dalsi uz by si vyzadalo druhou radu, a ta bere misto
 # mrizce, kterou hrac upravuje.
-const ED_COUNT := 13
+const ED_COUNT := 11
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
