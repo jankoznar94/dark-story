@@ -372,12 +372,22 @@ func end_draw() -> void:
 		status = "Cesta musí začínat i končit v uzlu (start, výhybka, spojka, uzel)."
 		return
 	_snapshot()
-	level.lanes.append({"cells": cs, "elem": draw_elem, "entry": false,
+	# VSTUPNI USEK (ten, ktery vede ze STARTu) SE KRESLI JAKO KMEN. Driv si
+	# nesl barvu zvoleneho elementu, ale neposkozoval - hrac videl oranzovy
+	# pruh a divil se, proc na nem nic nedela (Jan: "barvu má jak element
+	# a je to matoucí"). Tlacitkem "typ" ho pak hrac muze prepnout na
+	# element a zpet na kmen - je to normalni hodnota useku, zadny priznak.
+	var start_node: int = level.first_start()
+	var from_start: bool = (start_node >= 0 and a == start_node)
+	var el: int = Level.KMEN if from_start else draw_elem
+	level.lanes.append({"cells": cs, "elem": el, "entry": false,
 		"slots": draw_slots})
 	sel_lane = level.lane_count() - 1
 	sel_node = -1
 	_after_change()
-	if draw_elem == Level.KMEN:
+	if from_start:
+		status = "Úsek %d je vstupní — vede ze startu, proto se kreslí jako kmen (nepoškozuje). Tlacítkem \"typ\" ho přepneš na element." % level.lane_count()
+	elif draw_elem == Level.KMEN:
 		status = "Úsek %d je kmen — neposkozuje, takže na něm nejde stavět." % level.lane_count()
 	elif draw_elem == Level.NEUTRAL:
 		status = "Úsek %d je neutrální — poskozuje všechny stejně, stavět se na něm nedá." % level.lane_count()
@@ -801,17 +811,22 @@ func press(button: int) -> void:
 # ZIVEL. Kdyz je vybrany usek, meni se TYP TOHO USEKU (zivel, neutralni
 # usek, kmen) - presne to, co Janovi chybelo ("upravovat jiz existujici
 # zatim nejde"). Bez vyberu to je jen typ, kterym se kresli dalsi cesta.
+#
+# PLATI I PRO VSTUPNI USEK. Driv se u nej zmena odmitla ("ten neposkozuje,
+# at ma na sobe cokoli") - jenze prave proto vypadal jako element a choval
+# se jako kmen. Jan: "Melo by byt mozne rucne tuto vstupni cestu take
+# prepnout na neco jineho nez kmen, nebo naopak prepnout na kmen."
 func _elem_press() -> void:
 	var at: int = TYPE_CYCLE.find(elem)
 	elem = int(TYPE_CYCLE[(at + 1) % TYPE_CYCLE.size()]) if at >= 0 else int(TYPE_CYCLE[0])
 	if sel_lane >= 0 and sel_lane < level.lane_count():
-		if level.lane_is_entry(sel_lane):
-			status = "Úsek %d je vstupní (ze startu) — ten neposkozuje, ať má na sobě cokoli." % sel_lane
-			return
 		_snapshot()
 		level.set_lane_element(sel_lane, elem)
 		_after_change()
-		status = "Úsek %d je teď %s." % [sel_lane, Level.value_name(elem)]
+		if level.lane_is_entry(sel_lane):
+			status = "Vstupní úsek %d je teď %s. Kmen neposkozuje, na elementu se staví." % [sel_lane, Level.value_name(elem)]
+		else:
+			status = "Úsek %d je teď %s." % [sel_lane, Level.value_name(elem)]
 		return
 	status = "Kreslím typ cesty: %s." % Level.value_name(elem)
 

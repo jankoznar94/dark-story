@@ -20,6 +20,7 @@ func _init() -> void:
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
 	_run("mezera mezi poutniky", _test_spawn_gap)
+	_run("typ vstupniho useku", _test_entry_type)
 	_run("determinismus", _test_determinism)
 	_run("prohra pri zahlceni", _test_pile_up_loses)
 	if fails.is_empty():
@@ -183,12 +184,82 @@ func _test_reaches_exit() -> void:
 # ---------------------------------------------------------------- obtiznost
 
 func _test_spawn_gap() -> void:
-	# Hrac musi stihnout prepnout vyhybku PRO KAZDEHO poutnika zvlast,
-	# takze dve klepnuti se musi vejit do mezery mezi dvema poutniky.
+	# HRAC MUSI STIHNOUT PREPNOUT VYHYBKU PRO KAZDEHO POUTNIKA ZVLAST, takze
+	# dve klepnuti se musi vejit do mezery mezi dvema poutniky. Rozvrh se
+	# losuje pri kazde vlne zvlast, takze se to hlida na nekolika vlnach:
+	# meri se SKUTECNE mezery z rozvrhu, ne konstanta.
+	for w in range(1, 8):
+		var g := _new_game()
+		g.wave = w - 1
+		g.start_wave()
+		var n: int = g.spawn_times.size()
+		_check(n == 3 + w, "vlna %d ma naplanovat %d poutniku, ma %d" % [w, 3 + w, n])
+		if n < 2:
+			continue
+		_check(float(g.spawn_times[0]) == 0.0,
+			"vlna %d nezacina vstupem - hrac by koukal do prazdne mapy" % w)
+		var seen: Dictionary = {}
+		for i in range(1, n):
+			var gap: float = (float(g.spawn_times[i]) - float(g.spawn_times[i - 1]))
+			# mezera v pixelech: presne to, co hrac vidi mezi poutniky
+			var px: float = gap * float(g.level.speed)
+			_check(px >= 90.0, "vlna %d: poutnici jsou moc u sebe (%.0f px)" % [w, px])
+			seen[int(roundf(gap * 100.0))] = true
+		# NEPRAVIDELNE: kdyby vysly vsechny mezery stejne, je to porad ta
+		# stara perioda a Janovo "chodí předvídatelně" by zustalo.
+		_check(seen.size() >= 2, "vlna %d: mezery mezi poutniky jsou vsechny stejne" % w)
+		# ROZLOZENE DO KOLA: posledni poutnik vstoupi nejpozdeji ve trech
+		# ctvtinach kola. Zbytek kola uz jen dochazi do cile - presne to
+		# Jan chtel ("3/4 času kola ... a pak už jen hráč počká").
+		var walk: float = g.walk_time()
+		var last: float = float(g.spawn_times[n - 1])
+		var share: float = last / maxf(last + walk, 0.001)
+		_check(share >= 0.6,
+			"vlna %d: poutnici vstupuji jen v %.0f %% kola, maji ve trech ctvtinach" % [
+				w, share * 100.0])
+
+
+# VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU:
+# hrac ho muze prepnout na element (pak poskozuje a da se na nem stavet)
+# a zpet na kmen. Jan: "Slo by rucne tuto vstupni cestu take prepnout na
+# neco jineho nez kmen, nebo naopak prepnout na kmen."
+func _test_entry_type() -> void:
 	var g := _new_game()
-	var gap: float = float(g.level.speed) * float(g.level.spawn)
-	_check(gap >= 90.0, "poutnici jsou moc u sebe (%.0f px) - hrac to nestihne" % gap)
-	_check(gap < 140.0, "poutnici jsou moc daleko od sebe (%.0f px)" % gap)
+	var entry: int = g.net.entry_lane
+	_check(entry >= 0, "sit nema vstupni usek")
+	if entry < 0:
+		return
+	_check(g.level.lane_is_kmen(entry), "vstupni usek neni kmen (je %s)"
+		% g.level.lane_type_name(entry))
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	e.lane = entry
+	e.s = 0.0
+	_check(g.dps_on(e) == 0.0, "na kmeni se poskozuje")
+
+	# PREPNUTI NA ELEMENT: poskozuje (a proto se na nem da i stavet).
+	# PO ZMENE LEVELU SE SIT STAVI ZNOVU - mista na bonus se pocitaji pri
+	# stavbe site (neposkrzujici usek zadna nema), takze teprve prestavena
+	# sit vi, ze se na vstupnim useku da stavet. Presne to dela i editor,
+	# kdyz hrac zmackne "hrat".
+	g.level.set_lane_element(entry, Element.WATER)
+	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, g.level)
+	var e2: Enemy = g.debug_spawn(Element.FIRE)
+	e2.lane = entry
+	e2.s = 0.0
+	_check(g.dps_on(e2) > 0.0, "vstupni usek prepnuty na element neposkozuje")
+	_check(g.level.lane_takes_bonus(entry), "na elementarnim vstupnim useku nejde stavet")
+	_check(g.net.slot_count(entry) > 0, "na vstupnim useku se neobjevila mista na bonus")
+	_check(g.try_build(entry, 0, Element.WATER), "bonus na vstupni usek nejde postavit")
+
+	# ZPET NA KMEN: zase neposkozuje a bonus se na nej nevejde
+	g.level.set_lane_element(entry, Level.KMEN)
+	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, g.level)
+	var e3: Enemy = g.debug_spawn(Element.FIRE)
+	e3.lane = g.net.entry_lane
+	e3.s = 0.0
+	_check(g.dps_on(e3) == 0.0, "po prepnuti zpet na kmen se porad poskozuje")
+	_check(not g.level.lane_takes_bonus(g.net.entry_lane), "kmen bere bonus")
+	_check(g.net.slot_count(g.net.entry_lane) == 0, "na kmeni jsou mista na bonus")
 
 
 func _test_determinism() -> void:

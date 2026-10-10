@@ -57,11 +57,14 @@ func _test_base_board() -> void:
 	_check(lv.first_start() >= 0, "zakladni deska nema start")
 	var els: Array = lv.spawn_elements()
 	_check(els == [0, 1, 2, 3], "zakladni deska ma posilat vsechny ctyri zivly, posila %s" % str(els))
-	# prave jeden usek je vstupni (ze startu) a neposkozuje
+	# prave jeden usek je vstupni (ze startu) a neposkozuje - a to proto,
+	# ze je to KMEN, ne kvuli nejakemu priznaku
 	var entries: int = 0
 	for i in range(lv.lane_count()):
 		if lv.lane_is_entry(i):
 			entries += 1
+			_check(lv.lane_is_kmen(i) and not lv.lane_deals_damage(i),
+				"vstupni usek %d neni kmen (je %s)" % [i, lv.lane_type_name(i)])
 	_check(entries == 1, "vstupni usek ma byt prave jeden, je %d" % entries)
 
 

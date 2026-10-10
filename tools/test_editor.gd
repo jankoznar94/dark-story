@@ -69,8 +69,8 @@ func _ed() -> Editor:
 
 
 # LEVEL SE DVEMA POSKOZUJICIMI USEKY: START -> VYHYBKA -> dva cile.
-# Usek 0 je VSTUPNI (neposkoduje) - mista ani zivel se na nem menit nedaji
-# a testy to hlidaji. Usek 1 a 2 poskozuji, takze na tech se upravuje.
+# Usek 0 je VSTUPNI (ze startu) a kresli se jako KMEN - neposkozuje a nema
+# mista. Da se ale rucne prepnout na element; testy to hlidaji.
 func _lane_level(e: Editor) -> void:
 	e.tool = Editor.TOOL_START
 	e.tap_cell(Vector2i(1, 5))
@@ -123,8 +123,15 @@ func _test_start_and_road() -> void:
 	e.tap_cell(Vector2i(5, 5))
 	_stroke(e, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5)])
 	_check(e.level.lane_count() == 1, "cesta se nepridala (useku %d)" % e.level.lane_count())
-	_check(e.level.lane_element(0) == Element.FIRE, "cesta nema zvoleny zivel")
+	# VSTUPNI USEK SE KRESLI JAKO KMEN, i kdyz je v palete zvoleny zivel.
+	# Driv si odnesl barvu elementu, ale neposkozoval - hrac videl oranzovy
+	# pruh a divil se, proc na nem nic nedela. Jan: "barvu má jak element
+	# a je to matoucí".
+	_check(e.level.lane_element(0) == Level.KMEN,
+		"usek ze startu si odnesl zivel (%s) - ma byt kmen" % e.level.lane_type_name(0))
+	_check(not e.level.lane_deals_damage(0), "usek ze startu poskozuje")
 	_check(e.level.lane_is_entry(0), "usek ze startu neni vstupni")
+	_check(e.status.contains("vstupní"), "status nemluvi o vstupnim useku: " + e.status)
 	# Rozdelana mapa jeste nema cil, takze validate() ji spravne odmitne -
 	# testuje se tady jen to, ze cesta a uzly vznikly.
 	_check(e.level.lane_start_node(0) == 0, "usek nezacina ve startu")
@@ -253,13 +260,29 @@ func _test_edit_existing() -> void:
 	e.press(Editor.BTN_ELEM)
 	_check(e.level.lane_element(1) == Element.EARTH, "druha zmena zivlu neprosla")
 
-	# VSTUPNI USEK SE NEMENI: neposkozuje, takze by zivel jen lhal
+	# VSTUPNI USEK SE MENIT DA. Od vychoziho stavu je to KMEN (neposkrzuje,
+	# kresli se sedy) a hrac ho rucne prepne na element - a zpet na kmen.
+	# Jan: "Melo by byt mozne rucne tuto vstupni cestu take prepnout na
+	# neco jineho nez kmen, nebo naopak prepnout na kmen." Driv se zmena
+	# odmitla, ale barva vstupniho useku se stejne kreslila podle elementu
+	# - usek tedy lhal o tom, co dela.
 	e.sel_lane = 0
-	e.elem = Element.FIRE
+	_check(e.level.lane_is_kmen(0), "usek ze startu neni kmen (je %s)"
+		% e.level.lane_type_name(0))
+	e.elem = Element.AIR
 	e.press(Editor.BTN_ELEM)
-	_check(e.level.lane_element(0) == Level.NEUTRAL or not e.level.lane_deals_damage(0),
-		"vstupnimu useku se zmenil zivel")
-	_check(e.status.contains("vstupní"), "status nemluvi o vstupnim useku: " + e.status)
+	_check(e.level.lane_element(0) == Level.NEUTRAL,
+		"vstupnimu useku se nezmenil typ (je %s)" % e.level.lane_type_name(0))
+	_check(e.level.lane_deals_damage(0), "vstupni usek na elementu neposkozuje")
+	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.level.lane_slot_count(0),
+		"tlacitko u poskozujiciho vstupniho useku nelze: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(e.status.contains("Vstupní"), "status nemluvi o vstupnim useku: " + e.status)
+	e.elem = Level.NEUTRAL
+	e.press(Editor.BTN_ELEM)
+	_check(e.level.lane_element(0) == Level.KMEN,
+		"vstupni usek se neprepnul zpet na kmen (je %s)" % e.level.lane_type_name(0))
+	_check(not e.level.lane_deals_damage(0), "kmen po prepnuti poskozuje")
+	_check(not e.level.lane_takes_bonus(0), "na kmen jde postavit bonus")
 
 	# rozdelovani useku si pocet mist odnese do OBOU dilu
 	e.sel_lane = 1

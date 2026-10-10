@@ -28,12 +28,19 @@ extends RefCounted
 # =========================================================================
 
 # --------------------------------------------------------------- mrizka
-# Pomer 2:1 sedi mezi 16:9 a 21:9 telefonem. Bunka je VZDY ctvercova
-# (Network pocita velikost jako min(arena.w/cols, arena.h/rows) a mrizku
-# centruje) - natahovani po ose by z ohybu udelalo neco jineho, nez co
-# hrac nakreslil.
-const COLS := 20
-const ROWS := 10
+# MRIZKA VYPLNUJE ARENU: `Network` pocita cell_w = arena.w/cols a
+# cell_h = arena.h/rows, takze bunka neni ctvercova a okraj nezustava
+# zadny. Natazeni po ose ale nic nelame - cesty vedou PO OSE, takze se
+# z kazdeho ohybu stane i tak pravy uhel.
+#
+# HUSTOTA. Jan (Oct 2026): "Mohl by být grid ještě hustší? Aby byly
+# čtverečky menší a tím pádem se mohly cesty stavět o něco flexibilněji."
+# 20x10 -> 28x14 (krok 0.4): na 932x430 je bunka v editoru 33x23 px misto
+# 47x32, takze ohyb cesty stoji 33 px a dve trasy se daji slozit tesne
+# vedle sebe. Hranici je prst: na 640x360 (nejmensi podporovany displej)
+# vyjde bunka na 23x18 px a mensi uz by se nedala trefit.
+const COLS := 28
+const ROWS := 14
 
 # --------------------------------------------------------------- druhy uzlu
 const START := 0      # vstup poutniku, 1 vystup
@@ -76,7 +83,11 @@ var rows: int = ROWS
 var nodes: Array = []
 # USEKY: [{cells: Array[Vector2i], elem:int, entry:bool, slots:int}]
 #   cells[0] je bunka pocatecniho uzlu, cells[-1] bunka koncoveho uzlu.
-#   entry = vede ze STARTu - neposkozuje (poutnik teprve prichazi).
+#   entry = vede ze STARTu (odvozeno z grafu, ne z ruky hrace). Je to
+#   STRUKTURALNI priznak: z takoveho useku poutnici vstupuji do mapy a
+#   prodluzuje se na okraj displeje. O poskozeni ROZHODUJE HODNOTA USEKU,
+#   ne tenhle priznak - vstupni usek je od vychoziho stavu KMEN, ale hrac
+#   ho muze prepnout na element.
 #   slots = kolik mist na bonus tenhle usek ma (0 = zadne bonusy).
 var lanes: Array = []
 
@@ -154,17 +165,20 @@ func lane_is_kmen(lane: int) -> bool:
 	return lane_element(lane) == KMEN
 
 
-# USEK, KTERY VUBEC NEPOSKOZUJE. Vstupni usek (poutnik po nem teprve
-# prichazi) a kmen. Jedno misto pro tuhle otazku - ptá se ji hra (kolik
-# poskozeni), sit (kresli se pas a mista?) i editor (co jde na usek
-# postavit).
+# USEK, KTERY VUBEC NEPOSKOZUJE. Je to JEN kmen - a nic vic. Driv se tu
+# ptalo i na priznak "entry" (usek ze startu), takze vstupni usek nemel
+# poskozeni, i kdyz na sobe mel barvu elementu: vypadal jako ohen a choval
+# se jako kmen. Presne to Janovi vadilo ("barvu má jak element a je to
+# matoucí"). Vstupni usek je proto od zacatku KMEN (kresli se sedy) a hrac
+# ho muze tlacitkem "typ" prepnout na element - a tim padem i na zpet na
+# kmen. JEDNO pravidlo: o poskozeni rozhoduje jen hodnota useku.
 func lane_deals_damage(lane: int) -> bool:
-	return not lane_is_kmen(lane) and not lane_is_entry(lane)
+	return not lane_is_kmen(lane)
 
 
 # USEK, NA KTERY SE DA STAVET BONUS. Na neutralni usek ne (uz poskozuje
-# vsechny stejne) a na neposkozujici usek taky ne - bonus by nemel co
-# posilit a hrac by vyhodil zlato.
+# vsechny stejne) a na kmen taky ne - bonus by nemel co posilit a hrac by
+# vyhodil zlato.
 func lane_takes_bonus(lane: int) -> bool:
 	if lane_is_neutral(lane) or lane_is_kmen(lane):
 		return false
@@ -215,7 +229,9 @@ func set_lane_element(lane: int, element: int) -> void:
 	lanes[lane]["elem"] = element
 
 
-# Usek, ze ktereho poutnici vstupuji - neposkozuje.
+# Usek, ze ktereho poutnici vstupuji do mapy. Odvozeno z grafu (usek ze
+# STARTu), ne z priznaku - prislo by o nej pri kazde zmene tvaru mapy.
+# Sam o sobe NERIKA nic o poskozeni: to je vec hodnoty useku (KMEN = zadne).
 func lane_is_entry(lane: int) -> bool:
 	if lane < 0 or lane >= lanes.size():
 		return false
@@ -782,32 +798,50 @@ static func base() -> Level:
 	lv.name = "zakladni"
 	# START vlevo, dve vyhybky v sérii, pet cílu vpravo.
 	#
-	#   rada 1  ohen     (4,1) --------------------> (15,1)
-	#   rada 3                 zeme (8,3) ---------> (15,3)
-	#   rada 5  start (1,5) -> j1 (4,5) -> j2 (8,5) --- neutr ---> (15,5)
-	#   rada 7                 vzduch (8,7) -------> (15,7)
-	#   rada 9  voda     (4,9) --------------------> (15,9)
+	#   rada 1  ohen     (6,1) --------------------> (21,1)
+	#   rada 4                 zeme (11,4) --------> (21,4)
+	#   rada 7  start (1,7) -> j1 (6,7) -> j2 (11,7) - neutr ---> (21,7)
+	#   rada 10                vzduch (11,10) ------> (21,10)
+	#   rada 13 voda     (6,13) -------------------> (21,13)
+	#
+	# DESKA JE PREPOCTENA NA HUSTSI MRIZKU 28x14 (puvodne 20x10, krok 0.4).
+	# Drzi se stejnych POMERU, takze i vsechna vyladena cisla zustavaji:
+	# cesta je v pixelech stejne dlouha (11 R bunek z 20 je 0.55 sirky,
+	# 15 R bunek z 28 je 0.536) a poskozeni je "za CELE PROJETI useku", takze
+	# na delce v pixelech vubec nezalezi. Rozestupy radku jsou 3/14 = 0.214
+	# misto 2/10 = 0.20 - o chlup vic mista mezi pruhy.
 	#
 	# Poradi je dane tim, aby se cesty NEKRIZILY: kdo odbocuje vys, musi
 	# odbocit drive (nalevo), a sestup zpet dolu ma vlastni sloupec.
 	# Vsechny ctyri zivly + neutralni usek - na te same desce se da
 	# kalibrovat cela matice poskozeni.
-	var start := lv.add_node(1, 5, START)
-	var j1 := lv.add_node(4, 5, VYHYBKA)
-	var j2 := lv.add_node(8, 5, VYHYBKA)
-	var e_fire := lv.add_node(15, 1, CIL)
-	var e_earth := lv.add_node(15, 3, CIL)
-	var e_neutral := lv.add_node(15, 5, CIL)
-	var e_air := lv.add_node(15, 7, CIL)
-	var e_water := lv.add_node(15, 9, CIL)
+	var start := lv.add_node(1, 7, START)
+	var j1 := lv.add_node(6, 7, VYHYBKA)
+	# Druha vyhybka je na 12, ne na 11 (presne 11.2): usek mezi vyhybkami je
+	# pak 6 bunek, tedy stejne siroky jako predtim (4 z 20 = 0.20). Pri 5
+	# bunkach vysel uzsi nez driv a mista na nem se prerusovala (odhalil to
+	# test rozlozeni) - zaokrouhleni na bunku se musi drzet POMERU.
+	var j2 := lv.add_node(12, 7, VYHYBKA)
+	var e_fire := lv.add_node(21, 1, CIL)
+	var e_earth := lv.add_node(21, 4, CIL)
+	var e_neutral := lv.add_node(21, 7, CIL)
+	var e_air := lv.add_node(21, 10, CIL)
+	var e_water := lv.add_node(21, 13, CIL)
 
-	lv.add_lane(start, j1, "R R R", NEUTRAL)
-	lv.add_lane(j1, e_fire, "U U U U R R R R R R R R R R R", Element.FIRE)
-	lv.add_lane(j1, j2, "R R R R", NEUTRAL)
-	lv.add_lane(j1, e_water, "D D D D R R R R R R R R R R R", Element.WATER)
-	lv.add_lane(j2, e_earth, "U U R R R R R R R", Element.EARTH)
-	lv.add_lane(j2, e_air, "D D R R R R R R R", Element.AIR)
-	lv.add_lane(j2, e_neutral, "R R R R R R R", NEUTRAL)
+	# VSTUPNI USEK JE KMEN. Je to jediny usek, ktery neposkozuje "od
+	# prirody" - hrac po nem teprve prichazi, takze by kazda rana byla
+	# zdarma. Barva i poskozeni si ted odpovidaji: sedy pruh, zadna rana.
+	#
+	# Smery se skladaji z opakovani, ne rucne: u hustsi mrizky se do
+	# retezce "U U U" snadno napise o pismeno min a cesta pak minne
+	# skonci o bunku vedle (tichy posun celeho levelu).
+	lv.add_lane(start, j1, "R".repeat(5), KMEN)
+	lv.add_lane(j1, e_fire, "U".repeat(6) + "R".repeat(15), Element.FIRE)
+	lv.add_lane(j1, j2, "R".repeat(6), NEUTRAL)
+	lv.add_lane(j1, e_water, "D".repeat(6) + "R".repeat(15), Element.WATER)
+	lv.add_lane(j2, e_earth, "U".repeat(3) + "R".repeat(9), Element.EARTH)
+	lv.add_lane(j2, e_air, "D".repeat(3) + "R".repeat(9), Element.AIR)
+	lv.add_lane(j2, e_neutral, "R".repeat(9), NEUTRAL)
 
 	for i in range(lv.lanes.size()):
 		var ln: Dictionary = lv.lanes[i]

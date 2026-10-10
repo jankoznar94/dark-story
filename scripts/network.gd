@@ -82,6 +82,10 @@ var lane_sel_index: Array = []     # usek -> poradi vystupu v ramci sve vyhybky
 
 # Usek, kterym poutnici do mapy vstupuji. Nahrazuje stary "kmen".
 var entry_lane: int = -1
+# A VSEchny takove useky. Hra z nich strida (spawn_index % pocet), aby se
+# druhy vstup nepromarnil - dnes je tu jeden (validace pripousti jediny
+# START), ale kod se na to nesmi spolehat.
+var entry_lanes: Array = []
 var exit_pos: Array = []
 var slot_pos: Array = []
 # MISTA NA BONUS SE MERI NA SVE PRAVE CASTI USEKU. Usek se na obrazovce
@@ -185,12 +189,16 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			lane_sel_index[idx] = k
 
 	# --- vstup do mapy
-	entry_lane = -1
-	var st: int = level.first_start()
-	if st >= 0:
-		var outs: Array = level.lanes_from(st)
-		if not outs.is_empty():
-			entry_lane = int(outs[0])
+	# VSECHNY vstupni useky. Validace pripousti prave jeden START, takze je
+	# tu zatim jeden - hra se ale ptá na seznam, ne na "ten prvni": az bude
+	# mit mapa vstupu vic, nesmi se to dohledavat po celem kodu.
+	entry_lanes = []
+	for n in range(level.node_count()):
+		if level.node_kind(n) != Level.START:
+			continue
+		for ln in level.lanes_from(n):
+			entry_lanes.append(int(ln))
+	entry_lane = int(entry_lanes[0]) if not entry_lanes.is_empty() else -1
 
 	# --- cile
 	exit_pos = []
@@ -233,19 +241,22 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 # CELE PROJETI USEKU" (ZONE_DMG / traverse), takze se mechanika nemeni -
 # jen cesta vede tam, kam hrac kouka.
 func _extend_ends() -> void:
-	if entry_lane >= 0 and entry_lane < lane_path.size():
-		var p: PackedVector2Array = lane_path[entry_lane]
-		if p.size() >= 2:
-			var d: Vector2 = (p[1] - p[0]).normalized()
-			var q: Vector2 = _border_point(p[0], -d)
-			if q.distance_to(p[0]) > 0.5:
-				var np := PackedVector2Array([q])
-				np.append_array(p)
-				lane_path[entry_lane] = np
-				# Prodlouzeni je PRED prvni bunkou useku - mista se o nej
-				# musi posunout, aby zustala na sve prave casti cesty.
-				lane_slot_off[entry_lane] = float(lane_slot_off[entry_lane]) \
-					+ q.distance_to(p[0])
+	for item in entry_lanes:
+		var el: int = int(item)
+		if el < 0 or el >= lane_path.size():
+			continue
+		var p: PackedVector2Array = lane_path[el]
+		if p.size() < 2:
+			continue
+		var d: Vector2 = (p[1] - p[0]).normalized()
+		var q: Vector2 = _border_point(p[0], -d)
+		if q.distance_to(p[0]) > 0.5:
+			var np := PackedVector2Array([q])
+			np.append_array(p)
+			lane_path[el] = np
+			# Prodlouzeni je PRED prvni bunkou useku - mista se o nej
+			# musi posunout, aby zustala na sve prave casti cesty.
+			lane_slot_off[el] = float(lane_slot_off[el]) + q.distance_to(p[0])
 	for i in range(lane_path.size()):
 		if level.node_kind(lane_end_node(i)) != Level.CIL:
 			continue
@@ -376,8 +387,8 @@ func lane_deals_damage(lane: int) -> bool:
 	return level.lane_deals_damage(lane)
 
 
-# Usek, ze ktereho poutnici vstupuji do mapy. Neposkzuje - poutnik teprve
-# prichazi, hrac jeste nemel jakkoli sanci neco udelat.
+# Usek, ze ktereho poutnici vstupuji do mapy. Neposkrzuje sam o sobe -
+# rozhoduje hodnota useku (vstupni usek je od vychoziho stavu KMEN).
 func lane_is_entry(lane: int) -> bool:
 	return lane == entry_lane
 
