@@ -381,6 +381,18 @@ func _handle_guide_tap(pos: Vector2) -> void:
 # cesta. Poradi je dulezite: NEJDRIV tlacitka. Kdyby se hledala bunka prvni,
 # klepnuti na pruh by kreslilo cestu pod nim a tlacitko by nikdy nezabralo.
 func _handle_editor_tap(pos: Vector2) -> void:
+	# SEZNAM: kazdy radek je level k nacteni (prvni je novy, posledni navrat).
+	if editor.is_list():
+		var items: Array = editor.list_items()
+		var rects: Array = layout.editor_list_rows(items.size())
+		for i in range(rects.size()):
+			var rr: Rect2 = rects[i]
+			if rr.has_point(pos):
+				_click()
+				editor.pick(items[i])
+				_push_editor_level()
+				return
+		return
 	for i in range(layout.ed_buttons.size()):
 		var r: Rect2 = layout.ed_buttons[i]
 		if not r.has_point(pos):
@@ -442,12 +454,40 @@ func _open_editor() -> void:
 
 
 func _draw_editor() -> void:
+	if editor.is_list():
+		_draw_editor_list()
+		return
 	_draw_background()
 	_draw_grid()
 	_draw_lanes()
 	_draw_nodes()
 	_draw_editor_draft()
 	_draw_editor_bar()
+
+
+# SEZNAM ULOZENYCH LEVELU. Kazdy novy level dostane vlastni jmeno, takze se
+# predchozi prace nikdy neprepise - a tady se k ni hrac dostane zpatky.
+func _draw_editor_list() -> void:
+	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
+	_label(Vector2(_pad_left(), layout.hud_h * 0.78), "LEVELY", 22, Color(0.90, 0.87, 0.80))
+	var items: Array = editor.list_items()
+	var rects: Array = layout.editor_list_rows(items.size())
+	for i in range(items.size()):
+		var r: Rect2 = rects[i]
+		var it: Dictionary = items[i]
+		var kind: String = str(it["kind"])
+		var accent: Color = Color(0.42, 0.40, 0.35)
+		if kind == "new":
+			accent = Color(0.65, 0.78, 0.60)
+		elif kind == "level":
+			accent = Color(0.78, 0.62, 0.30) if str(it["key"]) == editor.local_name \
+				else Color(0.55, 0.53, 0.48)
+		elif kind == "back":
+			accent = Color(0.72, 0.70, 0.62)
+		draw_rect(r, Color(0.135, 0.125, 0.11))
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
+			str(it["name"]), 17, Color(0.88, 0.85, 0.78))
 
 
 # CO Hrac PRAVE KRESLI. Do levelu se to dostane, az kdyz prst zvedne - do
@@ -702,29 +742,29 @@ func _draw_guide_block(b: Dictionary, origin: Vector2, cell_w: float, cell_h: fl
 			_guide_lane(art, fs)
 
 
-# OBRAZEK 1: vyhybka. Kmen se rozvetvuje na useky, vybrany je svetlejsi -
-# presne to, co hrac na desce vidi, kdyz klepne.
+# OBRAZEK 1: vyhybka. Krouzek s Y - presne ta znacka, kterou hrac najde na
+# desce. Vybrana vetev je svetlejsi, ostatni jsou utlumene.
 func _guide_switch(r: Rect2, fs: int) -> void:
-	var y: float = r.get_center().y
-	var x0: float = r.position.x + r.size.x * 0.12
-	var xm: float = r.position.x + r.size.x * 0.46
+	var c := Vector2(r.position.x + r.size.x * 0.34, r.get_center().y)
+	var rr: float = minf(r.size.x * 0.17, r.size.y * 0.30)
 	var x1: float = r.position.x + r.size.x * 0.88
-	draw_line(Vector2(x0, y), Vector2(xm, y), Color(0.45, 0.41, 0.35), float(fs) * 0.28)
 	var spread: float = r.size.y * 0.30
-	var lanes := [Vector2(x1, y - spread), Vector2(x1, y), Vector2(x1, y + spread)]
 	var sel: int = 1
-	for i in range(lanes.size()):
-		var col: Color = [Element.color_of(Element.FIRE), Element.color_of(Element.WATER),
-			Element.color_of(Element.EARTH)][i]
+	var cols := [Element.color_of(Element.FIRE), Element.color_of(Element.WATER),
+		Element.color_of(Element.EARTH)]
+	var tips := [Vector2(x1, c.y - spread), Vector2(x1, c.y), Vector2(x1, c.y + spread)]
+	for i in range(tips.size()):
+		var col: Color = cols[i]
 		var a: float = 0.95 if i == sel else 0.30
-		draw_line(Vector2(xm, y), lanes[i], Color(col.r, col.g, col.b, a),
+		draw_line(c, tips[i], Color(col.r, col.g, col.b, a),
 			float(fs) * (0.26 if i == sel else 0.16))
-	draw_circle(Vector2(xm, y), float(fs) * 0.34, Color(0.10, 0.095, 0.085))
-	draw_arc(Vector2(xm, y), float(fs) * 0.34, 0.0, TAU, 20,
-		Element.color_of(Element.WATER), 2.0)
+	# Krouzek s Y - znacka uzlu, na ktery se klepe.
+	draw_circle(c, rr, Color(0.10, 0.095, 0.085))
+	draw_arc(c, rr, 0.0, TAU, 24, Element.color_of(Element.WATER), 2.0)
+	_draw_y(c, rr * 0.5, Element.color_of(Element.WATER), false)
 	# Kolecko mysi/prstu nad vybranym usekem - znacka "klepni sem".
-	var px: float = xm + (x1 - xm) * 0.45
-	draw_arc(Vector2(px, lanes[sel].y), float(fs) * 0.30, 0.0, TAU, 18,
+	var px: float = c.x + (x1 - c.x) * 0.5
+	draw_arc(Vector2(px, tips[sel].y), float(fs) * 0.30, 0.0, TAU, 18,
 		Color(0.90, 0.87, 0.80), 2.0)
 
 

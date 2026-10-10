@@ -25,19 +25,23 @@ const TOOL_COUNT := 7
 # Tlacitka za nastroji.
 const BTN_ELEM := TOOL_COUNT
 const BTN_NEW := TOOL_COUNT + 1
-const BTN_EXPORT := TOOL_COUNT + 2
-const BTN_PLAY := TOOL_COUNT + 3
-const BTN_COUNT := TOOL_COUNT + 4
+const BTN_LIST := TOOL_COUNT + 2
+const BTN_EXPORT := TOOL_COUNT + 3
+const BTN_PLAY := TOOL_COUNT + 4
+const BTN_COUNT := TOOL_COUNT + 5
 
 const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
 	Level.SPOJKA, Level.UZEL, Level.NEUTRAL]
+
+enum { MODE_EDIT, MODE_LIST }
 
 var level: Level = null
 var tool: int = TOOL_ROAD
 var elem: int = Element.FIRE
 var status: String = ""
 var code: String = ""
-var local_name: String = "vlastni"
+var local_name: String = ""
+var mode: int = MODE_EDIT
 
 # Prubeh tahnuti prstem. `draw_cells` je to, co hrac prave nakreslil, a
 # kresli se to zive - dokud prst nezvedne, neni to soucast levelu.
@@ -60,8 +64,11 @@ func _init() -> void:
 # =========================================================================
 
 func reset() -> void:
+	var keep: String = _free_name()
 	level = Level.new()
+	local_name = keep
 	level.name = local_name
+	mode = MODE_EDIT
 	tool = TOOL_ROAD
 	status = "Prázdná mřížka. Polož START a pak tažením prstu kresli cesty."
 	code = ""
@@ -71,11 +78,75 @@ func reset() -> void:
 	level.save()
 
 
+# Kazdy novy level dostane VLASTNI jmeno, aby ten predchozi neprepsal.
+# Prepsat cizi praci jednim klepnutim je to nejhorsi, co editor umi.
+#
+# Vyjimka: kdyz je ten soucasny level jeste PRAZDNY, novy ho prevezme.
+# Bez toho by kazde klepnuti na "novy" nechalo za sebou prazdnou skolku
+# a seznam by se zaplnil necem, co nikdo nikdy nechtel.
+func _free_name() -> String:
+	if level != null and local_name != "" \
+			and level.lane_count() == 0 and level.node_count() == 0:
+		return local_name
+	var keys: Array = level.saved_keys()
+	var n: int = 1
+	while keys.has("level-%d" % n):
+		n += 1
+	return "level-%d" % n
+
+
 func open_last() -> void:
+	var keys: Array = level.saved_keys()
+	if keys.is_empty():
+		reset()
+		return
+	local_name = str(keys[keys.size() - 1])
 	if level.load_from_disk(local_name):
 		status = "Načteno: %s" % level.name
 	else:
 		reset()
+
+
+# =========================================================================
+# SEZNAM ULOZENYCH LEVELU
+# =========================================================================
+
+func is_list() -> bool:
+	return mode == MODE_LIST
+
+
+func open_list() -> void:
+	mode = MODE_LIST
+
+
+func close_list() -> void:
+	mode = MODE_EDIT
+
+
+# Prvni radek je NOVY level, pak vsechno ulozene, posledni je navrat.
+func list_items() -> Array:
+	var out: Array = [{"kind": "new", "name": "nový level", "key": ""}]
+	for k in level.saved_keys():
+		out.append({"kind": "level", "name": str(k), "key": k})
+	out.append({"kind": "back", "name": "zpět do kreslení", "key": ""})
+	return out
+
+
+func pick(item: Dictionary) -> void:
+	var kind: String = str(item["kind"])
+	if kind == "new":
+		reset()
+		return
+	if kind == "back":
+		close_list()
+		return
+	var key: String = str(item["key"])
+	if level.load_from_disk(key):
+		local_name = key
+		status = "Načteno: %s" % level.name
+	else:
+		status = "Level %s se nepodařilo načíst." % key
+	close_list()
 
 
 func button_labels() -> Array:
@@ -84,6 +155,7 @@ func button_labels() -> Array:
 		out.append(t)
 	out.append(Element.name_of(elem))
 	out.append("nový")
+	out.append("seznam")
 	out.append("export")
 	out.append("hrát")
 	return out
@@ -277,6 +349,8 @@ func press(button: int) -> void:
 			status = "Kreslím živel: %s." % Element.name_of(elem)
 		BTN_NEW:
 			reset()
+		BTN_LIST:
+			open_list()
 		BTN_EXPORT:
 			_export()
 		BTN_PLAY:

@@ -8,6 +8,10 @@ var checks: int = 0
 
 
 func _init() -> void:
+	# Testy si po sobe uklidi: editor uklada pri kazde zmene, takze by po
+	# kazdem behu nechaval v user://levels/ hromadu prazdnych levelu a
+	# dalsi beh by zacinal v jinem stavu, nez v jakem skoncil.
+	_wipe_levels()
 	_run("novy level", _test_empty)
 	_run("start a cesta", _test_start_and_road)
 	_run("rychlý tah", _test_fast_drag)
@@ -15,6 +19,7 @@ func _init() -> void:
 	_run("guma", _test_erase)
 	_run("jidel a cil", _test_element_and_exit)
 	_run("export", _test_export)
+	_run("seznam levelu", _test_list)
 	if fails.is_empty():
 		print("EDITOR_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -23,6 +28,19 @@ func _init() -> void:
 			print("  FAIL: " + str(f))
 		print("EDITOR_ALL_PASS=false (%d kontrol)" % checks)
 		quit(1)
+
+
+func _wipe_levels() -> void:
+	var d := DirAccess.open("user://levels/")
+	if d == null:
+		return
+	d.list_dir_begin()
+	var f: String = d.get_next()
+	while f != "":
+		if not d.current_is_dir() and f.ends_with(".zily"):
+			DirAccess.remove_absolute("user://levels/" + f)
+		f = d.get_next()
+	d.list_dir_end()
 
 
 func _run(label: String, fn: Callable) -> void:
@@ -197,3 +215,44 @@ func _test_export() -> void:
 		_check(back.to_code() == e.code, "kod se po nacteni zmenil")
 		_check(back.lane_count() == e.level.lane_count(), "po nacteni je jiný pocet useku")
 		_check(back.spawn_elements() == e.level.spawn_elements(), "po nacteni jine zivly")
+
+
+# SEZNAM ULOZENYCH LEVELU. Hlida se hlavne to, ze "novy" NEPREPISE predchozi
+# praci - to je jedina vec, ktera se neda vzit zpet.
+func _test_list() -> void:
+	_wipe_levels()
+	var a := Editor.new()
+	a.reset()
+	a.tool = Editor.TOOL_START
+	a.tap_cell(Vector2i(1, 5))
+	a.tool = Editor.TOOL_CIL
+	a.tap_cell(Vector2i(5, 5))
+	_stroke(a, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5)])
+	_check(a.level.lane_count() == 1, "prvni level se nepostavil")
+	var first: String = a.local_name
+	_check(first != "", "level nema jmeno")
+
+	var b := Editor.new()
+	b.reset()
+	_check(b.local_name != first, "novy level dostal stejne jmeno jako predchozi")
+	b.tool = Editor.TOOL_START
+	b.tap_cell(Vector2i(2, 2))
+	b.tool = Editor.TOOL_CIL
+	b.tap_cell(Vector2i(6, 2))
+	_stroke(b, [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(6, 2)])
+	_check(b.level.lane_count() == 1, "druhy level se nepostavil")
+
+	b.open_list()
+	_check(b.is_list(), "seznam se neotevrel")
+	var items: Array = b.list_items()
+	_check(items.size() == 4, "seznam ma %d radku, cekaji se 4" % items.size())
+	_check(str(items[0]["kind"]) == "new", "prvni radek neni novy level")
+	_check(str(items[items.size() - 1]["kind"]) == "back", "posledni radek neni navrat")
+
+	# NAVRAT PRVNIHO LEVELU: jeho prace musi byt cela. Presne kvuli tomuhle
+	# se kazdy level uklada pod svym jmenem.
+	var c := Editor.new()
+	_check(c.level.load_from_disk(first), "prvni level se neda nacist zpatky")
+	_check(c.level.lane_count() == 1,
+		"po nacteni ma prvni level %d useku" % c.level.lane_count())
+	_wipe_levels()
