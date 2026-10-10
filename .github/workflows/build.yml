@@ -81,6 +81,18 @@ jobs:
           echo "$OUT" | tail -20
           echo "$OUT" | grep -q "AUDIO_ALL_PASS=true"
 
+      # EDITOR. Level se stavi na telefonu, takze kazde tlacitko musi opravdu
+      # menit level, kod levelu musi projit tam i zpet znak po znaku a zakotvene
+      # levely musi davat smysl. Hlida i to, ze se vetev z vyhybky da napojit
+      # na vic nez jeden usek ("dalsi useky ignoruje") a ze se uzel napojeni
+      # srovna odbocenim ciloveho useku, misto aby napojeni zmizelo.
+      - name: Editor test (levely a jejich kod)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_editor.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "EDITOR_ALL_PASS=true"
+
       - name: Export
         run: |
           set -e
