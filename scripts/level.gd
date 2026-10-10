@@ -46,6 +46,11 @@ const KIND_NAMES := ["start", "cíl", "výhybka", "spojka", "uzel"]
 
 # Element useku. Neutralni usek nema element a dava vsem 100 %.
 const NEUTRAL := -1
+# KMEN je druhy usek BEZ ELEMENTU: neposkozuje vubec (jako vstupni usek ze
+# startu). Jan: "v nabidce typu cest chybi neutralni a kmen (nedava zadne
+# poskozeni)". Neni to element, proto se nikdy nesmi dostat do
+# Element.name_of - na jmena je tu `value_name()`.
+const KMEN := -2
 
 # --------------------------------------------------------------- zakladni cisla
 const BASE_ZONE_DMG := 30.0
@@ -145,8 +150,48 @@ func lane_is_neutral(lane: int) -> bool:
 	return lane_element(lane) == NEUTRAL
 
 
+func lane_is_kmen(lane: int) -> bool:
+	return lane_element(lane) == KMEN
+
+
+# USEK, KTERY VUBEC NEPOSKOZUJE. Vstupni usek (poutnik po nem teprve
+# prichazi) a kmen. Jedno misto pro tuhle otazku - ptá se ji hra (kolik
+# poskozeni), sit (kresli se pas a mista?) i editor (co jde na usek
+# postavit).
+func lane_deals_damage(lane: int) -> bool:
+	return not lane_is_kmen(lane) and not lane_is_entry(lane)
+
+
+# USEK, NA KTERY SE DA STAVET BONUS. Na neutralni usek ne (uz poskozuje
+# vsechny stejne) a na neposkozujici usek taky ne - bonus by nemel co
+# posilit a hrac by vyhodil zlato.
+func lane_takes_bonus(lane: int) -> bool:
+	if lane_is_neutral(lane) or lane_is_kmen(lane):
+		return false
+	return lane_deals_damage(lane)
+
+
+# JMENO HODNOTY USEKU. `Element.name_of` se na neutralni usek a kmen NESMI
+# volat: dostane -1/-2 a v GDScriptu to neni chyba, ale tichy nesmysl
+# (NAMES[-1] je "Vzduch"), takze by hra lhala o tom, na co se hrac kouka.
+static func value_name(e: int) -> String:
+	if e == NEUTRAL:
+		return "neutrální"
+	if e == KMEN:
+		return "kmen"
+	if e < 0 or e >= Element.COUNT:
+		return "?"
+	return Element.name_of(e)
+
+
+func lane_type_name(lane: int) -> String:
+	return Level.value_name(lane_element(lane))
+
+
 func lane_accepts(lane: int, element: int) -> bool:
-	return not lane_is_neutral(lane) and lane_element(lane) == element
+	if not lane_takes_bonus(lane):
+		return false
+	return lane_element(lane) == element
 
 
 # KOLIK MIST NA BONUS TENHLE USEK MA. Neni to konstanta: Jan chce, aby si to
@@ -287,7 +332,8 @@ func spawn_elements() -> Array:
 	var seen: Array = []
 	for i in range(lanes.size()):
 		var e: int = lane_element(i)
-		if e == NEUTRAL:
+		# Neutralni usek ani kmen nejsou element - z nich se posilat nesmi.
+		if e < 0:
 			continue
 		if not seen.has(e):
 			seen.append(e)

@@ -124,6 +124,42 @@ func _one(w: int, h: int) -> void:
 			tag, same_d, g.net.bonus_r * 1.5])
 	_check(g.net.max_slot_count() > 0, "%s: zadny usek nema misto na bonus" % tag)
 
+	# --- MISTA LEZI NA SVEM USEKU, NE V OCASKU K OKRAJI. Usek se na
+	# obrazovce prodluzuje k okraji displeje (poutnici prichazeji
+	# "zpoza displeje"), ale nikdo po nem nechodi - bonus v ocasku by byl
+	# mimo hru. Presne tudy utikala mista "nahodne po ceste" (Jan).
+	# Kontrola: misto musi byt bliz k NITRU useku nez k ocasku, tedy
+	# vzdalenost od koncoveho uzlu musi byt aspon pul bunky a stejne tak
+	# od pocatecniho.
+	var cell_min: float = minf(g.net.cell_w, g.net.cell_h)
+	for lane in range(g.net.lane_count()):
+		if not g.net.lane_deals_damage(lane):
+			continue
+		var cells: Array = g.net.level.lane_cells(lane)
+		for slot in range(g.net.slot_count(lane)):
+			var sp: Vector2 = g.net.slot_world(lane, slot)
+			# 1) misto musi lezet NA NECI BUNCE sveho useku. Ocaskovy bod je
+			#    od vsech svych bunek dal nez pul bunky, takze se chyti tady.
+			var best: float = 1.0e9
+			for c in cells:
+				var v: Vector2i = c
+				var center: Vector2 = g.net.origin + Vector2(
+					(float(v.x) + 0.5) * g.net.cell_w, (float(v.y) + 0.5) * g.net.cell_h)
+				best = minf(best, sp.distance_to(center))
+			_check(best <= 0.75 * cell_min,
+				"%s: misto %d na useku %d nelezi na zadne bunce useku (%.1f px, treba %.1f)" % [
+					tag, slot, lane, best, 0.75 * cell_min])
+			# 2) a nesmi sedet na uzlu - prekrylo by se s jeho znackou
+			var room: float = 0.5 * cell_min
+			var start_node: int = int(g.net.lane_from_node[lane])
+			if start_node >= 0:
+				_check(sp.distance_to(g.net.node_world(start_node)) >= room,
+					"%s: misto %d na useku %d sedi na pocatecnim uzlu" % [tag, slot, lane])
+			var end_node: int = g.net.lane_end_node(lane)
+			if end_node >= 0:
+				_check(sp.distance_to(g.net.node_world(end_node)) >= room,
+					"%s: misto %d na useku %d sedi na koncovem uzlu" % [tag, slot, lane])
+
 	# --- hratelnost: klepnuti na uzel vyhybky prepne TU vyhybku
 	for j in range(g.net.junction_count()):
 		var node: int = int(g.net.junction_nodes[j])

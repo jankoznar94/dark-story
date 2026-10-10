@@ -20,6 +20,9 @@ func _init() -> void:
 	_run("jidel a cil", _test_element_and_exit)
 	_run("uprava existujiciho useku", _test_edit_existing)
 	_run("mista na useku", _test_slot_edit)
+	_run("typy cest", _test_lane_types)
+	_run("oznaceni prvku", _test_select_node)
+	_run("zpet", _test_undo)
 	_run("presouvani uzlu", _test_move_node)
 	_run("export", _test_export)
 	_run("seznam levelu", _test_list)
@@ -63,6 +66,27 @@ func _ed() -> Editor:
 	var e := Editor.new()
 	e.reset()
 	return e
+
+
+# LEVEL SE DVEMA POSKOZUJICIMI USEKY: START -> VYHYBKA -> dva cile.
+# Usek 0 je VSTUPNI (neposkoduje) - mista ani zivel se na nem menit nedaji
+# a testy to hlidaji. Usek 1 a 2 poskozuji, takze na tech se upravuje.
+func _lane_level(e: Editor) -> void:
+	e.tool = Editor.TOOL_START
+	e.tap_cell(Vector2i(1, 5))
+	e.tool = Editor.TOOL_VYHYBKA
+	e.tap_cell(Vector2i(4, 5))
+	e.tool = Editor.TOOL_CIL
+	e.tap_cell(Vector2i(8, 2))
+	e.tap_cell(Vector2i(8, 8))
+	e.tool = Editor.TOOL_ROAD
+	e.elem = Element.FIRE
+	e.draw_elem = Element.FIRE
+	_stroke(e, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5)])
+	_stroke(e, [Vector2i(4, 5), Vector2i(4, 4), Vector2i(4, 3), Vector2i(4, 2),
+		Vector2i(5, 2), Vector2i(6, 2), Vector2i(7, 2), Vector2i(8, 2)])
+	_stroke(e, [Vector2i(4, 5), Vector2i(4, 6), Vector2i(4, 7), Vector2i(4, 8),
+		Vector2i(5, 8), Vector2i(6, 8), Vector2i(7, 8), Vector2i(8, 8)])
 
 
 # Nakresli cestu tahem: prst jede po zadanych bunkach.
@@ -185,13 +209,14 @@ func _test_erase() -> void:
 
 func _test_element_and_exit() -> void:
 	var e := _ed()
-	# tlacitko zivlu cykluje pres vsechny ctyri
+	# tlacitko typu cesty cykluje pres VSECHNY typy: ctyri zivly,
+	# neutralni usek a kmen (poradi je v Editor.TYPE_CYCLE)
 	var seen: Array = []
-	for i in range(Element.COUNT):
+	for i in range(Editor.TYPE_CYCLE.size()):
 		seen.append(e.elem)
 		e.press(Editor.BTN_ELEM)
-	_check(seen.size() == Element.COUNT, "cyklus zivlu neprosel")
-	_check(e.elem == seen[0], "cyklus zivlu se nevratil na zacatek")
+	_check(seen.size() == Editor.TYPE_CYCLE.size(), "cyklus typu cest neprosel")
+	_check(e.elem == seen[0], "cyklus typu cest se nevratil na zacatek")
 	_check(e.button_labels().size() == Editor.BTN_COUNT, "pruh nema %d tlacitek"
 		% Editor.BTN_COUNT)
 	_check(e.button_labels()[Editor.BTN_ELEM] == Element.name_of(e.elem),
@@ -203,76 +228,84 @@ func _test_element_and_exit() -> void:
 # Janovi chybelo: "upravovat jiz existujici zatim nejde".
 func _test_edit_existing() -> void:
 	var e := _ed()
-	e.tool = Editor.TOOL_START
-	e.tap_cell(Vector2i(1, 5))
-	e.tool = Editor.TOOL_CIL
-	e.tap_cell(Vector2i(7, 5))
-	e.tool = Editor.TOOL_ROAD
-	e.draw_elem = Element.FIRE
-	e.begin_draw(Vector2i(1, 5))
-	e.extend_draw(Vector2i(7, 5))
-	e.end_draw()
-	_check(e.level.lane_count() == 1, "cesta se nepridala")
-	_check(e.level.lane_element(0) == Element.FIRE, "nova cesta nema ohen")
-	_check(e.sel_lane == 0, "nova cesta se nevybrala (sel_lane %d)" % e.sel_lane)
+	_lane_level(e)
+	_check(e.level.lane_count() == 3, "level s vyhybkou ma %d useku" % e.level.lane_count())
+	_check(e.level.validate().is_empty(),
+		"level s vyhybkou je rozbity: " + str(e.level.validate()))
+	_check(e.level.lane_is_entry(0), "usek ze startu neni vstupni")
 
 	# klepnuti na caru useku = vyber (a nic se nekresli)
 	e.sel_lane = -1
-	e.begin_draw(Vector2i(4, 5))
+	e.tool = Editor.TOOL_ROAD
+	e.begin_draw(Vector2i(6, 2))
 	e.end_draw()
-	_check(e.level.lane_count() == 1, "klepnuti na usek neco nakreslilo")
-	_check(e.sel_lane == 0, "klepnuti na caru useku ho nevybralo")
+	_check(e.level.lane_count() == 3, "klepnuti na usek neco nakreslilo")
+	_check(e.sel_lane == 1, "klepnuti na caru useku ho nevybralo (sel %d)" % e.sel_lane)
 	_check(e.status.contains("Vybran"), "status nemluvi o vyberu: " + e.status)
 
 	# zivel se zmeni NA VYBRANEM useku a rovnou se s nim i kresli dal
 	e.elem = Element.FIRE
 	e.press(Editor.BTN_ELEM)
-	_check(e.level.lane_element(0) == Element.WATER,
-		"zivel vybraneho useku se nezmenil (je %s)" % Element.name_of(e.level.lane_element(0)))
+	_check(e.level.lane_element(1) == Element.WATER,
+		"zivel vybraneho useku se nezmenil (je %s)" % e.level.lane_type_name(1))
 	_check(e.elem == Element.WATER, "kreslici zivel se neshoduje s usekem")
 	# druhy stisk posune dal - uprava je opakovatelna
 	e.press(Editor.BTN_ELEM)
-	_check(e.level.lane_element(0) == Element.EARTH, "druha zmena zivlu neprosla")
+	_check(e.level.lane_element(1) == Element.EARTH, "druha zmena zivlu neprosla")
 
-	# rozdelovani useku si pocet mist odnesе do OBOU dilu
+	# VSTUPNI USEK SE NEMENI: neposkozuje, takze by zivel jen lhal
+	e.sel_lane = 0
+	e.elem = Element.FIRE
+	e.press(Editor.BTN_ELEM)
+	_check(e.level.lane_element(0) == Level.NEUTRAL or not e.level.lane_deals_damage(0),
+		"vstupnimu useku se zmenil zivel")
+	_check(e.status.contains("vstupní"), "status nemluvi o vstupnim useku: " + e.status)
+
+	# rozdelovani useku si pocet mist odnese do OBOU dilu
+	e.sel_lane = 1
 	e.tool = Editor.TOOL_UZEL
-	e.tap_cell(Vector2i(4, 5))
-	_check(e.level.lane_count() == 2, "usek se nerozdelil")
-	if e.level.lane_count() == 2:
-		_check(e.level.lane_slot_count(0) == Level.SLOTS
-			and e.level.lane_slot_count(1) == Level.SLOTS,
+	e.tap_cell(Vector2i(6, 2))
+	_check(e.level.lane_count() == 4, "usek se nerozdelil (useku %d)" % e.level.lane_count())
+	if e.level.lane_count() == 4:
+		_check(e.level.lane_slot_count(1) == Level.SLOTS
+			and e.level.lane_slot_count(3) == Level.SLOTS,
 			"po rozdeleni prisel jeden dil o mista")
 
 
 func _test_slot_edit() -> void:
 	var e := _ed()
-	e.tool = Editor.TOOL_START
-	e.tap_cell(Vector2i(1, 5))
-	e.tool = Editor.TOOL_CIL
-	e.tap_cell(Vector2i(7, 5))
-	e.tool = Editor.TOOL_ROAD
-	e.begin_draw(Vector2i(1, 5))
-	e.extend_draw(Vector2i(7, 5))
-	e.end_draw()
-	_check(e.sel_lane == 0, "usek se nevybral")
+	_lane_level(e)
 	# bez vyberu se meni, s kolika misty se kresli dalsi cesta
 	e.sel_lane = -1
+	e.sel_node = -1
 	var n0: int = e.draw_slots
 	e.press(Editor.BTN_SLOTS)
 	_check(e.draw_slots == (n0 + 1) % (Level.MAX_SLOTS + 1),
 		"pocet mist pro nove cesty se nezmenil")
 	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.draw_slots,
 		"tlacitko neukazuje pocet mist: " + e.button_labels()[Editor.BTN_SLOTS])
-	# s vyberem se meni pocet mist TOHO useku, az na nulu a pak dokola
+
+	# VSTUPNI USEK: nic na nem postavit nejde, takze se pocet mist nemeni
+	# a tlacitko to rekne ("místa 0") - tlacitko nesmi lhat.
 	e.sel_lane = 0
+	var entry_slots: int = e.level.lane_slot_count(0)
+	e.press(Editor.BTN_SLOTS)
+	_check(e.level.lane_slot_count(0) == entry_slots,
+		"vstupnimu useku se zmenil pocet mist")
+	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa 0",
+		"tlacitko u vstupniho useku nelze: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(not e.level.lane_deals_damage(0), "vstupni usek poskozuje")
+
+	# POSKOZUJICI USEK: cyklus 0..MAX_SLOTS a dokola
+	e.sel_lane = 1
 	var seen: Dictionary = {}
 	for i in range(Level.MAX_SLOTS + 2):
-		var cur: int = e.level.lane_slot_count(0)
+		var cur: int = e.level.lane_slot_count(1)
 		seen[cur] = true
 		e.press(Editor.BTN_SLOTS)
-		_check(e.level.lane_slot_count(0) == (cur + 1) % (Level.MAX_SLOTS + 1),
+		_check(e.level.lane_slot_count(1) == (cur + 1) % (Level.MAX_SLOTS + 1),
 			"pocet mist na vybranem useku se nezmenil z %d" % cur)
-		_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.level.lane_slot_count(0),
+		_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.level.lane_slot_count(1),
 			"tlacitko nelze o poctu mist na useku")
 	_check(seen.has(0), "na useku se nikdy nepodarilo udelat nula mist")
 	_check(seen.size() == Level.MAX_SLOTS + 1, "cyklus neprosel vsechny pocty mist")
@@ -281,8 +314,162 @@ func _test_slot_edit() -> void:
 	var back := Level.from_code(code)
 	_check(back != null, "kod s upravenym poctem mist se neda nacist")
 	if back != null:
-		_check(back.lane_slot_count(0) == e.level.lane_slot_count(0),
+		_check(back.lane_slot_count(1) == e.level.lane_slot_count(1),
 			"po nacteni ma usek jiny pocet mist")
+
+
+# TYPY CEST: zivly + neutralni usek + kmen. Jan: "v nabidce typu cest
+# chybi neutralni a kmen (nedava zadne poskozeni)".
+func _test_lane_types() -> void:
+	var e := _ed()
+	e.sel_lane = -1
+	e.sel_node = -1
+	var seen: Dictionary = {}
+	for i in range(Editor.TYPE_CYCLE.size()):
+		seen[e.elem] = true
+		e.press(Editor.BTN_ELEM)
+	_check(seen.has(Level.NEUTRAL), "v nabidce typu cest chybi neutralni usek")
+	_check(seen.has(Level.KMEN), "v nabidce typu cest chybi kmen")
+	_check(seen.size() == Editor.TYPE_CYCLE.size(), "cyklus typu cest neprosel vsechny")
+	_check(e.elem == int(Editor.TYPE_CYCLE[0]), "cyklus typu cest se nevratil na zacatek")
+	_check(Level.value_name(Level.KMEN) == "kmen", "kmen se jmenuje spatne")
+	_check(Level.value_name(Level.NEUTRAL) == "neutrální", "neutralni usek se jmenuje spatne")
+
+	# KMEN NAKRESLENY RUKOU: neposkozuje, nema mista a neposila se z nej
+	e.tool = Editor.TOOL_START
+	e.tap_cell(Vector2i(1, 5))
+	e.tool = Editor.TOOL_CIL
+	e.tap_cell(Vector2i(7, 5))
+	e.elem = Level.KMEN
+	e.tool = Editor.TOOL_ROAD
+	e.draw_elem = Level.KMEN
+	_stroke(e, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5),
+		Vector2i(5, 5), Vector2i(6, 5), Vector2i(7, 5)])
+	_check(e.level.lane_count() == 1, "kmen se nenakreslil")
+	_check(e.level.lane_is_kmen(0), "usek nema typ kmen (je %s)" % e.level.lane_type_name(0))
+	_check(not e.level.lane_deals_damage(0), "kmen poskozuje")
+	_check(not e.level.lane_accepts(0, Element.FIRE), "na kmen jde postavit bonus")
+	_check(not e.level.lane_takes_bonus(0), "kmen bere bonus")
+	_check(e.level.spawn_elements().is_empty(),
+		"z kmene se posilaji poutnici: " + str(e.level.spawn_elements()))
+	_check(Level.value_name(e.level.lane_element(0)) == "kmen", "kmen nema jmeno")
+
+	# a neutralni usek na POSKOZUJICIM useku: poskozuje vsechny stejne,
+	# ale taky se na nem nestavi a neposila se z nej
+	var f := _ed()
+	_lane_level(f)
+	f.sel_lane = 1
+	f.sel_node = -1
+	f.elem = Element.AIR
+	f.press(Editor.BTN_ELEM)
+	_check(f.level.lane_element(1) == Level.NEUTRAL, "neutralni usek se nenastavil")
+	_check(f.level.lane_is_neutral(1), "usek neni neutralni")
+	_check(not f.level.lane_takes_bonus(1), "na neutralni usek jde stavet")
+	_check(f.level.lane_deals_damage(1), "neutralni usek neposkozuje")
+	_check(not f.level.spawn_elements().has(Level.NEUTRAL),
+		"z neutralniho useku se posila poutnik")
+	_check(f.level.spawn_elements() == [Element.FIRE],
+		"po zmene na neutralni se posilaji spatne zivly: " + str(f.level.spawn_elements()))
+
+
+# OZNACENI JIZ EXISTUJICIHO PRVKU. Jan: "chybi mi moznost oznacit jiz
+# existujici prvek, abych ho mohl upravit". Klepnutim nastrojem "cesta"
+# se oznaci uzel nebo usek a tlacitko "mista" se u prvku zmeni na "druh".
+func _test_select_node() -> void:
+	var e := _ed()
+	_lane_level(e)
+	e.sel_lane = -1
+	e.sel_node = -1
+	e.tool = Editor.TOOL_ROAD
+	# klepnuti na UZEL oznaci prave uzel (ne usek, ktery pod nim vede)
+	e.begin_draw(Vector2i(4, 5))
+	e.end_draw()
+	_check(e.sel_node == 1, "klepnuti na prvek neoznacilo prvek (sel_node %d)" % e.sel_node)
+	_check(e.sel_lane == -1, "oznaceni prvku nechalo oznaceny i usek")
+	_check(e.status.contains("prvek"), "status nemluvi o prvku: " + e.status)
+	_check(e.sel_text().contains("výhybka"), "vyber neukazuje druh prvku: " + e.sel_text())
+	# tlacitko "mista" se u prvku zmeni na "druh" a opravdu meni druh
+	_check(e.button_labels()[Editor.BTN_SLOTS].begins_with("druh:"),
+		"tlacitko u prvku neukazuje druh: " + e.button_labels()[Editor.BTN_SLOTS])
+	var before: int = e.level.node_kind(1)
+	e.press(Editor.BTN_SLOTS)
+	_check(e.level.node_kind(1) == (before + 1) % Level.KIND_NAMES.size(),
+		"druh prvku se nezmenil")
+	_check(e.button_labels()[Editor.BTN_SLOTS] == "druh: %s" % e.level.kind_name(e.level.node_kind(1)),
+		"tlacitko nelze o druhu prvku: " + e.button_labels()[Editor.BTN_SLOTS])
+	# klepnuti na CARU useku (ne na uzel) oznaci usek
+	e.tool = Editor.TOOL_ROAD
+	e.begin_draw(Vector2i(6, 2))
+	e.end_draw()
+	_check(e.sel_lane == 1 and e.sel_node == -1,
+		"klepnuti na caru useku neoznacilo usek (lane %d, node %d)" % [e.sel_lane, e.sel_node])
+	# a paletou se da prvek zmenit i dal - klepnuti na uzel s nastrojem
+	e.tool = Editor.TOOL_SPOJKA
+	e.tap_cell(Vector2i(1, 5))
+	_check(e.level.node_kind(0) == Level.SPOJKA, "paleta neprekreslila druh prvku")
+
+
+# ZPET. Kazda uprava musi jit vratit - vcetne presunu uzlu (cely tah je
+# jedna uprava) a vcetne levelu, ktery hrac omylem prepsal novym.
+func _test_undo() -> void:
+	var e := _ed()
+	_check(e.button_labels()[Editor.BTN_UNDO] == "zpět",
+		"v pruhu neni tlacitko zpet: " + e.button_labels()[Editor.BTN_UNDO])
+	e.press(Editor.BTN_UNDO)
+	_check(e.status.contains("Není co vrátit"), "zpet na prazdnem levelu nehlasi: " + e.status)
+
+	# start, cil a cesta - kazdy krok zpet
+	e.tool = Editor.TOOL_START
+	e.tap_cell(Vector2i(1, 5))
+	e.tool = Editor.TOOL_CIL
+	e.tap_cell(Vector2i(7, 5))
+	e.tool = Editor.TOOL_ROAD
+	_stroke(e, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5),
+		Vector2i(5, 5), Vector2i(6, 5), Vector2i(7, 5)])
+	_check(e.level.lane_count() == 1, "cesta se nepridala")
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.lane_count() == 0, "zpet nevratilo nakreslenou cestu")
+	_check(e.level.node_count() == 2, "zpet vzalo i uzly")
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.node_count() == 1, "zpet nevratilo položeny cil")
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.node_count() == 0, "zpet nevratilo položeny start")
+
+	# PRESUN UZLU: cely tah je JEDNA uprava, ne krok za bunku
+	_lane_level(e)
+	e.tool = Editor.TOOL_START
+	var start_node: int = e.level.first_start()
+	_check(e.begin_move(Vector2i(1, 5)), "tazeni ze startu nezacalo")
+	e.extend_move(Vector2i(1, 3))
+	e.end_move()
+	_check(e.level.node_cell(start_node) == Vector2i(1, 3),
+		"start se nepresunul (je na %s)" % str(e.level.node_cell(start_node)))
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.node_cell(start_node) == Vector2i(1, 5),
+		"zpet nevratilo presun (je na %s)" % str(e.level.node_cell(start_node)))
+
+	# POCET MIST a DRUH PRVKU se taky vraci
+	e.sel_lane = 1
+	e.sel_node = -1
+	var slots_before: int = e.level.lane_slot_count(1)
+	e.press(Editor.BTN_SLOTS)
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.lane_slot_count(1) == slots_before, "zpet nevratilo pocet mist")
+	e.sel_node = 1
+	e.sel_lane = -1
+	var kind_before: int = e.level.node_kind(1)
+	e.press(Editor.BTN_SLOTS)
+	_check(e.level.node_kind(1) != kind_before, "druh se nezmenil")
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.node_kind(1) == kind_before, "zpet nevratilo druh prvku")
+
+	# NOVY LEVEL: "zpet" musi vratit i praci, kterou hrac omylem prepsal
+	var name_before: String = e.local_name
+	e.reset()
+	_check(e.level.lane_count() == 0 and e.level.node_count() == 0, "novy level neni prazdny")
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.lane_count() == 3, "zpet nevratilo level pred novym (%d useku)" % e.level.lane_count())
+	_check(e.local_name == name_before, "zpet nevratilo jmeno levelu")
 
 
 # PRESOUVANI UZLU. Klepnuti uzel zmeni, TAZENI ho presune - a cesty, ktere

@@ -936,10 +936,14 @@ func _draw_background() -> void:
 
 
 # Barva pruhu. Neutralni pruh NENI sedy "bez vyznamu" - je to pruh,
-# ktery dela vsem stejne, takze ma vlastni, klidnou barvu.
+# ktery dela vsem stejne, takze ma vlastni, klidnou barvu. KMEN je jeste
+# tmavsi: neposkozuje vubec, takze nesmi vypadat jako pruh, ktery neco
+# dela.
 func _lane_color(lane: int) -> Color:
 	if game.net.lane_is_neutral(lane):
 		return Color(0.55, 0.53, 0.48)
+	if game.net.lane_is_kmen(lane):
+		return Color(0.36, 0.35, 0.33)
 	return Element.color_of(game.net.lane_element(lane))
 
 
@@ -989,11 +993,12 @@ func _draw_lanes() -> void:
 # vic ran dostane. Cislo nasobku tu ZAMERNE NENI - hrac ho ma v hornim
 # panelu u vybraneho useku.
 #
-# VSTUPNI USEK se nevybarvuje: neposkozuje, takze by pas lhal.
+# NEPOSKOZUJICI USEK se nevybarvuje: vstupni usek ani kmen nic nezranuji,
+# takze by pas lhal.
 func _draw_zones() -> void:
 	var thick: float = ZONE_THICK * layout.s
 	for lane in range(game.net.lane_count()):
-		if game.net.lane_is_entry(lane):
+		if not game.net.lane_deals_damage(lane):
 			continue
 		var col: Color = _lane_color(lane)
 		var sel: bool = game.lane_selected(lane)
@@ -1064,6 +1069,12 @@ func _draw_nodes() -> void:
 				draw_circle(p, rr, Color(0.10, 0.095, 0.085))
 				draw_arc(p, rr, 0.0, TAU, 24, rim, 3.0)
 				_draw_y(p, rr * 0.52, Color(0.68, 0.64, 0.56), true)
+		# OZNACENY PRVEK je obkresleny - hrac musi videt, co si vybral
+		# klepnutim. Kresli se JEN v editoru; v hre se neoznacuje nic.
+		# (Musi byt AZ ZA `match` - uvnitr by to GDScript cetl jako dalsi
+		# vzor a spadl by na chybe pri nacitani skriptu.)
+		if menu.is_editor() and editor.sel_node == n:
+			draw_arc(p, rr * 1.55, 0.0, TAU, 28, Color(0.90, 0.87, 0.80), 2.0)
 
 
 # CIL: dira v mape s krizkem. Krizek je zamerne jiny tvar nez vsechny runy -
@@ -1184,8 +1195,11 @@ func _draw_hud() -> void:
 		sel_txt = "—"
 	elif game.net.lane_is_neutral(sel):
 		sel_txt = "neutrální × 1.0"
+	elif game.net.lane_is_kmen(sel):
+		# KMEN: poskozeni zadne. Cislo by tu bylo lez.
+		sel_txt = "kmen × 0.0"
 	else:
-		sel_txt = "%s × %.1f" % [Element.name_of(game.net.lane_element(sel)),
+		sel_txt = "%s × %.1f" % [game.net.level.lane_type_name(sel),
 			Element.STRONG * game.lane_mult(sel)]
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.48), sel_txt, 18, Color(0.72, 0.70, 0.64))
 	if game.phase == "build":

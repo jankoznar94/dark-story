@@ -37,6 +37,13 @@ const BASE_SWITCH_R := 46.0
 const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
 const SLOT_MIN := 0.20
 const SLOT_MAX := 0.85
+# ODSTUP MISTA OD UZLU NA KONCI USEKU. Misto na bonus je krouzek velikosti
+# `bonus_r` a uzel je taky krouzek (vyhybka, cil) - kdyz se prekryji, hrac
+# klepne na bonus a trefi uzel (klepnuti na vyhybku ma v hre prednost),
+# takze se na to misto neda postavit. Proto se uzitecna cast useku zmensi
+# o `bonus_r + exit_r` z kazde strany - vic nez 18 % delky useku ale ne,
+# aby i kratky usek unesl tolik mist, kolik ma v datech.
+const SLOT_CLEAR_FRAC := 0.18
 
 var level: Level = null
 var area: Rect2 = Rect2()
@@ -77,6 +84,16 @@ var lane_sel_index: Array = []     # usek -> poradi vystupu v ramci sve vyhybky
 var entry_lane: int = -1
 var exit_pos: Array = []
 var slot_pos: Array = []
+# MISTA NA BONUS SE MERI NA SVE PRAVE CASTI USEKU. Usek se na obrazovce
+# prodluzuje na okraj displeje (vstup ze startu a vsechno, co konci v cili),
+# aby poutnici prichazeli a odchazeli "zpoza displeje" - ale to prodlouzeni
+# je JEN KRESLENI: nikdo po nem nechodi a bonus na nem nema co delat.
+# Kdyby se mista rozkladala z CELE delky, vyjde prvni misto presne na lom
+# a posledni ZA cilem (Jan: "body se objevuji tak nahodne po ceste").
+# `lane_slot_off` je vzdalenost od zacatku kreslene cesty k prvni bunku
+# useku, `lane_slot_len` je delka samotnych bunek useku.
+var lane_slot_off: Array = []
+var lane_slot_len: Array = []
 
 
 func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
@@ -116,6 +133,8 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	lane_len = []
 	lane_from_node = []
 	lane_to_node = []
+	lane_slot_off = []
+	lane_slot_len = []
 	for i in range(level.lane_count()):
 		var pts := PackedVector2Array()
 		var cs: Array = level.lane_cells(i)
@@ -124,6 +143,10 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			pts.append(_cell_center(v.x, v.y))
 		lane_path.append(pts)
 		lane_len.append(_poly_len(pts))
+		# ZATIM je cesta presne to, co hrac nakreslil - prodlouzeni na okraj
+		# displeje prijde az v _extend_ends() a do techhle dvou cisel nesmi.
+		lane_slot_off.append(0.0)
+		lane_slot_len.append(lane_len[i])
 		lane_from_node.append(level.lane_start_node(i))
 		lane_to_node.append(level.lane_end_node(i))
 
@@ -179,12 +202,28 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	_extend_ends()
 
 	# --- mista na bonusy
+	# MERI SE NA BUNKACH USEKU, ne na prodlouzeni k okraji displeje, a
+	# s odstupem od obou uzlu.
+	#
+	# NA NEPOSKOZUJICIM USEKU (vstupni usek, kmen) SE MISTA NEKRESLI:
+	# nikdo tam nic nepostavi, takze by krouzky jen lhaly - a kdyz se
+	# rozlozi na kratkem useku, este se i prekryvaji (Jan: "body se
+	# objevuji tak nahodne po ceste a vypada to divne").
 	slot_pos = []
 	for i in range(level.lane_count()):
 		var slots: Array = []
-		var total: float = maxf(float(lane_len[i]), 0.001)
+		if not level.lane_deals_damage(i):
+			slot_pos.append(slots)
+			continue
+		var off: float = float(lane_slot_off[i])
+		var span: float = float(lane_slot_len[i])
+		if span <= 0.001:
+			span = maxf(float(lane_len[i]), 0.001)
+			off = 0.0
+		var clear: float = minf(bonus_r + exit_r, span * SLOT_CLEAR_FRAC)
+		var usable: float = maxf(span - 2.0 * clear, 1.0)
 		for f in slot_fractions(level.lane_slot_count(i)):
-			slots.append(point_at(i, float(f) * total))
+			slots.append(point_at(i, off + clear + float(f) * usable))
 		slot_pos.append(slots)
 
 
@@ -203,6 +242,10 @@ func _extend_ends() -> void:
 				var np := PackedVector2Array([q])
 				np.append_array(p)
 				lane_path[entry_lane] = np
+				# Prodlouzeni je PRED prvni bunkou useku - mista se o nej
+				# musi posunout, aby zustala na sve prave casti cesty.
+				lane_slot_off[entry_lane] = float(lane_slot_off[entry_lane]) \
+					+ q.distance_to(p[0])
 	for i in range(lane_path.size()):
 		if level.node_kind(lane_end_node(i)) != Level.CIL:
 			continue
@@ -326,6 +369,11 @@ func lane_element(lane: int) -> int:
 
 func lane_accepts(lane: int, element: int) -> bool:
 	return level.lane_accepts(lane, element)
+
+
+# Poskozuje tenhle usek vubec? Vstupni usek a kmen ne.
+func lane_deals_damage(lane: int) -> bool:
+	return level.lane_deals_damage(lane)
 
 
 # Usek, ze ktereho poutnici vstupuji do mapy. Neposkzuje - poutnik teprve

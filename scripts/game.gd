@@ -168,10 +168,12 @@ func try_build(lane: int, slot: int, element: int) -> bool:
 	if not net.lane_accepts(lane, element):
 		if net.lane_is_neutral(lane):
 			_note("Neutrální úsek nemá element — nedá se na něm stavět.")
+		elif net.lane_is_kmen(lane) or net.lane_is_entry(lane):
+			_note("Tenhle úsek neposkozuje — bonus na něm nemá co posílit.")
 		else:
 			_note("Na úsek %s patří jen bonus %s." % [
-				Element.name_of(net.lane_element(lane)),
-				Element.name_of(net.lane_element(lane))])
+				net.level.lane_type_name(lane),
+				net.level.lane_type_name(lane)])
 		return false
 	if gold < Bonus.COST:
 		_note("Málo zlata na bonus (%d)." % Bonus.COST)
@@ -221,9 +223,10 @@ func dps_on(e: Enemy) -> float:
 	if not e.on_lane():
 		return 0.0
 	var lane: int = e.lane
-	# VSTUPNI USEK NEPOSKOZUJE. Poutnik po nem teprve prichazi - hrac jeste
-	# nemel jakkoli sanci neco udelat, takze by to bylo poskozeni "zdarma".
-	if net.lane_is_entry(lane):
+	# VSTUPNI USEK A KMEN NEPOSKOZUJI. Poutnik po vstupnim useku teprve
+	# prichazi - hrac jeste nemel jakkoli sanci neco udelat, takze by to
+	# bylo poskozeni "zdarma". Kmen je tataz vec, jen si ho hrac kresli sam.
+	if not net.lane_deals_damage(lane):
 		return 0.0
 	var len_px: float = float(net.lane_len[lane])
 	if len_px <= 0.001 or e.speed <= 0.0:
@@ -247,10 +250,7 @@ func set_switch(lane: int) -> void:
 	if j < 0:
 		return
 	switch_sel[j] = int(net.lane_sel_index[lane])
-	if net.lane_is_neutral(lane):
-		_note("Výhybka %d nastavena na neutrální úsek." % (j + 1))
-	else:
-		_note("Výhybka %d nastavena na %s." % [j + 1, Element.name_of(net.lane_element(lane))])
+	_note("Výhybka %d nastavena na %s." % [j + 1, net.level.lane_type_name(lane)])
 
 
 # Který usek vyhybka posila. Hra to potrebuje pri kazdem pruchodu poutnika.
@@ -277,10 +277,7 @@ func cycle_switch(j: int) -> void:
 	var cur: int = int(switch_sel[j])
 	switch_sel[j] = (cur + 1) % lanes.size()
 	var lane: int = net.junction_lane(j, int(switch_sel[j]))
-	if net.lane_is_neutral(lane):
-		_note("Výhybka %d: neutrální úsek." % (j + 1))
-	else:
-		_note("Výhybka %d: %s." % [j + 1, Element.name_of(net.lane_element(lane))])
+	_note("Výhybka %d: %s." % [j + 1, net.level.lane_type_name(lane)])
 
 
 # Usek vybrany na PRVNI vyhybce. HUD v nem ukazuje nasobek poskozeni.
