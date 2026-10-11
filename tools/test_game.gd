@@ -17,7 +17,9 @@ func _init() -> void:
 	_run("vez bere protikladu dvojnasobek", _test_tower_damage)
 	_run("obrana zabiji", _test_defense_kills)
 	_run("vlastni zivel je imunni", _test_own_element_is_free)
+	_run("vez nestrili na sveho", _test_tower_skips_own_element)
 	_run("stavba a vylepseni veze", _test_tower_build_and_levels)
+	_run("vyber, vylepseni a prodej veze", _test_tower_select_sell)
 	_run("pas kolem cest", _test_strip_rules)
 	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
@@ -69,6 +71,18 @@ func _strip_cell_on(g: Game, lane: int, dx: int, dy: int) -> Vector2i:
 	var cs: Array = g.level.lane_cells(lane)
 	var c: Vector2i = cs[cs.size() / 2]
 	return Vector2i(c.x + dx, c.y + dy)
+
+
+# VZDALENOST NA USEK, VE KTERE POUTNIK STOJI PRESNE V TÉ BUNCE. Hleda se
+# v krocich, protoze se pocita z geometrie site - test tak nestoji na tom,
+# ze bunka (x, y) je zrovna na nejakem hezkem nasobku delky.
+func _s_at_cell(g: Game, lane: int, cell: Vector2i) -> float:
+	var steps: int = 400
+	for i in range(steps + 1):
+		var s: float = g.net.lane_len[lane] * float(i) / float(steps)
+		if g.net.cell_at(g.net.point_at(lane, s)) == cell:
+			return s
+	return -1.0
 
 
 # PUST POUTNIKA PO CELY USEK od jeho zacatku. Vraci ho, aby se dalo merit,
@@ -239,6 +253,107 @@ func _test_tower_build_and_levels() -> void:
 			for el in range(Element.COUNT):
 				_check(is_equal_approx(Element.tower_multiplier(el, nt.element), 1.0),
 					"neutralni vez nebere zivlu %d presne 100 %%" % el)
+
+
+# VEZ SE NA SVEHO NEOBRACI. Jan (Oct 2026): "Věže samozřejmě útočí pouze na
+# nepřítele, který není stejného typu... Zbytečně to věži bere příležitost
+# zaútočit na nepřítele, kterému poškození skutečně udělí."
+# Test stoji na tom, ze v dosahu jsou OBA najednou: kdyby vez cílila sveho,
+# zahodila by ranu a ten druhy by zustal bez skrabnuti.
+func _test_tower_skips_own_element() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	if not g.net.strip_has(cell):
+		return
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	var t: Tower = g.tower_at(cell)
+	if t == null:
+		return
+	_check(t.can_hurt(Element.WATER), "ohniva vez neumi ublizit vode")
+	_check(t.can_hurt(Element.EARTH), "ohniva vez neumi ublizit zemi")
+	_check(not t.can_hurt(Element.FIRE), "ohniva vez si mysli, ze ublizi ohni")
+	# SEGMENT ohnive cesty, ktery je v dosahu veze (bunka hned nad pasem)
+	var seg: Vector2i = Vector2i(cell.x, cell.y - 1)
+	var s: float = _s_at_cell(g, fire, seg)
+	_check(s >= 0.0, "na ohnivem useku neni bunka %s" % str(seg))
+	if s < 0.0:
+		return
+	# 1) V DOSAHU JE JEN SVUJ: vez NESMI vystrelit a zustava nabita.
+	var own: Enemy = g.debug_spawn(Element.FIRE)
+	own.lane = fire
+	own.s = s
+	g.run_for(0.30)
+	_check(own.hp >= own.max_hp - 0.001,
+		"vez vystrelila na poutnika sveho elementu (hp %.1f z %.1f)" % [own.hp, own.max_hp])
+	_check(t.shot_t <= 0.0, "vez si vystrelem na sveho vybila strelu")
+	_check(t.cd <= 0.0, "vez si na sveho vybila nabijeni (cd %.2f)" % t.cd)
+	# 2) PRIJDE CIZI: vez vystreli na NEJ, ne na sveho.
+	var other: Enemy = g.debug_spawn(Element.WATER)
+	other.lane = fire
+	other.s = s
+	g.run_for(0.30)
+	_check(other.hp < other.max_hp - 0.001,
+		"vodni poutnik v dosahu ohnive veze nedostal ránu (hp %.1f z %.1f)" %
+		[other.hp, other.max_hp])
+	_check(own.hp >= own.max_hp - 0.001,
+		"vez si nasla svuj element, i kdyz mela ciziho")
+
+
+# VEZ JE SAMOSTATNY OBJEKT: klepnutim se vybere, vylepsi a proda. Jan (Oct
+# 2026): "Věže se musí chovat jako samostatné objekty. Musí být možné je
+# vložit, vybrat, vylepšit a prodat."
+func _test_tower_select_sell() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	if not g.net.strip_has(cell):
+		return
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	var t: Tower = g.tower_at(cell)
+	if t == null:
+		return
+	_check(g.selected_tower() == t, "po postaveni neni vez vybrana")
+	_check(t.spent == Tower.level_cost(1), "vez si nepamatuje investici (%d)" % t.spent)
+	# KLEPNUTI NA VEZ = VYBER, NE VYLEPSENI. Kdyby klepnuti vylepsovalo,
+	# nemel by hrac jak zjistit, co vez umi, a nemohl by ji prodat.
+	var gold_before: int = g.gold
+	var lvl: int = t.level
+	g.tap_build_cell(cell)
+	_check(t.level == lvl, "klepnuti na vez ji vylepsilo (ma byt vyber)")
+	_check(g.gold == gold_before, "klepnuti na vez si vzalo zlato")
+	_check(g.selected_tower() == null, "druhe klepnuti na vybranou vez nezrusilo vyber")
+	# VYBER PRES JINOU VEZ
+	g.tap_build_cell(cell)
+	_check(g.selected_tower() == t, "vez se neda vybrat klepnutim")
+	# VYLEPSENI Z PANELU
+	var up: int = t.upgrade_cost()
+	gold_before = g.gold
+	_check(g.try_upgrade(cell), "vybrana vez nejde vylepsit")
+	_check(t.level == 2, "vez po vylepseni nema level 2 (%d)" % t.level)
+	_check(gold_before - g.gold == up, "vylepseni nestalo svoji cenu")
+	_check(t.spent == Tower.level_cost(1) + up, "investice do veze nesedi (%d)" % t.spent)
+	gold_before = g.gold
+	# PRODEJ: vrati vetsinu investice, ale ne vsechno
+	var back: int = t.sell_back()
+	_check(back > 0, "prodej veze vraci nulu")
+	_check(back < t.spent, "prodej vraci vic, nez hrac do veze dal (%d z %d)" % [back, t.spent])
+	_check(g.try_sell(cell), "vez nejde prodat")
+	_check(g.tower_count() == 0, "prodana vez zustala na desce")
+	_check(g.gold - gold_before == back, "prodej nepridal zlato (%d)" % (g.gold - gold_before))
+	_check(g.selected_tower() == null, "po prodeji zustal vyber")
+	_check(g.sel_tower.x < 0, "po prodeji zustala vybrana bunka %s" % str(g.sel_tower))
+	_check(not g.try_sell(cell), "prodej prazdne bunky prosel")
+	_check(not g.try_upgrade(cell), "vylepseni prazdne bunky proslo")
+	# PO PRODEJI SE DA NA BUNKU POSTAVIT ZNOVU (jinak by prodej byl past)
+	_check(g.try_build(cell), "po prodeji nejde na bunku postavit nova vez")
+	_check(g.tower_at(cell) != null, "nova vez po prodeji nikde")
 
 
 # PAS. Nikdy nelezi na ceste ani na uzlu, nikdy neni bliz nez jedno policko

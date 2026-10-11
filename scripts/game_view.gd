@@ -20,7 +20,9 @@ extends Node2D
 const MAX_TOAST := 3.0
 # VELIKOST VEZE. Je to ctverec v bunce pasu - znacka, ktera musi byt videt
 # na telefonu, ale nesmi prekryt cestu vedle.
-const TOWER_SIDE := 11.0
+# VEZ je osmihran (viz _draw_towers). Polomer je VETSI nez u nepritele:
+# vez ma byt stavba, ktera je videt, ne drobna krabicka.
+const TOWER_SIDE := 16.0
 
 # VELIKOST POUTNIKA. Je to znacka, ktera musi byt citelna na telefonu -
 # poutnik je to, na co se hrac cely cas kouka, takze je vetsi nez zbytek
@@ -222,6 +224,19 @@ func _setup_shot() -> void:
 	for el in [Element.FIRE, Element.EARTH, Element.WATER, Element.AIR, Element.FIRE]:
 		game.debug_spawn(el)
 	game.run_for(11.0)
+	# UKAZKOVE NALEZITOSTI PRO KONTROLU VZHLEDU: vybrana vez (aby byl na
+	# snimku videt i panel s vylepsenim/prodejem) a ROZJETA STRELA. Strela se
+	# jinak neda vyfotit - leti 0,18 s a snimek se dela po trech snimcich.
+	# V rezimu snimku se hra nehybe (viz _process), takze zustane viset.
+	for item in game.towers:
+		var t: Tower = item
+		# Vez i cil musi byt na DESCE: kdyby cil vysel nad horni radek, kreslil
+		# by se nad HUDem a snimek by strelu vubec neukazal.
+		if t.cell.y >= 2 and t.cell.y < game.net.level.rows / 2 and t.cell.x < game.net.level.cols - 3:
+			game.select_tower(t.cell)
+			t.shot_to = game.net.cell_center(Vector2i(t.cell.x + 2, t.cell.y - 1))
+			t.shot_t = Tower.SHOT_FLASH * 0.12
+			break
 	_shot = true
 
 
@@ -401,7 +416,21 @@ func _handle_tap(pos: Vector2) -> void:
 	# bunku PASU (stavi / vylepsi vez) a klepnuti kamkoli JINAM na usek
 	# (prepne vyhybku). Zadna tlacitka vyhybky nejsou: casem jich bude vic,
 	# nez se jich do pruhu vejde, a usek je to, na co se stejne kouka.
-	# NEJDRIV UZEL VYHYBKY. Kruh je to, co hrac vidi jako tlacitko. V uzlu se
+	# PANEL VYBRANE VEZE JE NAD DESKOU, takze se testuje PRVNI: jinak by
+	# klepnuti na "vylepsit" propadlo na bunku pod tlacitkem a hrac by
+	# postavil vez, kterou nechtel.
+	var st: Tower = game.selected_tower()
+	if st != null:
+		if layout.tower_up.has_point(pos):
+			_click()
+			if st.can_upgrade():
+				game.try_upgrade(st.cell)
+			return
+		if layout.tower_sell.has_point(pos):
+			_click()
+			game.try_sell(st.cell)
+			return
+	# PAK UZEL VYHYBKY. Kruh je to, co hrac vidi jako tlacitko. V uzlu se
 	# vstupni usek potkava s vystupnimi a vsechny jsou od stredu stejne
 	# daleko, takze hledani nejblizsiho useku by mohlo vybrat ten, ktery do
 	# vyhybky jen vstupuje - a hrac by prepnul neco jineho, nez na co klepnul.
@@ -411,7 +440,8 @@ func _handle_tap(pos: Vector2) -> void:
 		game.cycle_switch(j)
 		return
 	# PAK BUNKA PASU. Klepnuti na prazdnou bunku stavi vez s elementem te
-	# cesty, klepnuti na hotovou vez ji vylepsi. Mimo pas se nestavi.
+	# cesty, klepnuti na hotovou vez ji VYBRE (vylepseni a prodej jsou pak
+	# tlacitka v panelu). Mimo pas se nestavi.
 	var cell: Vector2i = game.net.cell_at(pos)
 	if game.net.strip_has(cell):
 		_click()
@@ -421,6 +451,11 @@ func _handle_tap(pos: Vector2) -> void:
 	if lane >= 0:
 		_click()
 		game.set_switch(lane)
+		return
+	# KLEPNUTI MIMO DESKU zrusi vyber. Panel s tlacitky nesmi zustat viset na
+	# obrazovce, kdyz hrac dela neco jineho - jinak by prekryval desku a hrac
+	# by nevedel, proc.
+	game.select_tower(Vector2i(-1, -1))
 
 
 # MENU: ctyři tlacitka. Battle spusti kolo, Navod vysvetli pravidla,
@@ -880,7 +915,17 @@ func _draw_battle() -> void:
 	_draw_nodes()
 	_draw_towers()
 	_draw_enemies()
+	# VYBRANA VEZ: oznaceni na desce a panel s vylepsenim/prodejem. Kresli se
+	# jako POSLEDNI nad deskou, aby tlacitka nikdy neprekryla nic, co hrac
+	# potrebuje videt (panel si sam hlida, na ktere strane lezi).
+	var st: Tower = game.selected_tower()
+	if st != null:
+		var sc: Vector2 = game.net.cell_center(st.cell)
+		layout.tower_panel(sc)
+		_draw_tower_sel(sc)
 	_draw_hud()
+	if st != null:
+		_draw_tower_panel(st)
 
 
 # ---------------------------------------------------------------- menu
@@ -1262,26 +1307,112 @@ func _draw_strip() -> void:
 		draw_rect(Rect2(o.x + cw * float(c.x), o.y + ch * float(c.y), cw, ch), col)
 
 
-# VEZE. Ctverec s runou zivlu (barva = element pasu, ve kterem vez stoji),
-# u vystrelu kratka cara na poutnika. Uroven je videt jako pocet malych
-# ctverecku nad vezi - cislo by se do bunky neveslo a barva runy uz nese
-# element.
+# VEZE. Vez je STAVBA, ne poutnik: osmihran s tmavym obrysem, svetlejsi
+# "strechou" a poctem zubu nad sebou podle urovne. Element nese BARVA (vez
+# runu nekresli - runa je znacka poutniku, a prave v tom se obe pletly).
+# Jan (Oct 2026): "Věže by měly být větší a měly by mít jiný design. Teď jsou
+# příliš podobné nepříteli."
 func _draw_towers() -> void:
-	var side: float = maxf(4.0, TOWER_SIDE * layout.s)
+	var r: float = maxf(5.0, TOWER_SIDE * layout.s)
 	for item in game.towers:
 		var t: Tower = item
 		var p: Vector2 = game.net.cell_center(t.cell)
 		var col: Color = Level.value_color(t.element)
 		if t.shot_t > 0.0:
-			draw_line(p, t.shot_to, Color(col.r, col.g, col.b, 0.5), maxf(1.0, 2.0 * layout.s))
-		draw_rect(Rect2(p.x - side - 1.5, p.y - side - 1.5, side * 2.0 + 3.0, side * 2.0 + 3.0),
-			Color(0.09, 0.085, 0.08))
-		draw_rect(Rect2(p.x - side, p.y - side, side * 2.0, side * 2.0), col)
-		_glyph(t.element, p, side * 0.55, Color(0.07, 0.06, 0.06))
+			_draw_shot(p, t.shot_to, col, t.shot_t)
+		var pts: PackedVector2Array = _octagon(p, r)
+		draw_colored_polygon(pts, col)
+		_draw_poly_outline(pts, Color(0.09, 0.085, 0.08), maxf(1.5, 3.0 * layout.s))
+		var cap: PackedVector2Array = _octagon(p, r * 0.55)
+		draw_colored_polygon(cap, col.lightened(0.32))
+		_draw_poly_outline(cap, Color(0.09, 0.085, 0.08, 0.75), maxf(1.0, 1.8 * layout.s))
+		# UROVEN: pocet zubu nad vezi (cislo by se do bunky neveslo).
+		var pw: float = maxf(2.0, 3.6 * layout.s)
 		for l in range(t.level):
-			var pw: float = maxf(2.0, 3.2 * layout.s)
 			draw_rect(Rect2(p.x - (pw * 1.5 + 1.0) + float(l) * (pw + 1.0),
-				p.y - side - 3.0 - pw, pw, pw), Color(0.95, 0.88, 0.60))
+				p.y - r - 5.0 * layout.s - pw, pw, pw), Color(0.95, 0.88, 0.60))
+
+
+# STRELA. Neni to tenka linka: je to tlusta cara s tmavym podkladem, barevnym
+# telem a svetlym jadrem, ktera NAVIC LETI - hlava se posouva od veze k cili.
+# Jan (Oct 2026): "Missile věže by měl být daleko výraznější. Teď je to tak
+# tenká linka, že skoro není vidět."
+#
+# Tmavy podklad je tam proto, ze pas je svetly: bez nej by strela na svetlem
+# pasu zmizela. Svetle jadro neni efekt (zadny glow) - je to plocha barva.
+func _draw_shot(from: Vector2, to: Vector2, col: Color, left: float) -> void:
+	var k: float = clampf(1.0 - left / Tower.SHOT_FLASH, 0.0, 1.0)
+	var head: Vector2 = from.lerp(to, k)
+	var tail: Vector2 = from.lerp(to, maxf(k - 0.45, 0.0))
+	draw_line(tail, head, Color(0.09, 0.085, 0.08), maxf(3.0, 7.4 * layout.s))
+	draw_line(tail, head, col, maxf(2.2, 4.8 * layout.s))
+	draw_line(tail, head, col.lightened(0.45), maxf(1.0, 2.0 * layout.s))
+	# HLAVA strely: plny krouzek, aby byl videt i na jednom pixelu.
+	draw_circle(head, maxf(2.2, 5.0 * layout.s), col.lightened(0.55))
+	draw_arc(head, maxf(2.2, 5.0 * layout.s), 0.0, TAU, 16, Color(0.09, 0.085, 0.08),
+		maxf(1.0, 1.6 * layout.s))
+
+
+# Osmihran jako PackedVector2Array - jedna funkce pro telo i pro strechu.
+func _octagon(p: Vector2, r: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in range(8):
+		var a: float = TAU * float(i) / 8.0 + PI / 8.0
+		pts.append(p + Vector2(cos(a), sin(a)) * r)
+	return pts
+
+
+func _draw_poly_outline(pts: PackedVector2Array, col: Color, w: float) -> void:
+	var closed := pts.duplicate()
+	closed.append(pts[0])
+	draw_polyline(closed, col, w)
+
+
+# OZNACENI VYBRANE VEZE: ramecek bunky + CTVEREC DOSTRELU. Hrac tak vidi, kam
+# vez dosahne, a zaroven ze je vybrana prave tahle (panel s tlacitky k ni
+# patri). Neni to hover - stav se meni jen klepnutim.
+func _draw_tower_sel(center: Vector2) -> void:
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
+	var o: Vector2 = game.net.origin
+	draw_rect(Rect2(o.x + cw * float(game.sel_tower.x), o.y + ch * float(game.sel_tower.y),
+		cw, ch), Color(0.95, 0.88, 0.60, 0.85), false, maxf(2.0, 3.0 * layout.s))
+	var d: int = Tower.RANGE
+	var a: Vector2 = o + Vector2(cw * float(game.sel_tower.x - d), ch * float(game.sel_tower.y - d))
+	var b: Vector2 = o + Vector2(cw * float(game.sel_tower.x + d + 1), ch * float(game.sel_tower.y + d + 1))
+	draw_rect(Rect2(a, b - a), Color(0.95, 0.88, 0.60, 0.30), false, maxf(1.0, 1.8 * layout.s))
+	draw_circle(center, maxf(2.0, 3.0 * layout.s), Color(0.95, 0.88, 0.60))
+
+
+# PANEL VYBRANE VEZE. Jedno misto, kde se vez vylepsuje a prodava - cisla
+# (poskozeni, nabijeni, cena) jsou tu vedle tlacitek, takze hrac nemusi nikam
+# odchazet. Panel se kresli na protilehlou stranu, nez vez stoji (viz
+# ScreenLayout.tower_panel), aby nikdy nezakryl to, co hrac vybral.
+func _draw_tower_panel(t: Tower) -> void:
+	var bar: Rect2 = layout.tower_bar
+	draw_rect(bar, PANEL_BG)
+	draw_line(Vector2(bar.position.x, bar.position.y),
+		Vector2(bar.end.x, bar.position.y), Color(0.46, 0.42, 0.35), 2.0)
+	var col: Color = Level.value_color(t.element)
+	_label(Vector2(layout.text_x, bar.position.y + bar.size.y * 0.42),
+		"Věž %s · úroveň %d" % [Level.value_name(t.element), t.level], 18, col)
+	_label(Vector2(layout.text_x, bar.position.y + bar.size.y * 0.78),
+		"%.0f poškození · %.2f s · dostřel %d" % [t.damage(), t.cooldown(), Tower.RANGE],
+		13, Color(0.58, 0.55, 0.49))
+	# VYLEPSIT: cena je na tlacitku, aby hrac nemusel nikam koukat.
+	if t.can_upgrade():
+		_draw_bar_btn(layout.tower_up, "Vylepšit %d" % t.upgrade_cost(), col, true)
+	else:
+		_draw_bar_btn(layout.tower_up, "Maximální", col, false)
+	_draw_bar_btn(layout.tower_sell, "Prodat +%d" % t.sell_back(), Color(0.85, 0.42, 0.36), true)
+
+
+func _draw_bar_btn(r: Rect2, text: String, accent: Color, live: bool) -> void:
+	draw_rect(r, PANEL_BTN)
+	if live:
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+	_label(Vector2(r.get_center().x, r.position.y + r.size.y * 0.64), text, 16,
+		Color(0.90, 0.87, 0.80) if live else Color(0.42, 0.40, 0.36), true, r.size.x)
 
 
 # MRIZKA. Kresli se JEN V EDITORU - v hre by byla nabytkem, ktery by bral

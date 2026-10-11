@@ -8,8 +8,12 @@ extends RefCounted
 # věže kolem tras, které budou útočit na procházející nepřátele."
 #
 # VEZ JE VAZANA NA BUNKU, NE NA USEK. Element dostava od cesty, ktera tu bunku
-# podbarvuje - vez u ohnive cesty ma ohnivy element, vez v sedem pasu (kmen
-# nebo neutralni usek) je neutralni a dava fyzicke poskozeni vsem stejne.
+# podbarvuje - vez u ohnive cesty ma ohnivy element, vez u neutralni cesty je
+# neutralni a dava fyzicke poskozeni vsem stejne.
+#
+# VEZ JE SAMOSTATNY OBJEKT (Jan: "Věže se musí chovat jako samostatné objekty.
+# Musí být možné je vložit, vybrat, vylepšit a prodat."). Proto si pamatuje,
+# KOLIK HRAC DO NI DAL (`spent`) - z toho se pocita, za kolik ji muze prodat.
 #
 # DOSAH JE CTVERCOVY (Chebyshev), 2 bunky: Jan: "Prozatim budou mit vsechny
 # veze dosah 2 policek ve ctvercovem rozsahu."
@@ -24,23 +28,32 @@ const COST := [60, 100, 160]
 # poskozeni.").
 const DMG := [7.0, 12.0, 20.0]
 const CD := [1.00, 0.90, 0.80]
-# Jak dlouho je videt cara vystrelu. Je to ZNACKA, ne mechanika - hrac z ni
-# pozna, ze vez opravdu strili a na koho.
-const SHOT_FLASH := 0.12
+# Jak dlouho leti strela. Je to ZNACKA, ne mechanika - hrac z ni pozna, ze
+# vez opravdu strili a na koho. Ranu dostane poutnik hned (hitscan); strela
+# je jen to, co hrac vidi, takze se da prodlouzit bez zasahu do pravidel.
+# Jan (Oct 2026): "Missile věže by měl být daleko výraznější."
+const SHOT_FLASH := 0.18
+# KOLIK PROCENT INVESTICE SE VRATI PRI PRODEJI. Prodej musi byt PRODEJ, ne
+# druha pokladna: hrac dostane vetsinu zpatky (muzes prestat stavet jinam),
+# ale ne vsechno - jinak by se stavba a bourani daly otacet dokola zadarmo
+# a rozhodnuti "kam s vezi" by nic nestalo.
+const SELL_BACK := 0.7
 
 var cell: Vector2i = Vector2i.ZERO
 # HODNOTA USEKU, KTERY TEHLE VEZI DAL ELEMENT (0..3, Level.NEUTRAL, Level.KMEN).
 # Nikdy se neposila do `Element.name_of` - na jmena je `Level.value_name`.
 var element: int = Element.FIRE
 var level: int = 1
+# Kolik zlata do veze hrac celkem dal (postaveni + vsechny upgrady).
+var spent: int = 0
 # Kolik sekund zbyva, nez muze vystrelit znovu. Nula = vez je pripravena.
 var cd: float = 0.0
-# Odkud a kam naposledy vystrelila (kresli se z toho cara vystrelu).
+# Odkud a kam naposledy vystrelila a jak dlouho jeste leti strela.
 var shot_to: Vector2 = Vector2.ZERO
 var shot_t: float = 0.0
 
 
-# Cena za postaveni veze dane urovne. Jedno misto, kde se o cenach vi vsechno -
+# Cena za postaveni veze dane urovne. Jedno misto, kde o cenach vi vsechno -
 # HUD, pravidla i testy se ptaji tady, ne kazdy zvlast.
 static func level_cost(l: int) -> int:
 	if l < 1 or l > MAX_LEVEL:
@@ -68,6 +81,22 @@ func dps() -> float:
 	return damage() / maxf(cooldown(), 0.01)
 
 
+# ZA KOLIK SE DA VEZE PRODAT. Vzdy aspon 1 zlaty, aby prodej nikdy nebyl
+# "klepnu a nic" (nula by hraci vypadala jako chyba hry).
+func sell_back() -> int:
+	return maxi(1, int(floor(float(spent) * SELL_BACK)))
+
+
 # JE CIL V DOSAHU? Ctverec 2 bunky na kazdou stranu, ne kruh.
 func in_range(target: Vector2i) -> bool:
 	return absi(target.x - cell.x) <= RANGE and absi(target.y - cell.y) <= RANGE
+
+
+# MUZE VUZEC TOMUHLE POUTNIKOVI VUBEC UBLIZIT? Vez sameho elementu dava nulu
+# (Element.tower_multiplier), takze na nej NESMI utocit - prisla by o ranu,
+# kterou mohla dat nekomu, komu opravdu ublizi.
+# Jan (Oct 2026): "Věže samozřejmě útočí pouze na nepřítele, který není
+# stejného typu. Nemá smysl útočit na nepřítele stejného elementu. Zbytečně to
+# věži bere příležitost zaútočit na nepřítele, kterému poškození skutečně udělí."
+func can_hurt(enemy_el: int) -> bool:
+	return Element.tower_multiplier(enemy_el, element) > 0.0

@@ -81,6 +81,28 @@ var settings_toggle := Rect2()
 var settings_back := Rect2()
 # Navrat do editoru v hornim panelu hry (jen kdyz hrac hraje level z editoru).
 var hud_back := Rect2()
+
+# --- PANEL VYBRANE VEZE ---
+# Vyskoci JEN kdyz je vez vybrana, takze si nesmi brat misto desce natrvalo
+# (deska ma pevny pocet bunek a kazdy pixel navic ji zmensi). Kresli se na
+# PROTILEHLOU stranu, nez na ktere vez stoji - hrac musi porad videt, co
+# vybral, i kdyz se mu pod prstem objevi tlacitka.
+const TOWER_BAR_H := 58.0
+var tower_bar := Rect2()
+var tower_up := Rect2()
+var tower_sell := Rect2()
+
+
+func tower_panel(center: Vector2) -> void:
+	var h: float = maxf(MIN_TOUCH + 10.0 * ui, TOWER_BAR_H * ui)
+	var bar_y: float = (view.y - h) if center.y <= view.y * 0.5 else hud_h + 1.0 * s
+	tower_bar = Rect2(0.0, bar_y, view.x, h)
+	var pad: float = 6.0 * ui
+	var bh: float = h - pad * 2.0
+	var bw: float = minf(maxf(MIN_TOUCH * 2.2, 190.0 * ui), (view.x - 4.0 * PAD * ui) * 0.5)
+	var bx: float = view.x - PAD * ui * 0.5 - bw
+	tower_sell = Rect2(bx, bar_y + pad, bw, bh)
+	tower_up = Rect2(bx - bw - pad, bar_y + pad, bw, bh)
 # Editor: pruh tabu dole, panel otevrene kategorie a plocha, kterou zabira.
 var ed_buttons: Array = []
 # OTEVRENY PANEL: seznam radku (dole -> nahoru), kazdy radek seznam polozek

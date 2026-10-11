@@ -35,7 +35,7 @@ const BLOCKS := [
 	{
 		"art": "_guide_tower",
 		"title": "Věže",
-		"text": "Klepni na pás u cesty. Věž střílí.",
+		"text": "Klepni na pás u cesty: věž se postaví. Klepni na věž: vybereš ji a vylepšíš nebo prodáš.",
 	},
 	{
 		"art": "_guide_damage",

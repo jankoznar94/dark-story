@@ -176,3 +176,43 @@ func _one(w: int, h: int) -> void:
 			var mid: Vector2 = g2.net.point_at(lane, float(g2.net.lane_len[lane]) * 0.5)
 			_check(not g2.net.strip_has(g2.net.cell_at(mid)),
 				"%s: stred useku %d lezi v pasu - klepnuti by stavělo místo prepnuti" % [tag, lane])
+
+	# --- PANEL VYBRANE VEZE: tlacitka musi byt na displeji, nad dotykovym
+	# minimem a NESMI zakryt vez, kterou hrac vybral - jinak by nevidel, co
+	# vlastne vylepsuje. Zkousi se OBE strany: vez v horni i v dolni polovine,
+	# protoze panel se kresli na protilehlou stranu.
+	for want_top in [true, false]:
+		var tcell := Vector2i(-1, -1)
+		for cellv in g2.net.strip_cells:
+			var cc: Vector2i = cellv
+			if (cc.y < g2.net.level.rows / 2) == want_top and g2.tower_at(cc) != null:
+				tcell = cc
+				break
+		if tcell.x < 0:
+			continue
+		var ctr: Vector2 = g2.net.cell_center(tcell)
+		layout.tower_panel(ctr)
+		for r in [layout.tower_bar, layout.tower_up, layout.tower_sell]:
+			_check(r.position.x >= -0.6 and r.end.x <= float(w) + 0.6,
+				"%s: panel veze utika vodorovne (%.1f..%.1f)" % [tag, r.position.x, r.end.x])
+			_check(r.position.y >= -0.6 and r.end.y <= float(h) + 0.6,
+				"%s: panel veze utika svisle (%.1f..%.1f)" % [tag, r.position.y, r.end.y])
+		var touch: float = ScreenLayout.MIN_TOUCH * layout.ui
+		_check(layout.tower_up.size.y >= touch - 0.6,
+			"%s: tlacitko vylepseni je nizke %.1f px (min %.1f)" % [
+				tag, layout.tower_up.size.y, touch])
+		_check(layout.tower_sell.size.x >= touch - 0.6,
+			"%s: tlacitko prodeje je uzke %.1f px (min %.1f)" % [
+				tag, layout.tower_sell.size.x, touch])
+		_check(not layout.tower_up.intersects(layout.tower_sell),
+			"%s: tlacitka vylepseni a prodeje se prekryvaji" % tag)
+		# PANEL NESMI ZAKRYT VYBRANOU VEZ
+		var crect := Rect2(ctr - Vector2(g2.net.cell_w, g2.net.cell_h) * 0.5,
+			Vector2(g2.net.cell_w, g2.net.cell_h))
+		_check(not layout.tower_bar.intersects(crect),
+			"%s: panel zakryva vybranou vez na %s" % [tag, str(tcell)])
+		# a lezi opravdu na protilehle strane, nez vez stoji
+		var panel_below: bool = layout.tower_bar.position.y > float(h) * 0.5
+		_check(panel_below == want_top,
+			"%s: panel je na stejne strane jako vez (nahore=%s, vez nahore=%s)" % [
+				tag, not panel_below, want_top])

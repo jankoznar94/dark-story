@@ -48,6 +48,10 @@ const ROUND_BONUS := 40
 var level: Level = null
 var net: Network = Network.new()
 var towers: Array = []
+# VYBRANA VEZ (bunka), nebo -1. Panel s vylepsenim a prodejem se kresli jen
+# pro ni, takze "co je vybrane" je stav HRY, ne obrazovky - testy se na to
+# ptaji tady a obrazovka si to jen cte.
+var sel_tower: Vector2i = Vector2i(-1, -1)
 var enemies: Array = []
 var gold: int = START_GOLD
 var lives: int = START_LIVES
@@ -89,6 +93,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	switch_sel = []
 	rebuild_network(r, scale_hint, bar_top)
 	towers = []
+	sel_tower = Vector2i(-1, -1)
 	enemies = []
 	gold = level.gold
 	lives = level.lives
@@ -206,7 +211,10 @@ func try_build(cell: Vector2i) -> bool:
 	var t := Tower.new()
 	t.cell = cell
 	t.element = net.strip_element(cell)
+	# Kolik do ni hrac dal - z toho se pocita cena pri prodeji.
+	t.spent = cost
 	towers.append(t)
+	sel_tower = cell
 	_note("Věž %s postavena." % Level.value_name(t.element))
 	return true
 
@@ -225,16 +233,65 @@ func try_upgrade(cell: Vector2i) -> bool:
 		_note("Málo zlata na vylepšení (%d)." % cost)
 		return false
 	gold -= cost
+	t.spent += cost
 	t.level += 1
 	_note("Věž vylepšena na úroveň %d." % t.level)
 	return true
 
 
-# Klepnuti na bunku, kde uz vez stoji, ji vylepsi; jinak se stavi nova.
-# Jedno misto pro tohle rozhodnuti - obrazovka se ho jen ptá.
+# PRODEJ VEZE. Vez je samostatny objekt, takze ji hrac musi umet i zbavit se -
+# jinak by mu spatne postavena vez blokovala bunku do konce hry.
+func try_sell(cell: Vector2i) -> bool:
+	var t: Tower = tower_at(cell)
+	if t == null:
+		_note("Tady žádná věž nestojí.")
+		return false
+	var back: int = t.sell_back()
+	gold += back
+	towers.erase(t)
+	if sel_tower == cell:
+		sel_tower = Vector2i(-1, -1)
+	_note("Věž prodána za %d." % back)
+	return true
+
+
+# ---------------------------------------------------------------- vyber veze
+
+func selected_tower() -> Tower:
+	if sel_tower.x < 0:
+		return null
+	return tower_at(sel_tower)
+
+
+# VYBER VEZE. Klepnuti na hotovou vez ji VYBRE (ne vylepsi): hrac musi nejdriv
+# videt, co ta vez umi a co stoji dalsi level, a teprve pak se rozhodnout.
+# Klepnuti na uz vybranou vez vyber ZRUSI - druhe klepnuti na to same misto
+# musi neco znamenat, ne jen zopakovat prvni.
+func select_tower(cell: Vector2i) -> bool:
+	if tower_at(cell) == null:
+		sel_tower = Vector2i(-1, -1)
+		return false
+	if sel_tower == cell:
+		sel_tower = Vector2i(-1, -1)
+		_note("Výběr zrušen.")
+		return false
+	sel_tower = cell
+	var t: Tower = tower_at(cell)
+	if t.can_upgrade():
+		_note("Věž %s, úroveň %d — vylepšení %d." % [
+			Level.value_name(t.element), t.level, t.upgrade_cost()])
+	else:
+		_note("Věž %s, úroveň %d — maximum." % [Level.value_name(t.element), t.level])
+	return true
+
+
+# Klepnuti na bunku pasu: prazdna = postav vez, obsazena = vyber ji.
+# Jedno misto pro tohle rozhodnuti - obrazovka se ho jen ptá. Vylepseni
+# a prodej uz nejsou "druhe klepnuti na vez", ale tlacitka u vybrane veze:
+# prodavat ve dve klepnuti omylem by hrac prisel o vez, kterou chtel vylepsit.
 func tap_build_cell(cell: Vector2i) -> bool:
 	if tower_at(cell) != null:
-		return try_upgrade(cell)
+		return select_tower(cell)
 	return try_build(cell)
 
 
@@ -553,6 +610,11 @@ func _target_for(t: Tower) -> Enemy:
 		if not e.alive or not e.on_lane():
 			continue
 		if e.lane < 0 or e.lane >= net.lane_len.size():
+			continue
+		# NA SVEHO SE NEUTOCI. Vez, ktera by poutnikovi stejneho elementu
+		# neublizila, na nej nesmi ani vystrelit - prisla by o ranu pro
+		# nekoho, komu opravdu ublizi (Jan, Oct 2026).
+		if not t.can_hurt(e.element):
 			continue
 		if not t.in_range(net.cell_at(net.point_at(e.lane, e.s))):
 			continue
