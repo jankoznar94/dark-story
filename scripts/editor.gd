@@ -303,7 +303,7 @@ func sel_text() -> String:
 	if sel_lane >= 0 and sel_lane < level.lane_count():
 		return "úsek %d · %s · míst %d · (úseků %d · uzlů %d)" % [sel_lane,
 			level.lane_type_name(sel_lane),
-			level.lane_slot_count(sel_lane), level.lane_count(), level.node_count()]
+			level.lane_bonus_slots(sel_lane), level.lane_count(), level.node_count()]
 	return "úseků %d · uzlů %d — klepni na úsek nebo na prvek a vybereš ho" % [
 		level.lane_count(), level.node_count()]
 
@@ -413,7 +413,7 @@ func _select_at(cell: Vector2i) -> bool:
 		sel_lane = sel
 		sel_node = -1
 		status = "Vybran úsek %d (%s, míst %d)." % [sel, level.lane_type_name(sel),
-			level.lane_slot_count(sel)]
+			level.lane_bonus_slots(sel)]
 		return true
 	status = "Tady nic není — klepni na úsek nebo na prvek."
 	return false
@@ -881,13 +881,21 @@ func _kind_press() -> void:
 			sel_node, level.kind_name(nxt), level.validate()[0]]
 
 
+# EXPORT. Kod levelu se nejen vypise nad pruhem, ale ROVNOU SE ZKOPIRUJE do
+# schranky: vypsany radek se na telefonu neda oznacit, takze hrac nemel jak
+# kod dostat ven. Jan: "kod se sice zobrazí, ale nedá se zkopírovat".
+# Vypis nad pruhem zustava jako druha sance, kdyz zapis do schranky prohlizec
+# odmitne (a hrac to v hlasce vidi).
 func _export() -> void:
 	code = level.to_code()
 	var errs: Array = level.validate()
 	if not errs.is_empty():
 		status = "Mapa má chybu: %s" % errs[0]
 		return
-	status = "Kód je vypsaný nad pruhem — opiš ho nebo pošli."
+	if Clipboard.copy(code):
+		status = "Kód (%d znaků) je ve schránce — vlož ho jako text." % code.length()
+	else:
+		status = "Kód se nepodařilo zkopírovat — zkus Export znovu."
 
 
 # =========================================================================

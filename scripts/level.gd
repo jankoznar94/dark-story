@@ -198,6 +198,39 @@ static func value_name(e: int) -> String:
 	return Element.name_of(e)
 
 
+# BARVA HODNOTY USEKU. Druhy par k `value_name` a JEDINE misto, kde se hodnota
+# useku meni na barvu: kmen je tmavy sedy (neposkuzuje vubec), neutralni usek
+# svetle sedy (dela vsem stejne) a element svoji barvu. Pouziva ji hra i
+# editor - kdyby si to kazda obrazovka pocitala sama, kreslil by editor neco
+# jineho, nez na co klepnuti sedi.
+#
+# POZOR: nikdy na tohle nepouzivej `Element.color_of(lane_element(lane))`.
+# Kmen ma -2 a `COLORS[-2]` je barva Země (zaporny index jde od konce pole),
+# takze se kmen kreslil jako zemni cesta a nikdo si toho nevsiml.
+static func value_color(e: int) -> Color:
+	if e == KMEN:
+		return Color(0.36, 0.35, 0.33)
+	if e == NEUTRAL or e < 0 or e >= Element.COUNT:
+		return Color(0.55, 0.53, 0.48)
+	return Element.color_of(e)
+
+
+func lane_type_color(lane: int) -> Color:
+	return Level.value_color(lane_element(lane))
+
+
+# KOLIK MIST NA BONUS MA USEK OPRAVDU (tedy kolik jich lze postavit). Od
+# `lane_slot_count` se lisi u useku, kde stavet NELZE (kmen, neutralni usek):
+# ta cisla v datech zustavaji (hracuv pocet mist se nesmi pri zmene typu
+# ztratit), ale UI je nesmi hlásit - jinak popisek u kmene tvrdi "míst 3",
+# zatimco tlacitko vedle "místa 0". Jan: "na kmenu se zobrazuji mista pro
+# upgrady, ktera by tam nemela existovat".
+func lane_bonus_slots(lane: int) -> int:
+	if not lane_takes_bonus(lane):
+		return 0
+	return lane_slot_count(lane)
+
+
 func lane_type_name(lane: int) -> String:
 	return Level.value_name(lane_element(lane))
 

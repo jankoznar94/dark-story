@@ -374,6 +374,15 @@ func lane_is_neutral(lane: int) -> bool:
 	return level.lane_is_neutral(lane)
 
 
+# USEK BEZ POSKOZENI (kmen). Chybela tu a volala se z game_view i game.gd:
+# kazde volani spadlo na "Nonexistent function" a GDScript po takove chybe
+# UKONCI funkci, ktera ji zavolala - `_lane_color` pak vratila null, barva
+# vysla cerna a cely pruh se kreslil cerny. Chyba se netykala jen kmene:
+# volani bylo pro kazdy usek, ktery neni neutralni.
+func lane_is_kmen(lane: int) -> bool:
+	return level.lane_is_kmen(lane)
+
+
 func lane_element(lane: int) -> int:
 	return level.lane_element(lane)
 

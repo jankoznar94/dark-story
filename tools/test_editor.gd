@@ -25,6 +25,7 @@ func _init() -> void:
 	_run("zpet", _test_undo)
 	_run("presouvani uzlu", _test_move_node)
 	_run("export", _test_export)
+	_run("barva a mista podle typu useku", _test_lane_type_color)
 	_run("seznam levelu", _test_list)
 	if fails.is_empty():
 		print("EDITOR_ALL_PASS=true (%d kontrol)" % checks)
@@ -609,6 +610,88 @@ func _test_export() -> void:
 		_check(back.to_code() == e.code, "kod se po nacteni zmenil")
 		_check(back.lane_count() == e.level.lane_count(), "po nacteni je jiný pocet useku")
 		_check(back.spawn_elements() == e.level.spawn_elements(), "po nacteni jine zivly")
+	# EXPORT MUSI KOD DOSTAT Z TELEFONU VEN. Vypsany radek se neda oznacit,
+	# takze se kod pri exportu kopiruje do schranky - a to se hlida na miste
+	# volani, protoze headless se schranka necte.
+	var esrc: String = FileAccess.get_file_as_string("res://scripts/editor.gd")
+	_check(esrc.contains("Clipboard.copy(code)"), "export nekopiruje kod do schranky")
+	_check(esrc.contains("je ve schránce"), "hrac se nedozvi, ze kod je ve schrance")
+	_check(not Clipboard.copy(""), "prazdny text se do schranky kopirovat nema")
+
+
+# BARVA A MISTA PODLE HODNOTY USEKU. Kmen (-2) a neutralni usek (-1) NEJSOU
+# elementy, takze se na ne NESMI odpovidat pres `Element.color_of/name_of`:
+# GDScript bere zaporny index od konce pole, takze `COLORS[-2]` je barva Zeme
+# a `NAMES[-1]` je "Vzduch". Presne to se stalo - kmen se kreslil hnedovy jako
+# zemska cesta. A druha vec: `net.lane_is_kmen` v siti VUBEC NEBYLA, i kdyz ji
+# game_view volal, takze kazde volani barvy spadlo ("Nonexistent function") a
+# GDScript po te chybe ukonci funkci, ktera ji zavolala - `_lane_color`
+# vratila null a kazdy pruh krome neutralniho se kreslil CERNY.
+func _test_lane_type_color() -> void:
+	var kmen: Color = Level.value_color(Level.KMEN)
+	var neutral: Color = Level.value_color(Level.NEUTRAL)
+	_check(kmen != neutral, "kmen a neutralni usek maji stejnou barvu")
+	for e in range(Element.COUNT):
+		_check(Level.value_color(e) == Element.color_of(e),
+			"barva elementu %s se zmenila" % Element.name_of(e))
+		_check(kmen != Element.color_of(e),
+			"kmen ma barvu elementu %s" % Element.name_of(e))
+	# Hodnota mimo element se NESMI tise preklopit na jiny element.
+	_check(Element.color_of(Level.KMEN) != Element.color_of(Element.EARTH),
+		"color_of(-2) vraci barvu Zeme (zaporny index)")
+	_check(Element.color_of(Level.NEUTRAL) != Element.color_of(Element.AIR),
+		"color_of(-1) vraci barvu Vzduchu (zaporny index)")
+	_check(Element.name_of(Level.KMEN) == "?", "name_of(-2) vraci jmeno elementu")
+	_check(Level.value_name(Level.KMEN) == "kmen", "kmen nema sve jmeno")
+	_check(Level.value_name(Level.NEUTRAL) == "neutrální", "neutral nema sve jmeno")
+
+	# SIT MUSI VEDET, CO JE KMEN. Tenhle test spadne na starem kodu tim, ze se
+	# ukonci hned na prvnim volani a _run to hlasi jako "neudelal ani jednu
+	# kontrolu".
+	var g := Game.new()
+	g.setup(Rect2(0.0, 0.0, 932.0, 430.0), 1.0, 0.0, Level.base())
+	var entry: int = g.net.entry_lane
+	_check(entry >= 0, "sit nema vstupni usek")
+	_check(g.net.lane_is_kmen(entry), "sit nevi, ze vstupni usek je kmen (net)")
+	_check(g.level.lane_is_kmen(entry), "level nevi, ze vstupni usek je kmen")
+	for i in range(g.net.lane_count()):
+		var col: Color = Level.value_color(g.net.lane_element(i))
+		_check(col.r + col.g + col.b > 0.3,
+			"usek %d vychazi cerny (%s)" % [i, col])
+		if g.net.lane_element(i) == Element.EARTH:
+			_check(col == Element.color_of(Element.EARTH),
+				"zemsky usek nema barvu Zeme")
+
+	# MISTA: kmen je v DATECH ma (hracuv pocet se nesmi pri zmene typu ztratit),
+	# ale UI je hlásit NESMI - popisek u kmene jinak tvrdi "míst 3" a hrac cte
+	# mista, ktera tam byt nemaji.
+	var e2 := Editor.new()
+	e2.level = Level.base()
+	e2.sel_lane = entry
+	_check(e2.level.lane_slot_count(entry) == Level.SLOTS,
+		"kmen prisel o pocet mist v datech")
+	_check(e2.level.lane_bonus_slots(entry) == 0, "kmen hlasi mista na bonus")
+	_check(not e2.sel_text().contains("míst %d" % Level.SLOTS),
+		"popisek u kmene hlasi mista (%s)" % e2.sel_text())
+	var elem_lane: int = -1
+	for i in range(e2.level.lane_count()):
+		if e2.level.lane_takes_bonus(i):
+			elem_lane = i
+			break
+	_check(elem_lane >= 0, "na zakladni desce neni usek, kde by sel bonus")
+	if elem_lane >= 0:
+		_check(e2.level.lane_bonus_slots(elem_lane) == Level.SLOTS,
+			"elementarni usek prisel o mista")
+
+	# Barva pruhu je na JEDNOM miste - kdyby si ji kazda obrazovka pocitala
+	# sama, vratila by se ta chyba s kmenem.
+	var src: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	_check(src.contains("Level.value_color("),
+		"barva pruhu nechodi pres Level.value_color")
+	_check(not src.contains("Element.color_of(game.net.lane_element"),
+		"barva pruhu se pocita z elementu (u kmene je to barva Zeme)")
+	_check(not src.contains("Element.color_of(editor.draw_elem)"),
+		"nacrt cesty se pocita z elementu (u kmene je to barva Zeme)")
 
 
 # SEZNAM ULOZENYCH LEVELU. Hlida se hlavne to, ze "novy" NEPREPISE predchozi

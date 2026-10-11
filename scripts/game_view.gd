@@ -515,9 +515,7 @@ func _draw_editor_draft() -> void:
 	var ch: float = game.net.cell_h
 	for cell in editor.draw_cells:
 		var v: Vector2i = cell
-		var col: Color = Color(0.55, 0.53, 0.48)
-		if editor.draw_elem != Level.NEUTRAL:
-			col = Element.color_of(editor.draw_elem)
+		var col: Color = Level.value_color(editor.draw_elem)
 		var p: Vector2 = game.net.origin + Vector2((float(v.x) + 0.5) * cw, (float(v.y) + 0.5) * ch)
 		draw_rect(Rect2(p - Vector2(cw, ch) * 0.5, Vector2(cw, ch)),
 			Color(col.r, col.g, col.b, 0.38))
@@ -576,7 +574,7 @@ func _draw_editor_bar() -> void:
 		elif i == Editor.BTN_ELEM:
 			# Tlacitko zivlu nese BARVU TOHO ZIVLU, ktery se prave kresli -
 			# hrac tak vidi, cim kresli, aniz by to musel nekde cist.
-			accent = Element.color_of(editor.elem)
+			accent = Level.value_color(editor.elem)
 		elif i == editor.tool:
 			# Zvoleny nastroj je svetlejsi. Ne barvou, ale jasem - barva je
 			# v teto hre vyhrazena zivlum.
@@ -935,16 +933,13 @@ func _draw_background() -> void:
 			Color(0.155, 0.14, 0.12, 0.55), 1.0)
 
 
-# Barva pruhu. Neutralni pruh NENI sedy "bez vyznamu" - je to pruh,
-# ktery dela vsem stejne, takze ma vlastni, klidnou barvu. KMEN je jeste
-# tmavsi: neposkozuje vubec, takze nesmi vypadat jako pruh, ktery neco
-# dela.
+# Barva pruhu. Jedno misto, kde se hodnota useku meni na barvu, je
+# `Level.value_color` - hra i editor se musi ptat jeho. Dřív tu stály vlastni
+# vetve a jedna z nich sahala na `Element.color_of(lane_element(lane))`, coz
+# u kmene (-2) vraci barvu Země, a druha volala `net.lane_is_kmen`, ktera
+# neexistovala - kazdy pruh krome neutralniho se pak kreslil CERNY.
 func _lane_color(lane: int) -> Color:
-	if game.net.lane_is_neutral(lane):
-		return Color(0.55, 0.53, 0.48)
-	if game.net.lane_is_kmen(lane):
-		return Color(0.36, 0.35, 0.33)
-	return Element.color_of(game.net.lane_element(lane))
+	return Level.value_color(game.net.lane_element(lane))
 
 
 # JE TENHLE USEK PRAVE ZVYRAZNENY? V HRE je to usek, ktery posila vyhybka -

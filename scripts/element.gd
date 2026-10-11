@@ -32,12 +32,21 @@ const WEAK := 0.5
 const NEUTRAL := 1.0
 
 
+# JMENA A BARVY ELEMENTU. Na hodnotu mimo 0..COUNT se NESMI tise odpovedet:
+# GDScript bere zaporny index od konce pole, takze `COLORS[-2]` je Země a
+# `NAMES[-1]` je "Vzduch". Kdo si toho nevsimne, kresli kmen hnedovou barvou
+# Země a je presvedceny, ze je to spravne - presne to se stalo u kmene.
+# Jedno bezpecne misto pro prepocet hodnoty useku na barvu je `Level.value_color`.
 static func name_of(e: int) -> String:
+	if e < 0 or e >= COUNT:
+		return "?"
 	var s: String = NAMES[e]
 	return s
 
 
 static func color_of(e: int) -> Color:
+	if e < 0 or e >= COUNT:
+		return Color(0.36, 0.35, 0.33)
 	var c: Color = COLORS[e]
 	return c
 
