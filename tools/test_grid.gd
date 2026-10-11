@@ -17,6 +17,7 @@ func _init() -> void:
 	_run("zakladni deska", _test_base_board)
 	_run("geometrie", _test_base_geometry)
 	_run("volba ve vyhybce", _test_choices)
+	_run("delka hotove cesty", _test_lane_bend)
 	_run("kod levelu", _test_code_round_trip)
 	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
@@ -163,6 +164,71 @@ func _test_choices() -> void:
 		var ln: int = lv.node_choice(j2, k)
 		_check(lv.node_kind(lv.lane_end_node(ln)) == Level.CIL,
 			"vystup %d z druhe vyhybky nevede do cile" % k)
+
+
+# DELKA HOTOVE CESTY. Jan (Oct 2026): "Ještě by to chtělo možnost
+# zvětšovat/zmenšovat existující cesty... abych nemusel vše dokola mazat
+# a znovu vkládat." Uzly se nehybou, meni se jen tvar cesty mezi nimi -
+# a prodlouzeni i zkraceni musi byt vratne (co se prida, to se zas vezme).
+func _test_lane_bend() -> void:
+	var lv := Level.base()
+	var lane: int = -1
+	for i in range(lv.lane_count()):
+		if lv.lane_cells(i).size() >= 4:
+			lane = i
+			break
+	_check(lane >= 0, "v mape neni cesta, kterou by slo prodlouzit")
+	if lane < 0:
+		return
+	var before: Array = lv.lane_cells(lane).duplicate()
+	var head: Vector2i = before[0]
+	var tail: Vector2i = before[before.size() - 1]
+	var errs0: int = lv.validate().size()
+	# 1) PRODLOUZENI
+	_check(lv.bend_lane(lane, true), "cesta nejde prodloužit")
+	var mid: Array = lv.lane_cells(lane)
+	_check(mid.size() == before.size() + 2,
+		"prodlouzeni nepridalo dve bunky (%d -> %d)" % [before.size(), mid.size()])
+	_check(mid[0] == head and mid[mid.size() - 1] == tail,
+		"prodlouzeni posunulo konec cesty (%s..%s)" % [str(mid[0]), str(mid[mid.size() - 1])])
+	for i in range(mid.size() - 1):
+		var d: Vector2i = mid[i + 1] - mid[i]
+		_check(absi(d.x) + absi(d.y) == 1,
+			"cesta po prodlouzeni neni souvisla (krok %d)" % i)
+	_check(lv.validate().size() <= errs0, "prodlouzeni rozbilo mapu: %s" % str(lv.validate()))
+	# 2) ZKRACENI ZPET - a musi dat PRESNE puvodni cestu
+	_check(lv.bend_lane(lane, false), "cestu nejde zase zkrátit")
+	var back: Array = lv.lane_cells(lane)
+	_check(back.size() == before.size(),
+		"zkraceni nedalo puvodni delku (%d vs %d)" % [back.size(), before.size()])
+	for i in range(mini(back.size(), before.size())):
+		_check(back[i] == before[i], "zkraceni nedalo puvodni cestu (bunka %d)" % i)
+	# 3) DVE CESTY VEDLE SEBE: prodlouzeni nesmi pridat bunku, ktera lezi na
+	# jine ceste. POZOR: cesty se v UZLECH sdileji odjakziva (vyhybka je
+	# koncova bunka vice cest), takze se hlida jen to, ze zadna NOVE pridana
+	# bunka na jine ceste nelezi.
+	var lv2 := Level.base()
+	var done: bool = false
+	for i in range(lv2.lane_count()):
+		if done:
+			break
+		var before2: Array = lv2.lane_cells(i).duplicate()
+		if lv2.bend_lane(i, true):
+			done = true
+			var cs: Array = lv2.lane_cells(i)
+			for j in range(lv2.lane_count()):
+				if j == i:
+					continue
+				for oc in lv2.lane_cells(j):
+					var o: Vector2i = oc
+					if not cs.has(o):
+						continue
+					_check(before2.has(o),
+						"prodlouzena cesta %d lezi na ceste %d v bunce %s" % [i, j, str(o)])
+	_check(done, "zadna cesta na zakladni desce se neda prodlouzit")
+	# 4) MIMO VYBER: neexistujici usek se neupravi
+	_check(not lv2.bend_lane(-1, true), "uprava neexistujiciho useku prošla")
+	_check(not lv2.bend_lane(lv2.lane_count(), true), "uprava useku za koncem prosla")
 
 
 # ---------------------------------------------------------------- kod levelu

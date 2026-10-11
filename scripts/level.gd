@@ -202,6 +202,97 @@ static func value_color(e: int) -> Color:
 	return Element.color_of(e)
 
 
+# =========================================================================
+# DELKA EXISTUJICI CESTY
+#
+# Jan (Oct 2026): "Ještě by to chtělo možnost zvětšovat/zmenšovat existující
+# cesty... Abych nemusel vše dokola mazat a znovu vkládat."
+
+# ZVETSENI/ZMENSENI HOTOVE CESTY. Uzly (start, vyhybka, spojka, cil) se
+# NEHYBOU - meni se jen tvar cesty mezi nimi: do prostredku se vlozi
+# "vybouleni" (cesta obejde o bunku vedle), takze se prodlouzi o DVE bunky,
+# a "kratsi" to same vybouleni zase slozi. Dve bunky proto, ze cesta vede
+# po mrizce: o jednu bunku se neda obejit tak, aby zustala souvisla.
+#
+# Nepoužije se misto, ktere je obsazene (jina cesta, uzel, mimo mrizku) -
+# a stejne jako kazda jina zmena v editoru projde kontrolou mapy (validate).
+func bend_lane(lane: int, grow: bool) -> bool:
+	if lane < 0 or lane >= lane_count():
+		return false
+	var old: Array = lane_cells(lane)
+	if old.size() < 3:
+		# Kratka cesta (dve bunky) nema kam vybouleni vlozit.
+		return false
+	if grow:
+		return _bend_grow(lane, old)
+	return _bend_shrink(lane, old)
+
+
+func _bend_grow(lane: int, old: Array) -> bool:
+	for i in range(old.size() - 1):
+		var a: Vector2i = old[i]
+		var b: Vector2i = old[i + 1]
+		var d: Vector2i = b - a
+		if absi(d.x) + absi(d.y) != 1:
+			continue
+		for p in [Vector2i(-d.y, d.x), Vector2i(d.y, -d.x)]:
+			var c1: Vector2i = a + p
+			var c2: Vector2i = b + p
+			if not _bend_cell_free(lane, old, c1) or not _bend_cell_free(lane, old, c2):
+				continue
+			var out: Array = []
+			out.append_array(old.slice(0, i + 1))
+			out.append(c1)
+			out.append(c2)
+			out.append_array(old.slice(i + 1, old.size()))
+			lanes[lane]["cells"] = out
+			return true
+	return false
+
+
+func _bend_shrink(lane: int, old: Array) -> bool:
+	for i in range(old.size() - 3):
+		var a: Vector2i = old[i]
+		var m1: Vector2i = old[i + 1]
+		var m2: Vector2i = old[i + 2]
+		var b: Vector2i = old[i + 3]
+		var d: Vector2i = b - a
+		if absi(d.x) + absi(d.y) != 1:
+			continue
+		# Vybouleni ma tvar a -> a+p -> b+p -> b.
+		if m1 != a + Vector2i(-d.y, d.x) and m1 != a + Vector2i(d.y, -d.x):
+			continue
+		if m2 != b + (m1 - a):
+			continue
+		var out: Array = []
+		out.append_array(old.slice(0, i + 1))
+		out.append_array(old.slice(i + 3, old.size()))
+		lanes[lane]["cells"] = out
+		return true
+	return false
+
+
+# MUZE TAM VYBOULE­NI VUBCE VYJIT? Nesmi to byt mimo mrizku, na uzlu, na
+# vlastni ceste a ani na ceste jine.
+func _bend_cell_free(lane: int, old: Array, c: Vector2i) -> bool:
+	if not in_bounds(c.x, c.y):
+		return false
+	if node_at_cell(c) >= 0:
+		return false
+	for oc in old:
+		var o: Vector2i = oc
+		if o == c:
+			return false
+	for j in range(lane_count()):
+		if j == lane:
+			continue
+		for oc in lane_cells(j):
+			var o: Vector2i = oc
+			if o == c:
+				return false
+	return true
+
+
 func lane_type_color(lane: int) -> Color:
 	return Level.value_color(lane_element(lane))
 

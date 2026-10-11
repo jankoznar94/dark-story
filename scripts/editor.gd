@@ -101,7 +101,11 @@ const BTN_PASTE := BTN_COPY + 1
 const BTN_ROT := BTN_COPY + 2
 const BTN_FLIP := BTN_COPY + 3
 const BTN_DEL_SEL := BTN_COPY + 4
-const BTN_COUNT := BTN_DEL_SEL + 1
+# DELKA HOTOVE CESTY. Je to akce NAD VYBEREM (hrac ma vybrany usek a meni
+# ho), tak stoji vedle smazani - ne v palete, kde se jen vybira, cim se kresli.
+const BTN_LANE_LONG := BTN_DEL_SEL + 1
+const BTN_LANE_SHORT := BTN_LANE_LONG + 1
+const BTN_COUNT := BTN_LANE_SHORT + 1
 
 # SIRKA TLACITEK "-"/"+" V PANELU. Jan: "Tlačítka + a - jsou zbytečně velká.
 # Tato tlačítka by měla být malá a ideálně přímo nalepená na hodnotu, kterou
@@ -467,6 +471,11 @@ func _lane_params_row(include_delete: bool) -> Array:
 	]
 	if include_delete and sel_lane >= 0 and sel_lane < level.lane_count():
 		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
+		# DELKA CESTY. Jan (Oct 2026): "Ještě by to chtělo možnost
+		# zvětšovat/zmenšovat existující cesty... abych nemusel vše dokola
+		# mazat a znovu vkládat." Uzly se nehybou, meni se jen tvar cesty.
+		row.append({"act": BTN_LANE_SHORT, "label": "kratší", "w": 0.8, "on": false})
+		row.append({"act": BTN_LANE_LONG, "label": "delší", "w": 0.8, "on": false})
 	return row
 
 
@@ -1572,6 +1581,10 @@ func press(button: int) -> void:
 			flip_clip()
 		BTN_DEL_SEL:
 			delete_box()
+		BTN_LANE_LONG:
+			_lane_len_press(true)
+		BTN_LANE_SHORT:
+			_lane_len_press(false)
 		BTN_UNDO:
 			undo()
 		BTN_LIST:
@@ -1736,6 +1749,32 @@ func _export() -> void:
 #   * parametry v panelu se vezmou z vybraneho useku (`panel_element`,
 #   * zkontroluje se cela mapa a prvni chyba jde do statusu,
 #   * ulozi se. Save tlacitko nema smysl: hrac uklada kazdou zmenu.
+# PRODLOUZENI / ZKRATENI VYBRANE CESTY. Uzly (start, vyhybka, spojka, cil)
+# se NEHYBOU, meni se jen tvar cesty mezi nimi - hrac tak nemusi cestu smazat
+# a nakreslit znovu. Projde to kontrolou mapy jako kazda jina zmena.
+func _lane_len_press(grow: bool) -> void:
+	if sel_lane < 0 or sel_lane >= level.lane_count():
+		status = "Nejdřív klepni na cestu, kterou chceš upravit."
+		return
+	var pre: Level = level.clone()
+	var before: Array = pre.validate()
+	var was: int = level.lane_cells(sel_lane).size()
+	if not level.bend_lane(sel_lane, grow):
+		level = pre
+		status = "Cesta se tudy nedá %s — vedle už něco je." % (
+			"prodloužit" if grow else "zkrátit")
+		return
+	var after: Array = level.validate()
+	if after.size() > before.size():
+		level = pre
+		status = after[0]
+		return
+	_push_state(local_name, pre, sel_lane, sel_node)
+	_after_change()
+	var now: int = level.lane_cells(sel_lane).size()
+	status = "Cesta %d: %d -> %d buněk." % [sel_lane + 1, was, now]
+
+
 func _after_change() -> void:
 	# Vybrany usek i prvek musi po kazde zmene ukazovat na neco, co
 	# existuje - po smazani by vyber visel na indexu, ktery uz neni.

@@ -20,6 +20,7 @@ func _init() -> void:
 	_run("jidel a cil", _test_element_and_exit)
 	_run("uprava existujiciho useku", _test_edit_existing)
 	_run("mista jsou legacy", _test_lane_slots_are_legacy)
+	_run("delka cesty", _test_lane_len)
 	_run("typy cest", _test_lane_types)
 	_run("oznaceni prvku", _test_select_node)
 	_run("zpet", _test_undo)
@@ -375,6 +376,47 @@ func _test_edit_existing() -> void:
 # POČET MÍST NA ÚSEKU JE LEGACY DATA. Veze se staví do pásu kolem cesty, ne
 # na místa na úseku, takže editor žádné ovládání počtu míst nemá - a data si
 # usek nese dál, aby se stará mapa dala přečíst a zapsat přesně tak, jak byla.
+# DELKA HOTOVE CESTY. Jan (Oct 2026): "Ještě by to chtělo možnost
+# zvětšovat/zmenšovat existující cesty... abych nemusel vše dokola mazat
+# a znovu vkládat." Vybrany usek se prodlouzi/zkrati, uzly zustavaji, a jde
+# to vzit zpet.
+func _test_lane_len() -> void:
+	var e := _ed()
+	_lane_level(e)
+	var lane: int = -1
+	for i in range(e.level.lane_count()):
+		if e.level.lane_cells(i).size() >= 4:
+			lane = i
+			break
+	_check(lane >= 0, "vykresleny level nema cestu se aspon 4 bunkami")
+	if lane < 0:
+		return
+	e.sel_lane = lane
+	e.sel_node = -1
+	var was: int = e.level.lane_cells(lane).size()
+	e.press(Editor.BTN_LANE_LONG)
+	_check(e.level.lane_cells(lane).size() > was,
+		"tlacitko 'delsi' cestu neprodouzilo (%d)" % e.level.lane_cells(lane).size())
+	_check(e.status.contains("->"), "status nemluvi o delce cesty: " + e.status)
+	var longer: int = e.level.lane_cells(lane).size()
+	e.press(Editor.BTN_LANE_SHORT)
+	_check(e.level.lane_cells(lane).size() < longer,
+		"tlacitko 'kratsi' cestu nezkratilo (%d)" % e.level.lane_cells(lane).size())
+	_check(e.level.lane_cells(lane).size() == was,
+		"zkraceni nevratilo puvodni delku (%d vs %d)" % [e.level.lane_cells(lane).size(), was])
+	# ZPET vrati i delku cesty
+	e.press(Editor.BTN_LANE_LONG)
+	var after_undo: int = e.level.lane_cells(lane).size()
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.lane_cells(lane).size() == was,
+		"zpet nevratilo delku cesty (%d vs %d)" % [e.level.lane_cells(lane).size(), was])
+	# BEZ VYBERU se delka menit neda (a musi to rict)
+	e.sel_lane = -1
+	e.press(Editor.BTN_LANE_LONG)
+	_check(e.level.lane_cells(lane).size() == was,
+		"bez vyberu se cesta prodlouzila")
+
+
 func _test_lane_slots_are_legacy() -> void:
 	var e := _ed()
 	_lane_level(e)
