@@ -19,6 +19,7 @@ func _init() -> void:
 	_run("volba ve vyhybce", _test_choices)
 	_run("delka hotove cesty", _test_lane_bend)
 	_run("posun vystupku cesty", _test_bump_shift)
+	_run("posun cele rovne cary", _test_move_piece)
 	_run("kod levelu", _test_code_round_trip)
 	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
@@ -620,3 +621,83 @@ func _test_diamond_survives() -> void:
 	# rozdel a zase spoj: obe paralelni trasy Konci ve stejnem uzlu
 	_check(lv.lane_end_node(lv.lanes_into(m)[0]) == m, "prvni usek nekonci ve spojce")
 	_check(lv.lane_end_node(lv.lanes_into(m)[1]) == m, "druhy usek nekonci ve spojce")
+
+
+# POSUN CELE ROVNE CARY MEZI DVEMA UZLY. Jan (Oct 2026): "Posouvání celých
+# úseku teď funguje maximálně o 2 pozice. Bylo by fajn, kdyby s tím šlo hýbat
+# neomezeně. A rozšiřování do boků stále rozšiřuje jen kousek celé čáry místo
+# celku."
+#
+# Kus, ktery konci v UZLU, se posouva I S TIM UZLEM - takze se hýbe celou
+# rovnou carou (ne jen vyboulenim v ni) a tolik bunek, kolik jich hrac ujede.
+# Presne to je "neomezene": kazda poloha prstu je jeden krok, zadny strop
+# krome okraje mapy.
+func _test_move_piece() -> void:
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 8, Level.START)
+	var c: int = lv.add_node(12, 8, Level.CIL)
+	lv.add_lane(s, c, "RRRRRRRRRR", Element.FIRE)
+	_check(lv.lane_cells(0).size() == 11, "testovaci cara nema 11 bunek")
+	# 1) KUS POD PRSTEM JE CELA CARA (a konci v obou uzlech)
+	var pc: Dictionary = lv.piece_at(0, Vector2i(7, 8), Vector2i(1, 0))
+	_check(not pc.is_empty(), "na rovne care se nenasel zadny kus")
+	if pc.is_empty():
+		return
+	_check(int(pc["a"]) == 0 and int(pc["b"]) == 10,
+		"kus na rovne care nemiri od uzlu k uzlu (%d..%d)" % [int(pc["a"]), int(pc["b"])])
+	# 2) PET KROKU DOLU: cara zustane rovna, oba uzly jdou s ni
+	var cur: Vector2i = Vector2i(7, 8)
+	for step in range(5):
+		var res: Dictionary = lv.move_piece(0, cur, Vector2i(0, 1), Vector2i(1, 0))
+		_check(bool(res["ok"]), "posun cele cary selhal v kroku %d" % (step + 1))
+		if not bool(res["ok"]):
+			return
+		_check(res["nodes"].size() == 2,
+			"posun cary neposunul oba uzly (%d)" % res["nodes"].size())
+		lv.lanes[0]["cells"] = res["cells"]
+		for item in res["nodes"]:
+			lv.nodes[int(item["i"])]["c"] = item["to"].x
+			lv.nodes[int(item["i"])]["r"] = item["to"].y
+		cur += Vector2i(0, 1)
+	var cs: Array = lv.lane_cells(0)
+	_check(cs.size() == 11, "posun cary zmenil pocet bunek (%d)" % cs.size())
+	for i in range(cs.size()):
+		_check(cs[i] == Vector2i(2 + i, 13),
+			"cara neni rovna po posunu (bunka %d: %s)" % [i, str(cs[i])])
+	_check(lv.node_cell(s) == Vector2i(2, 13) and lv.node_cell(c) == Vector2i(12, 13),
+		"uzly nejdou s carou (%s, %s)" % [str(lv.node_cell(s)), str(lv.node_cell(c))])
+	_check(lv.validate().is_empty(), "po posunu cary je mapa rozbita: " + str(lv.validate()))
+	# 3) KROK ZPET: cara se vrati presne na puvodni radek
+	var res2: Dictionary = lv.move_piece(0, Vector2i(7, 13), Vector2i(0, -1), Vector2i(1, 0))
+	_check(bool(res2["ok"]), "posun cary zpet selhal")
+	if bool(res2["ok"]):
+		lv.lanes[0]["cells"] = res2["cells"]
+		for item2 in res2["nodes"]:
+			lv.nodes[int(item2["i"])]["c"] = item2["to"].x
+			lv.nodes[int(item2["i"])]["r"] = item2["to"].y
+		_check(lv.lane_cells(0)[0] == Vector2i(2, 12), "krok zpet neposunul caru o bunku")
+	# 4) KUS S UZLEM JEN NA JEDNOM KONCI: druhy konec je roh - strana se
+	#    prodlouzi, uzel jde s prstem
+	var lv2 := Level.new()
+	var s2: int = lv2.add_node(2, 8, Level.START)
+	var c2: int = lv2.add_node(8, 5, Level.CIL)
+	lv2.add_lane(s2, c2, "RRRRRRUUU", Element.FIRE)
+	var pc2: Dictionary = lv2.piece_at(0, Vector2i(4, 8), Vector2i(1, 0))
+	_check(not pc2.is_empty(), "na care u startu se nenasel kus")
+	if pc2.is_empty():
+		return
+	_check(int(pc2["a"]) == 0 and int(pc2["b"]) < lv2.lane_cells(0).size() - 1,
+		"kus u startu nema uzel jen na jednom konci (%d..%d)" % [
+			int(pc2["a"]), int(pc2["b"])])
+	var res3: Dictionary = lv2.move_piece(0, Vector2i(4, 8), Vector2i(0, -1), Vector2i(1, 0))
+	_check(bool(res3["ok"]), "posun kusu s uzlem na jednom konci selhal")
+	if bool(res3["ok"]):
+		_check(res3["nodes"].size() == 1, "posunl se vic uzlu, nez ma kus na konci")
+		for item3 in res3["nodes"]:
+			lv2.nodes[int(item3["i"])]["c"] = item3["to"].x
+			lv2.nodes[int(item3["i"])]["r"] = item3["to"].y
+		lv2.lanes[0]["cells"] = res3["cells"]
+		_check(lv2.node_cell(s2) == Vector2i(2, 7), "uzel na konci kusu se neposunul")
+		_check(lv2.lane_cells(0).has(Vector2i(4, 7)),
+			"kus se neposunul nahoru: " + str(lv2.lane_cells(0)))
+		_check(lv2.validate().is_empty(), "posun kusu s uzlem rozbil mapu: " + str(lv2.validate()))

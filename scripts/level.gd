@@ -532,6 +532,168 @@ func widen_run(lane: int, cell: Vector2i, side: int, grow: bool) -> bool:
 	return true
 
 
+# ROVNY KUS CESTY POD BUNKOU (bez ohledu na to, co je na jeho koncich).
+# Vraci {} nebo {a, b, d}: kus jsou bunky cs[a..b] ve smeru `d`.
+#
+# Na rozdil od `run_at` (ktery hleda "vystupek", tedy kus s bocnimi stranami
+# presne jednou bunkou zpet) bere i kus, ktery ZACINA nebo KONCI V UZLU -
+# takovy kus se da posunout i s tim uzlem, takze se da hýbat celou rovnou
+# carou (Jan: "Posouvání celých úseku teď funguje maximálně o 2 pozice. Bylo
+# by fajn, kdyby s tím šlo hýbat neomezeně.").
+#
+# Smer se vybira tak, aby kus byl co NEJDELSI (u rohu pod prstem jsou dva
+# mozne - jeden je kus, druhy jeho rameno); pri stejne delce vyhrava smer,
+# kterym cesta z bunky pokracuje.
+func piece_at(lane: int, cell: Vector2i, hint: Vector2i = Vector2i.ZERO) -> Dictionary:
+	if lane < 0 or lane >= lane_count():
+		return {}
+	var cs: Array = lane_cells(lane)
+	var n: int = cs.size()
+	var i: int = -1
+	for k in range(n):
+		if cs[k] == cell:
+			i = k
+			break
+	if i < 0:
+		return {}
+	var here: Vector2i = cs[i]
+	var dirs: Array = []
+	if i + 1 < n:
+		var nxt: Vector2i = cs[i + 1]
+		dirs.append(nxt - here)
+	if i > 0:
+		var prv: Vector2i = cs[i - 1]
+		dirs.append(here - prv)
+	var best: Dictionary = {}
+	for item in dirs:
+		var d: Vector2i = item
+		if absi(d.x) + absi(d.y) != 1:
+			continue
+		# `hint` = smer kusu, ktery uz drzime: behem tahu se kus hybe a jeho
+		# rameno muze byt delsi nez on - bez tohoto by prst po par krocích
+		# chytil rameno a tah by se zastavil.
+		if hint != Vector2i.ZERO and d != hint and d != -hint:
+			continue
+		var a: int = i
+		while a > 0 and (cs[a] - cs[a - 1]) == d:
+			a -= 1
+		var b: int = i
+		while b + 1 < n and (cs[b + 1] - cs[b]) == d:
+			b += 1
+		# Jedna bunka neni kus - neni co posouvat.
+		if b - a < 1:
+			continue
+		if best.is_empty() or (b - a) > int(best["b"]) - int(best["a"]):
+			best = {"a": a, "b": b, "d": d}
+	return best
+
+
+# POSUN ROVNEHO KUSU POD BUNKOU O JEDNU BUNKU KOLMO NA NEJ (`p`).
+#
+# Vsechny bunky kusu se posunou o `p` a na kazdem konci se kus musi znovu
+# napojit na zbytek cesty:
+#   * konec je ROH (cesta pokracuje bokem): kdyz kus jde VEN z tvaru, vlozi se
+#     jedna bunka strany; kdyz jde DOVNITR, jedna bunka strany se vypusti,
+#   * konec je UZEL: uzel se posune s kusem - vrati se v "nodes", aby ho editor
+#     mohl presunout i s tim, co je na nej napojene.
+#
+# NIC NEMENI (je to cista geometrie): vraci {"ok", "cells", "nodes"}. Uzel si
+# posouva volajici - drzi si tim kontrolu nad celym krokem (kdyz to nepujde,
+# krok se vezme zpet).
+func move_piece(lane: int, cell: Vector2i, p: Vector2i, hint: Vector2i = Vector2i.ZERO) -> Dictionary:
+	var no: Dictionary = {"ok": false, "cells": [], "nodes": []}
+	var pc: Dictionary = piece_at(lane, cell, hint)
+	if pc.is_empty():
+		return no
+	var cs: Array = lane_cells(lane)
+	var n: int = cs.size()
+	var a: int = int(pc["a"])
+	var b: int = int(pc["b"])
+	var d: Vector2i = pc["d"]
+	if absi(p.x) + absi(p.y) != 1:
+		return no
+	if p.x * d.x + p.y * d.y != 0:
+		return no
+	var out: Array = []
+	var added: Array = []
+	var nodes: Array = []
+	# LEVA STRANA
+	if a == 0:
+		var sn: int = lane_start_node(lane)
+		if sn < 0:
+			return no
+		nodes.append({"i": sn, "to": cs[0] + p})
+	else:
+		var A: Vector2i = cs[a - 1]
+		var o: Vector2i = cs[a] - A
+		if absi(o.x) + absi(o.y) != 1:
+			return no
+		if p == o:
+			out.append_array(cs.slice(0, a))
+			var conn: Vector2i = A + p
+			out.append(conn)
+			added.append(conn)
+		elif p == -o:
+			# Kus dosedne na sousedni bunku - ta uz neni potreba.
+			out.append_array(cs.slice(0, a - 1))
+		else:
+			return no
+	# KUS SE POSUNE
+	for k in range(a, b + 1):
+		var c: Vector2i = cs[k] + p
+		out.append(c)
+		added.append(c)
+	# PRAVA STRANA
+	if b == n - 1:
+		var en: int = lane_end_node(lane)
+		if en < 0:
+			return no
+		for item in nodes:
+			if int(item["i"]) == en:
+				return no
+		nodes.append({"i": en, "to": cs[n - 1] + p})
+	else:
+		var B: Vector2i = cs[b + 1]
+		var ob: Vector2i = cs[b] - B
+		if absi(ob.x) + absi(ob.y) != 1:
+			return no
+		if p == ob:
+			var conn2: Vector2i = B + p
+			out.append(conn2)
+			added.append(conn2)
+			out.append_array(cs.slice(b + 1, n))
+		elif p == -ob:
+			out.append_array(cs.slice(b + 2, n))
+		else:
+			return no
+	if not _is_simple_path(out):
+		return no
+	for item2 in added:
+		var c2: Vector2i = item2
+		if not in_bounds(c2.x, c2.y):
+			return no
+		if node_at_cell(c2) >= 0 and node_at_cell(c2) != _node_at(c2, nodes):
+			return no
+		for j in range(lane_count()):
+			if j == lane:
+				continue
+			for o2 in lane_cells(j):
+				if o2 == c2:
+					return no
+	return {"ok": true, "cells": out, "nodes": nodes}
+
+
+# KTERY Z PRESOUVANYCH UZLU SE OCTNE NA TE BUNCE (jinak -1). Bunka, na kterou
+# se uzel posouva, je pro nas volna i kdyz je na ni uzel - vždyť ten uzel je
+# ten, ktery se hybe.
+func _node_at(c: Vector2i, nodes: Array) -> int:
+	for item in nodes:
+		var to: Vector2i = item["to"]
+		if to == c:
+			return int(item["i"])
+	return -1
+
+
 # SOUVISLA CESTA BEZ SMYCKY: sousedni bunky a zadna se neopakuje. Posun kusu
 # se tim da vyloucit, kdyby mel cestu preklopit sam na sebe.
 func _is_simple_path(cells: Array) -> bool:

@@ -447,33 +447,41 @@ func _test_lane_finger() -> void:
 		"panel vyberu porad nabizi tlacitko na delku cesty")
 	_check(not _panel_has_needle(e, Editor.PANEL_TOOLS, "kratší"),
 		"panel nastroju nabizi tlacitko na delku cesty")
-	# 1) CHYTIM KUS UPROSTRED A TÁHNU DO STRANY = OHNE SE U PRSTU
+	# 1) CHYTIM ROVNOU CARU UPROSTRED A TÁHNU KOLMO NA NI = POSUNE SE CELA CARA
+	#    (i s uzly na obou koncich), ne jen kousek. Presne to Jan psal:
+	#    "rozšiřování do boků stále rozšiřuje jen kousek celé čáry místo celku."
 	var was: int = e.level.lane_cells(0).size()
 	_check(e.begin_move(Vector2i(4, 5)), "cesta se neda chytit prstem")
 	e.extend_move(Vector2i(4, 6))
 	var cs: Array = e.level.lane_cells(0)
-	_check(cs.size() == was + 2,
-		"ohnuti kusu nepridalo dve bunky (%d -> %d)" % [was, cs.size()])
-	_check(cs.has(Vector2i(4, 6)),
-		"ohnuti nevzniklo u bunky, za kterou hrac chytil: " + str(cs))
-	_check(cs.has(Vector2i(4, 5)), "ohnuti utrhlo bunku, za kterou hrac chytil")
-	# 2) TAH ZPET NA PUVODNI MISTO = SROVNA SE (a to same gesto)
+	_check(cs.size() == was,
+		"posun cele cary zmenil pocet bunek (%d -> %d)" % [was, cs.size()])
+	for i in range(cs.size()):
+		_check(cs[i] == Vector2i(2 + i, 6),
+			"cara se neposunula cela (bunka %d: %s)" % [i, str(cs[i])])
+	_check(e.level.node_cell(s) == Vector2i(2, 6) and e.level.node_cell(c) == Vector2i(6, 6),
+		"uzly se s carou neposunuly (%s, %s)" % [
+			str(e.level.node_cell(s)), str(e.level.node_cell(c))])
+	# 2) TAH ZPET NA PUVODNI MISTO = PRESNE PUVODNI CARA (a to same gesto)
 	e.extend_move(Vector2i(4, 5))
-	_check(e.level.lane_cells(0).size() == was,
-		"tah zpet kus nesrovnal (%d vs %d)" % [e.level.lane_cells(0).size(), was])
+	var back5: Array = e.level.lane_cells(0)
+	_check(back5.size() == was, "tah zpet nedal puvodni delku (%d vs %d)" % [back5.size(), was])
+	for i in range(mini(back5.size(), was)):
+		_check(back5[i] == Vector2i(2 + i, 5), "tah zpet caru nevrátil (bunka %d)" % i)
 	e.end_move()
-	# 3) CHYTIM CESTU U KONCE = POSOUVA SE KONEC (ne uzel - cestu)
+	# 3) TAH PO OSE CARY U KONCE = KONEC SE PRODLOUZI (uzel jde s prstem)
 	var len3: int = e.level.lane_cells(0).size()
 	_check(e.begin_move(Vector2i(5, 5)), "cesta se u konce neda chytit")
-	e.extend_move(Vector2i(6, 6))
+	e.extend_move(Vector2i(6, 5))
 	e.end_move()
 	var cs3: Array = e.level.lane_cells(0)
-	_check(cs3[cs3.size() - 1] == Vector2i(6, 6),
-		"tah za cestu u konce neposunul konec (%s)" % str(cs3[cs3.size() - 1]))
-	_check(cs3.size() == len3 + 1, "posun konce nepridal jednu spojovaci bunku")
+	_check(cs3.size() == len3 + 1,
+		"tahem za konec se cesta neprodouzila (%d -> %d)" % [len3, cs3.size()])
+	_check(cs3[cs3.size() - 1] == Vector2i(7, 5),
+		"konec se neposunul (%s)" % str(cs3[cs3.size() - 1]))
 	# 4) KLEPNUTI NA CESTU (tah bez pohybu) dal ROZDELI cestu na dve
 	var lanes_before: int = e.level.lane_count()
-	_check(e.begin_move(Vector2i(3, 6)), "cesta se neda chytit")
+	_check(e.begin_move(Vector2i(3, 5)), "cesta se neda chytit")
 	e.end_move()
 	_check(e.level.lane_count() == lanes_before + 1,
 		"klepnuti na cestu ji nerozdelilo (%d)" % e.level.lane_count())
@@ -1513,12 +1521,13 @@ func _test_lane_grab_tools() -> void:
 	_check(e.moving and e.drag_lane == 0,
 		"chycena cesta neni oznacena jako tazena (moving=%s, lane=%d)" % [str(e.moving), e.drag_lane])
 	e.end_move()
-	# 2) NASTROJ "VYBER": tah za konec cestu PRODLOUZI (a neobtahne obdelnik)
+	# 2) NASTROJ "VYBER": tah PO OSE cesty u jejiho konce ji PRODLOUZI (uzel
+	#    jede s prstem) - a neobtahne pritom obdelnik.
 	e.tool = Editor.TOOL_VYBER
 	var was: int = e.level.lane_cells(0).size()
 	_check(e.begin_lane_drag(Vector2i(5, 5)), "nastrojem vyber se cesta neda chytit")
-	_check(e.drag_end == 1, "u konce cesty se nechytil konec (drag_end=%d)" % e.drag_end)
-	e.extend_move(Vector2i(7, 5))
+	_check(e.drag_node_end, "kus u konce cesty nema konec jako uzel")
+	e.extend_move(Vector2i(6, 5))
 	e.end_move()
 	var now: int = e.level.lane_cells(0).size()
 	_check(now == was + 1, "tahem za konec se cesta neprodouzila (%d -> %d)" % [was, now])
@@ -1584,8 +1593,12 @@ func _test_bump_shift() -> void:
 	var was: int = before.size()
 	# 1) PRST NA VRSEK VYSTUPKU: chyta se KUS (posun do strany), ne ohnuti
 	_check(e.begin_move(Vector2i(4, 4)), "vystupek se neda chytit prstem")
-	_check(e.drag_p == Vector2i(0, -1), "chyceny kus nema smer posunu (%s)" % str(e.drag_p))
 	_check(e.drag_run_cell == Vector2i(4, 4), "chyta se jina bunka nez ta pod prstem")
+	# Kolma osa tahu: jednotkovy vektor kolmy na kus. Znamenko dava az prst
+	# (tah nahoru i dolu je stejne platny smer posunu).
+	_check(absi(e.drag_p.x) + absi(e.drag_p.y) == 1, "os posunu neni jednotkova (%s)" % str(e.drag_p))
+	_check(e.drag_p.x * e.drag_d.x + e.drag_p.y * e.drag_d.y == 0,
+		"os posunu neni kolma na kus (%s vs %s)" % [str(e.drag_p), str(e.drag_d)])
 	# 2) TAH NAHORU: cely vrsek se posune, obe bocni strany se prodlouzi
 	e.extend_move(Vector2i(4, 3))
 	var cs: Array = e.level.lane_cells(0)
