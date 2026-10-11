@@ -209,14 +209,17 @@ static func value_color(e: int) -> Color:
 # cesty... Abych nemusel vše dokola mazat a znovu vkládat."
 
 # ZVETSENI/ZMENSENI HOTOVE CESTY. Uzly (start, vyhybka, spojka, cil) se
-# NEHYBOU - meni se jen tvar cesty mezi nimi: do prostredku se vlozi
-# "vybouleni" (cesta obejde o bunku vedle), takze se prodlouzi o DVE bunky,
-# a "kratsi" to same vybouleni zase slozi. Dve bunky proto, ze cesta vede
-# po mrizce: o jednu bunku se neda obejit tak, aby zustala souvisla.
+# NEHYBOU - meni se jen tvar cesty mezi nimi: do cesty se vlozi "vybouleni"
+# (cesta obejde o bunku vedle), takze se prodlouzi o DVE bunky, a "kratsi" to
+# same vybouleni zase slozi. Dve bunky proto, ze cesta vede po mrizce: o jednu
+# bunku se neda obejit tak, aby zustala souvisla.
+#
+# `near` je bunka, za kterou hrac chytil CESTU PRSTEM - vybouleni se dela u ni,
+# ne na zacatku cesty. Hrac tak tvaruje presne to misto, na ktere saha.
 #
 # Nepoužije se misto, ktere je obsazene (jina cesta, uzel, mimo mrizku) -
 # a stejne jako kazda jina zmena v editoru projde kontrolou mapy (validate).
-func bend_lane(lane: int, grow: bool) -> bool:
+func bend_lane(lane: int, grow: bool, near: Vector2i = Vector2i(-1, -1)) -> bool:
 	if lane < 0 or lane >= lane_count():
 		return false
 	var old: Array = lane_cells(lane)
@@ -224,11 +227,14 @@ func bend_lane(lane: int, grow: bool) -> bool:
 		# Kratka cesta (dve bunky) nema kam vybouleni vlozit.
 		return false
 	if grow:
-		return _bend_grow(lane, old)
-	return _bend_shrink(lane, old)
+		return _bend_grow(lane, old, near)
+	return _bend_shrink(lane, old, near)
 
 
-func _bend_grow(lane: int, old: Array) -> bool:
+func _bend_grow(lane: int, old: Array, near: Vector2i) -> bool:
+	var best: int = -1
+	var best_p: Vector2i = Vector2i.ZERO
+	var best_d: float = 1.0e12
 	for i in range(old.size() - 1):
 		var a: Vector2i = old[i]
 		var b: Vector2i = old[i + 1]
@@ -240,17 +246,25 @@ func _bend_grow(lane: int, old: Array) -> bool:
 			var c2: Vector2i = b + p
 			if not _bend_cell_free(lane, old, c1) or not _bend_cell_free(lane, old, c2):
 				continue
-			var out: Array = []
-			out.append_array(old.slice(0, i + 1))
-			out.append(c1)
-			out.append(c2)
-			out.append_array(old.slice(i + 1, old.size()))
-			lanes[lane]["cells"] = out
-			return true
-	return false
+			var dist: float = _bend_dist(c1, near)
+			if dist < best_d:
+				best_d = dist
+				best = i
+				best_p = p
+	if best < 0:
+		return false
+	var out: Array = []
+	out.append_array(old.slice(0, best + 1))
+	out.append(old[best] + best_p)
+	out.append(old[best + 1] + best_p)
+	out.append_array(old.slice(best + 1, old.size()))
+	lanes[lane]["cells"] = out
+	return true
 
 
-func _bend_shrink(lane: int, old: Array) -> bool:
+func _bend_shrink(lane: int, old: Array, near: Vector2i) -> bool:
+	var best: int = -1
+	var best_d: float = 1.0e12
 	for i in range(old.size() - 3):
 		var a: Vector2i = old[i]
 		var m1: Vector2i = old[i + 1]
@@ -264,12 +278,26 @@ func _bend_shrink(lane: int, old: Array) -> bool:
 			continue
 		if m2 != b + (m1 - a):
 			continue
-		var out: Array = []
-		out.append_array(old.slice(0, i + 1))
-		out.append_array(old.slice(i + 3, old.size()))
-		lanes[lane]["cells"] = out
-		return true
-	return false
+		var dist: float = _bend_dist(m1, near)
+		if dist < best_d:
+			best_d = dist
+			best = i
+	if best < 0:
+		return false
+	var out: Array = []
+	out.append_array(old.slice(0, best + 1))
+	out.append_array(old.slice(best + 3, old.size()))
+	lanes[lane]["cells"] = out
+	return true
+
+
+# Vzdalenost od bunky, za kterou hrac chytil cestu. Bez zadane bunky (near =
+# -1,-1) je vsechno stejne daleko - vybouleni se pak dela na prvnim moznem
+# miste, coz pouzivaji testy a stara data.
+func _bend_dist(c: Vector2i, near: Vector2i) -> float:
+	if near.x < 0:
+		return 0.0
+	return absf(float(c.x - near.x)) + absf(float(c.y - near.y))
 
 
 # MUZE TAM VYBOULE­NI VUBCE VYJIT? Nesmi to byt mimo mrizku, na uzlu, na

@@ -20,7 +20,7 @@ func _init() -> void:
 	_run("jidel a cil", _test_element_and_exit)
 	_run("uprava existujiciho useku", _test_edit_existing)
 	_run("mista jsou legacy", _test_lane_slots_are_legacy)
-	_run("delka cesty", _test_lane_len)
+	_run("delka cesty prstem", _test_lane_finger)
 	_run("posun kusu cesty", _test_move_run)
 	_run("typy cest", _test_lane_types)
 	_run("oznaceni prvku", _test_select_node)
@@ -425,41 +425,55 @@ func _test_move_run() -> void:
 	_check(cs2[cs2.size() - 1] == Vector2i(7, 6), "konec cesty neni na protazene bunce")
 
 
-func _test_lane_len() -> void:
+# TVAROVANI CESTY PRSTEM. Jan (Oct 2026): "Nechci měnit velikost pomocí
+# tlačítek. Chci ji měnit tahem prstem." V editoru proto ZADNA tlacitka na
+# delku cesty nejsou - cesta se chytá prstem za sebe: u kraje se chyti konec
+# a posouvá se, uprostred se chyti kus a ohne se (a tahem zpet srovna).
+func _test_lane_finger() -> void:
 	var e := _ed()
-	_lane_level(e)
-	var lane: int = -1
-	for i in range(e.level.lane_count()):
-		if e.level.lane_cells(i).size() >= 4:
-			lane = i
-			break
-	_check(lane >= 0, "vykresleny level nema cestu se aspon 4 bunkami")
-	if lane < 0:
-		return
-	e.sel_lane = lane
-	e.sel_node = -1
-	var was: int = e.level.lane_cells(lane).size()
-	e.press(Editor.BTN_LANE_LONG)
-	_check(e.level.lane_cells(lane).size() > was,
-		"tlacitko 'delsi' cestu neprodouzilo (%d)" % e.level.lane_cells(lane).size())
-	_check(e.status.contains("->"), "status nemluvi o delce cesty: " + e.status)
-	var longer: int = e.level.lane_cells(lane).size()
-	e.press(Editor.BTN_LANE_SHORT)
-	_check(e.level.lane_cells(lane).size() < longer,
-		"tlacitko 'kratsi' cestu nezkratilo (%d)" % e.level.lane_cells(lane).size())
-	_check(e.level.lane_cells(lane).size() == was,
-		"zkraceni nevratilo puvodni delku (%d vs %d)" % [e.level.lane_cells(lane).size(), was])
-	# ZPET vrati i delku cesty
-	e.press(Editor.BTN_LANE_LONG)
-	var after_undo: int = e.level.lane_cells(lane).size()
-	e.press(Editor.BTN_UNDO)
-	_check(e.level.lane_cells(lane).size() == was,
-		"zpet nevratilo delku cesty (%d vs %d)" % [e.level.lane_cells(lane).size(), was])
-	# BEZ VYBERU se delka menit neda (a musi to rict)
-	e.sel_lane = -1
-	e.press(Editor.BTN_LANE_LONG)
-	_check(e.level.lane_cells(lane).size() == was,
-		"bez vyberu se cesta prodlouzila")
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 5, Level.START)
+	var c: int = lv.add_node(6, 5, Level.CIL)
+	lv.add_lane(s, c, "RRRR", Element.FIRE)
+	e.level = lv
+	e.tool = 2   # "cíl" v TOOL_LABELS - jen aby platilo can_move()
+	e.sel_lane = 0
+	e.sel_node = c
+	# ZADNA TLACITKA NA DELKU CESTY (Jan je nechce)
+	_check(not _panel_has_needle(e, Editor.PANEL_SEL, "delší"),
+		"panel vyberu porad nabizi tlacitko na delku cesty")
+	_check(not _panel_has_needle(e, Editor.PANEL_TOOLS, "kratší"),
+		"panel nastroju nabizi tlacitko na delku cesty")
+	# 1) CHYTIM KUS UPROSTRED A TÁHNU DO STRANY = OHNE SE U PRSTU
+	var was: int = e.level.lane_cells(0).size()
+	_check(e.begin_move(Vector2i(4, 5)), "cesta se neda chytit prstem")
+	e.extend_move(Vector2i(4, 6))
+	var cs: Array = e.level.lane_cells(0)
+	_check(cs.size() == was + 2,
+		"ohnuti kusu nepridalo dve bunky (%d -> %d)" % [was, cs.size()])
+	_check(cs.has(Vector2i(4, 6)),
+		"ohnuti nevzniklo u bunky, za kterou hrac chytil: " + str(cs))
+	_check(cs.has(Vector2i(4, 5)), "ohnuti utrhlo bunku, za kterou hrac chytil")
+	# 2) TAH ZPET NA PUVODNI MISTO = SROVNA SE (a to same gesto)
+	e.extend_move(Vector2i(4, 5))
+	_check(e.level.lane_cells(0).size() == was,
+		"tah zpet kus nesrovnal (%d vs %d)" % [e.level.lane_cells(0).size(), was])
+	e.end_move()
+	# 3) CHYTIM CESTU U KONCE = POSOUVA SE KONEC (ne uzel - cestu)
+	var len3: int = e.level.lane_cells(0).size()
+	_check(e.begin_move(Vector2i(5, 5)), "cesta se u konce neda chytit")
+	e.extend_move(Vector2i(6, 6))
+	e.end_move()
+	var cs3: Array = e.level.lane_cells(0)
+	_check(cs3[cs3.size() - 1] == Vector2i(6, 6),
+		"tah za cestu u konce neposunul konec (%s)" % str(cs3[cs3.size() - 1]))
+	_check(cs3.size() == len3 + 1, "posun konce nepridal jednu spojovaci bunku")
+	# 4) KLEPNUTI NA CESTU (tah bez pohybu) dal ROZDELI cestu na dve
+	var lanes_before: int = e.level.lane_count()
+	_check(e.begin_move(Vector2i(3, 6)), "cesta se neda chytit")
+	e.end_move()
+	_check(e.level.lane_count() == lanes_before + 1,
+		"klepnuti na cestu ji nerozdelilo (%d)" % e.level.lane_count())
 
 
 func _test_lane_slots_are_legacy() -> void:

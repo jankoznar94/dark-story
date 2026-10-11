@@ -101,11 +101,7 @@ const BTN_PASTE := BTN_COPY + 1
 const BTN_ROT := BTN_COPY + 2
 const BTN_FLIP := BTN_COPY + 3
 const BTN_DEL_SEL := BTN_COPY + 4
-# DELKA HOTOVE CESTY. Je to akce NAD VYBEREM (hrac ma vybrany usek a meni
-# ho), tak stoji vedle smazani - ne v palete, kde se jen vybira, cim se kresli.
-const BTN_LANE_LONG := BTN_DEL_SEL + 1
-const BTN_LANE_SHORT := BTN_LANE_LONG + 1
-const BTN_COUNT := BTN_LANE_SHORT + 1
+const BTN_COUNT := BTN_DEL_SEL + 1
 
 # SIRKA TLACITEK "-"/"+" V PANELU. Jan: "Tlačítka + a - jsou zbytečně velká.
 # Tato tlačítka by měla být malá a ideálně přímo nalepená na hodnotu, kterou
@@ -471,11 +467,9 @@ func _lane_params_row(include_delete: bool) -> Array:
 	]
 	if include_delete and sel_lane >= 0 and sel_lane < level.lane_count():
 		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
-		# DELKA CESTY. Jan (Oct 2026): "Ještě by to chtělo možnost
-		# zvětšovat/zmenšovat existující cesty... abych nemusel vše dokola
-		# mazat a znovu vkládat." Uzly se nehybou, meni se jen tvar cesty.
-		row.append({"act": BTN_LANE_SHORT, "label": "kratší", "w": 0.8, "on": false})
-		row.append({"act": BTN_LANE_LONG, "label": "delší", "w": 0.8, "on": false})
+	# DELKA CESTY SE NEMENI TLACITKY. Jan (Oct 2026): "Nechci měnit velikost
+	# pomocí tlačítek. Chci ji měnit tahem prstem." Cesta se tvaruje tahem
+	# za ni (viz begin_move / _extend_lane_bump), zadna tlacitka na to nejsou.
 	return row
 
 
@@ -895,11 +889,18 @@ func begin_move(cell: Vector2i) -> bool:
 		return false
 	var n: int = level.node_at_cell(cell)
 	if n < 0:
-		return false
+		# PRST NENI NA UZLU: chytá se CESTA SAMA. Uzel je na telefonu maly
+		# cil, cesta je tlustá - a hrac chce tvarovat cestu, ne se strefovat
+		# do krouzku.
+		return _begin_lane_grab(cell)
 	moving = true
 	move_node = n
 	move_from = cell
 	move_steps = 0
+	drag_lane = -1
+	drag_end = -1
+	drag_cell = Vector2i(-1, -1)
+	drag_bump = false
 	status = "Tažením uzel přesuneš, klepnutím mu změníš druh."
 	return true
 
@@ -909,6 +910,11 @@ func begin_move(cell: Vector2i) -> bool:
 func extend_move(target: Vector2i) -> bool:
 	if not moving:
 		return false
+	# CHYCENA CESTA UPROSTRED (ne uzel): kus se ohne nebo srovna. Chyceny
+	# KONEC cesty se naopak hybe jako uzel (niz) - proto se pozna podle
+	# `drag_lane`, ne podle `move_node`.
+	if drag_lane >= 0 and (drag_end < 0 or move_node < 0):
+		return _extend_lane_bump(target)
 	# Kopie stavu PRED prvnim krokem. Presun se dela po krocich, ale pro
 	# "zpet" je to jedna uprava - jinak by hrac musel mackat zpet za kazdou
 	# bunku, kterou uzel popojel.
@@ -943,6 +949,10 @@ func end_move() -> void:
 	var from: Vector2i = move_from
 	move_node = -1
 	move_from = Vector2i(-1, -1)
+	drag_lane = -1
+	drag_end = -1
+	drag_cell = Vector2i(-1, -1)
+	drag_bump = false
 	if move_steps == 0:
 		# TAH BEZ POHYBU = KLEPNUTI. Uzel meni druh podle zvoleneho nastroje,
 		# presne jak to delalo pred tim, nez se dalo presouvat.
@@ -1663,10 +1673,6 @@ func press(button: int) -> void:
 			flip_clip()
 		BTN_DEL_SEL:
 			delete_box()
-		BTN_LANE_LONG:
-			_lane_len_press(true)
-		BTN_LANE_SHORT:
-			_lane_len_press(false)
 		BTN_UNDO:
 			undo()
 		BTN_LIST:
@@ -1831,32 +1837,122 @@ func _export() -> void:
 #   * parametry v panelu se vezmou z vybraneho useku (`panel_element`,
 #   * zkontroluje se cela mapa a prvni chyba jde do statusu,
 #   * ulozi se. Save tlacitko nema smysl: hrac uklada kazdou zmenu.
-# PRODLOUZENI / ZKRATENI VYBRANE CESTY. Uzly (start, vyhybka, spojka, cil)
-# se NEHYBOU, meni se jen tvar cesty mezi nimi - hrac tak nemusi cestu smazat
-# a nakreslit znovu. Projde to kontrolou mapy jako kazda jina zmena.
-func _lane_len_press(grow: bool) -> void:
-	if sel_lane < 0 or sel_lane >= level.lane_count():
-		status = "Nejdřív klepni na cestu, kterou chceš upravit."
-		return
-	var pre: Level = level.clone()
-	var before: Array = pre.validate()
-	var was: int = level.lane_cells(sel_lane).size()
-	if not level.bend_lane(sel_lane, grow):
-		level = pre
-		status = "Cesta se tudy nedá %s — vedle už něco je." % (
-			"prodloužit" if grow else "zkrátit")
-		return
-	var after: Array = level.validate()
-	if after.size() > before.size():
-		level = pre
-		status = after[0]
-		return
-	_push_state(local_name, pre, sel_lane, sel_node)
-	_after_change()
-	var now: int = level.lane_cells(sel_lane).size()
-	status = "Cesta %d: %d -> %d buněk." % [sel_lane + 1, was, now]
+# =========================================================================
+# TVAROVANI CESTY PRSTEM (bez tlacitek)
+# =========================================================================
+
+# Jan (Oct 2026): "Nechci měnit velikost pomocí tlačítek. Chci ji měnit tahem
+# prstem." Cesta se chytá PRSTEM ZA SEBE SAMA:
+#   * u kraje cesty se chyti jeji KONEC (uzel na tom konci) - tahem po smeru
+#     se cesta prodlouzi nebo zkrati, tahem do strany se cely rovny kus
+#     posune (viz `_shift_run`);
+#   * uprostred cesty se chyti TEN KUS - tahem do strany se ohne (cesta se
+#     prodlouzi o dve bunky), tahem zpet se zase srovna.
+# Uzel je na telefonu maly cil, cesta je tlustá - proto se da chytit cesta.
+var drag_lane: int = -1
+# Ktery konec cesty se chytil: 0 = u startu, 1 = u cile, -1 = kus uprostred.
+var drag_end: int = -1
+# Bunka, za kterou hrac cestu chytil (podle ni se ohne ten spravny kus).
+var drag_cell: Vector2i = Vector2i(-1, -1)
+# Je kus uz ohne­ty? Tah zpet ho srovna.
+var drag_bump: bool = false
 
 
+func _begin_lane_grab(cell: Vector2i) -> bool:
+	var lane: int = _lane_at(cell)
+	if lane < 0:
+		return false
+	var cs: Array = level.lane_cells(lane)
+	if cs.size() < 2:
+		return false
+	var at: int = -1
+	for i in range(cs.size()):
+		if cs[i] == cell:
+			at = i
+			break
+	if at < 0:
+		return false
+	moving = true
+	move_node = -1
+	move_from = cell
+	move_steps = 0
+	drag_lane = lane
+	drag_cell = cell
+	drag_bump = false
+	drag_end = -1
+	# Dve krajni bunky = konec cesty, zbytek = kus uprostred.
+	if at <= 1:
+		move_node = level.lane_start_node(lane)
+		if move_node >= 0:
+			drag_end = 0
+	elif at >= cs.size() - 2:
+		move_node = level.lane_end_node(lane)
+		if move_node >= 0:
+			drag_end = 1
+	if drag_end >= 0:
+		status = "Tažením za cestu posuneš její konec (a rovný kus s ním)."
+	else:
+		status = "Tažením za kus cesty ho ohneš, tahem zpet srovnáš."
+	return true
+
+
+# KTERA CESTA VEDE TOUHLE BUNKOU. Prvni nalezena - v uzlu se cesty potkavaji,
+# ale uzel se chyta jako uzel (viz begin_move).
+func _lane_at(cell: Vector2i) -> int:
+	for j in range(level.lane_count()):
+		if _lane_uses_cell(j, cell):
+			return j
+	return -1
+
+
+# SMER ROVNEHO KUSU V TÉ BUNCE. Bunky jsou sousedni, takze je to jednotkovy
+# vektor; u rohu se vezme prvni rameno.
+func _piece_dir(cs: Array, cell: Vector2i) -> Vector2i:
+	for i in range(cs.size() - 1):
+		var a: Vector2i = cs[i]
+		var b: Vector2i = cs[i + 1]
+		if b == a:
+			continue
+		if a == cell or b == cell:
+			return b - a
+	return Vector2i.ZERO
+
+
+# TAH ZA KUS CESTY UPROSTRED: prst do strany kus ohne (o dve bunky), prst
+# zpet na puvodni misto ho zase srovna. Jeden krok tahu = jedna zmena, aby
+# se to dalo vzit zpet jedinym "zpet".
+func _extend_lane_bump(target: Vector2i) -> bool:
+	if drag_lane < 0 or drag_lane >= level.lane_count():
+		return false
+	var cs: Array = level.lane_cells(drag_lane)
+	var d: Vector2i = _piece_dir(cs, drag_cell)
+	if d == Vector2i.ZERO:
+		return false
+	var p: Vector2i = Vector2i(-d.y, d.x)
+	# Vector2i `dot()` nema - pocita se rucne (je to jen skalarni soucin).
+	var off: int = (target.x - drag_cell.x) * p.x + (target.y - drag_cell.y) * p.y
+	var pre: Level = null
+	if move_steps == 0:
+		pre = level.clone()
+	var changed: bool = false
+	if off != 0 and not drag_bump:
+		changed = level.bend_lane(drag_lane, true, drag_cell)
+		if changed:
+			drag_bump = true
+	elif off == 0 and drag_bump:
+		changed = level.bend_lane(drag_lane, false, drag_cell)
+		if changed:
+			drag_bump = false
+	if changed:
+		move_steps += 1
+		if pre != null:
+			_push_state(local_name, pre, sel_lane, sel_node)
+		status = "Kus cesty ohnutý." if drag_bump else "Kus cesty srovnaný."
+	return changed
+
+
+#   * zkontroluje se cela mapa a prvni chyba jde do statusu,
+#   * ulozi se. Save tlacitko nema smysl: hrac uklada kazdou zmenu.
 func _after_change() -> void:
 	# Vybrany usek i prvek musi po kazde zmene ukazovat na neco, co
 	# existuje - po smazani by vyber visel na indexu, ktery uz neni.
