@@ -1603,7 +1603,8 @@ func _test_bump_shift() -> void:
 	# 3) TAH O DVE BUNKY: krok se nesmi preskocit, strany maji tri bunky
 	e.extend_move(Vector2i(4, 2))
 	_check(e.level.lane_cells(0).size() == was + 4, "druhy krok tahu vystupek neposunul")
-	_check(e.drag_run_cell == Vector2i(4, 2), "chycena bunka nejde s kusem")
+	# Chycena bunka zustava puvodni - kazda poloha tahu se stavi ZNOVU z ni.
+	_check(e.drag_run_cell == Vector2i(4, 4), "chycena bunka se posunula (%s)" % str(e.drag_run_cell))
 	# 4) TAH ZPET DOLU: krok za krokem presne na puvodni cestu
 	e.extend_move(Vector2i(4, 3))
 	e.extend_move(Vector2i(4, 4))
@@ -1625,16 +1626,28 @@ func _test_bump_shift() -> void:
 	e.end_move()
 	_check(e.sel_lane == 0, "klepnuti na vrsek nevybralo usek (%d)" % e.sel_lane)
 	_check(not e.box_active, "klepnuti na vrsek spustilo obdelnikovy vyber")
-	# 7) TAH POD PUVODNI TVAR VYSTUPEK NESMI SMIZET (tah zpet by ho nevratil)
+	# 7) ZMENŠOVÁNÍ: tah opacnym smerem vystupek SNIZI (az do zplosteni) a tah
+	#    zpet ho znovu zvedne. Kazda poloha prstu se stavi z puvodni cesty,
+	#    takze se pri tom nic neztrati.
 	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
-	e.extend_move(Vector2i(4, 3))
+	e.extend_move(Vector2i(4, 5))
 	e.extend_move(Vector2i(4, 6))
-	e.end_move()
 	var flat: Array = e.level.lane_cells(0)
-	_check(flat.size() == was, "tah pod puvodni tvar nedal puvodni cestu (%d vs %d)" % [
-		flat.size(), was])
-	_check(flat.has(Vector2i(4, 4)) and flat.has(Vector2i(5, 4)),
-		"vystupek po tahu zpet zmizel: " + str(flat))
+	_check(flat.size() == was - 2,
+		"zmenšování nezplostilo vystupek (%d vs %d)" % [flat.size(), was - 2])
+	_check(not flat.has(Vector2i(4, 4)) and not flat.has(Vector2i(5, 4)),
+		"po zplosteni zustal vystupek v ceste: " + str(flat))
+	e.extend_move(Vector2i(4, 3))
+	e.extend_move(Vector2i(4, 2))
+	_check(e.level.lane_cells(0).size() == was + 4,
+		"tah ven po zplosteni vystupek nezvedl (%d)" % e.level.lane_cells(0).size())
+	e.extend_move(Vector2i(4, 4))
+	e.end_move()
+	var back2: Array = e.level.lane_cells(0)
+	_check(back2.size() == was, "po tahu zpet neni puvodni delka (%d vs %d)" % [back2.size(), was])
+	for i in range(mini(back2.size(), was)):
+		_check(back2[i] == before[i], "po tahu zpet neni puvodni cesta (bunka %d: %s vs %s)" % [
+			i, str(back2[i]), str(before[i])])
 
 
 # MALA TLACITKA "−"/"+" NALEPENA NA HODNOTU + VIDITELNA MRIZKA.

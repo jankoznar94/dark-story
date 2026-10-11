@@ -975,6 +975,7 @@ func end_move() -> void:
 	drag_run_cell = Vector2i(-1, -1)
 	drag_p = Vector2i.ZERO
 	drag_moved = 0
+	drag_base = []
 	if move_steps == 0:
 		# TAH BEZ POHYBU = KLEPNUTI. U "vyberu" se jen VYBIRA: klepnuti na cestu
 		# ji oznaci (a v pruhu se rekne, ze se da tvarovat prstem), neze se
@@ -1895,6 +1896,9 @@ var drag_bump: bool = false
 var drag_run_cell: Vector2i = Vector2i(-1, -1)
 var drag_p: Vector2i = Vector2i.ZERO
 var drag_moved: int = 0
+# Cesta, jak vypadala, nez hrac vzal kus do ruky. Kazda poloha prstu se stavi
+# ZNOVU z ni - jinak by tah zpet nemusel vratit presne to, co tam bylo.
+var drag_base: Array = []
 
 
 # CESTA POD PRSTEM SE CHYTA A TAHNE. Je to JEDNO misto, kde se rozhoduje, ze
@@ -1945,6 +1949,10 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 	if not run.is_empty():
 		drag_run_cell = on
 		drag_p = run["s"]
+		# SNIMEK PUVODNI CESTY. Kazda poloha prstu se stavi znovu z nej, takze
+		# tah zpet vrati presne puvodni tvar a zmenšování jde do stejne hloubky
+		# jako zvetsovani (i pod puvodni tvar - vystupek se da zplostit).
+		drag_base = level.lane_cells(lane).duplicate()
 		status = "Tažením kusu do strany posuneš celý výstupek — boční strany se natáhnou."
 		return true
 	# Dve krajni bunky = konec cesty, zbytek = kus uprostred.
@@ -2034,50 +2042,54 @@ func _extend_lane_bump(target: Vector2i) -> bool:
 	return changed
 
 
-# TAH ZA ROVNY KUS ("obdelnikovy vystupek"): cely kus se posune o tolik bunek,
-# o kolik prst odesel do strany, a obe bocni strany se prodlouzi - tvar zustava
-# obdelnikovy, zadne schodky. Tah zpet ho zase snizi.
+# TAH ZA ROVNY KUS ("vystupek"): cely kus se posune o tolik bunek, o kolik prst
+# odesel do strany, a obe bocni strany se prodlouzi - tvar zustava obdelnikovy,
+# zadne schodky. Tah zpet ho zase snizi (az do zplosteni) a tah ven znovu
+# zvedne. Smer se bere z TVARU (`drag_p`), takze to plati nahoru, dolu, doleva
+# i doprava - hrac taha tam, kam vystupek trci.
 #
-# Krokuje se po bunkach (jako u presunu uzlu): jeden krok = jedna bunka, aby se
-# kus nikdy nepreskocil a cesta zustala souvisla. Cely tah = jedna polozka
-# "zpet" (kopie stavu se dela jen pri prvnim kroku).
+# Kazda poloha prstu se stavi ZNOVU ze snimku puvodni cesty (`drag_base`):
+#   * tah zpet vrati PRESNE puvodni tvar (i po nekolika krocích ven),
+#   * zmenšování jde pod puvodni tvar az do zplosteni a je vratne,
+#   * krok se nikdy nepreskoci.
+# Cely tah = jedna polozka "zpet".
 func _extend_lane_run(target: Vector2i) -> bool:
 	if drag_lane < 0 or drag_lane >= level.lane_count():
 		return false
 	var p: Vector2i = drag_p
-	if p == Vector2i.ZERO:
+	if p == Vector2i.ZERO or drag_base.is_empty():
 		return false
 	# O kolik bunek prst odesel ve smeru posunu? (Vector2i `dot()` nema.)
 	var off: int = (target.x - drag_cell.x) * p.x + (target.y - drag_cell.y) * p.y
-	# NIKDY POD PUVODNI TVAR: tah zpet jen vrati, co tah ven posunul. Kdyby
-	# sel i pod nulu, cesta by prisla o vystupek a tah zpet by ho uz nevratil
-	# (posun se dela z tvaru, ktery uz vystupek neni).
-	if off < 0:
-		off = 0
 	if off == drag_moved:
+		return false
+	var work: Level = level.clone()
+	work.lanes[drag_lane]["cells"] = drag_base.duplicate()
+	var cell: Vector2i = drag_run_cell
+	var moved: int = 0
+	while moved != off:
+		var step: int = 1 if off > moved else -1
+		if not work.shift_run(drag_lane, cell, step > 0):
+			# Vic uz to nejde (zplosteni, prekazka, okraj) - zustava se na tom,
+			# co se podarilo; dalsi tah zpet to zase zvedne.
+			break
+		cell += p * step
+		moved += step
+	if moved == drag_moved:
 		return false
 	var pre: Level = null
 	if move_steps == 0:
 		pre = level.clone()
-	var step: int = 1 if off > drag_moved else -1
-	var changed: bool = false
-	while drag_moved != off:
-		if not level.shift_run(drag_lane, drag_run_cell, step > 0):
-			break
-		# Chycena bunka jde s kusem - jinak by prst po prvnim posunu drzel
-		# bunku, ktera uz v kusu neni.
-		drag_run_cell += p * step
-		drag_moved += step
-		changed = true
-	if changed:
-		move_steps += 1
-		if pre != null:
-			_push_state(local_name, pre, sel_lane, sel_node)
-		var cs2: Array = level.lane_cells(drag_lane)
-		status = "Výstupek posunutý o %d %s · úsek %d má %d buněk." % [
-			absi(drag_moved), "buňku" if absi(drag_moved) == 1 else "buňky",
-			drag_lane + 1, cs2.size()]
-	return changed
+	level.lanes[drag_lane]["cells"] = work.lane_cells(drag_lane)
+	drag_moved = moved
+	move_steps += 1
+	if pre != null:
+		_push_state(local_name, pre, sel_lane, sel_node)
+	var cs: Array = level.lane_cells(drag_lane)
+	status = "Výstupek %s o %d %s · úsek %d má %d buněk." % [
+		"posunutý" if drag_moved > 0 else "snížený", absi(drag_moved),
+		"buňku" if absi(drag_moved) == 1 else "buňky", drag_lane + 1, cs.size()]
+	return true
 
 
 #   * zkontroluje se cela mapa a prvni chyba jde do statusu,

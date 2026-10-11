@@ -319,6 +319,52 @@ func _test_bump_shift() -> void:
 	_check(cs3.has(Vector2i(2, 3)) and cs3.has(Vector2i(3, 3)),
 		"vystupek u uzlu neni o bunku vys: " + str(cs3))
 	_check(lv3.validate().size() == 0, "posun vystupku u uzlu rozbil mapu: %s" % str(lv3.validate()))
+	# 9) JINY SMER: vystupek DOLU (dolina) se posouva stejne - smer se bere
+	# z tvaru, ne z toho, ze to je "nahoru"
+	var lv4 := Level.new()
+	var s4: int = lv4.add_node(2, 5, Level.START)
+	var c4: int = lv4.add_node(7, 5, Level.CIL)
+	lv4.add_lane(s4, c4, "RRDRURR", Element.FIRE)
+	var r4: Dictionary = lv4.run_at(0, Vector2i(4, 6))
+	_check(not r4.is_empty(), "dolina se nenasla jako rovny kus")
+	if not r4.is_empty():
+		_check(r4["s"] == Vector2i(0, 1), "dolina nemiri dolu (%s)" % str(r4["s"]))
+		_check(lv4.shift_run(0, Vector2i(4, 6), true), "dolina se neda posunout dolu")
+		var d4: Array = lv4.lane_cells(0)
+		_check(d4.size() == 10, "posun dolu nepridal dve bunky (%d)" % d4.size())
+		_check(d4.has(Vector2i(4, 7)) and d4.has(Vector2i(5, 7)),
+			"dolina neni o bunku niz: " + str(d4))
+		_check(lv4.validate().size() == 0, "posun dolu rozbil mapu")
+	# 10) JINY SMER: SVISLY kus se posouva DO STRANY
+	var lv5 := Level.new()
+	var s5: int = lv5.add_node(5, 2, Level.START)
+	var c5: int = lv5.add_node(5, 8, Level.CIL)
+	lv5.add_lane(s5, c5, "DDRDDLDD", Element.FIRE)
+	var r5: Dictionary = lv5.run_at(0, Vector2i(6, 4))
+	_check(not r5.is_empty(), "svistly kus se nenasel jako vystupek")
+	if not r5.is_empty():
+		_check(r5["d"] == Vector2i(0, 1), "svistly kus nema svistly smer (%s)" % str(r5["d"]))
+		_check(r5["s"] == Vector2i(1, 0), "svistly vystupek nemiri do strany (%s)" % str(r5["s"]))
+		_check(lv5.shift_run(0, Vector2i(6, 4), true), "svistly kus se neda posunout do strany")
+		var d5: Array = lv5.lane_cells(0)
+		_check(d5.size() == 11, "posun do strany nepridal dve bunky (%d)" % d5.size())
+		_check(d5.has(Vector2i(7, 4)) and d5.has(Vector2i(7, 6)),
+			"svistly vystupek neni o bunku vpravo: " + str(d5))
+		_check(lv5.validate().size() == 0, "posun do strany rozbil mapu")
+	# 11) ZMENŠOVÁNÍ: z kazdeho tvaru se da jit zpatky - a u nejmensiho
+	# vystupku (strany po jedne bunce) se posun dovnitr ZPLOSTI cestu
+	var lv6 := Level.new()
+	var s6: int = lv6.add_node(2, 5, Level.START)
+	var c6: int = lv6.add_node(7, 5, Level.CIL)
+	lv6.add_lane(s6, c6, "RRURDRR", Element.FIRE)
+	_check(lv6.shift_run(0, Vector2i(4, 4), false), "vystupek se neda zplostit")
+	var fl: Array = lv6.lane_cells(0)
+	_check(fl.size() == 6, "zplosteni nedalo rovnou cestu (%d): %s" % [fl.size(), str(fl)])
+	_check(not fl.has(Vector2i(4, 4)) and not fl.has(Vector2i(5, 4)),
+		"po zplosteni zustal vystupek v ceste: " + str(fl))
+	_check(lv6.validate().size() == 0, "zplosteni rozbilo mapu: %s" % str(lv6.validate()))
+	_check(not lv6.shift_run(0, Vector2i(4, 5), false),
+		"zplostena cesta se dala zmensovat dal")
 
 
 func _test_code_round_trip() -> void:
