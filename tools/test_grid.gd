@@ -108,7 +108,7 @@ func _test_base_board() -> void:
 	for i in range(lv.lane_count()):
 		if lv.lane_is_entry(i):
 			entries += 1
-			_check(lv.lane_is_kmen(i) and not lv.lane_deals_damage(i),
+			_check(lv.lane_is_kmen(i),
 				"vstupni usek %d neni kmen (je %s)" % [i, lv.lane_type_name(i)])
 	_check(entries == 1, "vstupni usek ma byt prave jeden, je %d" % entries)
 
@@ -145,13 +145,14 @@ func _test_choices() -> void:
 	_check(lv.node_kind(j1) == Level.VYHYBKA, "za startem ma byt vyhybka")
 	_check(lv.node_choice_count(j1) == 3, "prvni vyhybka ma mit 3 vystupy, ma %d"
 		% lv.node_choice_count(j1))
-	# volba 0 = ohen, 1 = dal po rade 5, 2 = voda
+	# volba 0 = ohen, 1 = dal po rade na druhou vyhybku, 2 = vzduch
+	# (protiklady musi lezet VEDLE SEBE, aby na ne vez dosahla - viz Level.base)
 	var c0: int = lv.node_choice(j1, 0)
 	var c1: int = lv.node_choice(j1, 1)
 	var c2: int = lv.node_choice(j1, 2)
 	_check(lv.lane_element(c0) == Element.FIRE, "volba 0 neni ohen")
 	_check(lv.lane_element(c1) == Level.NEUTRAL, "volba 1 neni neutralni")
-	_check(lv.lane_element(c2) == Element.WATER, "volba 2 neni voda")
+	_check(lv.lane_element(c2) == Element.AIR, "volba 2 neni vzduch")
 	# neutralni volba vede na druhou vyhybku
 	_check(lv.node_kind(lv.lane_end_node(c1)) == Level.VYHYBKA, "volba 1 nevede na vyhybku")
 	# ze spojky/uzlu se nevybira - maji jeden vystup

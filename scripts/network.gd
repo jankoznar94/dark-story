@@ -24,26 +24,14 @@ extends RefCounted
 #
 # Vsechna cisla levelu jsou v Level; tady je jen preklad do pixelu.
 
-const BASE_BONUS_R := 26.0
 const BASE_EXIT_R := 30.0
 const BASE_SWITCH_R := 46.0
-# Kde na useku stoji bonusy. Podil DELKY useku - na rozdil od stareho
-# modelu se nehleda "rovny usek", protoze v mrizce rovny usek neni:
-# cesta se ohne, kde hrac chce.
-#
-# MIST NA USEKU MUZE BYT LIBOVOLNE MNOZSTVI (0 az Level.MAX_SLOTS) a
-# rozdeleni je JEDNA funkce pro editor, hru i testy - kdyby si to kazdy
-# pocital sam, rozejdou se mista, na ktera hrac klepne, od mist, ktera vidi.
-const SLOT_FRACTIONS := [0.20, 0.52, 0.85]
-const SLOT_MIN := 0.20
-const SLOT_MAX := 0.85
-# ODSTUP MISTA OD UZLU NA KONCI USEKU. Misto na bonus je krouzek velikosti
-# `bonus_r` a uzel je taky krouzek (vyhybka, cil) - kdyz se prekryji, hrac
-# klepne na bonus a trefi uzel (klepnuti na vyhybku ma v hre prednost),
-# takze se na to misto neda postavit. Proto se uzitecna cast useku zmensi
-# o `bonus_r + exit_r` z kazde strany - vic nez 18 % delky useku ale ne,
-# aby i kratky usek unesl tolik mist, kolik ma v datech.
-const SLOT_CLEAR_FRAC := 0.18
+# BUNKA PASU, KTERA JE U VYHYBKY NEBO SPOJKY, SE NESTAVA. Jan: "U vyhybek
+# a spojek nemuze byt zadna v rozsahu 1 policka." Duvod je hratelnostni:
+# uzel je to, co hrac macka (prepnout vyhybku), a vez postavena na nem by
+# mu klepnuti kradla. Pas se tam proto ani nekresli - kreslit misto, kde se
+# neda stavet, je lez (stejne pravidlo jako driv u kmene).
+const STRIP_JUNCTION_CLEAR := 1
 
 var level: Level = null
 var area: Rect2 = Rect2()
@@ -51,7 +39,6 @@ var scale: float = 1.0
 # Horni hrana, za kterou se nesmi kreslit. Do site vstupuje jako OMEZENI:
 # mrizka se zmensi tak, aby se cela vesla nad ni.
 var bar_top: float = 1.0e9
-var bonus_r: float = BASE_BONUS_R
 var exit_r: float = BASE_EXIT_R
 var switch_r: float = BASE_SWITCH_R
 
@@ -87,17 +74,17 @@ var entry_lane: int = -1
 # START), ale kod se na to nesmi spolehat.
 var entry_lanes: Array = []
 var exit_pos: Array = []
-var slot_pos: Array = []
-# MISTA NA BONUS SE MERI NA SVE PRAVE CASTI USEKU. Usek se na obrazovce
-# prodluzuje na okraj displeje (vstup ze startu a vsechno, co konci v cili),
-# aby poutnici prichazeli a odchazeli "zpoza displeje" - ale to prodlouzeni
-# je JEN KRESLENI: nikdo po nem nechodi a bonus na nem nema co delat.
-# Kdyby se mista rozkladala z CELE delky, vyjde prvni misto presne na lom
-# a posledni ZA cilem (Jan: "body se objevuji tak nahodne po ceste").
-# `lane_slot_off` je vzdalenost od zacatku kreslene cesty k prvni bunku
-# useku, `lane_slot_len` je delka samotnych bunek useku.
-var lane_slot_off: Array = []
-var lane_slot_len: Array = []
+# PAS KOLEM CESTY. Kazda cesta ma po obou stranach jednu bunku podbarvenou
+# svym elementem (svetlejsim odstinem) a v tom pasu se stavi veze. Neni to
+# kosmetika - je to CELA STAVEBNI PLOCHA hry.
+#
+# `strip_lane` je JEDNO misto, kde se rozhoduje, ktera cesta tu bunku
+# podbarvuje: bunka muze lezet u dvou cest zaroven (dve paralelni trasy)
+# a pak patri te, ktera ma vic sousednich bunek; pri rovnosti rozhoduje
+# nizsi index useku. Hra, kresleni i klepnuti se musi ptat TOHOHLE slovniku -
+# kdyby si to kazdy pocital sam, kreslil by pas jinde, nez kam se stavi.
+var strip_lane: Dictionary = {}
+var strip_cells: Array = []
 
 
 func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
@@ -106,7 +93,6 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	area = r
 	scale = scale_hint
 	bar_top = bar_top_hint
-	bonus_r = BASE_BONUS_R * scale
 	exit_r = BASE_EXIT_R * scale
 	switch_r = BASE_SWITCH_R * scale
 
@@ -137,8 +123,6 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	lane_len = []
 	lane_from_node = []
 	lane_to_node = []
-	lane_slot_off = []
-	lane_slot_len = []
 	for i in range(level.lane_count()):
 		var pts := PackedVector2Array()
 		var cs: Array = level.lane_cells(i)
@@ -147,10 +131,6 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			pts.append(_cell_center(v.x, v.y))
 		lane_path.append(pts)
 		lane_len.append(_poly_len(pts))
-		# ZATIM je cesta presne to, co hrac nakreslil - prodlouzeni na okraj
-		# displeje prijde az v _extend_ends() a do techhle dvou cisel nesmi.
-		lane_slot_off.append(0.0)
-		lane_slot_len.append(lane_len[i])
 		lane_from_node.append(level.lane_start_node(i))
 		lane_to_node.append(level.lane_end_node(i))
 
@@ -210,30 +190,110 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	# --- poutnici vstupuji z okraje displeje a v cili z nej zase zmizi
 	_extend_ends()
 
-	# --- mista na bonusy
-	# MERI SE NA BUNKACH USEKU, ne na prodlouzeni k okraji displeje, a
-	# s odstupem od obou uzlu.
-	#
-	# NA NEPOSKOZUJICIM USEKU (vstupni usek, kmen) SE MISTA NEKRESLI:
-	# nikdo tam nic nepostavi, takze by krouzky jen lhaly - a kdyz se
-	# rozlozi na kratkem useku, este se i prekryvaji (Jan: "body se
-	# objevuji tak nahodne po ceste a vypada to divne").
-	slot_pos = []
+	# --- pas kolem cest: jedina stavebni plocha hry
+	_build_strip()
+
+
+# PAS KOLEM CESTY. Pro kazdou cestu se vezme osm okoli kazde jeji bunky
+# (tedy 1 bunka na kazdou stranu vcetne rohu, aby se cesta v ohybu obalila)
+# a z toho se stane stavebni plocha. Co do pasu NEPATRI:
+#
+#   * bunky samotnych cest (po ceste se chodi, nestavi),
+#   * bunky uzlu (start, cil, vyhybka, spojka, uzel),
+#   * bunky do 1 bunky od VYHYBKY a SPOJKY (Jan: "U vyhybek a spojek nemuze
+#     byt zadna v rozsahu 1 policka") - uzel je tlacitko hrace,
+#   * cely KMEN a VSECHNY VSTUPNI USEKY (Jan: "U kmene, vstupu, vyhybky
+#     a spojky se nestavi.") - sedivy pruh kolem nich se proto ani nekresli,
+#   * vsechno mimo mrizku.
+#
+# Kdyz bunku podbarvuji dve cesty, vyhrava ta s VIC SOUSEDNIMI bunkami; pri
+# rovnosti nizsi index. Je to jedine misto, kde se to rozhoduje.
+func _build_strip() -> void:
+	strip_lane = {}
+	strip_cells = []
+	var blocked: Dictionary = {}
 	for i in range(level.lane_count()):
-		var slots: Array = []
-		if not level.lane_deals_damage(i):
-			slot_pos.append(slots)
+		var cs: Array = level.lane_cells(i)
+		for cellv in cs:
+			blocked[cellv] = true
+	for n in range(level.node_count()):
+		blocked[level.node_cell(n)] = true
+	var near_junction: Dictionary = {}
+	var clear: int = STRIP_JUNCTION_CLEAR
+	for n in range(level.node_count()):
+		var k: int = level.node_kind(n)
+		if k != Level.VYHYBKA and k != Level.SPOJKA:
 			continue
-		var off: float = float(lane_slot_off[i])
-		var span: float = float(lane_slot_len[i])
-		if span <= 0.001:
-			span = maxf(float(lane_len[i]), 0.001)
-			off = 0.0
-		var clear: float = minf(bonus_r + exit_r, span * SLOT_CLEAR_FRAC)
-		var usable: float = maxf(span - 2.0 * clear, 1.0)
-		for f in slot_fractions(level.lane_slot_count(i)):
-			slots.append(point_at(i, off + clear + float(f) * usable))
-		slot_pos.append(slots)
+		var nc: Vector2i = level.node_cell(n)
+		for dx in range(-clear, clear + 1):
+			for dy in range(-clear, clear + 1):
+				near_junction[Vector2i(nc.x + dx, nc.y + dy)] = true
+
+	# Kolik sousedu teto bunky patri konkretni ceste. Tim se rozhoduje
+	# o spornych bunkach mezi dvema cestami.
+	var best_count: Dictionary = {}
+	for i in range(level.lane_count()):
+		# KMEN NEMA PAS. Je to cesta bez elementu, po ktere poutnik teprve
+		# prichazi - vez by tam nemela co delat (a barva by nemela vzjit).
+		if level.lane_is_kmen(i):
+			continue
+		var lane_cells: Dictionary = {}
+		var cs: Array = level.lane_cells(i)
+		for cellv in cs:
+			lane_cells[cellv] = true
+		for cellv in cs:
+			var c: Vector2i = cellv
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					var t := Vector2i(c.x + dx, c.y + dy)
+					if not level.in_bounds(t.x, t.y):
+						continue
+					if blocked.has(t) or near_junction.has(t):
+						continue
+					var n: int = int(best_count.get(t, -1))
+					var cnt: int = 0
+					for ddx in range(-1, 2):
+						for ddy in range(-1, 2):
+							if lane_cells.has(Vector2i(t.x + ddx, t.y + ddy)):
+								cnt += 1
+					if cnt > n:
+						# Vetsi sousedstvi vyhrava; pri rovnosti zustava
+						# ta prvni (tedy nizsi index useku).
+						best_count[t] = cnt
+						strip_lane[t] = i
+	strip_cells = strip_lane.keys()
+	strip_cells.sort()
+
+
+# Je ta bunka stavebni plocha? Ptá se klepnuti, kresleni i pravidla stavby.
+func strip_has(cell: Vector2i) -> bool:
+	return strip_lane.has(cell)
+
+
+# Ktera cesta tuhle bunku podbarvuje. -1 = bunka neni v pasu.
+func strip_lane_of(cell: Vector2i) -> int:
+	if not strip_lane.has(cell):
+		return -1
+	return int(strip_lane[cell])
+
+
+# ELEMENT VEZE, KTERA NA TÉ BUNCE MUZE STAT. Neni to volba hrace: vez ma
+# vzdycky element cesty, kolem ktere stoji (neutralni/sedy pas = neutralni
+# vez, ktera dava fyzicke poskozeni vsem stejne).
+func strip_element(cell: Vector2i) -> int:
+	var lane: int = strip_lane_of(cell)
+	if lane < 0:
+		return Level.NEUTRAL
+	return level.lane_element(lane)
+
+
+# Kolik stavebnich bunek ma ta cesta. HUD z toho cte, kolik obrany u ni stoji.
+func strip_cells_of_lane(lane: int) -> int:
+	var c: int = 0
+	for cellv in strip_cells:
+		if int(strip_lane[cellv]) == lane:
+			c += 1
+	return c
 
 
 # POUTNICI MAJI PRICHÁZET JAKO ZPOZA DISPLEJE a v cili koncit mimo nej.
@@ -255,9 +315,6 @@ func _extend_ends() -> void:
 			var np := PackedVector2Array([q])
 			np.append_array(p)
 			lane_path[el] = np
-			# Prodlouzeni je PRED prvni bunkou useku - mista se o nej
-			# musi posunout, aby zustala na sve prave casti cesty.
-			lane_slot_off[el] = float(lane_slot_off[el]) + q.distance_to(p[0])
 	for i in range(lane_path.size()):
 		if level.node_kind(lane_end_node(i)) != Level.CIL:
 			continue
@@ -287,21 +344,15 @@ func _border_point(from: Vector2, dir: Vector2) -> Vector2:
 # (zakladni deska se nesmi pohnout), jiny pocet se rozlozi rovnomerne mezi
 # stejne okraje. Jedna funkce pro vsechno - kdyby si kazdy pocital sve,
 # rozejdou se mista, na ktera hrac klepne, od tech, ktera vidi.
-static func slot_fractions(n: int) -> Array:
-	if n <= 0:
-		return []
-	if n == 1:
-		return [SLOT_FRACTIONS[1]]
-	if n == 3:
-		return SLOT_FRACTIONS
-	var out: Array = []
-	for k in range(n):
-		out.append(SLOT_MIN + (SLOT_MAX - SLOT_MIN) * float(k) / float(n - 1))
-	return out
-
-
 func _cell_center(c: int, r: int) -> Vector2:
 	return origin + Vector2((float(c) + 0.5) * cell_w, (float(r) + 0.5) * cell_h)
+
+
+# STRED BUNKY PRO KRESLENI. Verejne proto, ze si ho kresleni veze a testy
+# nesmi pocitat samy - kdyby si kazdy pocital svuj, vez by stala jinde, nez
+# kam se klepe.
+func cell_center(cell: Vector2i) -> Vector2:
+	return _cell_center(cell.x, cell.y)
 
 
 # Ktera bunka mrizky je pod timhle bodem. Editor z toho kresli - hrac
@@ -388,15 +439,6 @@ func lane_element(lane: int) -> int:
 	return level.lane_element(lane)
 
 
-func lane_accepts(lane: int, element: int) -> bool:
-	return level.lane_accepts(lane, element)
-
-
-# Poskozuje tenhle usek vubec? Vstupni usek a kmen ne.
-func lane_deals_damage(lane: int) -> bool:
-	return level.lane_deals_damage(lane)
-
-
 # Usek, ze ktereho poutnici vstupuji do mapy. Neposkrzuje sam o sobe -
 # rozhoduje hodnota useku (vstupni usek je od vychoziho stavu KMEN).
 # VSTUPU MUZE BYT VIC (startu je libovolne mnozstvi), takze se ptame na
@@ -421,47 +463,6 @@ func junction_lane(j: int, k: int) -> int:
 	if k < 0 or k >= jl.size():
 		return -1
 	return int(jl[k])
-
-
-# KOLIK MIST MA KONKRETNI USEK. Neni to konstanta site: pocet si nese level
-# (Level.lane_slot_count) - "nekde jen 1, nekde 3, nekde i vice a nekde
-# uplne bez bonusu". Nula je platna hodnota.
-func slot_count(lane: int) -> int:
-	if lane < 0 or lane >= slot_pos.size():
-		return 0
-	var slots: Array = slot_pos[lane]
-	return slots.size()
-
-
-# Nejmensi pocet mist pres vsechny useky - UI a testy potrebuji vedet, kolik
-# voleb vubec existuje, aniz by si to pocitaly samy.
-func max_slot_count() -> int:
-	var best: int = 0
-	for i in range(slot_pos.size()):
-		best = maxi(best, slot_count(i))
-	return best
-
-
-func slot_world(lane: int, slot: int) -> Vector2:
-	if lane < 0 or lane >= slot_pos.size():
-		return Vector2.ZERO
-	var slots: Array = slot_pos[lane]
-	if slot < 0 or slot >= slots.size():
-		return Vector2.ZERO
-	var p: Vector2 = slots[slot]
-	return p
-
-
-func nearest_slot(world: Vector2) -> Vector2i:
-	var best := Vector2i(-1, -1)
-	var best_d: float = bonus_r * 1.5
-	for lane in range(slot_pos.size()):
-		for slot in range(slot_count(lane)):
-			var d: float = slot_world(lane, slot).distance_to(world)
-			if d < best_d:
-				best_d = d
-				best = Vector2i(lane, slot)
-	return best
 
 
 # KTERY USEK JE POD PRSTEM. Klepnuti na usek je jediny zpusob, jak
@@ -521,37 +522,6 @@ func _dist_to_path(lane: int, world: Vector2) -> float:
 		if ab.length_squared() > 0.000001:
 			t = clampf((world - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
 		best = minf(best, world.distance_to(a + ab * t))
-	return best
-
-
-# Nejmensi vzdalenost mezi misty na bonusech RUZNYCH useku. V mrizce se
-# useky nekrizi, takze by to melo vyjit vzdy aspon na jednu bunkovou mezeru;
-# testy tuhle hodnotu kontroluji.
-func min_cross_lane_slot_distance() -> float:
-	var n: int = lane_path.size()
-	var best: float = 99999.0
-	for a in range(n):
-		for b in range(a + 1, n):
-			for sa in range(slot_count(a)):
-				for sb in range(slot_count(b)):
-					var d: float = slot_world(a, sa).distance_to(slot_world(b, sb))
-					if d < best:
-						best = d
-	return best
-
-
-# Nejmensi vzdalenost mezi DVEMA MISTY NA TEMZ useku. S libovolnym poctem
-# mist je to jedine, co drzi klepnuti na misto od klepnuti na sousedni -
-# test to meri na vsech rozlisenich.
-func min_same_lane_slot_distance() -> float:
-	var best: float = 99999.0
-	for lane in range(slot_pos.size()):
-		var cnt: int = slot_count(lane)
-		for a in range(cnt):
-			for b in range(a + 1, cnt):
-				var d: float = slot_world(lane, a).distance_to(slot_world(lane, b))
-				if d < best:
-					best = d
 	return best
 
 

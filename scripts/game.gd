@@ -4,18 +4,20 @@ extends RefCounted
 # CELA herni logika. Zadne kresleni, zadne nody, zadny Input.
 # Diky tomu se da hra testovat headless a simulovat zrychlene.
 #
-# POSKOZENI DELA CELEK USEKU, ne vez. Usek je dmg zona: cim dele poutnik
-# po elementarnim useku jde, tim vic ran dostane. Bonusy na useku
-# posiluji CELOU dmg zonu, ale samy neutoci.
+# POSKOZENI DELAJ VEZE. Jan (Oct 2026): "Trochu se přiblížíme TD žánru tím,
+# že budeme reálně stavět věže kolem tras, které budou útočit na procházející
+# nepřátele." Vez stoji v PASU kolem cesty (1 bunka na kazdou stranu) a sama
+# utoci na poutniky, kteri prochazeji v jejim ctvercovem dosahu 2 bunky.
+# CESTA SAMA NEDAVA ZADNE POSKOZENI - to je budouci upgrade, ne dnesni hra.
 #
 # DVE VEZE VYPOCTU, na kterych stoji cela hra:
-#   * neutralni usek poskozuje vsechny presne 100 % - spolehlivy zaklad,
-#   * elementarni usek da vlastnimu zivlu 0 %, jeho protikladu 200 %
+#   * vez v SEDEM pasu (neutralni usek, kmen) bere vsem presne 100 %,
+#   * vez elementu X da vlastnimu zivlu 0 %, jeho protikladu 200 %
 #     a zbylym dvema 50 %. Poslat poutnika na jeho vlastni usek je tedy
-#     ZTRATA - projde bez skrabnuti.
-# Hrac prepina vyhybku pro kazdeho poutnika zvlast a jeho jedina investice
-# je bonus do useku. Investice ma cenu jen tehdy, kdyz na usek dokaze
-# poutniky poslat - to je cele napeti hry.
+#     ZTRATA - projde bez skrabnuti, i kdyz tam vez stoji.
+# Hrac prepina vyhybku pro kazdeho poutnika zvlast a jeho investice je vez
+# v pasu. Investice ma cenu jen tehdy, kdyz na nej dokaze poutniky poslat -
+# to je cele napeti hry.
 
 const START_GOLD := 260
 const START_LIVES := 12
@@ -42,20 +44,10 @@ const ROUND_GAP_MIN := 1.0
 const ROUND_GAP_MAX := 5.0
 const BUILD_TIME := 6.0
 const ROUND_BONUS := 40
-# Poskozeni, ktere da usek poutnikovi za CELE PROJETI sve delky pri
-# jednotkovem nasobku. NENI to poskozeni za sekundu - to by záviselo na
-# tom, jak je displej velky (na malem telefonu je usek kratsi v pixelech,
-# takze by poutnik dostal min ran a hra by se rozbila podle zarizeni).
-# Takto je "usek da X" vlastnost useku, ne obrazovky ani rychlosti.
-#
-# Cisla: neutralni usek 30 (43 % z 70 HP), elementarni na protiklad 60
-# (poutnika ZRANI, ale nezabije - k zabiti je potreba investice), s jedním
-# bonusem x3 = 180 (zabije). Presne to je jadro hry.
-const ZONE_DMG := 30.0
 
 var level: Level = null
 var net: Network = Network.new()
-var bonuses: Array = []
+var towers: Array = []
 var enemies: Array = []
 var gold: int = START_GOLD
 var lives: int = START_LIVES
@@ -96,7 +88,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	level = level_data if level_data != null else Level.base()
 	switch_sel = []
 	rebuild_network(r, scale_hint, bar_top)
-	bonuses = []
+	towers = []
 	enemies = []
 	gold = level.gold
 	lives = level.lives
@@ -159,101 +151,111 @@ func _sync_switch() -> void:
 		switch_sel.remove_at(switch_sel.size() - 1)
 
 
-# ---------------------------------------------------------------- bonusy
+# ---------------------------------------------------------------- veze
 
-func bonus_at(lane: int, slot: int) -> Bonus:
-	for b in bonuses:
-		var bo: Bonus = b
-		if bo.lane == lane and bo.slot == slot:
-			return bo
+func tower_at(cell: Vector2i) -> Tower:
+	for item in towers:
+		var t: Tower = item
+		if t.cell == cell:
+			return t
 	return null
 
 
-func try_build(lane: int, slot: int, element: int) -> bool:
-	if lane < 0 or lane >= net.lane_count():
-		_note("Neplatný úsek.")
-		return false
-	if slot < 0 or slot >= net.slot_count(lane):
-		_note("Neplatné místo.")
-		return false
-	if bonus_at(lane, slot) != null:
-		_note("Na tom místě už něco stojí.")
-		return false
-	# BONUS PATRI JEN NA USEK SVÉHO ZIVLU. Na neutralni usek nesmi nic -
-	# nema co posilovat, uz poskozuje vsechny stejne. Pravidlo je tady,
-	# volat ji s necim jinym nesmi projit.
-	if not net.lane_accepts(lane, element):
-		if net.lane_is_neutral(lane):
-			_note("Neutrální úsek nemá element — nedá se na něm stavět.")
-		elif net.lane_is_kmen(lane) or net.lane_is_entry(lane):
-			_note("Tenhle úsek neposkozuje — bonus na něm nemá co posílit.")
+# Kolik vezi stoji. HUD z toho cte, kolik hrac vubec postavil.
+func tower_count() -> int:
+	return towers.size()
+
+
+# KOLIK VEZI STOJI V PASU TOHOHLE USEKU. Hrac to vidi v hornim panelu
+# u vybraneho useku: vyhybkou kupuje "kam je poslu" a cislo rika, kolik
+# obrany ho tam ceka.
+func towers_of_lane(lane: int) -> int:
+	var c: int = 0
+	for item in towers:
+		var t: Tower = item
+		if net.strip_lane_of(t.cell) == lane:
+			c += 1
+	return c
+
+
+# POSTAVENI VEZE. Klepnutim na bunku pasu se stavi vez S ELEMENTEM TÉ CESTY -
+# hrac element nevoli, protoze nema co volit: pas ma barvu cesty, kolem ktere
+# lezi. Mimo pas se stavet neda vubec.
+func try_build(cell: Vector2i) -> bool:
+	if not net.strip_has(cell):
+		# Dve ruzne veci se musi rict ruzne, jinak hrac hleda chybu v siti:
+		# bud je to cesta sama/uzel (tam se proste nestavi), nebo je to
+		# zakazane misto u vyhybky.
+		if net.level.node_at_cell(cell) >= 0:
+			_note("Na uzlu se nestaví.")
+		elif _is_lane_cell(cell):
+			_note("Na cestě se nestaví — věže patří do pásu vedle ní.")
+		elif _near_junction(cell):
+			_note("U výhybky a spojky musí být jedno políčko volné.")
 		else:
-			_note("Na úsek %s patří jen bonus %s." % [
-				net.level.lane_type_name(lane),
-				net.level.lane_type_name(lane)])
+			_note("Tady pás není — věže stojí jen u cesty.")
 		return false
-	if gold < Bonus.COST:
-		_note("Málo zlata na bonus (%d)." % Bonus.COST)
+	if tower_at(cell) != null:
+		_note("Tady už věž stojí.")
 		return false
-	gold -= Bonus.COST
-	var b := Bonus.new()
-	b.lane = lane
-	b.slot = slot
-	b.element = element
-	bonuses.append(b)
-	_note("Bonus %s postaven — posiluje celý úsek." % Element.name_of(element))
+	var cost: int = Tower.level_cost(1)
+	if gold < cost:
+		_note("Málo zlata na věž (%d)." % cost)
+		return false
+	gold -= cost
+	var t := Tower.new()
+	t.cell = cell
+	t.element = net.strip_element(cell)
+	towers.append(t)
+	_note("Věž %s postavena." % Level.value_name(t.element))
 	return true
 
 
-func try_upgrade(lane: int, slot: int) -> bool:
-	var b := bonus_at(lane, slot)
-	if b == null:
-		_note("Prazdne misto.")
+# VYLEPSENI VEZE. Kazdy dalsi level je drazsi a o neco rychlejsi a silnejsi.
+func try_upgrade(cell: Vector2i) -> bool:
+	var t: Tower = tower_at(cell)
+	if t == null:
+		_note("Tady žádná věž nestojí.")
 		return false
-	if not b.can_upgrade():
-		_note("Bonus je na maximu.")
+	if not t.can_upgrade():
+		_note("Věž je na maximu.")
 		return false
-	if gold < Bonus.UPGRADE_COST:
-		_note("Malo zlata na vylepseni (%d)." % Bonus.UPGRADE_COST)
+	var cost: int = t.upgrade_cost()
+	if gold < cost:
+		_note("Málo zlata na vylepšení (%d)." % cost)
 		return false
-	gold -= Bonus.UPGRADE_COST
-	b.level += 1
-	_note("Bonus vylepsen na uroven %d." % b.level)
+	gold -= cost
+	t.level += 1
+	_note("Věž vylepšena na úroveň %d." % t.level)
 	return true
 
 
-# Jak silna je dmg zona na tomhle useku. Nasobi se VSEMI bonusy, ktere
-# na nem stoji - bonus posiluje CELOU dmg zonu, ne jen sve misto.
-func lane_mult(lane: int) -> float:
-	var m := 1.0
-	for item in bonuses:
-		var bo: Bonus = item
-		if bo.lane == lane:
-			m *= bo.mult()
-	return m
+# Klepnuti na bunku, kde uz vez stoji, ji vylepsi; jinak se stavi nova.
+# Jedno misto pro tohle rozhodnuti - obrazovka se ho jen ptá.
+func tap_build_cell(cell: Vector2i) -> bool:
+	if tower_at(cell) != null:
+		return try_upgrade(cell)
+	return try_build(cell)
 
 
-# Kolik poskozeni tenhle poutnik dostane ZA SEKUNDU na svem useku.
-# Prepocitava se z ZONE_DMG pres dobu projeti useku, takze CELE PROJETI
-# da vzdy stejne poskozeni bez ohledu na velikost displeje.
-func dps_on(e: Enemy) -> float:
-	if not e.on_lane():
-		return 0.0
-	var lane: int = e.lane
-	# VSTUPNI USEK A KMEN NEPOSKOZUJI. Poutnik po vstupnim useku teprve
-	# prichazi - hrac jeste nemel jakkoli sanci neco udelat, takze by to
-	# bylo poskozeni "zdarma". Kmen je tataz vec, jen si ho hrac kresli sam.
-	if not net.lane_deals_damage(lane):
-		return 0.0
-	var len_px: float = float(net.lane_len[lane])
-	if len_px <= 0.001 or e.speed <= 0.0:
-		return 0.0
-	var traverse: float = len_px / e.speed
-	var neutral: bool = net.lane_is_neutral(lane)
-	var dmg: float = level.zone_dmg if level != null else ZONE_DMG
-	var total: float = dmg * lane_mult(lane) * Element.lane_multiplier(
-		e.element, net.lane_element(lane), neutral)
-	return total / traverse
+func _is_lane_cell(cell: Vector2i) -> bool:
+	for i in range(net.lane_count()):
+		for cellv in net.level.lane_cells(i):
+			if cellv == cell:
+				return true
+	return false
+
+
+func _near_junction(cell: Vector2i) -> bool:
+	var clear: int = Network.STRIP_JUNCTION_CLEAR
+	for n in range(net.level.node_count()):
+		var k: int = net.level.node_kind(n)
+		if k != Level.VYHYBKA and k != Level.SPOJKA:
+			continue
+		var nc: Vector2i = net.level.node_cell(n)
+		if absi(nc.x - cell.x) <= clear and absi(nc.y - cell.y) <= clear:
+			return true
+	return false
 
 
 # ---------------------------------------------------------------- vyhybka
@@ -305,12 +307,6 @@ func switch_lane() -> int:
 # Je tenhle usek prave vybrany na sve vyhybce? Kresli se podle toho jas.
 func lane_selected(lane: int) -> bool:
 	return selected_lane(net.lane_junction(lane)) == lane
-
-
-# Ktery zivel se na ten usek stavi. NENI to volba hrace: usek nese svuj
-# zivel a jen ten tam muze stat. UI to jen cte.
-func build_element(lane: int) -> int:
-	return net.lane_element(lane)
 
 
 # ---------------------------------------------------------------- kola
@@ -449,7 +445,10 @@ func step(delta: float) -> void:
 			_note("Kolo %d: vstupy skončily, dočisti desku." % round)
 
 	_move_enemies(delta)
-	_apply_damage(delta)
+	_fire(delta)
+	if lives <= 0:
+		phase = "lost"
+		_note("PROHRA.")
 
 	# KOLO KONCI AZ PRAZDNOU DESKOU. Kdyz vstupy skoncily a na desce uz nic
 	# neni, kolo je odrazene. Dokud se poutnici dobíjejí, hra ceka - hrac
@@ -513,36 +512,81 @@ func _move_enemies(delta: float) -> void:
 	enemies = still
 
 
-func _apply_damage(delta: float) -> void:
+# ---------------------------------------------------------------- strelba
+
+# VEZE STRILEJI. Kazda vez ma svuj nabijeci cas; kdyz je nabita a ma v dosahu
+# poutnika, vystreli. Vez, ktera ceka na cil, zustava NABITA (cd = 0) - kdyz
+# poutnik vstoupi do dosahu, dostane ránu hned, ne az za nabijeci dobu.
+#
+# CIL: poutnik, kteremu do cile zbyva NEJMENE. Hrac tak neztraci rany na tom,
+# kdo stejne jeste daleko; vez pomaha tam, kde to nejvic hrozi. Pri shode
+# rozhoduje poradi v seznamu (determinismus).
+func _fire(delta: float) -> void:
 	var keep: Array = []
+	for titem in towers:
+		var t: Tower = titem
+		t.shot_t = maxf(t.shot_t - delta, 0.0)
+		t.cd -= delta
+		if t.cd > 0.0:
+			continue
+		var target: Enemy = _target_for(t)
+		if target == null:
+			# Nabita vez zustava nabita: az poutnik vstoupi do dosahu,
+			# dostane ránu HNED, ne az za nabijeci dobu.
+			t.cd = 0.0
+			continue
+		_shot(t, target)
 	for item in enemies:
 		var e: Enemy = item
-		if not e.alive:
-			continue
-		if e.on_lane():
-			# DMG ZONA CELEHO USEKU. Neutralni usek dava vzdy 100 %,
-			# elementarni 0 / 50 / 200 podle toho, kdo po nem jde.
-			var dps: float = dps_on(e)
-			e.hp -= dps * delta
-			if e.hp <= 0.0:
-				e.alive = false
-				gold += REWARD
-				_note("Poutnik %s znicen (+%d)." % [Element.name_of(e.element), REWARD])
-				continue
-		keep.append(e)
+		if e.alive:
+			keep.append(e)
 	enemies = keep
-	if lives <= 0:
-		phase = "lost"
-		_note("PROHRA.")
+
+
+# Kdo to schytá. Poutnik, kteremu do cile zbyva NEJMENE - vez pomaha tam,
+# kde to nejvic hrozi. Pri shode rozhoduje poradi v seznamu (determinismus).
+func _target_for(t: Tower) -> Enemy:
+	var best: Enemy = null
+	var best_left: float = 1.0e12
+	for item in enemies:
+		var e: Enemy = item
+		if not e.alive or not e.on_lane():
+			continue
+		if e.lane < 0 or e.lane >= net.lane_len.size():
+			continue
+		if not t.in_range(net.cell_at(net.point_at(e.lane, e.s))):
+			continue
+		var left: float = float(net.lane_len[e.lane]) - e.s
+		if left < best_left:
+			best_left = left
+			best = e
+	return best
+
+
+# Jedna rana. Nasobek je z JEDNE tabulky (Element.tower_multiplier): vlastni
+# zivel 0 %, jiny 50 %, neutralni vez (sedy pas) 100 %, protiklad 200 %.
+func _shot(t: Tower, e: Enemy) -> void:
+	t.cd = t.cooldown()
+	t.shot_to = net.point_at(e.lane, e.s)
+	t.shot_t = Tower.SHOT_FLASH
+	var dmg: float = t.damage() * Element.tower_multiplier(e.element, t.element)
+	e.hp -= dmg
+	if e.hp <= 0.0:
+		e.alive = false
+		gold += REWARD
+		_note("Poutník %s zničen (+%d)." % [Element.name_of(e.element), REWARD])
 
 
 # ---------------------------------------------------------------- pomocne
 
+# Ktere useky maji u sebe vez. HUD a testy se ptaji tady.
 func lanes_used() -> Array:
 	var seen := {}
-	for item in bonuses:
-		var b: Bonus = item
-		seen[b.lane] = true
+	for item in towers:
+		var t: Tower = item
+		var lane: int = net.strip_lane_of(t.cell)
+		if lane >= 0:
+			seen[lane] = true
 	return seen.keys()
 
 

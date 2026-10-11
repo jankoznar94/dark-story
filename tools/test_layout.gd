@@ -6,9 +6,10 @@ extends SceneTree
 # Mrizka ma pevny pocet bunek, takze se do areny VZDY vejde - to je dana
 # vec. Co se ale overit da a co se opravdu kazi, je:
 #   * ze cesty zustanou v arene a nad hornim panelem,
-#   * ze mista na bonusy se neprekryvaji,
+#   * ze PAS kolem cest (jedina stavebni plocha) je cely v arene a v kazde
+#     bunce se da opravdu postavit vez,
 #   * ze klepnuti na stred vyhybky opravdu prepne TU vyhybku a ne jinou,
-#   * ze klepnuti na stred mista na bonus vybere to misto.
+#   * ze klepnuti na stred bunky pasu stavi PRAVE tam.
 # Posledni dve jsou meritka HRATELNOSTI: klepnuti se hleda podle vzdalenosti
 # k trase a ta zavisi na rozliseni, takze se to na malem displeji muze
 # rozbit, i kdyz obrazek vypada stejne.
@@ -111,54 +112,35 @@ func _one(w: int, h: int) -> void:
 		border_exits += 1
 	_check(border_exits > 0, "%s: v mape neni zadny cil" % tag)
 
-	# --- mista na bonusy se nesmi prekryvat
-	var min_d: float = g.net.min_cross_lane_slot_distance()
-	_check(min_d > g.net.bonus_r * 1.8,
-		"%s: mista na bonusy jsou u sebe (%.1f px, treba %.1f)" % [
-			tag, min_d, g.net.bonus_r * 1.8])
-	# a ani dve mista NA TOM SAME useku - pocet mist je libovolny, takze
-	# prave tohle je to, co drzi klepnuti od klepnuti na sousedni misto
-	var same_d: float = g.net.min_same_lane_slot_distance()
-	_check(same_d > g.net.bonus_r * 1.5,
-		"%s: dve mista na jednom useku jsou u sebe (%.1f px, treba %.1f)" % [
-			tag, same_d, g.net.bonus_r * 1.5])
-	_check(g.net.max_slot_count() > 0, "%s: zadny usek nema misto na bonus" % tag)
-
-	# --- MISTA LEZI NA SVEM USEKU, NE V OCASKU K OKRAJI. Usek se na
-	# obrazovce prodluzuje k okraji displeje (poutnici prichazeji
-	# "zpoza displeje"), ale nikdo po nem nechodi - bonus v ocasku by byl
-	# mimo hru. Presne tudy utikala mista "nahodne po ceste" (Jan).
-	# Kontrola: misto musi byt bliz k NITRU useku nez k ocasku, tedy
-	# vzdalenost od koncoveho uzlu musi byt aspon pul bunky a stejne tak
-	# od pocatecniho.
-	var cell_min: float = minf(g.net.cell_w, g.net.cell_h)
-	for lane in range(g.net.lane_count()):
-		if not g.net.lane_deals_damage(lane):
+	# --- PAS KOLEM CEST: jedina stavebni plocha hry. Musi byt cely v arene
+	# a v kazde jeho bunce se musi dat postavit vez - jinak by u nekterych
+	# cest nebylo kde stavet a hrac by to poznal az v bitve.
+	for i in range(g.net.lane_count()):
+		if g.level.lane_is_kmen(i):
 			continue
-		var cells: Array = g.net.level.lane_cells(lane)
-		for slot in range(g.net.slot_count(lane)):
-			var sp: Vector2 = g.net.slot_world(lane, slot)
-			# 1) misto musi lezet NA NECI BUNCE sveho useku. Ocaskovy bod je
-			#    od vsech svych bunek dal nez pul bunky, takze se chyti tady.
-			var best: float = 1.0e9
-			for c in cells:
-				var v: Vector2i = c
-				var center: Vector2 = g.net.origin + Vector2(
-					(float(v.x) + 0.5) * g.net.cell_w, (float(v.y) + 0.5) * g.net.cell_h)
-				best = minf(best, sp.distance_to(center))
-			_check(best <= 0.75 * cell_min,
-				"%s: misto %d na useku %d nelezi na zadne bunce useku (%.1f px, treba %.1f)" % [
-					tag, slot, lane, best, 0.75 * cell_min])
-			# 2) a nesmi sedet na uzlu - prekrylo by se s jeho znackou
-			var room: float = 0.5 * cell_min
-			var start_node: int = int(g.net.lane_from_node[lane])
-			if start_node >= 0:
-				_check(sp.distance_to(g.net.node_world(start_node)) >= room,
-					"%s: misto %d na useku %d sedi na pocatecnim uzlu" % [tag, slot, lane])
-			var end_node: int = g.net.lane_end_node(lane)
-			if end_node >= 0:
-				_check(sp.distance_to(g.net.node_world(end_node)) >= room,
-					"%s: misto %d na useku %d sedi na koncovem uzlu" % [tag, slot, lane])
+		_check(g.net.strip_cells_of_lane(i) > 0,
+			"%s: usek %d nema ani jednu bunku pasu" % [tag, i])
+	g.gold = 100000
+	var built_here: int = 0
+	for cellv in g.net.strip_cells:
+		var c: Vector2i = cellv
+		var p: Vector2 = g.net.cell_center(c)
+		_check(p.x >= layout.arena.position.x - 1.0 and p.x <= layout.arena.end.x + 1.0,
+			"%s: bunka pasu %s utika z areny vodorovne" % [tag, str(c)])
+		_check(p.y >= layout.arena.position.y - 1.0 and p.y <= layout.arena.end.y + 1.0,
+			"%s: bunka pasu %s utika z areny svisle" % [tag, str(c)])
+		# BUNKA POD STREDEM PASU JE PRESNE TA BUNKA. Kdyby se rozslo
+		# pocitani stredu a prevod bodu na bunku, hrac by klepal na vez
+		# a stavěl by o bunku vedle.
+		_check(g.net.cell_at(p) == c, "%s: stred bunky pasu %s padl do %s" % [
+			tag, str(c), str(g.net.cell_at(p))])
+		# KLEPNUTI NA STAVEBNI BUNKU NESMI UKRAST UZEL: u vyhybky musi byt
+		# jedno policko volne, aby se hrac na prepnuti vyhybky vzdy trefil.
+		var j: int = g.net.junction_tap_at(p, maxf(16.0, 34.0 * layout.s))
+		_check(j < 0, "%s: klepnuti na bunku pasu %s chyti vyhybku %d" % [tag, str(c), j])
+		if g.try_build(c):
+			built_here += 1
+	_check(built_here > 0, "%s: v pasu se nepostavila ani jedna vez" % tag)
 
 	# --- hratelnost: klepnuti na uzel vyhybky prepne TU vyhybku
 	for j in range(g.net.junction_count()):
@@ -173,21 +155,24 @@ func _one(w: int, h: int) -> void:
 			var after: int = g.selected_lane(j)
 			_check(before != after, "%s: posun vyhybkou %d nezmenil vetev" % [tag, j])
 
-	# --- hratelnost: klepnuti na misto na bonus vybere to misto
-	for lane in range(g.net.lane_count()):
-		for slot in range(g.net.slot_count(lane)):
-			var p: Vector2 = g.net.slot_world(lane, slot)
-			var hit: Vector2i = g.net.nearest_slot(p)
-			_check(hit.x == lane and hit.y == slot,
-				"%s: klepnuti na misto %d/%d vybralo %d/%d" % [
-					tag, lane, slot, hit.x, hit.y])
-
-	# --- kazda volba vyhybky se musi dat vybrat i prstem: stred useku po
-	#     prvnim ohybu je to, na co hrac sahá
-	for j in range(g.net.junction_count()):
-		for k in range(g.net.junction_lanes[j].size()):
-			var lane: int = g.net.junction_lane(j, k)
-			var mid: Vector2 = g.net.point_at(lane, float(g.net.lane_len[lane]) * 0.5)
-			var hit2: int = g.net.lane_tap_at(mid, maxf(12.0, 20.0 * layout.s))
-			_check(hit2 == lane, "%s: stred useku %d se neda trefit (trefil %d)" % [
-				tag, lane, hit2])
+	# --- hratelnost: klepnuti na STAVEBBNI BUNKU stavi vez. Hra hleda nejdriv
+	# uzel, pak bunku pasu, takze stred kazde bunky pasu musi opravdu byt
+	# ta bunka (a ne treba cesta vedle).
+	var g2 := Game.new()
+	g2.auto_round = false
+	g2.setup(layout.arena, layout.s, layout.board_bottom, Level.base())
+	g2.gold = 100000
+	for cellv in g2.net.strip_cells:
+		var c: Vector2i = cellv
+		var hit: Vector2i = g2.net.cell_at(g2.net.cell_center(c))
+		_check(hit == c and g2.net.strip_has(hit),
+			"%s: klepnuti na bunku pasu %s vybralo %s" % [tag, str(c), str(hit)])
+		_check(g2.try_build(hit), "%s: v bunce pasu %s nejde postavit vez" % [tag, str(c)])
+	# a klepnuti na CESTU stavi? Ne - prepina vyhybku. Stred useku, ktery vede
+	# z vyhybky, proto nesmi lezet v pasu (jinak by se na nej stavělo).
+	for j in range(g2.net.junction_count()):
+		for k in range(g2.net.junction_lanes[j].size()):
+			var lane: int = g2.net.junction_lane(j, k)
+			var mid: Vector2 = g2.net.point_at(lane, float(g2.net.lane_len[lane]) * 0.5)
+			_check(not g2.net.strip_has(g2.net.cell_at(mid)),
+				"%s: stred useku %d lezi v pasu - klepnuti by stavělo místo prepnuti" % [tag, lane])

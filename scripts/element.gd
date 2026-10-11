@@ -88,6 +88,18 @@ static func lane_multiplier(enemy_el: int, lane_el: int, neutral: bool) -> float
 	return multiplier(enemy_el, lane_el)
 
 
+# POSKOZENI VEZE. Vez dostava element od pasu, ve kterem stoji - a pas muze byt
+# i sedy (kmen nebo neutralni usek), takze hodnota muze byt -1 nebo -2.
+# Na takovou hodnotu se `multiplier` ptat NESMI: `opposite_of(-1)` je Země
+# a vez v sedem pasu by tise brala jen nekomu. Neutralni vez dava VŠEM presne
+# 100 % - to je jeji cely smysl (Jan: "Neutralni cesty budou mit svoje vlastni
+# veze, ktere budou davat fyzicke/neutralni poskozeni.").
+static func tower_multiplier(enemy_el: int, tower_el: int) -> float:
+	if tower_el < 0 or tower_el >= COUNT:
+		return NEUTRAL
+	return multiplier(enemy_el, tower_el)
+
+
 static func damage_table() -> String:
 	var out := ""
 	for e in range(COUNT):

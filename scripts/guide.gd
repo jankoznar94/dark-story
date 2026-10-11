@@ -33,24 +33,24 @@ const BLOCKS := [
 		"text": "Klepni na úsek nebo výhybku. Poutníci jdou tam.",
 	},
 	{
-		"art": "_guide_damage",
-		"title": "Poškození",
-		"text": "Bere celý úsek. Protiklad ×2, vlastní nic.",
+		"art": "_guide_tower",
+		"title": "Věže",
+		"text": "Klepni na pás u cesty. Věž střílí.",
 	},
 	{
-		"art": "_guide_bonus",
-		"title": "Bonus",
-		"text": "Klepni na místo s runou. Další klepnutí vylepší.",
+		"art": "_guide_damage",
+		"title": "Poškození",
+		"text": "Vlastnímu živlu nic, protikladu dvakrát tolik.",
+	},
+	{
+		"art": "_guide_strip",
+		"title": "Pás",
+		"text": "Šedý pás bere všem stejně, 100 %.",
 	},
 	{
 		"art": "_guide_exit",
 		"title": "Cíl",
 		"text": "Kdo dojde, stojí život.",
-	},
-	{
-		"art": "_guide_lane",
-		"title": "Úseky",
-		"text": "Šedý bere všem stejně, 100 %.",
 	},
 ]
 

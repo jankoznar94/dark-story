@@ -18,12 +18,9 @@ extends Node2D
 # sit prelozi za behu.
 
 const MAX_TOAST := 3.0
-# Sirka pasu dmg zony. Je to ZNACKA, ne presna mechanika - mechanika je
-# "cely usek", ale pas to musi ukazat citelne.
-# SILA ZONY JE VIDET JAKO PAS PODEL CESTY. Cesty jsou 18*s siroke (2x vic
-# nez driv), takze pas musi zustat o chlup sirsi - jinak by ho cesta
-# prekryla a hrac by nepoznal, KDE vsude poutnika poskozuje.
-const ZONE_THICK := 30.0
+# VELIKOST VEZE. Je to ctverec v bunce pasu - znacka, ktera musi byt videt
+# na telefonu, ale nesmi prekryt cestu vedle.
+const TOWER_SIDE := 11.0
 
 # VELIKOST POUTNIKA. Je to znacka, ktera musi byt citelna na telefonu -
 # poutnik je to, na co se hrac cely cas kouka, takze je vetsi nez zbytek
@@ -206,11 +203,13 @@ func _on_resize() -> void:
 func _setup_shot() -> void:
 	menu.open_battle()
 	game.gold = 5000
-	for lane in range(game.net.lane_count()):
-		if game.net.lane_accepts(lane, game.net.lane_element(lane)):
-			game.try_build(lane, 0, game.net.lane_element(lane))
-			if game.net.slot_count(lane) > 2:
-				game.try_build(lane, 2, game.net.lane_element(lane))
+	# Ukazkova obrana: veze v pasu kazde cesty, aby snimek ukazal, jak vypada
+	# deska ve hre (prazdna deska nedokazuje nic).
+	for cellv in game.net.strip_cells:
+		var c: Vector2i = cellv
+		game.try_build(c)
+		if game.towers.size() >= 14:
+			break
 	game.round = 3
 	game.gold = 240
 	game.lives = 9
@@ -398,10 +397,10 @@ func _handle_tap(pos: Vector2) -> void:
 		_click()
 		_back_to_editor()
 		return
-	# Na desce uz zadne tlacitko neni - jedina interakce je klepnuti na misto
-	# na bonus (stavi / vylepsi) a klepnuti kamkoli JINAM na usek (prepne
-	# vyhybku). Zadna tlacitka vyhybky nejsou: casem jich bude vic, nez se
-	# jich do pruhu vejde, a usek je to, na co se stejne kouka.
+	# Na desce uz zadane tlacitko neni - jedina interakce je klepnuti na
+	# bunku PASU (stavi / vylepsi vez) a klepnuti kamkoli JINAM na usek
+	# (prepne vyhybku). Zadna tlacitka vyhybky nejsou: casem jich bude vic,
+	# nez se jich do pruhu vejde, a usek je to, na co se stejne kouka.
 	# NEJDRIV UZEL VYHYBKY. Kruh je to, co hrac vidi jako tlacitko. V uzlu se
 	# vstupni usek potkava s vystupnimi a vsechny jsou od stredu stejne
 	# daleko, takze hledani nejblizsiho useku by mohlo vybrat ten, ktery do
@@ -411,13 +410,12 @@ func _handle_tap(pos: Vector2) -> void:
 		_click()
 		game.cycle_switch(j)
 		return
-	var cell: Vector2i = game.net.nearest_slot(pos)
-	if cell.x >= 0:
+	# PAK BUNKA PASU. Klepnuti na prazdnou bunku stavi vez s elementem te
+	# cesty, klepnuti na hotovou vez ji vylepsi. Mimo pas se nestavi.
+	var cell: Vector2i = game.net.cell_at(pos)
+	if game.net.strip_has(cell):
 		_click()
-		if game.bonus_at(cell.x, cell.y) != null:
-			game.try_upgrade(cell.x, cell.y)
-			return
-		game.try_build(cell.x, cell.y, game.build_element(cell.x))
+		game.tap_build_cell(cell)
 		return
 	var lane: int = game.net.lane_tap_at(pos, maxf(12.0, 20.0 * layout.s))
 	if lane >= 0:
@@ -590,9 +588,6 @@ func _draw_editor() -> void:
 	_draw_background()
 	_draw_grid()
 	_draw_lanes()
-	# MISTA NA BONUS se kresli i v editoru - hrac musi videt, kde vsude muze
-	# stavet a kolik jich tam je, jinak by pocet mist menil naslepo.
-	_draw_slots()
 	_draw_nodes()
 	_draw_editor_draft()
 	# OBDELNIKOVY VYBER A DUCH VLOZENI: kresli se nad deskou, aby hrac videl
@@ -875,13 +870,15 @@ func _draw() -> void:
 
 # HERNI DESKA. Pruh je pryc, takze posledni prvek je HUD - a deska saha
 # az k spodnimu okraji displeje.
+#
+# PORADI KRESLENI JE DANE: pas jde POD cesty (je to podbarveni, ne druha
+# cesta), veze nad cestami a poutnici nad vezemi.
 func _draw_battle() -> void:
 	_draw_background()
+	_draw_strip()
 	_draw_lanes()
-	_draw_zones()
-	_draw_slots()
 	_draw_nodes()
-	_draw_bonuses()
+	_draw_towers()
 	_draw_enemies()
 	_draw_hud()
 
@@ -993,12 +990,12 @@ func _draw_guide_block(b: Dictionary, origin: Vector2, cell_w: float, cell_h: fl
 			_guide_switch(art, fs)
 		"_guide_damage":
 			_guide_damage(art, fs)
-		"_guide_bonus":
-			_guide_bonus(art, fs)
+		"_guide_tower":
+			_guide_tower(art, fs)
+		"_guide_strip":
+			_guide_strip(art, fs)
 		"_guide_exit":
 			_guide_exit(art, fs)
-		"_guide_lane":
-			_guide_lane(art, fs)
 
 
 # OBRAZEK 1: vyhybka. Krouzek s Y - presne ta znacka, kterou hrac najde na
@@ -1062,24 +1059,30 @@ func _arrow(a: Vector2, b: Vector2, col: Color) -> void:
 	draw_colored_polygon(PackedVector2Array([b, b - d * 7.0 + n * 4.0, b - d * 7.0 - n * 4.0]), col)
 
 
-# OBRAZEK 3: bonus. Usek s prazdnym mistem (obrys s runou) a vedle hotovy
-# bonus - hrac vidi, co ma hledat a co z toho vznikne.
-func _guide_bonus(r: Rect2, fs: int) -> void:
+# OBRAZEK 3: vez. Pas kolem cesty (svetlejsi odstin) a v nem vez - hrac vidi,
+# co ma hledat. Krouzek nad vezi je "klepni sem".
+func _guide_tower(r: Rect2, fs: int) -> void:
 	var y: float = r.get_center().y
-	var col: Color = Element.color_of(Element.AIR)
-	var rr: float = minf(r.size.x * 0.13, r.size.y * 0.24)
-	var x0: float = r.position.x + r.size.x * 0.24
-	var x1: float = r.position.x + r.size.x * 0.72
-	draw_line(Vector2(r.position.x + r.size.x * 0.08, y),
-		Vector2(r.position.x + r.size.x * 0.92, y),
-		Color(col.r, col.g, col.b, 0.35), float(fs) * 0.20)
-	# Prazdne misto: obrys + runa = "sem muzes postavit".
-	draw_arc(Vector2(x0, y), rr, 0.0, TAU, 22, Color(col.r, col.g, col.b, 0.45), 2.0)
-	_glyph(Element.AIR, Vector2(x0, y), rr * 0.52, Color(col.r, col.g, col.b, 0.5))
-	var side: float = minf(r.size.x * 0.10, rr * 1.3)
-	draw_rect(Rect2(Vector2(x1, y) - Vector2(side, side), Vector2(side, side) * 2.0), col)
-	_glyph(Element.AIR, Vector2(x1, y), side * 0.62, Color(0.07, 0.06, 0.06))
-	_arrow(Vector2(x0 + rr + 3.0, y), Vector2(x1 - side - 3.0, y), Color(0.55, 0.52, 0.46))
+	var col: Color = Element.color_of(Element.WATER)
+	var band: Color = Level.strip_color(Element.WATER)
+	var x0: float = r.position.x + r.size.x * 0.06
+	var x1: float = r.position.x + r.size.x * 0.94
+	var half: float = float(fs) * 0.80
+	# Pas na obou stranach cesty...
+	draw_rect(Rect2(x0, y - half * 2.0, x1 - x0, half), band)
+	draw_rect(Rect2(x0, y + half, x1 - x0, half), band)
+	# ...a cesta mezi nimi.
+	draw_line(Vector2(x0, y), Vector2(x1, y), Color(col.r, col.g, col.b, 0.80),
+		maxf(2.0, float(fs) * 0.28))
+	# Vez stoji v pasu. Ctverec s runou - presne ta znacka, kterou hrac
+	# najde na desce.
+	var side: float = minf(r.size.x * 0.09, float(fs) * 0.95)
+	var tp := Vector2(r.position.x + r.size.x * 0.68, y - half * 1.5)
+	draw_rect(Rect2(tp.x - side - 1.5, tp.y - side - 1.5, side * 2.0 + 3.0, side * 2.0 + 3.0),
+		Color(0.09, 0.085, 0.08))
+	draw_rect(Rect2(tp.x - side, tp.y - side, side * 2.0, side * 2.0), col)
+	_glyph(Element.WATER, tp, side * 0.55, Color(0.07, 0.06, 0.06))
+	draw_arc(tp, side * 1.9, 0.0, TAU, 20, Color(0.90, 0.87, 0.80), 2.0)
 
 
 # OBRAZEK 4: vystup. Krizek je jiny tvar nez vsechny runy - nema element,
@@ -1105,23 +1108,28 @@ func _guide_exit(r: Rect2, fs: int) -> void:
 	_arrow(Vector2(c.x + rr + 3.0, c.y), Vector2(hc.x - hr * 1.15, c.y), col)
 
 
-# OBRAZEK 5: useky. Nahore neutralni (sedivy, bere vsem stejne) a pod nim
-# elementarni s runou. Hrac vidi rozdil, ktery se jinak pozna jen hranim.
-func _guide_lane(r: Rect2, fs: int) -> void:
-	var y0: float = r.position.y + r.size.y * 0.30
-	var y1: float = r.position.y + r.size.y * 0.72
-	var x0: float = r.position.x + r.size.x * 0.08
-	var x1: float = r.position.x + r.size.x * 0.92
-	var neu := Color(0.55, 0.53, 0.48)
-	var fire: Color = Element.color_of(Element.FIRE)
-	var lw: float = maxf(2.0, float(fs) * 0.28)
-	draw_line(Vector2(x0, y0), Vector2(x1, y0), Color(neu.r, neu.g, neu.b, 0.80), lw)
-	draw_line(Vector2(x0, y1), Vector2(x1, y1), Color(fire.r, fire.g, fire.b, 0.80), lw)
-	# Neutralni nema runu, elementarni ano - presne ten rozdil, ktery
-	# pozna i hrac, ktery barvy nerozlisuje.
-	draw_arc(Vector2((x0 + x1) * 0.5, y1), float(fs) * 0.60, 0.0, TAU, 22,
-		Color(fire.r, fire.g, fire.b, 0.45), 2.0)
-	_glyph(Element.FIRE, Vector2((x0 + x1) * 0.5, y1), float(fs) * 0.32, fire)
+# OBRAZEK 5: pas. Dve cesty - sediva (kmen/neutralni usek) a ohniva - a u
+# kazde svetlejsi pas. Sedy pas bere vsem 100 %, barevny patri svemu zivlu.
+func _guide_strip(r: Rect2, fs: int) -> void:
+	var x0: float = r.position.x + r.size.x * 0.06
+	var x1: float = r.position.x + r.size.x * 0.94
+	var half: float = float(fs) * 0.80
+	var lw: float = maxf(2.0, float(fs) * 0.26)
+	for i in range(2):
+		var y: float = r.position.y + r.size.y * (0.30 if i == 0 else 0.74)
+		var val: int = Level.KMEN if i == 0 else Element.FIRE
+		var col: Color = Level.value_color(val)
+		var band: Color = Level.strip_color(val)
+		draw_rect(Rect2(x0, y - half * 2.0, x1 - x0, half), band)
+		draw_rect(Rect2(x0, y + half, x1 - x0, half), band)
+		draw_line(Vector2(x0, y), Vector2(x1, y), Color(col.r, col.g, col.b, 0.80), lw)
+	# Runa jen u barevne cesty: sedivy pas nema element, bere vsem stejne.
+	draw_arc(Vector2((x0 + x1) * 0.5, r.position.y + r.size.y * 0.74),
+		float(fs) * 0.60, 0.0, TAU, 22,
+		Color(Element.COLORS[Element.FIRE].r, Element.COLORS[Element.FIRE].g,
+			Element.COLORS[Element.FIRE].b, 0.45), 2.0)
+	_glyph(Element.FIRE, Vector2((x0 + x1) * 0.5, r.position.y + r.size.y * 0.74),
+		float(fs) * 0.32, Element.color_of(Element.FIRE))
 
 
 func _pad_left() -> float:
@@ -1204,8 +1212,8 @@ func _draw_lanes() -> void:
 	# tlustší než teď."). Sirka je nasobek `layout.s`, takze plati na
 	# vsech rozliseni; "core" (jasnejsi stred) i "rim" drzi stejny pomer,
 	# aby usek porad cetl jako pruh s jasnejsim stredem, ne jako jedna
-	# plocha. Mista na bonus maji vlastni polomer (`bonus_r`, 26*s), takze
-	# jsou porad vetsi nez cesta a klepnuti se strefi.
+	# plocha. Cesta je sirsi nez jedna bunka pasu, proto je porad videt,
+	# kde jsou veze a kam se klepe.
 	var lw: float = maxf(4.0, 18.0 * layout.s)
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
@@ -1236,23 +1244,44 @@ func _draw_lanes() -> void:
 				draw_line(path[k], path[k + 1], rim, maxf(1.0, 3.2 * layout.s))
 
 
-# DMG ZONA. Pas vede PODEL CELE CESTY - cim dele po nem poutnik jde, tim
-# vic ran dostane. Cislo nasobku tu ZAMERNE NENI - hrac ho ma v hornim
-# panelu u vybraneho useku.
-#
-# NEPOSKOZUJICI USEK se nevybarvuje: vstupni usek ani kmen nic nezranuji,
-# takze by pas lhal.
-func _draw_zones() -> void:
-	var thick: float = ZONE_THICK * layout.s
-	for lane in range(game.net.lane_count()):
-		if not game.net.lane_deals_damage(lane):
+# PAS KOLEM CESTY. Kazda cesta ma po obou stranach jednu bunku ve SVETLEJSIM
+# odstinu sve barvy (Jan: "Kolem kazde cesty bude podbarveni ve stejne barve
+# jaky ma cesta element, ale bude mit svetlejsi odstin"). Pas je CELA
+# STAVEBNI PLOCHA hry, takze se kresli jen tam, kde se opravdu da stavet -
+# u vyhybek a spojek zadny neni.
+func _draw_strip() -> void:
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
+	var o: Vector2 = game.net.origin
+	for cellv in game.net.strip_cells:
+		var c: Vector2i = cellv
+		var lane: int = game.net.strip_lane_of(c)
+		if lane < 0:
 			continue
-		var col: Color = _lane_color(lane)
-		var sel: bool = game.lane_selected(lane)
-		var a: float = 0.10 if not sel else 0.17
-		var path: PackedVector2Array = game.net.lane_path[lane]
-		for k in range(path.size() - 1):
-			draw_line(path[k], path[k + 1], Color(col.r, col.g, col.b, a), thick)
+		var col: Color = Level.strip_color(game.net.lane_element(lane))
+		draw_rect(Rect2(o.x + cw * float(c.x), o.y + ch * float(c.y), cw, ch), col)
+
+
+# VEZE. Ctverec s runou zivlu (barva = element pasu, ve kterem vez stoji),
+# u vystrelu kratka cara na poutnika. Uroven je videt jako pocet malych
+# ctverecku nad vezi - cislo by se do bunky neveslo a barva runy uz nese
+# element.
+func _draw_towers() -> void:
+	var side: float = maxf(4.0, TOWER_SIDE * layout.s)
+	for item in game.towers:
+		var t: Tower = item
+		var p: Vector2 = game.net.cell_center(t.cell)
+		var col: Color = Level.value_color(t.element)
+		if t.shot_t > 0.0:
+			draw_line(p, t.shot_to, Color(col.r, col.g, col.b, 0.5), maxf(1.0, 2.0 * layout.s))
+		draw_rect(Rect2(p.x - side - 1.5, p.y - side - 1.5, side * 2.0 + 3.0, side * 2.0 + 3.0),
+			Color(0.09, 0.085, 0.08))
+		draw_rect(Rect2(p.x - side, p.y - side, side * 2.0, side * 2.0), col)
+		_glyph(t.element, p, side * 0.55, Color(0.07, 0.06, 0.06))
+		for l in range(t.level):
+			var pw: float = maxf(2.0, 3.2 * layout.s)
+			draw_rect(Rect2(p.x - (pw * 1.5 + 1.0) + float(l) * (pw + 1.0),
+				p.y - side - 3.0 - pw, pw, pw), Color(0.95, 0.88, 0.60))
 
 
 # MRIZKA. Kresli se JEN V EDITORU - v hre by byla nabytkem, ktery by bral
@@ -1356,42 +1385,6 @@ func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:
 	draw_line(c, c + Vector2(r * 0.85, r * s), col, 2.0)
 
 
-func _draw_slots() -> void:
-	var r: float = game.net.bonus_r
-	for lane in range(game.net.lane_count()):
-		var col: Color = _lane_color(lane)
-		for slot in range(game.net.slot_count(lane)):
-			var p: Vector2 = game.net.slot_world(lane, slot)
-			var b: Bonus = game.bonus_at(lane, slot)
-			if b != null:
-				draw_circle(p, r, Color(col.r * 0.40, col.g * 0.40, col.b * 0.40, 0.85))
-				draw_arc(p, r, 0.0, TAU, 24, col, 2.0)
-				continue
-			# Prazdne misto nese RUNU ZIVLU TOHO USEKU - hrac tak vidi, co
-			# tam muze postavit, aniz by to musel zkouset. Na neutralnim
-			# useku runa neni, protoze tam stat nic nemuze - misto je jen
-			# obrys a to je samo informace.
-			draw_arc(p, r, 0.0, TAU, 24, Color(col.r, col.g, col.b, 0.30), 2.0)
-			if not game.net.lane_is_neutral(lane):
-				_glyph(game.net.lane_element(lane), p, r * 0.52,
-					Color(col.r, col.g, col.b, 0.42))
-
-
-func _draw_bonuses() -> void:
-	var half: float = 13.0 * layout.s
-	for item in game.bonuses:
-		var b: Bonus = item
-		var p: Vector2 = game.net.slot_world(b.lane, b.slot)
-		var col: Color = Element.color_of(b.element)
-		draw_rect(Rect2(p.x - half, p.y - half, half * 2.0, half * 2.0), col)
-		_glyph(b.element, p, 8.0 * layout.s, Color(0.07, 0.06, 0.06))
-		if b.level > 1:
-			draw_rect(Rect2(p.x - 9.0 * layout.s, p.y - 21.0 * layout.s,
-				6.0 * layout.s, 5.0 * layout.s), Color(0.95, 0.88, 0.6))
-			draw_rect(Rect2(p.x + 3.0 * layout.s, p.y - 21.0 * layout.s,
-				6.0 * layout.s, 5.0 * layout.s), Color(0.95, 0.88, 0.6))
-
-
 # NEUTRALNI VYSTUP uz ma vlastni kreslici funkci `_draw_exit_mark` a kresli
 # ho `_draw_nodes` - cil je uzel jako kazdy jiny a musi byt videt i v editoru.
 # Zvlastni funkce pro herni desku tu driv byla a byla to chyba: v editoru cil
@@ -1443,24 +1436,20 @@ func _draw_hud() -> void:
 	_label(Vector2(x0 + step * 2.0, layout.hud_h * 0.48), "Zlato %d" % game.gold, 20,
 		Color(0.88, 0.78, 0.45))
 	_label(Vector2(x0 + step * 2.0, layout.hud_h * 0.88),
-		"bonus %d · vylepšení %d" % [Bonus.COST, Bonus.UPGRADE_COST], 13, Color(0.58, 0.55, 0.49))
-	# Vybrany usek: kolik dmg zona dava. Tohle je ta informace, kterou si
-	# hrac vyhybkou kupuje, proto patri do HUDu - a je to jedine misto,
-	# kde ji vidi, protoze v desce uz zadny popisek neni.
+		"věž %d · vylepšení %d · %d" % [Tower.level_cost(1), Tower.level_cost(2),
+			Tower.level_cost(3)], 13, Color(0.58, 0.55, 0.49))
+	# Vybrany usek: kolik obrany u nej stoji. Vyhybkou si hrac kupuje "kam
+	# je poslu", takze potrebuje videt, kde ma veze - a je to jedine misto,
+	# kde to vidi jako cislo (na desce jsou jen znacky).
 	var sel: int = game.switch_lane()
 	if sel < 0:
 		sel = 0
 	var sel_txt: String
 	if game.net.lane_count() == 0:
 		sel_txt = "—"
-	elif game.net.lane_is_neutral(sel):
-		sel_txt = "neutrální × 1.0"
-	elif game.net.lane_is_kmen(sel):
-		# KMEN: poskozeni zadne. Cislo by tu bylo lez.
-		sel_txt = "kmen × 0.0"
 	else:
-		sel_txt = "%s × %.1f" % [game.net.level.lane_type_name(sel),
-			Element.STRONG * game.lane_mult(sel)]
+		var n: int = game.towers_of_lane(sel)
+		sel_txt = "%s · %d %s" % [game.net.level.lane_type_name(sel), n, _towers_word(n)]
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.48), sel_txt, 18, Color(0.72, 0.70, 0.64))
 	# FAZE KOLA. Kolo nema pocet poutniku, takze hrac potrebuje dve cisla:
 	# kolik sekund jeste vstupy tecou a kolik poutniku je na desce. Ve fazi
@@ -1519,6 +1508,16 @@ func _draw_right(text: String, r: Rect2, baseline_y: float, size: int, col: Colo
 	var inset: float = 4.0 * layout.ui
 	draw_string(_font, Vector2(r.position.x, baseline_y), text, HORIZONTAL_ALIGNMENT_RIGHT,
 		maxf(r.size.x - inset, 1.0), layout.font(float(size)), col)
+
+
+# ČESKÉ SKLOŇOVÁNÍ POČTU VEZI (1 věž, 2-4 věže, 5+ věží). Rovnou tady, aby
+# text v panelu nelhal - "3 věž" je vidět a hrac si toho vsimne.
+func _towers_word(n: int) -> String:
+	if n == 1:
+		return "věž"
+	if n >= 2 and n <= 4:
+		return "věže"
+	return "věží"
 
 
 # ČESKÉ SKLOŇOVÁNÍ POČTU KOL (1 kolo, 2-4 kola, 5+ kol). Rovnou tady, aby

@@ -19,7 +19,7 @@ func _init() -> void:
 	_run("guma", _test_erase)
 	_run("jidel a cil", _test_element_and_exit)
 	_run("uprava existujiciho useku", _test_edit_existing)
-	_run("mista na useku", _test_slot_edit)
+	_run("mista jsou legacy", _test_lane_slots_are_legacy)
 	_run("typy cest", _test_lane_types)
 	_run("oznaceni prvku", _test_select_node)
 	_run("zpet", _test_undo)
@@ -108,6 +108,20 @@ func _panel_value_label(e: Editor, p: int, needle: String) -> String:
 	return out
 
 
+# JE V PANELU POPISEK S TIMTO SLOVEM? Pouziva se na to, ze se v panelu NEMA
+# objevit neco, co uz neexistuje (mista na bonus).
+func _panel_has_needle(e: Editor, p: int, needle: String) -> bool:
+	var save: int = e.panel
+	e.panel = p
+	var out: bool = false
+	for row in e.panel_rows():
+		for it in row:
+			if str(it["label"]).contains(needle):
+				out = true
+	e.panel = save
+	return out
+
+
 # Docasne prepnuti panelu, aby se daly prectit jeho radky.
 func _save_panel(e: Editor, p: int) -> void:
 	e.panel = p
@@ -187,7 +201,6 @@ func _test_start_and_road() -> void:
 	# a je to matoucí".
 	_check(e.level.lane_element(0) == Level.KMEN,
 		"usek ze startu si odnesl zivel (%s) - ma byt kmen" % e.level.lane_type_name(0))
-	_check(not e.level.lane_deals_damage(0), "usek ze startu poskozuje")
 	_check(e.level.lane_is_entry(0), "usek ze startu neni vstupni")
 	_check(e.status.contains("vstupní"), "status nemluvi o vstupnim useku: " + e.status)
 	# Rozdelana mapa jeste nema cil, takze validate() ji spravne odmitne -
@@ -283,8 +296,7 @@ func _test_element_and_exit() -> void:
 	_check(seen.size() == Editor.TYPE_CYCLE.size(), "cyklus typu cest neprosel")
 	_check(e.elem == seen[0], "cyklus typu cest se nevratil na zacatek")
 	_check(e.bar_entries().size() == 7, "pruh nema 7 polozek (tabu a akci)")
-	_check(_panel_acts(e, Editor.PANEL_SEL).size() >= 2, "panel vyberu je prazdny")
-	_check(e.slots_text().contains("míst"), "horni pruh neukazuje mista")
+	_check(_panel_acts(e, Editor.PANEL_SEL).size() >= 1, "panel vyberu je prazdny")
 	_check(_panel_label(e, Editor.BTN_ELEM) == Element.name_of(e.elem),
 		"tlacitko zivlu neukazuje zvoleny zivel")
 
@@ -342,16 +354,13 @@ func _test_edit_existing() -> void:
 		"vstupnimu useku se nezmenil typ (je %s)" % e.level.lane_type_name(0))
 	_check(e.elem == Level.NEUTRAL, "kreslici typ nekopiruje zmenu useku (je %s)"
 		% Level.value_name(e.elem))
-	_check(e.level.lane_deals_damage(0), "vstupni usek na elementu neposkozuje")
-	_check(e.slots_text().contains("míst %d" % e.level.lane_bonus_slots(0)),
-		"horni pruh nelze o poctu mist: " + e.slots_text())
+	_check(e.level.lane_is_neutral(0), "vstupni usek se neprepnul na neutralni typ")
 	_check(e.status.contains("Vstupní"), "status nemluvi o vstupnim useku: " + e.status)
 	e.press(Editor.BTN_ELEM)
 	_check(e.level.lane_element(0) == Level.KMEN,
 		"vstupni usek se neprepnul zpet na kmen (je %s)" % e.level.lane_type_name(0))
-	_check(not e.level.lane_deals_damage(0), "kmen po prepnuti poskozuje")
-	_check(not e.level.lane_takes_bonus(0), "na kmen jde postavit bonus")
-
+	_check(e.level.lane_is_neutral(0) or e.level.lane_is_kmen(0), "usek nema ani element, ani kmen")
+	_check(e.level.lane_is_kmen(0), "usek ze startu neni kmen")
 	# rozdelovani useku si pocet mist odnese do OBOU dilu
 	e.sel_lane = 1
 	e.tool = Editor.TOOL_UZEL
@@ -363,69 +372,19 @@ func _test_edit_existing() -> void:
 			"po rozdeleni prisel jeden dil o mista")
 
 
-func _test_slot_edit() -> void:
+# POČET MÍST NA ÚSEKU JE LEGACY DATA. Veze se staví do pásu kolem cesty, ne
+# na místa na úseku, takže editor žádné ovládání počtu míst nemá - a data si
+# usek nese dál, aby se stará mapa dala přečíst a zapsat přesně tak, jak byla.
+func _test_lane_slots_are_legacy() -> void:
 	var e := _ed()
 	_lane_level(e)
-	# BEZ VYBERU se meni, s kolika misty se kresli dalsi cesta - a jedno
-	# klepnuti = jedno misto (driv to byl cyklus, co preskakoval hodnoty).
-	e.sel_lane = -1
-	e.sel_node = -1
-	e.draw_slots = 0
-	var n0: int = e.draw_slots
-	e.press(Editor.BTN_SLOTS_UP)
-	_check(e.draw_slots == n0 + 1, "pocet mist pro nove cesty se nezmenil")
-	_check(e.slots_text().contains("míst %d" % e.draw_slots),
-		"horni pruh neukazuje pocet mist pro nove cesty: " + e.slots_text())
-	_check(_panel_value_label(e, Editor.PANEL_SEL, "míst") == "míst %d" % e.draw_slots,
-		"panel vyberu neukazuje pocet mist: " + _panel_value_label(e, Editor.PANEL_SEL, "míst"))
-	e.press(Editor.BTN_SLOTS_UP)
-	_check(e.draw_slots == n0 + 2, "druhe klepnuti na + nepridalo misto")
-	e.press(Editor.BTN_SLOTS_DOWN)
-	e.press(Editor.BTN_SLOTS_DOWN)
-	_check(e.draw_slots == n0, "mista se po - nevratila na puvodni pocet")
-	# DORAZ DOLU: nula je podlaha a rekne se to (tlacitko nesmi mlcet)
-	e.press(Editor.BTN_SLOTS_DOWN)
-	_check(e.draw_slots == 0, "pocet mist sel pod nulu (%d)" % e.draw_slots)
-	_check(e.status.contains("0 míst"), "doraz dolu nerekne proc: " + e.status)
-
-	# VSTUPNI USEK: nic na nem postavit nejde, takze se pocet mist nemeni
-	# a hrac to musi slyset - tiche odmitnuti necha klepat dokola.
-	e.sel_lane = 0
-	var entry_slots: int = e.level.lane_slot_count(0)
-	e.press(Editor.BTN_SLOTS_UP)
-	_check(e.level.lane_slot_count(0) == entry_slots,
-		"vstupnimu useku se zmenil pocet mist")
-	_check(e.status.contains("neposkuzuje") or e.status.contains("neposkozuje"),
-		"odmitnuti u vstupniho useku nerekne proc: " + e.status)
-	_check(not e.level.lane_deals_damage(0), "vstupni usek poskozuje")
-
-	# POSKOZUJICI USEK: jedno klepnuti = jedno misto, obema smery, s mezemi.
-	e.sel_lane = 1
-	e.level.set_lane_slots(1, 0)
-	e.press(Editor.BTN_SLOTS_UP)
-	_check(e.level.lane_slot_count(1) == 1, "na useku se nepridalo misto")
-	_check(e.slots_text().contains("míst 1"), "pruh neukazuje 1 misto: " + e.slots_text())
-	for i in range(Level.MAX_SLOTS + 2):
-		e.press(Editor.BTN_SLOTS_UP)
-	_check(e.level.lane_slot_count(1) == Level.MAX_SLOTS,
-		"pocet mist presel strop (%d)" % e.level.lane_slot_count(1))
-	_check(e.status.contains("nejde"), "strop nerekne proc: " + e.status)
-	e.press(Editor.BTN_SLOTS_DOWN)
-	_check(e.level.lane_slot_count(1) == Level.MAX_SLOTS - 1,
-		"misto se po - neubralo")
-	# pocet mist musi prezit ulozeni a nacteni
-	e.level.set_lane_slots(1, 2)
-	var code: String = e.level.to_code()
-	var back := Level.from_code(code)
-	_check(back != null, "kod s upravenym poctem mist se neda nacist")
-	if back != null:
-		_check(back.lane_slot_count(1) == 2, "po nacteni ma usek jiny pocet mist")
-	# ZPET VRATI I POCET MIST
-	var undo_before: int = e.level.lane_slot_count(1)
-	e.press(Editor.BTN_SLOTS_UP)
-	e.press(Editor.BTN_UNDO)
-	_check(e.level.lane_slot_count(1) == undo_before,
-		"zpet nevrátilo pocet mist (%d vs %d)" % [e.level.lane_slot_count(1), undo_before])
+	_check(e.level.lane_slot_count(1) == Level.SLOTS,
+		"usek nema vychozi pocet mist (%d)" % e.level.lane_slot_count(1))
+	_check(not e.sel_text().contains("míst"),
+		"vyber v hornim pruhu hlasi mista na bonus: " + e.sel_text())
+	for p in [Editor.PANEL_SEL, Editor.PANEL_TOOLS]:
+		_check(not _panel_has_needle(e, p, "míst"),
+			"panel %d porad nabizi mista na bonus" % p)
 
 
 # TYPY CEST: zivly + neutralni usek + kmen. Jan: "v nabidce typu cest
@@ -457,9 +416,8 @@ func _test_lane_types() -> void:
 		Vector2i(5, 5), Vector2i(6, 5), Vector2i(7, 5)])
 	_check(e.level.lane_count() == 1, "kmen se nenakreslil")
 	_check(e.level.lane_is_kmen(0), "usek nema typ kmen (je %s)" % e.level.lane_type_name(0))
-	_check(not e.level.lane_deals_damage(0), "kmen poskozuje")
-	_check(not e.level.lane_accepts(0, Element.FIRE), "na kmen jde postavit bonus")
-	_check(not e.level.lane_takes_bonus(0), "kmen bere bonus")
+	_check(e.level.lane_is_neutral(0) or e.level.lane_is_kmen(0), "usek nema ani element, ani kmen")
+	_check(not e.level.spawn_elements().has(Level.KMEN), "z kmene se posila poutnik")
 	_check(e.level.spawn_elements().is_empty(),
 		"z kmene se posilaji poutnici: " + str(e.level.spawn_elements()))
 	_check(Level.value_name(e.level.lane_element(0)) == "kmen", "kmen nema jmeno")
@@ -476,8 +434,8 @@ func _test_lane_types() -> void:
 	f.press(Editor.BTN_ELEM)
 	_check(f.level.lane_element(1) == Level.NEUTRAL, "neutralni usek se nenastavil")
 	_check(f.level.lane_is_neutral(1), "usek neni neutralni")
-	_check(not f.level.lane_takes_bonus(1), "na neutralni usek jde stavet")
-	_check(f.level.lane_deals_damage(1), "neutralni usek neposkozuje")
+	_check(not f.level.lane_is_kmen(1), "neutralni usek se tvari jako kmen")
+	_check(f.level.lane_is_neutral(1), "usek neni neutralni")
 	_check(not f.level.spawn_elements().has(Level.NEUTRAL),
 		"z neutralniho useku se posila poutnik")
 	# PO ZMENE NA NEUTRALNI zbyde v mape jen Ohen - a ten tu nema svuj protiklad
@@ -507,14 +465,14 @@ func _test_select_node() -> void:
 	_check(e.status.contains("prvek"), "status nemluvi o prvku: " + e.status)
 	_check(e.sel_text().contains("výhybka"), "vyber neukazuje druh prvku: " + e.sel_text())
 	# tlacitko "mista" se u prvku zmeni na "druh" a opravdu meni druh
-	_check(_panel_label(e, Editor.BTN_SLOTS).begins_with("druh:"),
-		"tlacitko u prvku neukazuje druh: " + _panel_label(e, Editor.BTN_SLOTS))
+	_check(_panel_label(e, Editor.BTN_KIND).begins_with("druh:"),
+		"tlacitko u prvku neukazuje druh: " + _panel_label(e, Editor.BTN_KIND))
 	var before: int = e.level.node_kind(1)
-	e.press(Editor.BTN_SLOTS)
+	e.press(Editor.BTN_KIND)
 	_check(e.level.node_kind(1) == (before + 1) % Level.KIND_NAMES.size(),
 		"druh prvku se nezmenil")
-	_check(_panel_label(e, Editor.BTN_SLOTS) == "druh: %s" % e.level.kind_name(e.level.node_kind(1)),
-		"tlacitko nelze o druhu prvku: " + _panel_label(e, Editor.BTN_SLOTS))
+	_check(_panel_label(e, Editor.BTN_KIND) == "druh: %s" % e.level.kind_name(e.level.node_kind(1)),
+		"tlacitko nelze o druhu prvku: " + _panel_label(e, Editor.BTN_KIND))
 	# klepnuti na CARU useku (ne na uzel) oznaci usek
 	e.tool = Editor.TOOL_ROAD
 	e.begin_draw(Vector2i(6, 2))
@@ -569,14 +527,10 @@ func _test_undo() -> void:
 	# POCET MIST a DRUH PRVKU se taky vraci
 	e.sel_lane = 1
 	e.sel_node = -1
-	var slots_before: int = e.level.lane_slot_count(1)
-	e.press(Editor.BTN_SLOTS_UP)
-	e.press(Editor.BTN_UNDO)
-	_check(e.level.lane_slot_count(1) == slots_before, "zpet nevratilo pocet mist")
 	e.sel_node = 1
 	e.sel_lane = -1
 	var kind_before: int = e.level.node_kind(1)
-	e.press(Editor.BTN_SLOTS)
+	e.press(Editor.BTN_KIND)
 	_check(e.level.node_kind(1) != kind_before, "druh se nezmenil")
 	e.press(Editor.BTN_UNDO)
 	_check(e.level.node_kind(1) == kind_before, "zpet nevratilo druh prvku")
@@ -757,25 +711,21 @@ func _test_lane_type_color() -> void:
 				"zemsky usek nema barvu Zeme")
 
 	# MISTA: kmen je v DATECH ma (hracuv pocet se nesmi pri zmene typu ztratit),
-	# ale UI je hlásit NESMI - popisek u kmene jinak tvrdi "míst 3" a hrac cte
-	# mista, ktera tam byt nemaji.
+	# ale UI je hlásit NESMI - a veze se do pasu u kmene vubec nestavi.
 	var e2 := Editor.new()
 	e2.level = Level.base()
 	e2.sel_lane = entry
 	_check(e2.level.lane_slot_count(entry) == Level.SLOTS,
 		"kmen prisel o pocet mist v datech")
-	_check(e2.level.lane_bonus_slots(entry) == 0, "kmen hlasi mista na bonus")
-	_check(not e2.sel_text().contains("míst %d" % Level.SLOTS),
+	_check(not e2.sel_text().contains("míst"),
 		"popisek u kmene hlasi mista (%s)" % e2.sel_text())
 	var elem_lane: int = -1
 	for i in range(e2.level.lane_count()):
-		if e2.level.lane_takes_bonus(i):
-			elem_lane = i
-			break
-	_check(elem_lane >= 0, "na zakladni desce neni usek, kde by sel bonus")
-	if elem_lane >= 0:
-		_check(e2.level.lane_bonus_slots(elem_lane) == Level.SLOTS,
-			"elementarni usek prisel o mista")
+		if e2.level.lane_is_kmen(i) or e2.level.lane_is_entry(i):
+			continue
+		elem_lane = i
+		break
+	_check(elem_lane >= 0, "na zakladni desce neni usek s elementem")
 
 	# Barva pruhu je na JEDNOM miste - kdyby si ji kazda obrazovka pocitala
 	# sama, vratila by se ta chyba s kmenem.
@@ -846,9 +796,9 @@ func _test_panels() -> void:
 		_check(labels[0] == Editor.TOOL_LABELS[Editor.TOOL_ROAD]
 			and labels[1] == Editor.TOOL_LABELS[Editor.TOOL_GUMA],
 			"prvni skupina nejsou kreslici nastroje: " + str(labels))
-		# A DRUHY RADEK JSOU PARAMETRY: typ cesty a mista se krokovaci.
+		# A DRUHY RADEK JSOU PARAMETRY: typ cesty (mista na bonus uz nejsou).
 		var prm: Array = _panel_acts(e, Editor.PANEL_TOOLS)
-		for want in [Editor.BTN_ELEM, Editor.BTN_SLOTS_DOWN, Editor.BTN_SLOTS_UP]:
+		for want in [Editor.BTN_ELEM]:
 			_check(prm.has(want), "v panelu nastroju chybi parametr %d" % want)
 		_check(not prm.has(Editor.BTN_DELETE),
 			"panel nastroju nabizi smazani useku - to patri do panelu vyber")
@@ -866,9 +816,8 @@ func _test_panels() -> void:
 	e.sel_lane = -1
 	e.sel_node = -1
 	var none_acts: Array = _panel_acts(e, Editor.PANEL_SEL)
-	_check(none_acts.has(Editor.BTN_ELEM) and none_acts.has(Editor.BTN_SLOTS_UP)
-		and none_acts.has(Editor.BTN_SLOTS_DOWN),
-		"bez vyberu panel nevyber nenabizi zivel a mista -/+: " + str(none_acts))
+	_check(none_acts.has(Editor.BTN_ELEM),
+		"bez vyberu panel nevyber nenabizi zivel: " + str(none_acts))
 	_check(not none_acts.has(Editor.BTN_DELETE),
 		"bez vyberu panel nabizi smazani: " + str(none_acts))
 	e.sel_lane = 1
@@ -879,8 +828,8 @@ func _test_panels() -> void:
 	var node_acts: Array = _panel_acts(e, Editor.PANEL_SEL)
 	_check(node_acts.size() == 2 and node_acts.has(Editor.BTN_DELETE),
 		"u vybraneho prvku panel nabizi %s" % str(node_acts))
-	_check(_panel_label(e, Editor.BTN_SLOTS).begins_with("druh:"),
-		"u prvku tlacitko neukazuje druh: " + _panel_label(e, Editor.BTN_SLOTS))
+	_check(_panel_label(e, Editor.BTN_KIND).begins_with("druh:"),
+		"u prvku tlacitko neukazuje druh: " + _panel_label(e, Editor.BTN_KIND))
 
 	# SMAZANI VYBERU
 	e.sel_node = 0
@@ -1004,7 +953,6 @@ func _test_level_params() -> void:
 		_check(is_equal_approx(back.speed, e.level.speed), "rychlost se v kodu ztratila")
 		_check(back.lives == e.level.lives, "zivoty se v kodu ztratily")
 		_check(back.gold == e.level.gold, "zlato se v kodu ztratilo")
-		_check(is_equal_approx(back.zone_dmg, e.level.zone_dmg), "sila useku se v kodu ztratila")
 
 
 # ROZVRZENI PRUHU A PANELU: vsechno se musi vejit na displej, panel musi byt
@@ -1057,28 +1005,20 @@ func _test_params_prefill() -> void:
 		var lab: String = _label_in_panel(e, p, Editor.BTN_ELEM)
 		_check(lab == Level.value_name(Element.FIRE),
 			"panel %d nepredvyplnil typ vybraneho useku (%s)" % [p, lab])
-		var val: String = _panel_value_label(e, p, "míst")
-		_check(val.contains("míst 2"), "panel %d nepredvyplnil mista (%s)" % [p, val])
 		var sl: String = _panel_value_label(e, p, "úsek")
 		_check(sl.contains("úsek 1"), "panel %d nemluvi o vybranem useku (%s)" % [p, sl])
 	# --- stisk meni VYBRANY usek (a cyklus jde z jeho typu)
 	e.press(Editor.BTN_ELEM)
 	_check(e.level.lane_element(1) == Element.EARTH,
 		"typ vybraneho useku se nezmenil z ohnive (%s)" % e.level.lane_type_name(1))
-	e.press(Editor.BTN_SLOTS_UP)
-	_check(e.level.lane_slot_count(1) == 3, "mista vybraneho useku se nepridala (%d)"
-		% e.level.lane_slot_count(1))
 	# --- druhy usek ma SVOJE hodnoty: panel se preplni znovu
 	var other: int = 2
 	e.level.set_lane_element(other, Element.WATER)
-	e.level.set_lane_slots(other, 1)
 	e.begin_draw(e.level.lane_cells(other)[3])
 	e.end_draw()
 	_check(e.sel_lane == other, "druhy usek se nevybral (sel %d)" % e.sel_lane)
 	_check(_label_in_panel(e, Editor.PANEL_SEL, Editor.BTN_ELEM) == Level.value_name(Element.WATER),
 		"panel se nepreplnil na druhy usek")
-	var mv: String = _panel_value_label(e, Editor.PANEL_SEL, "míst")
-	_check(mv.contains("míst 1"), "panel neukazuje mista druheho useku: " + mv)
 
 
 func _test_editor_layout() -> void:
@@ -1329,7 +1269,7 @@ func _test_box_copy() -> void:
 	var acts: Array = _panel_acts(e3, Editor.PANEL_SEL)
 	_check(acts.has(Editor.BTN_COPY), "u obdelniku chybi kopirovani: %s" % str(acts))
 	_check(acts.has(Editor.BTN_DEL_SEL), "u obdelniku chybi smazani vyberu: %s" % str(acts))
-	_check(not acts.has(Editor.BTN_ELEM) and not acts.has(Editor.BTN_SLOTS_UP),
+	_check(not acts.has(Editor.BTN_ELEM) and not acts.has(Editor.BTN_KIND),
 		"u obdelniku panel nabizi jednoprvkove veci: %s" % str(acts))
 	e3.copy_box()
 	var acts2: Array = _panel_acts(e3, Editor.PANEL_SEL)
@@ -1381,9 +1321,12 @@ func _test_steppers_and_grid() -> void:
 		var lay := ScreenLayout.new()
 		lay.compute(size)
 		lay.set_editor_font(font)
-		# PANEL "LEVEL" I "VYBER": hodnota je text a vedle ni stoji dve mala
-		# tlacitka TESNE u ni (bez mezery) - jedno misto, kde se to hlida.
-		for p in [Editor.PANEL_LEVEL, Editor.PANEL_SEL]:
+		# Krokovaci "−"/"+" ma jen panel "level" (kolo, rychlost, zivoty,
+		# zlato). Panel "vyber" uz zadny nema - mista na bonus z nej zmizela;
+		# test se proto pta na KAZDY panel, kolik dvojic v nem opravdu je,
+		# a rovnou to overi (panel bez dvojice je povolen, kdyz nema co
+		# krokovat).
+		for p in [Editor.PANEL_LEVEL, Editor.PANEL_SEL, Editor.PANEL_TOOLS]:
 			e.panel = p
 			e.sel_lane = 0
 			lay.editor_panel(e.panel_rows())
@@ -1416,9 +1359,9 @@ func _test_steppers_and_grid() -> void:
 					"%s panel %d: hodnota pred - neni text u praveho okraje" % [str(size), p])
 				_check(str(plus["item"].get("label", "")) == "+",
 					"%s panel %d: za - neni +" % [str(size), p])
-			# Panel "level" ma dvojici u kazdeho parametru, panel "vyber" jednu
-			# (mista). Kdyby se nasla nula, test by meril prazdno.
-			var want: int = Editor.PARAM_COUNT if p == Editor.PANEL_LEVEL else 1
+			# Panel "level" ma dvojici u kazdeho parametru; ostatni zadnou.
+			# Kdyby se nasla nula v "level", test by meril prazdno.
+			var want: int = Editor.PARAM_COUNT if p == Editor.PANEL_LEVEL else 0
 			_check(pairs == want,
 				"%s panel %d: naslo se %d dvojic -/+ (ceka se %d)" % [str(size), p, pairs, want])
 	e.panel = Editor.PANEL_NONE

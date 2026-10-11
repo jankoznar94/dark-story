@@ -23,7 +23,7 @@ extends RefCounted
 #
 # Co z puvodniho modelu zmizelo: relayout, rows_fit, MIN_ROW_GAP, NODE_FRACS,
 # run_frac_for, divert, MAX_DEPTH, span/_jspan, automaticke umistovani.
-# Co zustalo: damage model (Element + zone_dmg), bonusy na usek, rng a vlny
+# Co zustalo: damage model (Element), pas kolem cest se vezemi, rng a kola
 # (ty jsou ve Game, ne tady).
 # =========================================================================
 
@@ -60,7 +60,6 @@ const NEUTRAL := -1
 const KMEN := -2
 
 # --------------------------------------------------------------- zakladni cisla
-const BASE_ZONE_DMG := 30.0
 const BASE_SPEED := 52.0
 # LEGACY: prumerna mezera mezi poutniky z modelu VLAK (0.6-1.4 nasobek).
 # Dnesni kolo si mezery losuje samo z rozpeti Game.ROUND_GAP_MIN..MAX, takze
@@ -72,10 +71,10 @@ const BASE_SPAWN := 1.9
 const BASE_ROUND := 120.0
 const BASE_LIVES := 12
 const BASE_GOLD := 260
-# Kolik bonusu se vejde na jeden usek. Neni to geometrie - je to pocet
-# mist, kam hrac muze klepnout. KAZDY USEK SI SVUJ POCET DRZI SAM
-# ("slots" v datech useku) - Jan: "Nekde jen 1, nekde 3, nekde i vice a
-# nekde uplne bez bonusu." SLOTS je jen vychozi hodnota pro nove useky.
+# KOLIK MIST NA BONUS SE VEJDE NA JEDEN USEK. LEGACY: hodnota se jeste
+# uklada do kodu levelu (klic "slots"), ale do hry nevstupuje - veze se
+# stavi do PASU kolem cesty, ne na mista na useku. Slouzi jen k tomu, aby
+# se stara ulozena mapa dala precist a zapsat presne tak, jak byla.
 const SLOTS := 3
 # Strop poctu mist na jednom useku. Neni to geometrie (mista se vejdou i
 # vic), je to mez, za kterou uz by se klepnuti na jedno misto nedalo
@@ -95,10 +94,10 @@ var nodes: Array = []
 #   prodluzuje se na okraj displeje. O poskozeni ROZHODUJE HODNOTA USEKU,
 #   ne tenhle priznak - vstupni usek je od vychoziho stavu KMEN, ale hrac
 #   ho muze prepnout na element.
-#   slots = kolik mist na bonus tenhle usek ma (0 = zadne bonusy).
+#   slots = kolik mist na bonus tenhle usek ma (LEGACY - do hry nevstupuje,
+#   viz `lane_slot_count`).
 var lanes: Array = []
 
-var zone_dmg: float = BASE_ZONE_DMG
 var speed: float = BASE_SPEED
 var spawn: float = BASE_SPAWN
 var round_time: float = BASE_ROUND
@@ -173,26 +172,6 @@ func lane_is_kmen(lane: int) -> bool:
 	return lane_element(lane) == KMEN
 
 
-# USEK, KTERY VUBEC NEPOSKOZUJE. Je to JEN kmen - a nic vic. Driv se tu
-# ptalo i na priznak "entry" (usek ze startu), takze vstupni usek nemel
-# poskozeni, i kdyz na sobe mel barvu elementu: vypadal jako ohen a choval
-# se jako kmen. Presne to Janovi vadilo ("barvu má jak element a je to
-# matoucí"). Vstupni usek je proto od zacatku KMEN (kresli se sedy) a hrac
-# ho muze tlacitkem "typ" prepnout na element - a tim padem i na zpet na
-# kmen. JEDNO pravidlo: o poskozeni rozhoduje jen hodnota useku.
-func lane_deals_damage(lane: int) -> bool:
-	return not lane_is_kmen(lane)
-
-
-# USEK, NA KTERY SE DA STAVET BONUS. Na neutralni usek ne (uz poskozuje
-# vsechny stejne) a na kmen taky ne - bonus by nemel co posilit a hrac by
-# vyhodil zlato.
-func lane_takes_bonus(lane: int) -> bool:
-	if lane_is_neutral(lane) or lane_is_kmen(lane):
-		return false
-	return lane_deals_damage(lane)
-
-
 # JMENO HODNOTY USEKU. `Element.name_of` se na neutralni usek a kmen NESMI
 # volat: dostane -1/-2 a v GDScriptu to neni chyba, ale tichy nesmysl
 # (NAMES[-1] je "Vzduch"), takze by hra lhala o tom, na co se hrac kouka.
@@ -227,6 +206,23 @@ func lane_type_color(lane: int) -> Color:
 	return Level.value_color(lane_element(lane))
 
 
+# BARVA PASU KOLEM CESTY: STEJNA BARVA jako cesta, ale SVETLEJSI ODSTIN
+# (Jan: "bude mit svetlejsi odstin"). Pas je podbarveni, ne druha cesta -
+# proto zustava pruhledny a cesta nad nim je porad to nejjasnejsi.
+#
+# Barva je tady a ne v kresleni: test se na ni musi moct zeptat a overit,
+# ze pas je opravdu svetlejsi nez cesta a ze neni pruhlednejsi nez podklad.
+const STRIP_LIGHTEN := 0.45
+const STRIP_ALPHA := 0.28
+
+
+static func strip_color(e: int) -> Color:
+	var c: Color = value_color(e)
+	var l: Color = c.lerp(Color(1.0, 1.0, 1.0), STRIP_LIGHTEN)
+	l.a = STRIP_ALPHA
+	return l
+
+
 # MRIZKA JE VIDET. Driv se kreslila barvou 0.20 (skoro jako podklad desky) a
 # hrac v ni nevnimal bunky - Jan: "Mřížku uděláme viditelnější." Barvy jsou
 # tady, ne v kresleni: test se na ne muze zeptat primo (a hlida, ze prvni
@@ -245,25 +241,15 @@ const GRID_STEP := 4
 # ztratit), ale UI je nesmi hlásit - jinak popisek u kmene tvrdi "míst 3",
 # zatimco tlacitko vedle "místa 0". Jan: "na kmenu se zobrazuji mista pro
 # upgrady, ktera by tam nemela existovat".
-func lane_bonus_slots(lane: int) -> int:
-	if not lane_takes_bonus(lane):
-		return 0
-	return lane_slot_count(lane)
-
-
 func lane_type_name(lane: int) -> String:
 	return Level.value_name(lane_element(lane))
 
 
-func lane_accepts(lane: int, element: int) -> bool:
-	if not lane_takes_bonus(lane):
-		return false
-	return lane_element(lane) == element
-
-
-# KOLIK MIST NA BONUS TENHLE USEK MA. Neni to konstanta: Jan chce, aby si to
-# kazdy usek nesl sam ("nekde jen 1, nekde 3, nekde i vice a nekde uplne bez
-# bonusu"). Nula je platna hodnota - usek bez bonusu.
+# KOLIK MIST NA BONUS TENHLE USEK MA. LEGACY: dnes se veze nestavi na mista
+# na useku, ale do PASU kolem cesty (viz `Network.strip_lane`), takze tahle
+# hodnota do hry nevstupuje. Zustava jen v DATECH a v kodu levelu, aby se
+# stara ulozena mapa dala precist a zapsat presne tak, jak byla - a aby se
+# pocet mist neztratil, kdyby se sem nejaka podoba stavby vratila.
 func lane_slot_count(lane: int) -> int:
 	if lane < 0 or lane >= lanes.size():
 		return 0
@@ -482,7 +468,6 @@ func clone() -> Level:
 	lv.name = name
 	lv.cols = cols
 	lv.rows = rows
-	lv.zone_dmg = zone_dmg
 	lv.speed = speed
 	lv.spawn = spawn
 	lv.round_time = round_time
@@ -715,7 +700,6 @@ func to_dict() -> Dictionary:
 		"n": name,
 		"w": cols,
 		"h": rows,
-		"z": zone_dmg,
 		"s": speed,
 		"p": spawn,
 		"rt": round_time,
@@ -731,7 +715,6 @@ static func from_dict(d: Dictionary) -> Level:
 	lv.name = str(d.get("n", ""))
 	lv.cols = int(d.get("w", COLS))
 	lv.rows = int(d.get("h", ROWS))
-	lv.zone_dmg = float(d.get("z", BASE_ZONE_DMG))
 	lv.speed = float(d.get("s", BASE_SPEED))
 	lv.spawn = float(d.get("p", BASE_SPAWN))
 	lv.round_time = float(d.get("rt", BASE_ROUND))
@@ -837,7 +820,6 @@ func load_from_disk(key: String) -> bool:
 	name = lv.name
 	cols = lv.cols
 	rows = lv.rows
-	zone_dmg = lv.zone_dmg
 	speed = lv.speed
 	spawn = lv.spawn
 	lives = lv.lives
@@ -906,17 +888,28 @@ static func base() -> Level:
 	# START vlevo, dve vyhybky v sérii, pet cílu vpravo.
 	#
 	#   rada 1  ohen     (6,1) --------------------> (21,1)
-	#   rada 4                 zeme (11,4) --------> (21,4)
-	#   rada 7  start (1,7) -> j1 (6,7) -> j2 (11,7) - neutr ---> (21,7)
-	#   rada 10                vzduch (11,10) ------> (21,10)
-	#   rada 13 voda     (6,13) -------------------> (21,13)
+	#   rada 4                 voda (12,4) --------> (21,4)
+	#   rada 7  start (1,7) -> j1 (6,7) -> j2 (12,7) - neutr ---> (21,7)
+	#   rada 10                zeme (12,10) -------> (21,10)
+	#   rada 13 vzduch   (6,13) -------------------> (21,13)
 	#
 	# DESKA JE PREPOCTENA NA HUSTSI MRIZKU 28x14 (puvodne 20x10, krok 0.4).
-	# Drzi se stejnych POMERU, takze i vsechna vyladena cisla zustavaji:
-	# cesta je v pixelech stejne dlouha (11 R bunek z 20 je 0.55 sirky,
-	# 15 R bunek z 28 je 0.536) a poskozeni je "za CELE PROJETI useku", takze
-	# na delce v pixelech vubec nezalezi. Rozestupy radku jsou 3/14 = 0.214
-	# misto 2/10 = 0.20 - o chlup vic mista mezi pruhy.
+	# Drzi se stejnych POMERU, takze i vsechna vyladena cisla zustavaji.
+	#
+	# PROC JSOU ZIVLY PREROVANE PROTI PUVODNI DESCE. Vez ma ctvercovy dosah
+	# 2 bunky, takze utoci na cesty, ktere jsou od ni do 2 radku - a pas
+	# u cesty je 1 bunku od ni. Aby na sebe cesty vubec dosahly, musi byt
+	# PROTIKLADY VEDLE SEBE:
+	#
+	#   * vez u ohnive cesty (rada 2) dosahne na radu 4, tedy na vodu,
+	#   * vez u vodni cesty (rada 3) dosahne na radu 1, tedy na ohen,
+	#   * vez u zemske cesty (rada 11) dosahne na radu 13, tedy na vzduch,
+	#   * vez u vzduchove cesty (rada 12) dosahne na radu 10, tedy na zemi.
+	#
+	# Na puvodni desce (ohen 1, zeme 4, neutral 7, vzduch 10, voda 13) lezely
+	# protiklady 12 radku od sebe a ZADNA vez nedosahla na svuj protiklad -
+	# hra by nemela cim zabijet. Rada 7 zustava neutralni: sedive veze
+	# uprostred berou vsem 100 % a kryji obe vnitrni cesty.
 	#
 	# Poradi je dane tim, aby se cesty NEKRIZILY: kdo odbocuje vys, musi
 	# odbocit drive (nalevo), a sestup zpet dolu ma vlastni sloupec.
@@ -930,14 +923,15 @@ static func base() -> Level:
 	# test rozlozeni) - zaokrouhleni na bunku se musi drzet POMERU.
 	var j2 := lv.add_node(12, 7, VYHYBKA)
 	var e_fire := lv.add_node(21, 1, CIL)
-	var e_earth := lv.add_node(21, 4, CIL)
+	var e_water := lv.add_node(21, 4, CIL)
 	var e_neutral := lv.add_node(21, 7, CIL)
-	var e_air := lv.add_node(21, 10, CIL)
-	var e_water := lv.add_node(21, 13, CIL)
+	var e_earth := lv.add_node(21, 10, CIL)
+	var e_air := lv.add_node(21, 13, CIL)
 
-	# VSTUPNI USEK JE KMEN. Je to jediny usek, ktery neposkozuje "od
-	# prirody" - hrac po nem teprve prichazi, takze by kazda rana byla
-	# zdarma. Barva i poskozeni si ted odpovidaji: sedy pruh, zadna rana.
+	# VSTUPNI USEK JE KMEN: kresli se sedy a jeho vez bere vsem 100 %.
+	# Hrac po nem teprve prichazi, takze by kazda rana byla zdarma; dnes
+	# ale rany dava vez, ne cesta, takze sedivy pas u vstupu je prvni
+	# misto, kde se da stavet.
 	#
 	# Smery se skladaji z opakovani, ne rucne: u hustsi mrizky se do
 	# retezce "U U U" snadno napise o pismeno min a cesta pak minne
@@ -945,9 +939,9 @@ static func base() -> Level:
 	lv.add_lane(start, j1, "R".repeat(5), KMEN)
 	lv.add_lane(j1, e_fire, "U".repeat(6) + "R".repeat(15), Element.FIRE)
 	lv.add_lane(j1, j2, "R".repeat(6), NEUTRAL)
-	lv.add_lane(j1, e_water, "D".repeat(6) + "R".repeat(15), Element.WATER)
-	lv.add_lane(j2, e_earth, "U".repeat(3) + "R".repeat(9), Element.EARTH)
-	lv.add_lane(j2, e_air, "D".repeat(3) + "R".repeat(9), Element.AIR)
+	lv.add_lane(j1, e_air, "D".repeat(6) + "R".repeat(15), Element.AIR)
+	lv.add_lane(j2, e_water, "U".repeat(3) + "R".repeat(9), Element.WATER)
+	lv.add_lane(j2, e_earth, "D".repeat(3) + "R".repeat(9), Element.EARTH)
 	lv.add_lane(j2, e_neutral, "R".repeat(9), NEUTRAL)
 
 	for i in range(lv.lanes.size()):

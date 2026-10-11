@@ -13,14 +13,16 @@ var checks: int = 0
 
 func _init() -> void:
 	_run("hra se postavi", _test_setup)
-	_run("vstupni usek", _test_entry_free)
-	_run("poskozeni na useku", _test_zone_damage)
-	_run("cesta sama nezabiji", _test_path_alone_wont_kill)
-	_run("vlastni zivel", _test_own_element_is_free)
+	_run("cesta sama nebere", _test_path_deals_no_damage)
+	_run("vez bere protikladu dvojnasobek", _test_tower_damage)
+	_run("obrana zabiji", _test_defense_kills)
+	_run("vlastni zivel je imunni", _test_own_element_is_free)
+	_run("stavba a vylepseni veze", _test_tower_build_and_levels)
+	_run("pas kolem cest", _test_strip_rules)
+	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
 	_run("vstupy v kole", _test_round_spawns)
-	_run("typ vstupniho useku", _test_entry_type)
 	_run("determinismus", _test_determinism)
 	_run("prohra pri zahlceni", _test_pile_up_loses)
 	if fails.is_empty():
@@ -61,6 +63,25 @@ func _lane_with(g: Game, element: int) -> int:
 	return -1
 
 
+# BUNKA V PASU TÉ CESTY: prostredni bunka useku posunuta o (dx,dy). Pas je
+# osm okoli cesty, takze (0,1) je bunka pod cestou a (0,-1) nad ni.
+func _strip_cell_on(g: Game, lane: int, dx: int, dy: int) -> Vector2i:
+	var cs: Array = g.level.lane_cells(lane)
+	var c: Vector2i = cs[cs.size() / 2]
+	return Vector2i(c.x + dx, c.y + dy)
+
+
+# PUST POUTNIKA PO CELY USEK od jeho zacatku. Vraci ho, aby se dalo merit,
+# co mu zustalo ze zivota.
+func _walk_lane(g: Game, lane: int, element: int) -> Enemy:
+	var e: Enemy = g.debug_spawn(element)
+	e.lane = lane
+	e.s = 0.0
+	var speed: float = maxf(e.speed, 1.0)
+	g.run_for(float(g.net.lane_len[lane]) / speed * 1.2 + 0.5)
+	return e
+
+
 # ---------------------------------------------------------------- zaklad
 
 func _test_setup() -> void:
@@ -75,73 +96,173 @@ func _test_setup() -> void:
 	# kazda vyhybka ma aspon dva vystupy a hra na ne umi klepnout
 	for j in range(g.net.junction_count()):
 		_check(g.net.junction_lanes[j].size() >= 2, "vyhybka %d ma malo vystupu" % j)
+	# KAZDA CESTA S ELEMENTEM MA PAS; U KMENE (a tedy i u vstupu) SE NESTAVI.
+	# Jan: "U kmene, vstupu, vyhybky a spojky se nestavi."
+	var with_strip: int = 0
+	for i in range(g.net.lane_count()):
+		if g.level.lane_is_kmen(i):
+			_check(g.net.strip_cells_of_lane(i) == 0,
+				"u kmene (usek %d) je pas, i kdyz se tam nestavi" % i)
+			continue
+		_check(g.net.strip_cells_of_lane(i) > 0,
+			"u useku %d neni zadna bunka pasu" % i)
+		with_strip += 1
+	_check(with_strip > 0, "v mape neni zadna cesta, u ktere by se dalo stavet")
 
 
-func _test_entry_free() -> void:
-	var g := _new_game()
-	var e: Enemy = g.debug_spawn(Element.FIRE)
-	_check(e.lane == g.net.entry_lane, "poutnik nevstoupil na vstupni usek")
-	_check(g.dps_on(e) == 0.0, "na vstupnim useku se poskozuje")
-	# projdi cely vstupni usek - porad bez skrabnuti
-	g.run_for(g.net.lane_len[e.lane] / e.speed * 0.9)
-	_check(e.hp >= e.max_hp - 0.001, "poutnik dostal rany jeste pred vyhybkou")
-
-
-# ---------------------------------------------------------------- poskozeni
-
-func _test_zone_damage() -> void:
+# CESTA SAMA NEBERE. Jan: "Jinak cesta sama o sobě dávat poškození nebude."
+# Je to zaklad celeho modelu: kdyby cesta brala, byly by veze zbytecne a hra
+# by nemela zadne rozhodnuti.
+func _test_path_deals_no_damage() -> void:
 	var g := _new_game()
 	var fire: int = _lane_with(g, Element.FIRE)
 	_check(fire >= 0, "v mape neni ohnivy usek")
 	if fire < 0:
 		return
-	var e: Enemy = g.debug_spawn(Element.WATER)
-	var full: float = e.max_hp
-	e.lane = fire
-	e.s = 0.0
-	var traverse: float = g.net.lane_len[fire] / e.speed
-	g.run_for(traverse * 0.97)
-	# voda na ohni = protiklad = 2x, tedy 60 za cele projeti
-	_check(e.hp > 0.0, "poutnik mel po projeti ohniveho useku prezit")
-	var got: float = full - e.hp
-	var want: float = g.level.zone_dmg * 2.0 * 0.97
-	_check(absf(got - want) < 2.0, "voda na ohni ma dostat %.1f, dostala %.1f" % [want, got])
-	# S BONUSEM UZ ALE MUSI UMRIT. Presne to je jadro hry: cesta sama
-	# nedokaze zabit, investice ano.
-	g.gold = 1000
-	_check(g.try_build(fire, 0, Element.FIRE), "bonus na ohnivy usek nejde postavit")
-	var e2: Enemy = g.debug_spawn(Element.WATER)
-	e2.lane = fire
-	e2.s = 0.0
-	g.run_for(g.net.lane_len[fire] / e2.speed * 1.05)
-	_check(not e2.alive, "s bonusem mel poutnik na svem protikladu umrit")
+	var e: Enemy = _walk_lane(g, fire, Element.WATER)
+	_check(e.hp >= e.max_hp - 0.001,
+		"cesta sama ubrala zivoty (hp %.2f z %.2f)" % [e.hp, e.max_hp])
 
 
-func _test_path_alone_wont_kill() -> void:
-	# CELE JADRO BALANCE: cesta sama nesmi nikoho zabit. Kdyby ano,
-	# stavet bonusy by bylo zbytecne a hra by nemela zadne rozhodnuti.
+# VEZ BERE PODLE TABULKY. Voda na ohni (protiklad) dostane dvojnasobek, ale
+# JEDNA vez prvniho levelu jeste nezabije - presne jako driv: cesta sama
+# nesmi byt resenim, obrana musi byt investice.
+func _test_tower_damage() -> void:
 	var g := _new_game()
+	g.gold = 5000
 	var fire: int = _lane_with(g, Element.FIRE)
 	if fire < 0:
 		return
-	var e: Enemy = g.debug_spawn(Element.WATER)
-	e.lane = fire
-	e.s = 0.0
-	g.run_for(g.net.lane_len[fire] / e.speed * 0.99)
-	_check(e.hp > 0.0, "cesta sama zabila - balance je rozbita")
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	_check(g.net.strip_has(cell), "bunka %s neni v pasu ohnive cesty" % str(cell))
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	var t: Tower = g.tower_at(cell)
+	_check(t != null and t.element == Element.FIRE,
+		"vez v pasu ohnive cesty nema ohnivy element (%s)" %
+		Level.value_name(-1 if t == null else t.element))
+	var e: Enemy = _walk_lane(g, fire, Element.WATER)
+	var got: float = e.max_hp - e.hp
+	_check(got > 0.0, "vodni poutnik po ohnive ceste s ohnivou vezi nedostal nic")
+	_check(got > t.damage() * Element.STRONG,
+		"jedna rana ma byt aspon %.1f, dostal %.1f" % [t.damage() * Element.STRONG, got])
+	_check(e.hp > 0.0, "jedna vez prvniho levelu nemá sama zabíjet (balance)")
+
+
+# CELA OBRANA ZABIJI. Tri vodni veze pod ohnivou cestou (vez je 2 bunky od
+# rady 1, takze na ohnivou cestu dosahnou) zabiji ohniveho poutnika.
+func _test_defense_kills() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	var water: int = _lane_with(g, Element.WATER)
+	if fire < 0 or water < 0:
+		return
+	var cs: Array = g.level.lane_cells(water)
+	# bunky 2 radky NAD vodni cestou (rada 4 -> rada 3) kryji ohnivou cestu
+	var base: Vector2i = cs[cs.size() / 2]
+	var row: int = base.y - 1
+	var built: int = 0
+	for c in [base.x - 3, base.x, base.x + 3]:
+		var cell := Vector2i(c, row)
+		if g.net.strip_has(cell) and g.try_build(cell):
+			built += 1
+	_check(built == 3, "pod ohnivou cestou se postavily jen %d veze" % built)
+	var e: Enemy = _walk_lane(g, fire, Element.FIRE)
+	_check(not e.alive, "ohnivy poutnik po ohnive ceste s vodnimi vezemi neumrel (hp %.1f)" % e.hp)
 
 
 func _test_own_element_is_free() -> void:
 	var g := _new_game()
+	g.gold = 5000
 	var fire: int = _lane_with(g, Element.FIRE)
 	if fire < 0:
 		return
-	var e: Enemy = g.debug_spawn(Element.FIRE)
-	e.lane = fire
-	e.s = 0.0
-	g.run_for(g.net.lane_len[fire] / e.speed * 0.99)
+	# OHNIVE VEZE PRIMO V PASU OHNIVE CESTY na sve vlastni poutniky
+	# nedosahnou: vlastni zivel je 0 %.
+	for c in [11, 14, 17]:
+		var cell: Vector2i = _strip_cell_on(g, fire, c - 13, 1)
+		if g.net.strip_has(cell):
+			g.try_build(cell)
+	_check(g.tower_count() > 0, "v pasu ohnive cesty se nepostavila zadna vez")
+	var e: Enemy = _walk_lane(g, fire, Element.FIRE)
 	_check(e.hp >= e.max_hp - 0.01,
-		"poutnik na svem vlastnim useku dostal rany (hp %.2f z %.2f)" % [e.hp, e.max_hp])
+		"poutnik na sve vlastni ceste dostal rany od vlastnich vezi (hp %.2f z %.2f)" %
+		[e.hp, e.max_hp])
+
+
+# STAVBA A VYLEPSENI. Kazdy dalsi level je drazsi a o neco silnejsi
+# a rychlejsi; stavet se da jen do pasu a jen jedno na bunku.
+func _test_tower_build_and_levels() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	var neutral: int = _lane_with(g, Level.NEUTRAL)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	# na obsazenou bunku se nestavi druha
+	_check(not g.try_build(cell), "na obsazenou bunku se postavila druha vez")
+	# na cestu se nestavi
+	_check(not g.try_build(Vector2i(cell.x, cell.y - 1)), "vez se postavila na cestu")
+	# mimo pas se nestavi
+	_check(not g.try_build(Vector2i(2, 2)), "vez se postavila mimo pas")
+	# U VYHYBKY A SPOJKY JE JEDNO POLICKO VOLNE (Jan). Uzel j1 je na (6,7).
+	for d in [Vector2i(-1, -1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(1, 1)]:
+		var n := Vector2i(6 + d.x, 7 + d.y)
+		_check(not g.net.strip_has(n),
+			"bunka %s u vyhybky je v pasu (musi byt volna)" % str(n))
+		_check(not g.try_build(n), "u vyhybky se postavila vez")
+
+	var t: Tower = g.tower_at(cell)
+	var dmg1: float = t.damage()
+	var cd1: float = t.cooldown()
+	var gold_before: int = g.gold
+	_check(g.try_upgrade(cell), "vez nejde vylepsit")
+	_check(t.level == 2, "vez po vylepseni nema level 2 (%d)" % t.level)
+	_check(Tower.level_cost(2) > Tower.level_cost(1),
+		"druhy level neni drazsi nez prvni")
+	_check(gold_before - g.gold == Tower.level_cost(2), "vylepseni nestalo cenu 2. levelu")
+	_check(t.damage() > dmg1 and t.cooldown() < cd1,
+		"vylepsena vez neni silnejsi a rychlejsi (%.1f/%.2f -> %.1f/%.2f)" %
+		[dmg1, cd1, t.damage(), t.cooldown()])
+	_check(g.try_upgrade(cell), "vez nejde vylepsit na treti level")
+	_check(not g.try_upgrade(cell), "vez jde vylepsit pres maximu")
+	_check(t.level == Tower.MAX_LEVEL, "vez nema maximalni level (%d)" % t.level)
+	# neutralni vez: sedivy pas bere vsem 100 %
+	if neutral >= 0:
+		var ncell: Vector2i = _strip_cell_on(g, neutral, 0, 1)
+		if g.net.strip_has(ncell) and g.try_build(ncell):
+			var nt: Tower = g.tower_at(ncell)
+			_check(nt.element == Level.NEUTRAL,
+				"vez v neutralnim pasu ma element %d" % nt.element)
+			for el in range(Element.COUNT):
+				_check(is_equal_approx(Element.tower_multiplier(el, nt.element), 1.0),
+					"neutralni vez nebere zivlu %d presne 100 %%" % el)
+
+
+# PAS. Nikdy nelezi na ceste ani na uzlu, nikdy neni bliz nez jedno policko
+# k vyhybce nebo spojce a vzdy je v mrizce. Kdyby se tohle rozbilo, hrac
+# postavi vez tam, kde ji nema mit, a nikdo si toho nevsimne.
+func _test_strip_rules() -> void:
+	var g := _new_game()
+	var clear: int = Network.STRIP_JUNCTION_CLEAR
+	_check(g.net.strip_cells.size() > 0, "sit nema zadny pas")
+	for cellv in g.net.strip_cells:
+		var c: Vector2i = cellv
+		_check(g.level.in_bounds(c.x, c.y), "bunka pasu %s je mimo mrizku" % str(c))
+		_check(g.level.node_at_cell(c) < 0, "bunka pasu %s je uzel" % str(c))
+		var lane: int = g.net.strip_lane_of(c)
+		_check(lane >= 0, "bunka pasu %s nepatri zadne ceste" % str(c))
+		for lc in g.level.lane_cells(lane):
+			_check(lc != c, "bunka pasu %s lezi na ceste %d" % [str(c), lane])
+		for n in range(g.level.node_count()):
+			var k: int = g.level.node_kind(n)
+			if k != Level.VYHYBKA and k != Level.SPOJKA:
+				continue
+			var nc: Vector2i = g.level.node_cell(n)
+			var far: bool = absi(nc.x - c.x) > clear or absi(nc.y - c.y) > clear
+			_check(far, "bunka pasu %s je u uzlu %d (ma byt jedno policko volno)" % [str(c), n])
 
 
 # ---------------------------------------------------------------- hrac
@@ -280,10 +401,9 @@ func _test_round_spawns() -> void:
 		"po konci vstupu jeste nekdo vstoupil (%d -> %d)" % [frozen, g.spawned])
 
 
-# VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU:
-# hrac ho muze prepnout na element (pak poskozuje a da se na nem stavet)
-# a zpet na kmen. Jan: "Slo by rucne tuto vstupni cestu take prepnout na
-# neco jineho nez kmen, nebo naopak prepnout na kmen."
+# VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU: hrac
+# ho muze prepnout na element a zpet. Sedivy pas u nej bere vsem 100 %,
+# barevny podle tabulky poskozeni.
 func _test_entry_type() -> void:
 	var g := _new_game()
 	var entry: int = g.net.entry_lane
@@ -292,35 +412,34 @@ func _test_entry_type() -> void:
 		return
 	_check(g.level.lane_is_kmen(entry), "vstupni usek neni kmen (je %s)"
 		% g.level.lane_type_name(entry))
-	var e: Enemy = g.debug_spawn(Element.FIRE)
-	e.lane = entry
-	e.s = 0.0
-	_check(g.dps_on(e) == 0.0, "na kmeni se poskozuje")
+	# U KMENE A VSTUPU SE NESTAVI. Jan: "U kmene, vstupu, vyhybky a spojky
+	# se nestavi." Pas tam proto vubec neni - kreslit misto, kde se neda
+	# stavet, by hrace nechalo klepat do prazdna.
+	g.gold = 5000
+	var cell: Vector2i = _strip_cell_on(g, entry, 0, 1)
+	_check(not g.net.strip_has(cell), "u vstupniho useku (kmen) je pas")
+	_check(not g.try_build(cell), "u vstupu se postavila vez")
 
-	# PREPNUTI NA ELEMENT: poskozuje (a proto se na nem da i stavet).
-	# PO ZMENE LEVELU SE SIT STAVI ZNOVU - mista na bonus se pocitaji pri
-	# stavbe site (neposkrzujici usek zadna nema), takze teprve prestavena
-	# sit vi, ze se na vstupnim useku da stavet. Presne to dela i editor,
-	# kdyz hrac zmackne "hrat".
+	# PREPNUTI NA ELEMENT: cesta uz je element, takze u ni pas JE a vez bere
+	# podle tabulky. PO ZMENE LEVELU SE SIT STAVI ZNOVU - pas se pocita pri
+	# stavbe site.
 	g.level.set_lane_element(entry, Element.WATER)
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, g.level)
-	var e2: Enemy = g.debug_spawn(Element.FIRE)
-	e2.lane = entry
-	e2.s = 0.0
-	_check(g.dps_on(e2) > 0.0, "vstupni usek prepnuty na element neposkozuje")
-	_check(g.level.lane_takes_bonus(entry), "na elementarnim vstupnim useku nejde stavet")
-	_check(g.net.slot_count(entry) > 0, "na vstupnim useku se neobjevila mista na bonus")
-	_check(g.try_build(entry, 0, Element.WATER), "bonus na vstupni usek nejde postavit")
+	g.gold = 5000
+	var cell2: Vector2i = _strip_cell_on(g, g.net.entry_lane, 0, 1)
+	_check(g.net.strip_has(cell2), "po prepnuti vstupniho useku na element neni pas")
+	if g.net.strip_has(cell2) and g.try_build(cell2):
+		var t2: Tower = g.tower_at(cell2)
+		_check(t2.element == Element.WATER, "vez u vstupu nema vodni element")
+		_check(is_equal_approx(Element.tower_multiplier(Element.FIRE, t2.element), 2.0),
+			"ohnivy poutnik nema od vodni veze dvojnasobek")
 
-	# ZPET NA KMEN: zase neposkozuje a bonus se na nej nevejde
+	# ZPET NA KMEN: pas zase zmizi
 	g.level.set_lane_element(entry, Level.KMEN)
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, g.level)
-	var e3: Enemy = g.debug_spawn(Element.FIRE)
-	e3.lane = g.net.entry_lane
-	e3.s = 0.0
-	_check(g.dps_on(e3) == 0.0, "po prepnuti zpet na kmen se porad poskozuje")
-	_check(not g.level.lane_takes_bonus(g.net.entry_lane), "kmen bere bonus")
-	_check(g.net.slot_count(g.net.entry_lane) == 0, "na kmeni jsou mista na bonus")
+	_check(g.level.lane_is_kmen(g.net.entry_lane), "vstupni usek se nevratil na kmen")
+	_check(not g.net.strip_has(_strip_cell_on(g, g.net.entry_lane, 0, 1)),
+		"po navratu na kmen zustal u vstupu pas")
 
 
 func _test_determinism() -> void:
