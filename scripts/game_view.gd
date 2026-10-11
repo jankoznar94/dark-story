@@ -612,17 +612,26 @@ func _draw_editor_top() -> void:
 			layout.hud_h * 0.88, 11, Color(0.80, 0.84, 0.70), layout.view.x - pad)
 
 
-# PANEL OTEVRENE KATEGORIE. Kresli se NAD pruhem a PREKRYVA spodni kus desky:
+# PANEL OTEVENE KATEGORIE. Kresli se NAD pruhem a PREKRYVA spodni kus desky:
 # kdyby deska ujizdela, mrizka by pri kazdem otevreni menu uskocila a hrac by
 # ztratil misto, kde prave kreslil. Klepnuti na desku panel zavre.
+#
+# PANEL MA SVETLEJSI PODBARVENI NEZ PRUH (Jan: "Podmenu vždy uděláme s nějakým
+# lehkým podbarvením, ať řádky nesplývají s hlavním panelem"): pruh je tmavy
+# (0.075), panel je o stupen svetlejsi a teplejsi, takze je na prvni pohled
+# videt, co je otevrene menu a co je spodni lista.
+const PANEL_BG := Color(0.175, 0.165, 0.148)
+const PANEL_BTN := Color(0.235, 0.222, 0.198)
+
+
 func _draw_editor_panel() -> void:
 	var rows: Array = layout.ed_panel_rows
 	if rows.is_empty():
 		return
 	var top: float = layout.ed_panel_top
 	var bot: float = layout.editor_bar_top()
-	draw_rect(Rect2(0.0, top, layout.view.x, bot - top), Color(0.105, 0.10, 0.09))
-	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.38, 0.35, 0.29), 2.0)
+	draw_rect(Rect2(0.0, top, layout.view.x, bot - top), PANEL_BG)
+	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.46, 0.42, 0.35), 2.0)
 	for row in rows:
 		var line: Array = row
 		var lpx: int = layout.panel_label_px(line, _font)
@@ -630,17 +639,21 @@ func _draw_editor_panel() -> void:
 			var r: Rect2 = e["rect"]
 			var it: Dictionary = e["item"]
 			var kind: String = str(it.get("kind", "action"))
+			# PRAZDNE MISTO V MRIZCE se jen preskoci - je tam kvuli tomu, aby
+			# bunky v obou radcich sedely na stejnem x.
+			if kind == "spacer":
+				continue
 			if kind == "value":
 				# HODNOTA NENI TLACITKO. Kresli se jako text: ramecek by
 				# slibil klepnuti, ktere nic nedela.
 				_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
-					Color(0.94, 0.90, 0.80))
+					Color(0.96, 0.93, 0.84))
 				continue
-			draw_rect(r, Color(0.135, 0.125, 0.11))
+			draw_rect(r, PANEL_BTN)
 			var accent: Color = _panel_accent(it)
-			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.7), false, 2.0)
 			_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.64, lpx,
-				Color(0.88, 0.85, 0.78))
+				Color(0.90, 0.87, 0.80))
 
 
 # CIM SE TLACITKO V PANELU VYZNACUJE. Barva je tu jen na to, co si ji

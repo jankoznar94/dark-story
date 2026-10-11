@@ -83,6 +83,9 @@ const PARAMS := [
 	{"key": "zone_dmg", "label": "síla", "kind": "f", "step": 5.0, "lo": 5.0, "hi": 200.0},
 ]
 const PARAM_COUNT := 5
+# PANEL "LEVEL" JE MRIZKA 3 SLOUPCU. Pocet sloupcu je tady, protoze se podle
+# nej dorovnava druhy (kratsi) radek prazdnou bunkou.
+const PARAM_COLS := 3
 const BTN_COUNT := BTN_PARAM_DOWN + PARAM_COUNT * 2
 
 const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
@@ -346,44 +349,62 @@ func panel_rows() -> Array:
 
 # PANEL "VYBER". Co se da delat, zavisi na tom, co je oznacene - a kdyz nic,
 # meni se tim, cim se bude kreslit DALSI cesta (jako driv tlacitko "mista").
-# POCET MIST JE VIDET V HORNIM PRUHU (a v hlasce po kazdem klepnuti): tlacitka
-# jsou proto jen "místa −" a "místa +", ne jedno pretáčecí.
+# POCET MIST JE HODNOTA, NE TLACITKO: kresli se jako text ("místa 3") a vedle
+# jsou jen dve kompaktni tlacitka "−" a "+". Jedno klepnuti = jedno misto.
 func _sel_rows() -> Array:
 	if sel_node >= 0 and sel_node < level.node_count():
 		return [[
-			{"act": BTN_SLOTS, "label": _kind_label(), "w": 1.6, "on": false, "kind": "action"},
+			{"act": BTN_SLOTS, "label": _kind_label(), "w": 1.8, "on": false, "kind": "action"},
 			{"act": BTN_DELETE, "label": "smazat prvek", "w": 1.3, "on": false, "kind": "danger"},
 		]]
 	var row: Array = [
-		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.4, "on": false, "kind": "elem"},
-		{"act": BTN_SLOTS_DOWN, "label": "místa −", "w": 1.0, "on": false, "kind": "action"},
-		{"act": BTN_SLOTS_UP, "label": "místa +", "w": 1.0, "on": false, "kind": "action"},
+		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.6, "on": false, "kind": "elem"},
+		{"act": -1, "label": slots_text(), "w": 1.4, "on": false, "kind": "value"},
+		{"act": BTN_SLOTS_DOWN, "label": "−", "w": 1.0, "on": false, "kind": "action"},
+		{"act": BTN_SLOTS_UP, "label": "+", "w": 1.0, "on": false, "kind": "action"},
 	]
 	if sel_lane >= 0 and sel_lane < level.lane_count():
 		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
 	return [row]
 
 
-# PANEL "LEVEL". Dva radky parametru, kazdy jako [−] [hodnota] [+] - hodnota
-# je jen popisek, ne tlacitko (tlacitko, ktere nic nedela, je lez).
+# PANEL "LEVEL" JE MRIZKA: kazdy parametr je jedna bunka a bunky maji VSECHNY
+# STEJNOU SIRKU (proto `spacer` v druhem radku - prazdne misto, aby sloupce
+# sedely a radky nesplyvaly). V bunce je nazev s hodnotou jako TEXT a vedle
+# jen dve kompaktni tlacitka "−" a "+": driv mel kazdy parametr dva velke
+# obdelniky s napisem "kolo −" a "kolo +", coz bylo na kratky text zbytecne
+# siroke a vsechno se tvarilo stejne velke (Jan: "Hodnoty u prvků ohledně
+# levelů mohou být daleko úspornější na prostor").
 func _level_rows() -> Array:
-	return [
-		_param_row([0, 1, 2]),
-		_param_row([3, 4]),
-	]
+	var row: Array = _param_row([0, 1, 2])
+	return [row, _param_row([3, 4])]
 
 
 func _param_row(ids: Array) -> Array:
 	var row: Array = []
 	for p in ids:
 		var par: Dictionary = PARAMS[p]
-		var key: String = str(par["key"])
-		row.append({"act": BTN_PARAM_DOWN + int(p) * 2, "label": "%s −" % str(par["label"]),
-			"w": 0.9, "on": false, "kind": "action"})
-		row.append({"act": -1, "label": _param_text(key), "w": 1.0, "on": false, "kind": "value"})
-		row.append({"act": BTN_PARAM_DOWN + int(p) * 2 + 1, "label": "%s +" % str(par["label"]),
-			"w": 0.9, "on": false, "kind": "action"})
+		row.append({"act": -1, "label": _param_label(p), "w": 2.2, "on": false, "kind": "value"})
+		row.append({"act": BTN_PARAM_DOWN + int(p) * 2, "label": "−", "w": 1.0,
+			"on": false, "kind": "action"})
+		row.append({"act": BTN_PARAM_DOWN + int(p) * 2 + 1, "label": "+", "w": 1.0,
+			"on": false, "kind": "action"})
+	# DOROVNANI SLOUPCU. Chybejici bunka se doplni PRAZDNymi polozkami tak,
+	# aby mel kazdy radek STEJNY POCET POLOZek i stejny soucet vah - jinak
+	# se rozjede jak deleni sirky, tak mezery mezi polozkami a sloupce
+	# v obou radcich prestanou sedet (odhalila to az vizualni kontrola).
+	var cell: float = 2.2 + 1.0 + 1.0
+	var missing: int = PARAM_COLS - ids.size()
+	for i in range(missing * 3):
+		row.append({"act": -1, "label": "", "w": cell / 3.0, "on": false, "kind": "spacer"})
 	return row
+
+
+# NAZEV PARAMETRU S HODNOTOU DOHROMADY ("kolo 120 s"). Je to jedna informace
+# a jedno misto, kde se sklada - jinak by se nazev a hodnota rozešly.
+func _param_label(p: int) -> String:
+	var par: Dictionary = PARAMS[p]
+	return "%s %s" % [str(par["label"]), _param_text(str(par["key"]))]
 
 
 # HODNOTA PARAMETRU jako text (popisek mezi − a +). Cela cisla se kresli bez

@@ -243,6 +243,11 @@ func all_editor_buttons() -> Array:
 		out.append(r)
 	for row in ed_panel_rows:
 		for e in row:
+			# PRAZDNE MISTO V MRIZCE neni tlacitko - do seznamu klepatek
+			# nepatri (jinak by test hlasil prekryv s necim, na co se neda
+			# klepnout).
+			if str(e["item"].get("kind", "")) == "spacer":
+				continue
 			out.append(e["rect"])
 	return out
 
@@ -258,19 +263,25 @@ func ed_label_px(labels: Array, f: Font) -> int:
 	return label_px_for(labels, f, ed_buttons[0].size.x - 4.0)
 
 
-# VELIKOST PISMA V JEDNOM RADKU PANELU. Bere se NEJUZSI tlacitko radku -
-# popisek se musi vejit do kazdeho z nich. Kazdy radek muze mit jinou
-# velikost, protoze radky maji ruzny pocet parametru (tri v radku = uzsi
-# tlacitka nez dve).
+# VELIKOST PISMA V JEDNOM RADKU PANELU. Kazdy popisek se meri proti SVEMU
+# tlacitku (driv se meril proti nejuzsimu v radku, coz po zavedeni kompaktnich
+# tlacitek "−"/"+" srazilo pismo i dlouhemu textu, ktery ma mista dost).
 func panel_label_px(row: Array, f: Font) -> int:
-	var labels: Array = []
-	var room: float = 1.0e9
-	for e in row:
-		labels.append(str(e["item"].get("label", "")))
-		room = minf(room, float(e["rect"].size.x) - 4.0)
-	if labels.is_empty():
-		return 13
-	return label_px_for(labels, f, room)
+	for px in range(13, 9, -1):
+		var fpx: int = font(float(px))
+		var fits := true
+		for e in row:
+			# Prazdne misto v mrizce nema co merit.
+			if str(e["item"].get("kind", "")) == "spacer":
+				continue
+			var room: float = float(e["rect"].size.x) - 4.0
+			var txt: String = str(e["item"].get("label", ""))
+			if f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fpx).x > room:
+				fits = false
+				break
+		if fits:
+			return px
+	return 10
 
 
 func label_px_for(labels: Array, f: Font, room: float) -> int:

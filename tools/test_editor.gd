@@ -92,6 +92,20 @@ func _panel_label(e: Editor, act: int) -> String:
 	return ""
 
 
+# TEXTOVA HODNOTA V PANELU (polozka bez akce) JEJIM NAZVEM. Hleda se podle
+# popisku, ktery na ni hrac vidi - stejne jako vsechno ostatni z `panel_rows()`.
+func _panel_value_label(e: Editor, p: int, needle: String) -> String:
+	var save: int = e.panel
+	e.panel = p
+	var out: String = ""
+	for row in e.panel_rows():
+		for it in row:
+			if int(it["act"]) < 0 and str(it["label"]).begins_with(needle):
+				out = str(it["label"])
+	e.panel = save
+	return out
+
+
 # TLACITKA V PANELU: cisla akci, ktera panel nabizi (bez hodnotovych popisku).
 func _panel_acts(e: Editor, p: int) -> Array:
 	var save: int = e.panel
@@ -346,6 +360,8 @@ func _test_slot_edit() -> void:
 	_check(e.draw_slots == n0 + 1, "pocet mist pro nove cesty se nezmenil")
 	_check(e.slots_text().contains("míst %d" % e.draw_slots),
 		"horni pruh neukazuje pocet mist pro nove cesty: " + e.slots_text())
+	_check(_panel_value_label(e, Editor.PANEL_SEL, "míst") == "míst %d" % e.draw_slots,
+		"panel vyberu neukazuje pocet mist: " + _panel_value_label(e, Editor.PANEL_SEL, "míst"))
 	e.press(Editor.BTN_SLOTS_UP)
 	_check(e.draw_slots == n0 + 2, "druhe klepnuti na + nepridalo misto")
 	e.press(Editor.BTN_SLOTS_DOWN)
@@ -886,7 +902,15 @@ func _test_level_params() -> void:
 			or absf(after - float(par["hi"])) < 0.001,
 			"%s se nezmenil o krok (%s -> %s)" % [key, str(before), str(after)])
 		var label: String = _panel_label(e, up_act)
-		_check(label.ends_with(" +"), "%s: tlacitko + ma popisek %s" % [key, label])
+		_check(label == "+", "%s: tlacitko + ma popisek %s" % [key, label])
+		_check(_panel_label(e, down_act) == "−", "%s: tlacitko - ma popisek %s" % [key, _panel_label(e, down_act)])
+		# NAZEV S HODNOTOU je v panelu jako TEXT (ne obdelnik): hrac vidi
+		# "kolo 120 s" a vedle jen dve mala tlacitka.
+		var value_label: String = _panel_value_label(e, Editor.PANEL_LEVEL, str(par["label"]))
+		_check(value_label.begins_with(str(par["label"]) + " "),
+			"%s: hodnota v panelu je \"%s\"" % [key, value_label])
+		_check(value_label.contains(e._param_text(key)) or value_label.length() > str(par["label"]).length(),
+			"%s: hodnota v panelu neukazuje cislo: \"%s\"" % [key, value_label])
 		_check(e.status.contains(str(par["label"])), "hlaska nemluvi o %s: %s" % [key, e.status])
 		# DOLU: zpatky
 		e.press(down_act)
@@ -960,10 +984,13 @@ func _test_editor_layout() -> void:
 			_check(lay.ed_panel_top < lay.editor_bar_top() - 1.0,
 				"%s: panel %d neni nad pruhem" % [str(size), p])
 			var prev_bottom: float = 1.0e9
+			var cells: Array = []
 			for row in lay.ed_panel_rows:
 				var line: Array = row
 				var row_top: float = 1.0e9
-				for en in line:
+				var row_cells: Array = []
+				for k in range(line.size()):
+					var en: Dictionary = line[k]
 					var rr: Rect2 = en["rect"]
 					_check(rr.position.x >= -0.5 and rr.end.x <= size.x + 0.5,
 						"%s: panel %d utika z displeje" % [str(size), p])
@@ -972,10 +999,22 @@ func _test_editor_layout() -> void:
 					row_top = minf(row_top, rr.position.y)
 					_check(_rects_do_not_overlap(lay.all_editor_buttons(), rr),
 						"%s: tlacitka editoru se prekryvaji" % str(size))
+					# ZACATKY BUNEK: kazda treti polozka je zacatek bunky
+					if p == Editor.PANEL_LEVEL and k % 3 == 0:
+						row_cells.append(rr.position.x)
+				cells.append(row_cells)
 				_check(row_top < prev_bottom, "%s: radky panelu %d se prekryvaji" % [str(size), p])
 				prev_bottom = row_top + float(line[0]["rect"].size.y)
 				var plpx: int = lay.panel_label_px(line, font)
 				_check(plpx >= 11, "%s: popisky panelu %d jsou jen %d px" % [str(size), p, plpx])
+			# SLOUPCE MUSI SEDET: bunky v druhem radku zacinaji na stejnem x
+			# jako v prvnim. Kdyz se dorovnani rozbije, hrac vidi usklebene
+			# radky - a cisla to nepoznaji, jen oko.
+			if cells.size() >= 2:
+				for k in range(cells[0].size()):
+					_check(absf(float(cells[0][k]) - float(cells[1][k])) < 0.6,
+						"%s: sloupce panelu level nesedi (radek 0: %s, radek 1: %s)" % [
+							str(size), str(cells[0]), str(cells[1])])
 
 
 func _rects_do_not_overlap(all: Array, r: Rect2) -> bool:
