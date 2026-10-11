@@ -17,10 +17,15 @@ extends RefCounted
 # nevedel, kudy poutnik po dokresleni pujde dal. Hrac to udela tak, ze
 # nejdriv polozi START a pak kresli.
 
-enum { TOOL_ROAD, TOOL_START, TOOL_CIL, TOOL_VYHYBKA, TOOL_SPOJKA, TOOL_UZEL, TOOL_GUMA }
+# NASTROJE. Poradi v enumu je poradim TLACITEK (press(act)) - novy nastroj se
+# proto pridava NA KONEC, aby se cisla tech starych neposunula. Ktere nastroje
+# stoji vedle sebe v panelu, rozhoduje `_tools_row()`.
+enum { TOOL_ROAD, TOOL_START, TOOL_CIL, TOOL_VYHYBKA, TOOL_SPOJKA, TOOL_UZEL, TOOL_GUMA,
+	TOOL_VYBER }
 
-const TOOL_LABELS := ["cesta", "start", "cíl", "výhybka", "spojka", "uzel", "guma"]
-const TOOL_COUNT := 7
+const TOOL_LABELS := ["cesta", "start", "cíl", "výhybka", "spojka", "uzel", "guma",
+	"výběr"]
+const TOOL_COUNT := 8
 
 # TYP CESTY, KTERY SE KRESLI. Ctyri zivly + neutralni usek + kmen. Jan:
 # "v nabidce typu cest chybi neutralni a kmen (nedava zadne poskozeni)".
@@ -86,10 +91,35 @@ const PARAM_COUNT := 5
 # PANEL "LEVEL" JE MRIZKA 3 SLOUPCU. Pocet sloupcu je tady, protoze se podle
 # nej dorovnava druhy (kratsi) radek prazdnou bunkou.
 const PARAM_COLS := 3
-const BTN_COUNT := BTN_PARAM_DOWN + PARAM_COUNT * 2
+const BTN_PARAM_COUNT := PARAM_COUNT * 2
+
+# --- OBSTARANI VYBERU (obdelnikovy tah) ------------------------------------
+# Hromadny vyber funguje jako klavesnice: oznacit obdelnikem -> kopirovat ->
+# (otocit / zrcadlit) -> vlozit. Jan: "Přidáme možnost prvky označit hromadně
+# (pomocí obdélníkového tahu), případně je zkopírovat (přesně v tom formátu jak
+# jsou, včetně velikosti, směru, a všech jiných parametrů) a vložit a otočit
+# (například když chci udělat dvě protichůdné zrcadlové trasy)."
+const BTN_COPY := BTN_PARAM_DOWN + BTN_PARAM_COUNT
+const BTN_PASTE := BTN_COPY + 1
+# OTOCENI A ZRCADLENI meni KOPII, ne desku: hrac si ji pripravi a teprve pak
+# vlozi. Je to jedine poradi, ve kterem se da neco zkusit a vzit zpet.
+const BTN_ROT := BTN_COPY + 2
+const BTN_FLIP := BTN_COPY + 3
+const BTN_DEL_SEL := BTN_COPY + 4
+const BTN_COUNT := BTN_DEL_SEL + 1
+
+# SIRKA TLACITEK "-"/"+" V PANELU. Jan: "Tlačítka + a - jsou zbytečně velká.
+# Tato tlačítka by měla být malá a ideálně přímo nalepená na hodnotu, kterou
+# ovládají." Jsou proto pevne siroke (ne vahou zbytku radku), stoji ve skupine
+# s hodnotou (bez mezery) a drzi dotykove minimum - mensi uz se prstem mine.
+const STEP_W := ScreenLayout.MIN_TOUCH
+# PRAZDNE MISTO V MRIZCE PANELU "LEVEL" (dorovnani sloupcu). Druhy radek ma
+# jen dve polozky, takze treti bunka se doplni prazdnou - a aby sloupce sedely,
+# ma stejnou stavbu jako bunka opravdova (text + dve tlacitka).
+const CELL_SPACER := "spacer"
 
 const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
-	Level.SPOJKA, Level.UZEL, Level.NEUTRAL]
+	Level.SPOJKA, Level.UZEL, Level.NEUTRAL, Level.NEUTRAL]
 
 # KOLIK UPRAV SE PAMATUJE NA "ZPET". Kazda polozka je kopie levelu (mala
 # data), takze se jich par desitek vejde i na telefon.
@@ -130,6 +160,29 @@ var mode: int = MODE_EDIT
 # desku ho zavre (aby se pod panelem omylem nekladl prvek) - proto je to stav,
 # ktery znaji kresleni, klepnuti i rozvrzeni.
 var panel: int = PANEL_NONE
+
+# --- OBSTARANI VYBERU (obdelnikovy tah, kopie, vlozeni) --------------------
+# `sel_box` je obdelnik bunek, ktery hrac obtahl nastrojem "výběr"; prazdny
+# obdelnik (size 0) znamena, ze zadny hromadny vyber neni. Drzi se VEDLE
+# `sel_lane`/`sel_node`: klepnuti vybira jeden prvek, tah vybira obdelnik -
+# a kdyz je obdelnik, jednoprvkovy vyber se uklidi (a naopak).
+var sel_box: Rect2i = Rect2i(0, 0, 0, 0)
+# PRAVE TAZENY OBDELNIK. Do levelu se nic nezapisuje - je to jen vyber.
+var box_active: bool = false
+var box_from: Vector2i = Vector2i(-1, -1)
+# KOPIE VYBERU. Nese PRESNE to, co v obdelniku bylo: bunky useku (tedy tvar i
+# smer), element, pocet mist i druhy prvku. Otoceni a zrcadleni meni ji, ne
+# desku - hrac si ji pripravi a teprve pak vlozi.
+var clip: Dictionary = {}
+# 0..3 = o kolik ctvrttonin se kopie otoci po vlozeni (doprava).
+var clip_rot: int = 0
+# Zrcadleni se aplikuje PRED otocenim (tak to odpovida tomu, jak se o tom
+# mluvi: "zrcadlovou trasu otocim/vlozim").
+var clip_flip: bool = false
+# VLOZENI SE PRIPRAVUJE: dalsi klepnuti na desku rekne, KAM. Dokud je
+# pripravene, kresli se duch kopie - hrac vidi, co a kam polozi.
+var paste_armed: bool = false
+var paste_cell: Vector2i = Vector2i(-1, -1)
 
 # Prubeh tahnuti prstem. `draw_cells` je to, co hrac prave nakreslil, a
 # kresli se to zive - dokud prst nezvedne, neni to soucast levelu.
@@ -173,6 +226,16 @@ func reset() -> void:
 	move_node = -1
 	move_from = Vector2i(-1, -1)
 	move_steps = 0
+	# Hromadny vyber i kopie patří k levelu, ktery prave skoncil - novy level
+	# zacina s cistym stolem.
+	sel_box = Rect2i(0, 0, 0, 0)
+	box_active = false
+	box_from = Vector2i(-1, -1)
+	clip = {}
+	clip_rot = 0
+	clip_flip = false
+	paste_armed = false
+	paste_cell = Vector2i(-1, -1)
 	level.save()
 
 
@@ -214,6 +277,11 @@ func undo() -> void:
 	draw_cells = []
 	moving = false
 	move_node = -1
+	# Rozpracovany obdelnik i pripravene vlozeni se uklidi: ukazovaly by na
+	# stav, ktery uz "zpet" vratil.
+	clear_box()
+	box_active = false
+	paste_armed = false
 	_after_change()
 	status = "Zpět (%d kroků zpátky)." % undo_stack.size()
 
@@ -343,14 +411,15 @@ func panel_rows() -> Array:
 	return []
 
 
-# NASTROJE VE DVOU SKUPINACH, kazdy svou velikosti: "cesta" a "guma" jsou to,
-# co delam PRSTEM (kreslim a maze se tahem), "start/cíl/výhybka/spojka/uzel"
-# je to, co POKLADAM klepnutim. Mezi skupinami je prazdne misto, aby to nebyl
-# jeden nerozlisitelny pruh obdelniku. Tlacitka maji `compact`, takze je
-# rozvrzeni zmiri podle popisku ("cíl" je uzke, "výhybka" siroke).
+# NASTROJE VE DVOU SKUPINACH, kazdy svou velikosti: "cesta", "guma" a "výběr"
+# jsou to, co delam PRSTEM (kreslim, maze se a vybira se tahem), "start/cíl/
+# výhybka/spojka/uzel" je to, co POKLADAM klepnutim. Mezi skupinami je prazdne
+# misto, aby to nebyl jeden nerozlisitelny pruh obdelniku. Tlacitka maji
+# `compact`, takze je rozvrzeni zmiri podle popisku ("cíl" je uzke, "výhybka"
+# siroke).
 func _tools_row() -> Array:
 	var row: Array = []
-	for t in [TOOL_ROAD, TOOL_GUMA]:
+	for t in [TOOL_ROAD, TOOL_GUMA, TOOL_VYBER]:
 		row.append(_tool_item(t))
 	row.append({"act": -1, "label": "", "w": 0.5, "on": false, "kind": "spacer"})
 	for t in [TOOL_START, TOOL_CIL, TOOL_VYHYBKA, TOOL_SPOJKA, TOOL_UZEL]:
@@ -363,24 +432,63 @@ func _tool_item(t: int) -> Dictionary:
 		"kind": "tool", "compact": true}
 
 
-# PANEL "VYBER". Co se da delat, zavisi na tom, co je oznacene - a kdyz nic,
-# meni se tim, cim se bude kreslit DALSI cesta (jako driv tlacitko "mista").
-# POCET MIST JE HODNOTA, NE TLACITKO: kresli se jako text ("místa 3") a vedle
-# jsou jen dve kompaktni tlacitka "−" a "+". Jedno klepnuti = jedno misto.
+# PANEL "VYBER". Co se da delat, zavisi na tom, co je oznacene:
+#   * obdelnikovy vyber (tah nastrojem "výběr") -> obstarani kopie,
+#   * jeden prvek -> jeho druh + smazani,
+#   * jeden usek -> element, mista, smazani,
+#   * nic -> cim se bude kreslit dalsi cesta.
+#
+# HODNOTA JE TEXT, TLACITKO JE JEN TO, CO SE MACKA. Hodnota a jeji "-"/"+" stoji
+# v JEDNE SKUPINE (bez mezery), takze tlacitka jsou "přímo nalepená na hodnotu"
+# (Jan) a maji pevnou, malou sirku - drive to byly dva velke obdelniky.
 func _sel_rows() -> Array:
+	if has_box():
+		return _box_rows()
 	if sel_node >= 0 and sel_node < level.node_count():
 		return [[
 			{"act": BTN_SLOTS, "label": _kind_label(), "w": 1.8, "on": false, "kind": "action"},
 			{"act": BTN_DELETE, "label": "smazat prvek", "w": 1.3, "on": false, "kind": "danger"},
 		]]
+	# BUNKA PARAMETRU: nazev s hodnotou jako TEXT, vedle jen "−" a "+".
+	var g: String = "slots"
 	var row: Array = [
-		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.6, "on": false, "kind": "elem"},
-		{"act": -1, "label": slots_text(), "w": 1.4, "on": false, "kind": "value"},
-		{"act": BTN_SLOTS_DOWN, "label": "−", "w": 1.0, "on": false, "kind": "action"},
-		{"act": BTN_SLOTS_UP, "label": "+", "w": 1.0, "on": false, "kind": "action"},
+		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.0, "on": false,
+			"kind": "elem", "compact": true},
+		{"act": -1, "label": slots_text(), "w": 1.6, "on": false, "kind": "value",
+			"align": "right", "group": g},
+		_step_item(BTN_SLOTS_DOWN, "−", g),
+		_step_item(BTN_SLOTS_UP, "+", g),
 	]
 	if sel_lane >= 0 and sel_lane < level.lane_count():
 		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
+	return [row]
+
+
+# TLACITKO "−"/"+" (KROKOVAC). Vzdy ma pevnou malou sirku a stoji ve skupine
+# s hodnotou, kterou ovlada - jedno misto, kde se to rozhoduje, takze se vsechna
+# krokovaci v editoru chovaji stejne.
+func _step_item(act: int, label: String, group: String) -> Dictionary:
+	return {"act": act, "label": label, "w": 1.0, "on": false, "kind": "action",
+		"abs_w": STEP_W, "group": group}
+
+
+# PANEL PRO OBDELNIKOVY VYBER: co se da s hromadnym vyberem delat. Poradi je
+# jako u klavesnice (oznacit -> kopirovat -> pripravit -> vlozit) a "smazat
+# vyber" je na konci, aby se na nej nedalo klepnout omylem.
+func _box_rows() -> Array:
+	var row: Array = [
+		{"act": BTN_COPY, "label": "kopírovat", "w": 1.0, "on": false, "kind": "action",
+			"compact": true},
+	]
+	if not clip.is_empty():
+		row.append({"act": BTN_PASTE, "label": "vložit", "w": 1.0, "on": paste_armed,
+			"kind": "action", "compact": true})
+		row.append({"act": BTN_ROT, "label": "otoč", "w": 1.0, "on": false, "kind": "action",
+			"compact": true})
+		row.append({"act": BTN_FLIP, "label": "zrcadli", "w": 1.0, "on": clip_flip,
+			"kind": "action", "compact": true})
+	row.append({"act": BTN_DEL_SEL, "label": "smazat výběr", "w": 1.0, "on": false,
+		"kind": "danger", "compact": true})
 	return [row]
 
 
@@ -399,20 +507,27 @@ func _level_rows() -> Array:
 func _param_row(ids: Array) -> Array:
 	var row: Array = []
 	for p in ids:
-		var par: Dictionary = PARAMS[p]
-		row.append({"act": -1, "label": _param_label(p), "w": 2.2, "on": false, "kind": "value"})
-		row.append({"act": BTN_PARAM_DOWN + int(p) * 2, "label": "−", "w": 1.0,
-			"on": false, "kind": "action"})
-		row.append({"act": BTN_PARAM_DOWN + int(p) * 2 + 1, "label": "+", "w": 1.0,
-			"on": false, "kind": "action"})
+		var g: String = "p%d" % int(p)
+		row.append({"act": -1, "label": _param_label(p), "w": 1.0, "on": false,
+			"kind": "value", "align": "right", "group": g})
+		row.append(_step_item(BTN_PARAM_DOWN + int(p) * 2, "−", g))
+		row.append(_step_item(BTN_PARAM_DOWN + int(p) * 2 + 1, "+", g))
 	# DOROVNANI SLOUPCU. Chybejici bunka se doplni PRAZDNymi polozkami tak,
-	# aby mel kazdy radek STEJNY POCET POLOZek i stejny soucet vah - jinak
+	# aby mel kazdy radek STEJNY POCET POLOZek i stejny SOUCET VAH - jinak
 	# se rozjede jak deleni sirky, tak mezery mezi polozkami a sloupce
 	# v obou radcich prestanou sedet (odhalila to az vizualni kontrola).
-	var cell: float = 2.2 + 1.0 + 1.0
+	# Prazdna bunka ma STEJNOU STAVBU jako opravdova (text + dve tlacitka):
+	# jinak by mel druhy radek jiny soucet pevnych sirek a sloupce by ujely.
 	var missing: int = PARAM_COLS - ids.size()
-	for i in range(missing * 3):
-		row.append({"act": -1, "label": "", "w": cell / 3.0, "on": false, "kind": "spacer"})
+	for i in range(missing):
+		var g: String = "f%d" % i
+		# text, "−", "+" - stejne poradi i stejna pevna sirka jako u opravdove
+		# bunky, aby sloupce v obou radcich sedely na pixel.
+		row.append({"act": -1, "label": "", "w": 1.0, "on": false,
+			"kind": CELL_SPACER, "group": g})
+		for k in range(2):
+			row.append({"act": -1, "label": "", "w": 1.0, "on": false,
+				"kind": CELL_SPACER, "group": g, "abs_w": STEP_W})
 	return row
 
 
@@ -444,8 +559,10 @@ func _fmt_num(v: float) -> String:
 
 # JE TO CISLO TLACITKA PARAMETRU? Jedno misto, kde se to rozhoduje - jinak by
 # se "cislo nad BTN_PARAM_DOWN" pocitalo na vice mistech a nekde by uteklo.
+# Mez je `BTN_PARAM_DOWN + BTN_PARAM_COUNT`: za parametry uz zacinaji tlacitka
+# obdelnikoveho vyberu a ta se nesmi plest s krokem parametru.
 func is_param_button(b: int) -> bool:
-	return b >= BTN_PARAM_DOWN and b < BTN_COUNT
+	return b >= BTN_PARAM_DOWN and b < BTN_PARAM_DOWN + BTN_PARAM_COUNT
 
 
 func param_of_button(b: int) -> int:
@@ -521,6 +638,17 @@ func sel_text() -> String:
 
 
 func _sel_body() -> String:
+	if has_box():
+		var ln: int = box_lanes().size()
+		var nd: int = box_nodes().size()
+		var s: String = "výběr %d×%d · %d úseků · %d prvků" % [
+			sel_box.size.x, sel_box.size.y, ln, nd]
+		if not clip.is_empty():
+			var sz: Vector2i = clip_size()
+			s += " · kopie %d×%d%s" % [sz.x, sz.y, _clip_turn_text()]
+		if paste_armed:
+			s += " · klepni, kam vložit (%d,%d)" % [paste_cell.x, paste_cell.y]
+		return s
 	if sel_node >= 0 and sel_node < level.node_count():
 		var ins: int = level.lanes_into(sel_node).size()
 		var outs: int = level.lanes_from(sel_node).size()
@@ -626,6 +754,8 @@ func end_draw() -> void:
 # Uzel ma prednost: je mensi nez usek, ktery pod nim vede, takze klepnuti
 # na uzel musi vybrat uzel a ne cestu.
 func _select_at(cell: Vector2i) -> bool:
+	# VYBER JE VZDY JEN JEDEN: klepnuti uklidi obdelnikovy vyber.
+	clear_box()
 	var n: int = level.node_at_cell(cell)
 	if n >= 0:
 		sel_node = n
@@ -663,6 +793,10 @@ func tap_cell(cell: Vector2i) -> void:
 			# hrac nemusel prepinat nastroj, kdyz chce neco upravit.
 			if not _select_at(cell):
 				status = "Tažením prstu kresli cestu. Konec musí být v uzlu."
+		TOOL_VYBER:
+			# Klepnutim se vybira jeden prvek, tahem obdelnik - rozhodne se
+			# az pri pusteni prstu (`end_box`).
+			begin_box(cell)
 		TOOL_GUMA:
 			_erase(cell)
 		_:
@@ -672,6 +806,9 @@ func tap_cell(cell: Vector2i) -> void:
 func _place_node(cell: Vector2i, kind: int) -> void:
 	if kind == Level.NEUTRAL:
 		return
+	# Položení prvku je jiná práce než hromadný výběr - obdélník se uklidi,
+	# aby panel neukazoval tlacitka na vyber, ktery uz neplati.
+	clear_box()
 	var existing: int = level.node_at_cell(cell)
 	if existing >= 0:
 		if level.node_kind(existing) == kind:
@@ -702,6 +839,7 @@ func _place_node(cell: Vector2i, kind: int) -> void:
 
 
 func _erase(cell: Vector2i) -> void:
+	clear_box()
 	var n: int = level.node_at_cell(cell)
 	if n >= 0:
 		_snapshot()
@@ -729,10 +867,11 @@ func _erase(cell: Vector2i) -> void:
 # PRESOUVANI UZLU
 # =========================================================================
 
-# Presouvat se da jen nastroji z palety. "cesta" kresli (tah = nova cesta)
-# a "guma" maze - u tech dvou by tah znamenal neco jineho.
+# Presouvat se da jen nastroji z palety. "cesta" kresli (tah = nova cesta),
+# "guma" maze a "výběr" obtahuje obdelnik - u tech trech by tah znamenal neco
+# jineho.
 func can_move() -> bool:
-	return tool != TOOL_ROAD and tool != TOOL_GUMA
+	return tool != TOOL_ROAD and tool != TOOL_GUMA and tool != TOOL_VYBER
 
 
 # Zacatek tazeni na uzlu. Vraci true, kdyz se opravdu zacalo - klepnuti
@@ -962,6 +1101,394 @@ func _lane_uses_cell(lane: int, cell: Vector2i) -> bool:
 
 
 # =========================================================================
+# OBDELNIKOVY VYBER, KOPIE A VLOZENI
+#
+# Jan: "Přidáme možnost prvky označit hromadně (pomocí obdélníkového tahu),
+# případně je zkopírovat (přesně v tom formátu jak jsou, včetně velikosti,
+# směru, a všech jiných parametrů) a vložit a otočit (například když chci udělat
+# dvě protichůdné zrcadlové trasy)."
+#
+# TAZENIM se obtahne obdelnik, KLEPNUTIM (tah bez pohybu) se vybere jeden
+# prvek - stejne jako nastrojem "cesta". Vyber je VZDY jen jeden: bud obdelnik,
+# nebo jeden usek/prvek.
+# =========================================================================
+
+func has_box() -> bool:
+	return sel_box.size.x > 0 and sel_box.size.y > 0
+
+
+func box_cells() -> Array:
+	var out: Array = []
+	for r in range(sel_box.position.y, sel_box.end.y):
+		for c in range(sel_box.position.x, sel_box.end.x):
+			out.append(Vector2i(c, r))
+	return out
+
+
+# USEKY CELE VE VYBERU. Usek, ktery obdelnik jen prekrocil, se nekopiruje:
+# z jeho zbytku by vznikla cesta, ktera nezacina ani nekonci v uzlu - a takova
+# mapa neplati. Hrac to v hlasce vidi, takze vi, proc je v kopii min useku.
+func box_lanes() -> Array:
+	var out: Array = []
+	if not has_box():
+		return out
+	for i in range(level.lane_count()):
+		var inside := true
+		for c in level.lane_cells(i):
+			var v: Vector2i = c
+			if not _box_has(v):
+				inside = false
+				break
+		if inside:
+			out.append(i)
+	return out
+
+
+func box_nodes() -> Array:
+	var out: Array = []
+	if not has_box():
+		return out
+	for n in range(level.node_count()):
+		if _box_has(level.node_cell(n)):
+			out.append(n)
+	return out
+
+
+func _box_has(cell: Vector2i) -> bool:
+	if not has_box():
+		return false
+	return cell.x >= sel_box.position.x and cell.y >= sel_box.position.y \
+		and cell.x < sel_box.end.x and cell.y < sel_box.end.y
+
+
+# ZACATEK TAZENI OBDELNIKU. Klepnuti (tah bez pohybu) se vyhodnoti az pri
+# pusteni - jinak by si obe gesta lezla pod rukama.
+func begin_box(cell: Vector2i) -> void:
+	if not level.in_bounds(cell.x, cell.y):
+		return
+	box_active = true
+	box_from = cell
+	sel_box = Rect2i(cell, Vector2i(1, 1))
+	sel_lane = -1
+	sel_node = -1
+	status = "Tažením obtáhni, co chceš vzít. Klepnutím vybereš jeden prvek."
+
+
+func extend_box(cell: Vector2i) -> void:
+	if not box_active:
+		return
+	var c := Vector2i(clampi(cell.x, 0, level.cols - 1), clampi(cell.y, 0, level.rows - 1))
+	var x0: int = mini(box_from.x, c.x)
+	var y0: int = mini(box_from.y, c.y)
+	var x1: int = maxi(box_from.x, c.x)
+	var y1: int = maxi(box_from.y, c.y)
+	sel_box = Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+
+
+func end_box() -> void:
+	if not box_active:
+		return
+	box_active = false
+	if sel_box.size.x <= 1 and sel_box.size.y <= 1:
+		# KLEPNUTI, NE TAH: vybere se jeden prvek (nebo usek) pod prstem.
+		sel_box = Rect2i(0, 0, 0, 0)
+		_select_at(box_from)
+		return
+	var ln: int = box_lanes().size()
+	var nd: int = box_nodes().size()
+	if ln == 0 and nd == 0:
+		sel_box = Rect2i(0, 0, 0, 0)
+		status = "V obdélníku nic není — obtáhni úseky a prvky."
+		return
+	status = "Vybráno obdélníkem: %d úseků, %d prvků. Kopíruj nebo smaž." % [ln, nd]
+
+
+func clear_box() -> void:
+	sel_box = Rect2i(0, 0, 0, 0)
+
+
+# KOPIE VYBERU. Do kopie jdou CELA data useku (bunky = tvar i smer, element,
+# pocet mist) i druhy prvku. Neni to "zkopiruj tvar" - je to presna kopie toho,
+# co hrac v obdelniku vidi.
+func copy_box() -> bool:
+	if not has_box():
+		status = "Nejdřív obtažením označ, co chceš kopírovat."
+		return false
+	var lanes: Array = box_lanes()
+	var nodes: Array = box_nodes()
+	if lanes.is_empty() and nodes.is_empty():
+		status = "V obdélníku nic není — není co kopírovat."
+		return false
+	var w: int = sel_box.size.x
+	var h: int = sel_box.size.y
+	var ox: int = sel_box.position.x
+	var oy: int = sel_box.position.y
+	var nlist: Array = []
+	for n in nodes:
+		var c: Vector2i = level.node_cell(int(n))
+		nlist.append({"c": c.x - ox, "r": c.y - oy, "kind": level.node_kind(int(n))})
+	var llist: Array = []
+	for l in lanes:
+		var cells: Array = []
+		for cc in level.lane_cells(int(l)):
+			var v: Vector2i = cc
+			cells.append(Vector2i(v.x - ox, v.y - oy))
+		llist.append({"cells": cells, "elem": level.lane_element(int(l)),
+			"slots": level.lane_slot_count(int(l))})
+	var skipped: int = 0
+	for i in range(level.lane_count()):
+		if lanes.has(i):
+			continue
+		for c in level.lane_cells(i):
+			var v: Vector2i = c
+			if _box_has(v):
+				skipped += 1
+				break
+	clip = {"nodes": nlist, "lanes": llist, "w": w, "h": h, "skipped": skipped}
+	clip_rot = 0
+	clip_flip = false
+	paste_armed = false
+	status = "Zkopírováno (%d úseků, %d prvků)." % [llist.size(), nlist.size()]
+	if skipped > 0:
+		status += " %d úseků je v obdélníku jen částí — ty se nekopírují." % skipped
+	return true
+
+
+# ROZMER KOPIE PO OTOceni A ZRCADLENI. Jedno misto, kde se to pocita - kresleni
+# ducha vlozeni, kontrola meze i samotne vlozeni se musi ptat tady, jinak by
+# duch ukazoval neco jineho, nez co se opravdu vlozi.
+func clip_size() -> Vector2i:
+	if clip.is_empty():
+		return Vector2i.ZERO
+	var w: int = int(clip["w"])
+	var h: int = int(clip["h"])
+	if clip_rot % 2 == 1:
+		return Vector2i(h, w)
+	return Vector2i(w, h)
+
+
+# PREMENA BUNKY KOPIE: nejdriv zrcadleni (vodorovne), pak otoceni po ctvrtinach
+# doprava. Vraci bunku v prostoru kopie (od 0,0).
+func clip_map(dx: int, dy: int) -> Vector2i:
+	var w: int = int(clip["w"])
+	var h: int = int(clip["h"])
+	var x: int = dx
+	var y: int = dy
+	if clip_flip:
+		x = w - 1 - x
+	for i in range(clip_rot % 4):
+		var nx: int = h - 1 - y
+		var ny: int = x
+		x = nx
+		y = ny
+		var t: int = w
+		w = h
+		h = t
+	return Vector2i(x, y)
+
+
+# BUNKY KOPIE V PROSTORU DESKY pri vlozeni na `at` (levy horni roh kopie).
+# Pouziva je kresleni ducha i vlozeni.
+func clip_cells_at(at: Vector2i) -> Array:
+	var out: Array = []
+	if clip.is_empty():
+		return out
+	for ln in clip["lanes"]:
+		for cc in ln["cells"]:
+			var v: Vector2i = cc
+			out.append(at + clip_map(v.x, v.y))
+	return out
+
+
+# PRIPRAVA VLOZENI. Kopie se polozi VEDLE vyberu (napravo, pri nedostatku
+# misto dolu) - hrac tak hned vidi, kam se chysta, a muze klepnout jinam.
+func arm_paste() -> bool:
+	if clip.is_empty():
+		status = "Není co vložit — nejdřív výběr zkopíruj."
+		return false
+	var sz: Vector2i = clip_size()
+	var at := Vector2i(sel_box.end.x + 1, sel_box.position.y)
+	if at.x + sz.x > level.cols:
+		at.x = sel_box.position.x
+	if at.y + sz.y > level.rows:
+		at.y = maxi(level.rows - sz.y, 0)
+	at.x = clampi(at.x, 0, maxi(level.cols - sz.x, 0))
+	at.y = clampi(at.y, 0, maxi(level.rows - sz.y, 0))
+	paste_armed = true
+	paste_cell = at
+	status = "Klepni na buňku, kam vložit (%d×%d%s). Nebo zmáčkni „vložit“ znovu." % [
+		sz.x, sz.y, _clip_turn_text()]
+	return true
+
+
+func _clip_turn_text() -> String:
+	var t: String = ""
+	if clip_flip:
+		t += ", zrcadleno"
+	if clip_rot % 4 == 1:
+		t += ", otočeno 90°"
+	elif clip_rot % 4 == 2:
+		t += ", otočeno 180°"
+	elif clip_rot % 4 == 3:
+		t += ", otočeno 270°"
+	return t
+
+
+# OTOCENI KOPIE O CTVRTTINU DOPRAVA / ZRCADLENI. Meni se KOPIE, ne deska -
+# dokud hrac nevlozi, nic se v mape nedeje.
+func turn_clip() -> void:
+	if clip.is_empty():
+		status = "Není co otáčet — nejdřív výběr zkopíruj."
+		return
+	clip_rot = (clip_rot + 1) % 4
+	_seat_paste()
+	status = "Kopie je připravená%s (vložit ji můžeš klepnutím na buňku)." % _clip_turn_text()
+
+
+func flip_clip() -> void:
+	if clip.is_empty():
+		status = "Není co zrcadlit — nejdřív výběr zkopíruj."
+		return
+	clip_flip = not clip_flip
+	_seat_paste()
+	status = "Kopie je připravená%s (vložit ji můžeš klepnutím na buňku)." % _clip_turn_text()
+
+
+# Změna otoceni muze posunout pripravene misto (kopie ma jiny rozmer) - drzi se
+# proto znovu u vyberu, aby duch nevisel nekde v poli.
+func _seat_paste() -> void:
+	if paste_armed:
+		arm_paste()
+
+
+# VLOZENI NA BUNKU. Vsechna pravidla jsou tady:
+#   * kopie se musi vejit do mrizky,
+#   * v miste nesmi vest cizi usek (cesty se nekrizi) ani lezet cizi prvek
+#     tam, kam pada usek kopie,
+#   * prvek kopie, ktery padne NA existujici prvek, se SLOUCI - presne tim se
+#     da nova trasa napojit na stavajici sit (dva prvky v jedne bunce by
+#     rozbily graf),
+#   * a kdyby vlozeni mapu zhorsilo, VZYZKOUSI se (jako kazda chranena zmena).
+func paste_at(cell: Vector2i) -> bool:
+	if clip.is_empty():
+		status = "Není co vložit — nejdřív výběr zkopíruj."
+		return false
+	var sz: Vector2i = clip_size()
+	if cell.x < 0 or cell.y < 0 or cell.x + sz.x > level.cols or cell.y + sz.y > level.rows:
+		status = "Sem se kopie nevejde (%d×%d) — klepni blíž ke středu." % [sz.x, sz.y]
+		return false
+	var moved: Array = box_lanes()
+	# KAM VSECHNO PADNE: bunky useku i bunky prvku. Pres ne nesmi vest cizi
+	# usek (cesty se nekrizi) a na bunku useku nesmi lezet cizi prvek (rozdělil
+	# by vlozenou cestu).
+	var inside: Dictionary = {}
+	for cc in clip_cells_at(cell):
+		var v: Vector2i = cc
+		inside[v] = true
+	for n in clip["nodes"]:
+		var v: Vector2i = cell + clip_map(int(n["c"]), int(n["r"]))
+		inside[v] = true
+	for v in inside.keys():
+		var p: Vector2i = v
+		# BUNKA PRVKU JE SPOLECNA: v uzlu se cesty potkavaji, takze vlozena
+		# cesta se smi napojit presne na existujici prvek - stejne pravidlo
+		# ma i `validate()` (bunku uzlu smi mit vic useku).
+		if level.node_at_cell(p) >= 0:
+			continue
+		for i in range(level.lane_count()):
+			if moved.has(i):
+				continue
+			if _lane_uses_cell(i, p):
+				status = "Na %d,%d už vede jiný úsek — vyber jiné místo." % [p.x, p.y]
+				return false
+	# PRVEK KOPIE NA CIZIM PRVKU SE SLOUCI (dva prvky v jedne bunce by rozbily
+	# graf) - a presne tim se da vlozena trasa napojit na stavajici sit.
+	var merged: int = 0
+	var clip_nodes: Dictionary = {}
+	for n in clip["nodes"]:
+		var v: Vector2i = cell + clip_map(int(n["c"]), int(n["r"]))
+		clip_nodes[v] = true
+		if level.node_at_cell(v) >= 0:
+			merged += 1
+	for cc in clip["lanes"]:
+		for q in cc["cells"]:
+			var w: Vector2i = q
+			var p: Vector2i = cell + clip_map(w.x, w.y)
+			if clip_nodes.has(p):
+				continue
+			if level.node_at_cell(p) >= 0:
+				status = "Buňka %d,%d je prvek — úsek kopie se přes něj nesmí položit." % [p.x, p.y]
+				return false
+	# VLOZENI. Chranena zmena jako kazda jina: je z ni krok "zpet".
+	#
+	# Vlozeni se NEPOSUZUJE podle `validate()`: hrac si trasu sklada po
+	# castech a vlozena cast muze byt zatim nepřipojena (visici vyhybka).
+	# Presne proto tu je hlaska - a "zpet" - a ne tiche odmitnuti, ktere by
+	# hrace nechalo hádat, proc se nic nestalo (stejne pravidlo jako u zmeny
+	# druhu prvku).
+	_snapshot()
+	var new_box := Rect2i(cell, sz)
+	var added_nodes: Array = []
+	for n in clip["nodes"]:
+		var v: Vector2i = cell + clip_map(int(n["c"]), int(n["r"]))
+		if level.node_at_cell(v) >= 0:
+			# SLOUCENI: prvek uz tam je, druhy by rozbil graf. Vlozena cesta
+			# se tim napoji na stavajici sit.
+			continue
+		level.nodes.append({"c": v.x, "r": v.y, "kind": int(n["kind"])})
+		added_nodes.append(level.node_count() - 1)
+	var added_lanes: Array = []
+	for ln in clip["lanes"]:
+		var cells: Array = []
+		for q in ln["cells"]:
+			var w: Vector2i = q
+			cells.append(cell + clip_map(w.x, w.y))
+		level.lanes.append({"cells": cells, "elem": int(ln["elem"]), "entry": false,
+			"slots": int(ln["slots"])})
+		added_lanes.append(level.lane_count() - 1)
+	paste_armed = false
+	sel_box = new_box
+	clip_rot = 0
+	clip_flip = false
+	_after_change()
+	status = "Vloženo (%d úseků, %d prvků%s)." % [added_lanes.size(), added_nodes.size(),
+		(" · %d prvků se sloučilo s existujícími" % merged) if merged > 0 else ""]
+	var errs: Array = level.validate()
+	if not errs.is_empty():
+		status += " Mapa teď neplatí: %s" % errs[0]
+	return true
+
+
+# SMAZAT CELY VYBER. Indexy se uklizi od nejvyssiho - jinak by se pri kazdem
+# smazani posunuly a hrac by mazal neco jineho, nez oznacil.
+func delete_box() -> void:
+	if not has_box():
+		status = "Nejdřív obtažením označ, co chceš smazat."
+		return
+	var lanes: Array = box_lanes()
+	var nodes: Array = box_nodes()
+	if lanes.is_empty() and nodes.is_empty():
+		status = "V obdélníku nic není — není co smazat."
+		return
+	_snapshot()
+	var ls: Array = lanes.duplicate()
+	ls.sort()
+	ls.reverse()
+	for l in ls:
+		level.lanes.remove_at(int(l))
+	var ns: Array = nodes.duplicate()
+	ns.sort()
+	ns.reverse()
+	for n in ns:
+		level.nodes.remove_at(int(n))
+	sel_box = Rect2i(0, 0, 0, 0)
+	sel_lane = -1
+	sel_node = -1
+	_after_change()
+	status = "Smazáno obdélníkem: %d úseků, %d prvků." % [lanes.size(), nodes.size()]
+
+
+# =========================================================================
 # HLEDANI V LEVELU
 # =========================================================================
 
@@ -1015,6 +1542,8 @@ func press(button: int) -> void:
 		elif button == TOOL_ROAD:
 			status = "Tažením prstu kresli cestu (%s). Klepnutím úsek nebo prvek vybereš." \
 				% Level.value_name(elem)
+		elif button == TOOL_VYBER:
+			status = "Výběr: tažením obtáhni obdélník, klepnutím vybereš jeden prvek. Pak kopíruj, otoč a vlož."
 		else:
 			status = "Klepni, kam má %s přijít. Tažením z prvku ho přesuneš." \
 				% TOOL_LABELS[button]
@@ -1033,6 +1562,16 @@ func press(button: int) -> void:
 			_slots_step(-1)
 		BTN_DELETE:
 			_delete_press()
+		BTN_COPY:
+			copy_box()
+		BTN_PASTE:
+			_paste_press()
+		BTN_ROT:
+			turn_clip()
+		BTN_FLIP:
+			flip_clip()
+		BTN_DEL_SEL:
+			delete_box()
 		BTN_UNDO:
 			undo()
 		BTN_LIST:
@@ -1041,6 +1580,19 @@ func press(button: int) -> void:
 			_export()
 		BTN_PLAY:
 			pass
+
+
+# "VLOZIT" JE DVOJAK: prvni stisk vlozeni PRIPRAVI (a rekne, kam by padlo),
+# druhy stisk vlozi na pripravene misto. Klepnuti na desku vklada hned -
+# proto ma hrac obe cesty a nemusi se strefovat do jednoho poradi.
+func _paste_press() -> void:
+	if clip.is_empty():
+		status = "Není co vložit — nejdřív výběr zkopíruj."
+		return
+	if paste_armed:
+		paste_at(paste_cell)
+		return
+	arm_paste()
 
 
 # ZIVEL. Kdyz je vybrany usek, meni se TYP TOHO USEKU (zivel, neutralni

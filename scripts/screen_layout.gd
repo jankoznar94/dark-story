@@ -217,6 +217,13 @@ func editor_bar_top() -> float:
 # arena ujizdela, mrizka by pri kazdem otevreni menu uskocila a hrac by
 # ztratil misto, kde prave kreslil.
 #
+# DVE VECI NAVIC, obe z Janovych poznamek:
+#   * "group" - polozky se stejnym neprazdnym jmenem skupiny stoji TESNE u
+#     sebe (bez mezery). Hodnota a jeji "−"/"+" tak tvorí JEDEN celek:
+#     Jan chtel tlacitka "malá a ideálně přímo nalepená na hodnotu".
+#   * "abs_w" - pevna sirka v px (nasobi se `ui`). Tlacitka "-"/"+" maji
+#     presnou sirku, takze se ridi hodnotou vedle, ne vahou celeho radku.
+#
 # Panel neni soucasti `editor_arena`: deska se neposouva, jen se pod panelem
 # neda klepat (klepnuti na desku panel zavre).
 func editor_panel(spec: Array) -> void:
@@ -231,16 +238,38 @@ func editor_panel(spec: Array) -> void:
 		var items: Array = row
 		if items.is_empty():
 			continue
+		# MEZERY: uvnitr skupiny zadna, mezi skupinami jedna. Pocitaji se
+		# PRED delenim sirky - jinak by se sirka pocitala s jinym poctem
+		# mezer, nez se pak kresli, a posledni bunka by utekla z displeje.
+		var gaps: float = 0.0
+		for i in range(1, items.size()):
+			if not _same_group(items[i - 1], items[i]):
+				gaps += gap
+		var fixed: float = 0.0
 		var sum: float = 0.0
 		for it in items:
-			sum += maxf(_panel_weight(it), 0.05)
-		var avail: float = view.x - 2.0 * PAD * ui - gap * float(maxi(items.size() - 1, 0))
+			if _abs_w(it) > 0.0:
+				fixed += _abs_w(it)
+			else:
+				sum += maxf(_panel_weight(it), 0.05)
+		var avail: float = maxf(view.x - 2.0 * PAD * ui - gaps - fixed, 1.0)
 		var x: float = PAD * ui
 		var line: Array = []
-		for it in items:
-			var bw: float = avail * maxf(_panel_weight(it), 0.05) / sum
-			line.append({"rect": Rect2(x, y, bw, rh), "item": it})
-			x += bw + gap
+		for i in range(items.size()):
+			var it: Dictionary = items[i]
+			var step_gap: float = gap
+			if i == 0 or _same_group(items[i - 1], it):
+				step_gap = 0.0
+			var bw: float = _abs_w(it)
+			if bw <= 0.0:
+				bw = maxf(avail * maxf(_panel_weight(it), 0.05) / maxf(sum, 0.001), 1.0)
+			var r := Rect2(x + step_gap, y, bw, rh)
+			line.append({"rect": r, "item": it})
+			# DALSÍ POLOZKA ZACINA PRESNE NA KONCI TÉHLE, ale na konci, jak
+			# ho VIDI Rect2 (float32). Kdyby se pocitala z puvodniho souctu,
+			# vysla by o par tisícin px vedle a dve "nalepena" tlacitka by se
+			# o ten zlomek prekryvala (test na prekryv to odhalil).
+			x = r.end.x
 		ed_panel_rows.append(line)
 		y -= rh + gap
 	if not ed_panel_rows.is_empty():
@@ -249,11 +278,26 @@ func editor_panel(spec: Array) -> void:
 		ed_panel_top = float(first["rect"].position.y) - gap
 
 
+# PEVNA SIRKA POLOZKY (px, nasobeno `ui`). Nula = polozka se deli vahou.
+func _abs_w(it: Dictionary) -> float:
+	return maxf(float(it.get("abs_w", 0.0)), 0.0) * ui
+
+
+# JSOU POLOZKY VE STEJNE SKUPINE? (hodnota a jeji "-"/"+" stoji u sebe).
+func _same_group(a: Dictionary, b: Dictionary) -> bool:
+	var ga: String = str(a.get("group", ""))
+	return ga != "" and ga == str(b.get("group", ""))
+
+
 # VAHA POLOZKY V PANELU. Vetsina polozek si nosi vahu ("w") z editoru, ale
 # KOMPAKTNI tlacitko se meri podle sveho popisku: "cíl" ma byt uzke, "výhybka"
 # siroke. Driv mela vsechna tlacitka v panelu stejny obdelnik, i kdyz na nich
 # bylo jedno slovo (Jan: "Hodnoty ... mohou být daleko úspornější na prostor").
 # Podlaha je dotykove minimum, aby se zadne tlacitko nedalo minout prstem.
+#
+# `pad` a `min_w` si muze polozka zuzit: tlacitko "-"/"+" je jen znak, takze
+# mu staci mensi odsazeni, a hodnota ("kolo 120 s") je TEXT - ta zadne
+# dotykove minimum nepotrebuje, jen aby se vesla.
 func _panel_weight(it: Dictionary) -> float:
 	if not bool(it.get("compact", false)):
 		return float(it.get("w", 1.0))
@@ -261,8 +305,8 @@ func _panel_weight(it: Dictionary) -> float:
 	if ed_font != null:
 		var px: int = font(13.0)
 		var need: float = ed_font.get_string_size(str(it.get("label", "")),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, px).x + 26.0
-		w = maxf(need, MIN_TOUCH + 6.0) / ED_COMPACT_REF
+			HORIZONTAL_ALIGNMENT_LEFT, -1, px).x + float(it.get("pad", 26.0))
+		w = maxf(need, float(it.get("min_w", MIN_TOUCH + 6.0))) / ED_COMPACT_REF
 	return w
 
 

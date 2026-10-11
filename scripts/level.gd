@@ -227,6 +227,18 @@ func lane_type_color(lane: int) -> Color:
 	return Level.value_color(lane_element(lane))
 
 
+# MRIZKA JE VIDET. Driv se kreslila barvou 0.20 (skoro jako podklad desky) a
+# hrac v ni nevnimal bunky - Jan: "Mřížku uděláme viditelnější." Barvy jsou
+# tady, ne v kresleni: test se na ne muze zeptat primo (a hlida, ze prvni
+# radek mrizky neni tmavsi nez podklad desky).
+#
+# KAZDA CTVRTA CARA JE SVETLEJSI. Neni to dekorace: pole ma 28x14 bunek a bez
+# pravidelnejsiho rytmu se v nem neda pocitat, kolik bunek cesta zabira.
+const GRID_LINE := Color(0.34, 0.32, 0.28, 0.85)
+const GRID_MAJOR := Color(0.46, 0.43, 0.37, 0.95)
+const GRID_STEP := 4
+
+
 # KOLIK MIST NA BONUS MA USEK OPRAVDU (tedy kolik jich lze postavit). Od
 # `lane_slot_count` se lisi u useku, kde stavet NELZE (kmen, neutralni usek):
 # ta cisla v datech zustavaji (hracuv pocet mist se nesmi pri zmene typu

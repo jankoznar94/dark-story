@@ -111,6 +111,25 @@ func _ready() -> void:
 		editor.panel = Editor.PANEL_SEL
 		_push_editor_level()
 		_shot = true
+	elif args.has("--box-shot"):
+		# Snimek OBDELNIKOVEHO VYBERU S DUCHEM VLOZENI: jediny zpusob, jak
+		# zkontrolovat, ze vyber sviti, ze je videt kopie a kam padne.
+		# Obdelnik bere ohnivou vetev a usek mezi vyhybkami; kopie se
+		# ZRCADLI a polozi do prazdneho leveho horniho rohu, aby byl duch
+		# videt (navrzene misto vedle vyberu by padlo na original).
+		_open_editor()
+		editor.level = Level.base()
+		editor.tool = Editor.TOOL_VYBER
+		editor.begin_box(Vector2i(6, 1))
+		editor.extend_box(Vector2i(21, 7))
+		editor.end_box()
+		editor.copy_box()
+		editor.flip_clip()
+		editor.arm_paste()
+		editor.paste_cell = Vector2i(0, 0)
+		editor.panel = Editor.PANEL_SEL
+		_push_editor_level()
+		_shot = true
 	elif args.has("--tools-shot"):
 		# Snimek panelu "nastroje": dve skupiny a tlacitka siroka podle popisku.
 		_open_editor()
@@ -297,7 +316,7 @@ func _input(event: InputEvent) -> void:
 			var sd: InputEventScreenDrag = event
 			_editor_drag(sd.position)
 			return
-		if event is InputEventMouseMotion and (editor.drawing or editor.moving):
+		if event is InputEventMouseMotion and (editor.drawing or editor.moving or editor.box_active):
 			var mm: InputEventMouseMotion = event
 			_editor_drag(mm.position)
 			return
@@ -335,6 +354,11 @@ func _input(event: InputEvent) -> void:
 			# klepnuti a uzel jen zmeni druh podle zvoleneho nastroje.
 			editor.end_move()
 			_push_editor_level()
+		elif menu.is_editor() and editor.box_active:
+			# PUSTENI PRSTU UZAVRE OBDELNIKOVY VYBER. Kdyz se prst nehnul,
+			# je to klepnuti a vybere se jeden prvek pod nim.
+			editor.end_box()
+			_push_editor_level()
 
 
 # Tahnuti prstu v editoru. Preskocene bunky doplni Editor sám, aby se cesta
@@ -343,6 +367,9 @@ func _input(event: InputEvent) -> void:
 func _editor_drag(pos: Vector2) -> void:
 	if editor.drawing:
 		editor.extend_draw(game.net.cell_at(pos))
+		return
+	if editor.box_active:
+		editor.extend_box(game.net.cell_at(pos))
 		return
 	if editor.moving and editor.extend_move(game.net.cell_at(pos)):
 		_push_editor_level()
@@ -472,6 +499,16 @@ func _handle_editor_tap(pos: Vector2) -> void:
 			editor.press(pact)
 			_push_editor_level()
 			return
+	# VLOZENI PRIPRAVENE KOPIE: klepnuti na desku rekne, KAM. Je to PRED
+	# pravidlem o zavreni panelu - hrac musi mit tlacitka panelu na ocich,
+	# dokud vlozeni nepotvrdi (a muze ho vzit zpet).
+	if editor.paste_armed:
+		var pc: Vector2i = _editor_cell(pos)
+		if editor.level.in_bounds(pc.x, pc.y):
+			_click()
+			editor.paste_at(pc)
+			_push_editor_level()
+			return
 	# KLEPNUTI NA DESKU S OTEVRENYM PANELEM PANEL JEN ZAVRE. Jinak by hrac
 	# polozil prvek pod panelem, tedy nekam, co nevidi.
 	if editor.panel != Editor.PANEL_NONE:
@@ -479,7 +516,7 @@ func _handle_editor_tap(pos: Vector2) -> void:
 		editor.close_panel()
 		_push_editor_level()
 		return
-	var cell: Vector2i = game.net.cell_at(pos)
+	var cell: Vector2i = _editor_cell(pos)
 	if not editor.level.in_bounds(cell.x, cell.y):
 		return
 	_click()
@@ -489,6 +526,10 @@ func _handle_editor_tap(pos: Vector2) -> void:
 		editor.draw_elem = editor.elem
 		editor.begin_draw(cell)
 		_push_editor_level()
+	elif editor.tool == Editor.TOOL_VYBER:
+		# TAZENIM se obtahne obdelnik, KLEPNUTIM se vybere jeden prvek -
+		# rozhodne se az pri pusteni prstu (viz `end_box`).
+		editor.begin_box(cell)
 	elif editor.begin_move(cell):
 		# UZEL SE PRESOUVA TAZENIM. Klepnuti (tah bez pohybu) se vyhodnoti
 		# az pri pusteni prstu - do te doby se jeste nevi, co to bude.
@@ -496,6 +537,12 @@ func _handle_editor_tap(pos: Vector2) -> void:
 	else:
 		editor.tap_cell(cell)
 		_push_editor_level()
+
+
+# BUNKA POD PRSTEM. Jedno misto, kde se pozice doteku meni na bunku mrizky -
+# klepnuti na panel, na desku i vlozeni kopie se musi ptat stejne.
+func _editor_cell(pos: Vector2) -> Vector2i:
+	return game.net.cell_at(pos)
 
 
 # Editor si drzi vlastni level a hra dostane jeho kopii. Kdyby dostala level
@@ -545,6 +592,9 @@ func _draw_editor() -> void:
 	_draw_slots()
 	_draw_nodes()
 	_draw_editor_draft()
+	# OBDELNIKOVY VYBER A DUCH VLOZENI: kresli se nad deskou, aby hrac videl
+	# jak vyber, tak misto, kam kopie padne.
+	_draw_editor_box()
 	# PORADI JE DULEZITE: panel se kresli AZ PO desce (prekryva jeji spodni
 	# kus), ale PRED hornim pruhem, ktery je vždy videt cely.
 	_draw_editor_panel()
@@ -596,6 +646,61 @@ func _draw_editor_draft() -> void:
 			(float(editor.mark.x) + 0.5) * cw, (float(editor.mark.y) + 0.5) * ch)
 		draw_rect(Rect2(mp - Vector2(cw, ch) * 0.5, Vector2(cw, ch)),
 			Color(0.90, 0.87, 0.80), false, 2.0)
+
+
+# BUNKA JAKO OBDELNIK NA OBRAZOVCE. Jedno misto, kde se z bunky mrizky stane
+# obdelnik - obdelnikovy vyber, duch vlozeni i rám okolo kopie se musi pocitat
+# stejne, jinak by ramecek ukazoval jinde, nez co se opravdu vlozi.
+func _cell_rect(box: Rect2i) -> Rect2:
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
+	return Rect2(game.net.origin + Vector2(float(box.position.x) * cw, float(box.position.y) * ch),
+		Vector2(float(box.size.x) * cw, float(box.size.y) * ch))
+
+
+# OBDELNIKOVY VYBER A DUCH VLOZENI. Hrac musi videt dve veci:
+#   * CO MA VYBRANE (obtazeny obdelnik sviti),
+#   * KAM SE KOPIE POLOZI (duch na miste vlozeni, jeste nez klepne).
+# Duch kresli PRESNE ty bunky, ktere pak vlozi `paste_at` - obe strany jdou
+# pres `Editor.clip_map`, takze se nemuzou rozejit.
+func _draw_editor_box() -> void:
+	if not editor.has_box():
+		return
+	var r: Rect2 = _cell_rect(editor.sel_box)
+	draw_rect(r, Color(0.62, 0.74, 0.86, 0.10))
+	draw_rect(r, Color(0.62, 0.74, 0.86, 0.80), false, 2.0)
+	if editor.paste_armed and not editor.clip.is_empty():
+		_draw_paste_ghost()
+
+
+func _draw_paste_ghost() -> void:
+	var at: Vector2i = editor.paste_cell
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
+	for ln in editor.clip["lanes"]:
+		var col: Color = Level.value_color(int(ln["elem"]))
+		for q in ln["cells"]:
+			var v: Vector2i = q
+			var p: Vector2i = at + editor.clip_map(v.x, v.y)
+			draw_rect(_cell_rect(Rect2i(p, Vector2i(1, 1))), Color(col.r, col.g, col.b, 0.45))
+	var rr: float = game.net.switch_r * 0.30
+	for n in editor.clip["nodes"]:
+		# PRVEK KOPIE je slovnik ({"c","r","kind"}) - ne bunka.
+		var p: Vector2i = at + editor.clip_map(int(n["c"]), int(n["r"]))
+		var c: Vector2 = game.net.origin + Vector2(
+			(float(p.x) + 0.5) * cw, (float(p.y) + 0.5) * ch)
+		var kind: int = int(n["kind"])
+		draw_circle(c, rr, Color(0.10, 0.095, 0.085, 0.8))
+		draw_arc(c, rr, 0.0, TAU, 20, Color(0.90, 0.87, 0.80, 0.9), 2.0)
+		if kind == Level.START:
+			draw_circle(c, rr * 0.5, Color(0.62, 0.58, 0.50))
+		elif kind == Level.CIL:
+			var d: float = rr * 0.55
+			draw_line(c - Vector2(d, d), c + Vector2(d, d), Color(0.90, 0.87, 0.80), 2.0)
+			draw_line(c + Vector2(d, -d), c - Vector2(d, -d), Color(0.90, 0.87, 0.80), 2.0)
+	# RÁM CELÉ KOPIE: hrac vidi, jak velky kus se polozi (i kdyz je v nem
+	# treba jen jeden usek).
+	draw_rect(_cell_rect(Rect2i(at, editor.clip_size())), Color(0.90, 0.87, 0.80, 0.55), false, 2.0)
 
 
 func _draw_editor_top() -> void:
@@ -657,9 +762,16 @@ func _draw_editor_panel() -> void:
 				continue
 			if kind == "value":
 				# HODNOTA NENI TLACITKO. Kresli se jako text: ramecek by
-				# slibil klepnuti, ktere nic nedela.
-				_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
-					Color(0.96, 0.93, 0.84))
+				# slibil klepnuti, ktere nic nedela. Je-li oznacena jako
+				# `align: right`, tiskne se k PRAVEMU okraji sve bunky -
+				# tlacitka "−"/"+" stoji hned za ni, takze je hrac vidi
+				# "nalepena na hodnotu" (Jan).
+				if str(it.get("align", "center")) == "right":
+					_draw_right(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
+						Color(0.96, 0.93, 0.84))
+				else:
+					_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
+						Color(0.96, 0.93, 0.84))
 				continue
 			draw_rect(r, PANEL_BTN)
 			var accent: Color = _panel_accent(it)
@@ -1073,11 +1185,13 @@ func _lane_color(lane: int) -> Color:
 
 # JE TENHLE USEK PRAVE ZVYRAZNENY? V HRE je to usek, ktery posila vyhybka -
 # hrac tak vidi, kam poutniky posle. V EDITORU je to usek, ktery si hrac
-# VYBRAL klepnutim; tlacitka "zivel" a "mista" pak meni JEHO vlastnosti.
-# Jedno misto pro obe obrazovky: kdyby si to kazda pocitala sama, kreslil by
-# editor neco jineho, nez na co klepnuti opravdu sedi.
+# VYBRAL klepnutim (nebo obdelnikem); tlacitka "zivel" a "mista" pak meni JEHO
+# vlastnosti. Jedno misto pro obe obrazovky: kdyby si to kazda pocitala sama,
+# kreslil by editor neco jineho, nez na co klepnuti opravdu sedi.
 func _lane_highlighted(lane: int) -> bool:
 	if menu.is_editor():
+		if editor.has_box() and editor.box_lanes().has(lane):
+			return true
 		return editor.sel_lane == lane
 	return game.lane_selected(lane)
 
@@ -1134,6 +1248,11 @@ func _draw_zones() -> void:
 
 # MRIZKA. Kresli se JEN V EDITORU - v hre by byla nabytkem, ktery by bral
 # misto cestam. Hrac v ni vidi, ze cesta jde po bunkach a kam presne saha.
+#
+# KAZDA CTVRTA CARA JE VYRAZNEJSI (Level.GRID_STEP): v poli 28x14 se bez
+# pravidelneho rytmu neda pocitat bunky. Barvy jsou v `Level`, aby se na ne
+# test mohl zeptat - a aby mrizka nebyla tmavsi nez podklad desky, jak se
+# stalo driv (0.20 proti podkladu 0.125 vypadalo v ruce jako nic).
 func _draw_grid() -> void:
 	if game.net.level == null:
 		return
@@ -1142,14 +1261,17 @@ func _draw_grid() -> void:
 	var o: Vector2 = game.net.origin
 	var gw: float = cw * float(game.net.level.cols)
 	var gh: float = ch * float(game.net.level.rows)
-	var col := Color(0.20, 0.185, 0.165, 0.75)
 	for i in range(game.net.level.cols + 1):
 		var x: float = o.x + cw * float(i)
-		draw_line(Vector2(x, o.y), Vector2(x, o.y + gh), col, 1.0)
+		var major: bool = i > 0 and i < game.net.level.cols and i % Level.GRID_STEP == 0
+		draw_line(Vector2(x, o.y), Vector2(x, o.y + gh),
+			Level.GRID_MAJOR if major else Level.GRID_LINE, 2.0 if major else 1.5)
 	for j in range(game.net.level.rows + 1):
 		var y: float = o.y + ch * float(j)
-		draw_line(Vector2(o.x, y), Vector2(o.x + gw, y), col, 1.0)
-	draw_rect(Rect2(o, Vector2(gw, gh)), Color(0.30, 0.28, 0.24, 0.9), false, 2.0)
+		var major: bool = j > 0 and j < game.net.level.rows and j % Level.GRID_STEP == 0
+		draw_line(Vector2(o.x, y), Vector2(o.x + gw, y),
+			Level.GRID_MAJOR if major else Level.GRID_LINE, 2.0 if major else 1.5)
+	draw_rect(Rect2(o, Vector2(gw, gh)), Color(0.42, 0.39, 0.33, 0.9), false, 2.0)
 
 
 # UZLY. Kazdy uzel je znacka na sve bunce a hrac z ni pozna, co se tam deje:
@@ -1199,6 +1321,10 @@ func _draw_nodes() -> void:
 		# vzor a spadl by na chybe pri nacitani skriptu.)
 		if menu.is_editor() and editor.sel_node == n:
 			draw_arc(p, rr * 1.55, 0.0, TAU, 28, Color(0.90, 0.87, 0.80), 2.0)
+		# A PRVEK V OBDELNIKU je obkresleny taky: hromadny vyber musi byt
+		# videt na prvni pohled, ne jen pocet v hlasce.
+		if menu.is_editor() and editor.has_box() and editor.box_nodes().has(n):
+			draw_arc(p, rr * 2.4, 0.0, TAU, 28, Color(0.62, 0.74, 0.86), 2.0)
 
 
 # CIL: dira v mape s krizkem. Krizek je zamerne jiny tvar nez vsechny runy -
@@ -1373,6 +1499,16 @@ func _draw_hud() -> void:
 func _draw_centered(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:
 	draw_string(_font, Vector2(r.position.x, baseline_y), text, HORIZONTAL_ALIGNMENT_CENTER,
 		r.size.x, layout.font(float(size)), col)
+
+
+# TEXT ZAROVNANY K PRAVEMU OKRAJI SVÉHO OBDELNIKU (hodnota v panelu hned pred
+# tlacitky "−"/"+"): text tak stoji tesne u tlacitek, ktera k nemu patri.
+# Drobny odstup (4*ui) drzi text od ramecku tlacitka - bez nej se posledni
+# pismeno dotyka ramecku a vypada to jako chyba kresleni.
+func _draw_right(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:
+	var inset: float = 4.0 * layout.ui
+	draw_string(_font, Vector2(r.position.x, baseline_y), text, HORIZONTAL_ALIGNMENT_RIGHT,
+		maxf(r.size.x - inset, 1.0), layout.font(float(size)), col)
 
 
 # ČESKÉ SKLOŇOVÁNÍ POČTU KOL (1 kolo, 2-4 kola, 5+ kol). Rovnou tady, aby

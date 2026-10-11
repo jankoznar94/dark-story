@@ -24,6 +24,8 @@ func _init() -> void:
 	_run("oznaceni prvku", _test_select_node)
 	_run("zpet", _test_undo)
 	_run("presouvani uzlu", _test_move_node)
+	_run("obdelnikovy vyber a kopie", _test_box_copy)
+	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
 	_run("panely a pruh", _test_panels)
@@ -891,11 +893,18 @@ func _test_panels() -> void:
 	# hlida PORADI v kodu: zavreni panelu musi byt PRED prací s bunkou -
 	# kdyby bylo az za ni, hrac by polozil prvek pod panelem, tedy nekam,
 	# co nevidi.
+	#
+	# VYJIMKA JE VLOZENI KOPIE: dokud hrac vybira, KAM kopii polozi, musi
+	# tlacitka panelu zustat na ocich (a vlozeni musi jit vzit zpet) - proto
+	# je vetev vlozeni PRED zavrenim panelu.
 	var vsrc: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
 	var body: String = _func_body(vsrc, "_handle_editor_tap")
 	_check(body.contains("editor.close_panel()"), "klepnuti na desku nezavre panel")
 	var iclose: int = body.find("editor.close_panel()")
-	var icell: int = body.find("game.net.cell_at(pos)")
+	var icell: int = body.rfind("_editor_cell(pos)")
+	var ipaste: int = body.find("editor.paste_at(")
+	_check(ipaste >= 0 and iclose >= 0 and ipaste < iclose,
+		"vetev vlozeni kopie neni pred zavrenim panelu - panel by zmizel uprostred vlozeni")
 	_check(iclose >= 0 and icell >= 0 and iclose < icell,
 		"panel se zavira az po praci s bunkou - hrac by polozil prvek pod panelem")
 	# A panel i horni pruh se musi opravdu kreslit: tlacitka, ktera existuji
@@ -1081,6 +1090,276 @@ func _rects_do_not_overlap(all: Array, r: Rect2) -> bool:
 		if o.intersects(r, false):
 			hits += 1
 	return hits <= 1
+
+
+# OBDELNIKOVY VYBER, KOPIE, OTOCENI A VLOZENI.
+# Jan: "Přidáme možnost prvky označit hromadně (pomocí obdélníkového tahu),
+# případně je zkopírovat (přesně v tom formátu jak jsou, včetně velikosti,
+# směru, a všech jiných parametrů) a vložit a otočit (například když chci
+# udělat dvě protichůdné zrcadlové trasy)."
+#
+# Zakladni mapa (_lane_level): START (1,5) -> VYHYBKA (4,5) -> dve cesty do
+# cilu (8,2) a (8,8). Usek 1 je horni vetev, jeho bunky jsou
+# (4,5)(4,4)(4,3)(4,2)(5,2)(6,2)(7,2)(8,2).
+func _test_box_copy() -> void:
+	var e := _ed()
+	_lane_level(e)
+	_check(e.level.lane_count() == 3, "zakladni mapa pro vyber se nepostavila")
+	# Do useku 1 dame vlastni hodnoty, aby se poznalo, ze je kopie odnesla.
+	e.level.set_lane_element(1, Element.WATER)
+	e.level.set_lane_slots(1, 5)
+
+	# --- TAH OBDELNIKEM ---
+	e.tool = Editor.TOOL_VYBER
+	e.begin_box(Vector2i(4, 2))
+	_check(e.has_box(), "zacatek tazeni nezacal obdelnik")
+	e.extend_box(Vector2i(8, 5))
+	_check(e.sel_box == Rect2i(4, 2, 5, 4),
+		"obdelnik ma spatny rozmer: %s" % str(e.sel_box))
+	e.end_box()
+	_check(e.has_box(), "po pusteni prstu obdelnik zmizel")
+	_check(e.box_lanes() == [1], "v obdelniku neni cela horni vetev: %s" % str(e.box_lanes()))
+	_check(e.box_nodes().size() == 2,
+		"v obdelniku nejsou dva prvky (vyhybka a cil): %s" % str(e.box_nodes()))
+
+	# --- KLEPNUTI (tah bez pohybu) VYBIRA JEDEN PRVEK, NE OBDELNIK ---
+	e.begin_box(Vector2i(4, 5))
+	e.end_box()
+	_check(not e.has_box(), "klepnuti nechalo viset obdelnik")
+	_check(e.sel_node >= 0 and not e.has_box(),
+		"klepnuti nastrojem vyber nevybralo prvek pod prstem")
+
+	# --- KOPIE ODCHAZI S CELYM FORMATEM ---
+	e.begin_box(Vector2i(4, 2))
+	e.extend_box(Vector2i(8, 5))
+	e.end_box()
+	_check(e.copy_box(), "kopie vyberu se nepovedla: %s" % e.status)
+	_check(e.clip["lanes"].size() == 1 and e.clip["nodes"].size() == 2,
+		"kopie nema jeden usek a dva prvky: %s" % str(e.clip))
+	_check(int(e.clip["w"]) == 5 and int(e.clip["h"]) == 4,
+		"kopie si nenese velikost vyberu: %dx%d" % [int(e.clip["w"]), int(e.clip["h"])])
+	var cl: Dictionary = e.clip["lanes"][0]
+	_check(int(cl["elem"]) == Element.WATER,
+		"kopie si nenese element useku (je %d)" % int(cl["elem"]))
+	_check(int(cl["slots"]) == 5, "kopie si nenese pocet mist (je %d)" % int(cl["slots"]))
+	var first: Vector2i = cl["cells"][0]
+	_check(first == Vector2i(0, 3),
+		"kopie nema bunky relativne k obdelniku: prvni je %s" % str(first))
+	_check(cl["cells"].size() == 8, "kopie ma %d bunek misto 8" % cl["cells"].size())
+
+	# --- OTOCENI A ZRCADLENI MENI KOPII (a pocita se to na jednom miste) ---
+	e.clip_rot = 1
+	_check(e.clip_size() == Vector2i(4, 5),
+		"po otoceni o 90 stupnu ma kopie spatny rozmer: %s" % str(e.clip_size()))
+	# (0,0) v kopii 5x4 se po otoceni dostane na (h-1, 0) = (3,0)
+	_check(e.clip_map(0, 0) == Vector2i(3, 0),
+		"otoceni kopie miri spatne: (0,0) -> %s" % str(e.clip_map(0, 0)))
+	e.clip_rot = 2
+	_check(e.clip_map(0, 3) == Vector2i(4, 0),
+		"otoceni o 180 stupnu miri spatne: (0,3) -> %s" % str(e.clip_map(0, 3)))
+	e.clip_rot = 0
+	e.flip_clip()
+	_check(e.clip_flip, "zrcadleni se nepreplo")
+	_check(e.clip_map(0, 3) == Vector2i(4, 3),
+		"zrcadleni miri spatne: (0,3) -> %s" % str(e.clip_map(0, 3)))
+
+	# --- VLOZENI DO PRAZDNA (zrcadlena vetev) ---
+	var lanes0: int = e.level.lane_count()
+	var nodes0: int = e.level.node_count()
+	_check(e.paste_at(Vector2i(18, 9)), "vlozeni do prazdna se nepovedlo: %s" % e.status)
+	_check(e.level.lane_count() == lanes0 + 1, "vlozeni nepridalo usek")
+	_check(e.level.node_count() == nodes0 + 2, "vlozeni nepridalo dva prvky")
+	var newl: Array = e.level.lane_cells(lanes0)
+	_check(newl.size() == 8, "vlozeny usek ma %d bunek misto 8" % newl.size())
+	# Zrcadleny usek: puvodni (4,5)->(8,2) se zrcadli vodorovne a posune na
+	# (18,9), takze zacina v (22,12) a konci v (18,9).
+	_check(newl[0] == Vector2i(22, 12),
+		"zrcadleny usek nezacina tam, kde ma: %s" % str(newl[0]))
+	_check(newl[newl.size() - 1] == Vector2i(18, 9),
+		"zrcadleny usek nekonci tam, kde ma: %s" % str(newl[newl.size() - 1]))
+	_check(e.level.lane_element(lanes0) == Element.WATER,
+		"vlozeny usek ztratil element")
+	_check(e.level.lane_slot_count(lanes0) == 5, "vlozeny usek ztratil pocet mist")
+	_check(e.has_box() and e.sel_box == Rect2i(18, 9, 5, 4),
+		"po vlozeni neni vybrany vlozeny kus: %s" % str(e.sel_box))
+	_check(e.status.begins_with("Vloženo"), "vlozeni nerekne, co udelalo: %s" % e.status)
+
+	# --- VLOZENI SE NESMI POLOZIT PRES CIZI USEK ---
+	var lanes1: int = e.level.lane_count()
+	_check(not e.paste_at(Vector2i(6, 2)),
+		"vlozeni na obsazene misto proslo, i kdyz tam vede usek")
+	_check(e.level.lane_count() == lanes1, "odmitnute vlozeni presto zmenilo mapu")
+	_check(e.status.contains("už vede jiný úsek"),
+		"odmitnute vlozeni nerekne proc: %s" % e.status)
+
+	# --- "ZPET" VEZME VLOZENI ZPATKY ---
+	e.undo()
+	_check(e.level.lane_count() == lanes1 - 1,
+		"zpet nevzalo vlozeni (%d useku)" % e.level.lane_count())
+
+	# --- PRVEK KOPIE NA PRVKU SE SLOUCI (jinak by v bunce byly dva) ---
+	# Kopie polozena presne na svuj original: oba jeji prvky (vyhybka i cil)
+	# padnou na existujici, takze se SLOUCI - a pouzije se tim stavajici sit.
+	e.begin_box(Vector2i(4, 2))
+	e.extend_box(Vector2i(8, 5))
+	e.end_box()
+	e.copy_box()
+	e.clip_rot = 0
+	e.clip_flip = false
+	var nn0: int = e.level.node_count()
+	_check(e.paste_at(Vector2i(4, 2)), "vlozeni na stavajici prvek se nepovedlo: %s" % e.status)
+	_check(e.level.node_count() == nn0,
+		"vlozeni na prvky pridalo dalsi prvky misto slouceni (%d -> %d)" % [nn0, e.level.node_count()])
+	_check(e.status.contains("sloučilo"),
+		"slouceni prvku se nerekne: %s" % e.status)
+
+	# --- SMAZANI CELÉHO VYBERU ---
+	var e2 := _ed()
+	_lane_level(e2)
+	e2.tool = Editor.TOOL_VYBER
+	e2.begin_box(Vector2i(4, 2))
+	e2.extend_box(Vector2i(8, 5))
+	e2.end_box()
+	var l0: int = e2.level.lane_count()
+	var n0: int = e2.level.node_count()
+	e2.delete_box()
+	_check(e2.level.lane_count() == l0 - 1,
+		"smazani vyberu nesmazalo usek (%d -> %d)" % [l0, e2.level.lane_count()])
+	_check(e2.level.node_count() == n0 - 2,
+		"smazani vyberu nesmazalo dva prvky (%d -> %d)" % [n0, e2.level.node_count()])
+	_check(not e2.has_box(), "po smazani zustal obdelnik viset")
+
+	# --- PANEL "VYBER" SE MENI PODLE VYBERU ---
+	var e3 := _ed()
+	_lane_level(e3)
+	_check(not _panel_acts(e3, Editor.PANEL_SEL).has(Editor.BTN_COPY),
+		"bez obdelniku panel nabizi kopirovani")
+	e3.tool = Editor.TOOL_VYBER
+	e3.begin_box(Vector2i(4, 2))
+	e3.extend_box(Vector2i(8, 5))
+	e3.end_box()
+	var acts: Array = _panel_acts(e3, Editor.PANEL_SEL)
+	_check(acts.has(Editor.BTN_COPY), "u obdelniku chybi kopirovani: %s" % str(acts))
+	_check(acts.has(Editor.BTN_DEL_SEL), "u obdelniku chybi smazani vyberu: %s" % str(acts))
+	_check(not acts.has(Editor.BTN_ELEM) and not acts.has(Editor.BTN_SLOTS_UP),
+		"u obdelniku panel nabizi jednoprvkove veci: %s" % str(acts))
+	e3.copy_box()
+	var acts2: Array = _panel_acts(e3, Editor.PANEL_SEL)
+	for b in [Editor.BTN_PASTE, Editor.BTN_ROT, Editor.BTN_FLIP]:
+		_check(acts2.has(b), "po kopii chybi tlacitko %d: %s" % [b, str(acts2)])
+	# A tlacitka opravdu neco delaji (tlacitko, ktere nic nedela, je lez).
+	e3.press(Editor.BTN_ROT)
+	_check(e3.clip_rot == 1, "tlacitko otoceni neotocilo kopii")
+	e3.press(Editor.BTN_FLIP)
+	_check(e3.clip_flip, "tlacitko zrcadleni nezrcadlilo kopii")
+	e3.press(Editor.BTN_PASTE)
+	_check(e3.paste_armed, "tlacitko vlozit nepripravilo vlozeni: %s" % e3.status)
+	_check(e3.paste_cell == Vector2i(9, 2) or e3.paste_cell != Vector2i(-1, -1),
+		"pripravene vlozeni nema misto")
+	var lbefore: int = e3.level.lane_count()
+	e3.press(Editor.BTN_PASTE)
+	_check(e3.level.lane_count() == lbefore + 1,
+		"druhy stisk vlozit nevlozil (useku %d)" % e3.level.lane_count())
+	_check(not e3.paste_armed, "po vlozeni zustava vlozeni pripravene")
+
+	# --- NASTROJ "VYBER" JE V PANELU NASTROJU ---
+	var e4 := _ed()
+	_save_panel(e4, Editor.PANEL_TOOLS)
+	var row: Array = e4.panel_rows()[0]
+	var labels: Array = []
+	for it in row:
+		if int(it["act"]) >= 0:
+			labels.append(str(it["label"]))
+	_check(labels.size() == Editor.TOOL_COUNT,
+		"panel nastroju nema vsech %d nastroju: %s" % [Editor.TOOL_COUNT, str(labels)])
+	_check(labels.has(Editor.TOOL_LABELS[Editor.TOOL_VYBER]),
+		"v panelu nastroju chybi vyber: %s" % str(labels))
+	_check(not e4.can_move(), "nastrojem vyber se da tazenim presouvat uzel")
+	e4.panel = Editor.PANEL_NONE
+
+
+# MALA TLACITKA "−"/"+" NALEPENA NA HODNOTU + VIDITELNA MRIZKA.
+# Jan: (1) "Tlačítka + a - jsou zbytečně velká. Tato tlačítka by měla být malá
+# a ideálně přímo nalepená na hodnotu, kterou ovládají."
+#       (2) "Mřížku uděláme viditelnější."
+#
+# Meri se z ROZVRZENI, ktere dostane i kresleni - kdyby si test pocital svoje
+# cisla, mohl by projit na necem, co hrac nevidi.
+func _test_steppers_and_grid() -> void:
+	var e := _ed()
+	_lane_level(e)
+	var font := ThemeDB.fallback_font
+	for size in [Vector2(640.0, 360.0), Vector2(960.0, 600.0)]:
+		var lay := ScreenLayout.new()
+		lay.compute(size)
+		lay.set_editor_font(font)
+		# PANEL "LEVEL" I "VYBER": hodnota je text a vedle ni stoji dve mala
+		# tlacitka TESNE u ni (bez mezery) - jedno misto, kde se to hlida.
+		for p in [Editor.PANEL_LEVEL, Editor.PANEL_SEL]:
+			e.panel = p
+			e.sel_lane = 0
+			lay.editor_panel(e.panel_rows())
+			var items: Array = _panel_items(lay)
+			var pairs: int = 0
+			for i in range(1, items.size() - 1):
+				var minus: Dictionary = items[i]
+				if str(minus["item"].get("label", "")) != "−":
+					continue
+				var val: Dictionary = items[i - 1]
+				var plus: Dictionary = items[i + 1]
+				pairs += 1
+				var w: float = float(minus["rect"].size.x)
+				var step_px: float = Editor.STEP_W * lay.ui
+				_check(absf(w - step_px) < 0.6,
+					"%s panel %d: tlacitko - ma %.1f px, ma mit %.1f" % [str(size), p, w, step_px])
+				_check(w >= ScreenLayout.MIN_TOUCH * lay.ui - 0.6,
+					"%s panel %d: tlacitko - je pod dotykovym minimem" % [str(size), p])
+				_check(w < float(val["rect"].size.x),
+					"%s panel %d: tlacitko - neni mensi nez hodnota (%.1f vs %.1f)" % [
+						str(size), p, w, float(val["rect"].size.x)])
+				# NALEPENE: hodnota konci presne tam, kde - zacina, a + stoji
+				# na konci -.
+				_check(absf(float(minus["rect"].position.x) - float(val["rect"].end.x)) < 0.6,
+					"%s panel %d: - neni nalepene na hodnotu" % [str(size), p])
+				_check(absf(float(plus["rect"].position.x) - float(minus["rect"].end.x)) < 0.6,
+					"%s panel %d: + neni nalepene na -" % [str(size), p])
+				_check(str(val["item"].get("kind", "")) == "value"
+					and str(val["item"].get("align", "")) == "right",
+					"%s panel %d: hodnota pred - neni text u praveho okraje" % [str(size), p])
+				_check(str(plus["item"].get("label", "")) == "+",
+					"%s panel %d: za - neni +" % [str(size), p])
+			# Panel "level" ma dvojici u kazdeho parametru, panel "vyber" jednu
+			# (mista). Kdyby se nasla nula, test by meril prazdno.
+			var want: int = Editor.PARAM_COUNT if p == Editor.PANEL_LEVEL else 1
+			_check(pairs == want,
+				"%s panel %d: naslo se %d dvojic -/+ (ceka se %d)" % [str(size), p, pairs, want])
+	e.panel = Editor.PANEL_NONE
+
+	# MRIZKA JE VIDET: barvy jsou v `Level` (ne v kresleni), takze se na ne
+	# test muze zeptat. Podklad desky je luminancne ~0.115 - cara mrizky musi
+	# byt VYRAZNE svetlejsi, jinak v ruce neni videt vubec.
+	var bg_lum: float = Color(0.125, 0.115, 0.10).get_luminance()
+	_check(Level.GRID_LINE.get_luminance() > 2.0 * bg_lum,
+		"cara mrizky je jen %.3f proti podkladu %.3f" % [
+			Level.GRID_LINE.get_luminance(), bg_lum])
+	_check(Level.GRID_MAJOR.get_luminance() > Level.GRID_LINE.get_luminance(),
+		"kazda ctvrta cara mrizky neni vyraznejsi")
+	_check(Level.GRID_STEP == 4, "rytmus mrizky se zmenil (%d)" % Level.GRID_STEP)
+	var gsrc: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	_check(gsrc.contains("Level.GRID_LINE") and gsrc.contains("Level.GRID_MAJOR"),
+		"mrizka nekresli barvami z Level")
+	_check(gsrc.contains("Level.GRID_STEP"), "mrizka nekresli kazdou ctvrtou caru vyrazneji")
+	_check(not gsrc.contains("Color(0.20, 0.185, 0.165"),
+		"v kresleni zustala stara (neviditelna) barva mrizky")
+
+
+# POLOZKY ROZVRZENEHO PANELU (kresleni i klepnuti jdou pres ne).
+func _panel_items(lay: ScreenLayout) -> Array:
+	var out: Array = []
+	for row in lay.ed_panel_rows:
+		for en in row:
+			out.append(en)
+	return out
 
 
 # SEZNAM ULOZENYCH LEVELU. Hlida se hlavne to, ze "novy" NEPREPISE predchozi
