@@ -20,7 +20,10 @@ extends Node2D
 const MAX_TOAST := 3.0
 # Sirka pasu dmg zony. Je to ZNACKA, ne presna mechanika - mechanika je
 # "cely usek", ale pas to musi ukazat citelne.
-const ZONE_THICK := 24.0
+# SILA ZONY JE VIDET JAKO PAS PODEL CESTY. Cesty jsou 18*s siroke (2x vic
+# nez driv), takze pas musi zustat o chlup sirsi - jinak by ho cesta
+# prekryla a hrac by nepoznal, KDE vsude poutnika poskozuje.
+const ZONE_THICK := 30.0
 
 # VELIKOST POUTNIKA. Je to znacka, ktera musi byt citelna na telefonu -
 # poutnik je to, na co se hrac cely cas kouka, takze je vetsi nez zbytek
@@ -1197,7 +1200,13 @@ func _lane_highlighted(lane: int) -> bool:
 
 
 func _draw_lanes() -> void:
-	var lw: float = maxf(2.0, 9.0 * layout.s)
+	# CESTY JSOU 2x TLUSTSI (Jan: "Udelame cesty o neco tlustsi. Třeba 2x
+	# tlustší než teď."). Sirka je nasobek `layout.s`, takze plati na
+	# vsech rozliseni; "core" (jasnejsi stred) i "rim" drzi stejny pomer,
+	# aby usek porad cetl jako pruh s jasnejsim stredem, ne jako jedna
+	# plocha. Mista na bonus maji vlastni polomer (`bonus_r`, 26*s), takze
+	# jsou porad vetsi nez cesta a klepnuti se strefi.
+	var lw: float = maxf(4.0, 18.0 * layout.s)
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
@@ -1210,7 +1219,7 @@ func _draw_lanes() -> void:
 		faint.a = 0.28 if not sel else 0.42
 		var bright := col
 		bright.a = 0.60 if not sel else 0.95
-		var core: float = maxf(1.0, 3.0 * layout.s) if not sel else maxf(1.0, 4.5 * layout.s)
+		var core: float = maxf(2.0, 6.0 * layout.s) if not sel else maxf(2.0, 9.0 * layout.s)
 		if sel:
 			var halo := col
 			halo.a = 0.16
@@ -1224,7 +1233,7 @@ func _draw_lanes() -> void:
 			var rim := col
 			rim.a = 0.85
 			for k in range(path.size() - 1):
-				draw_line(path[k], path[k + 1], rim, maxf(1.0, 1.6 * layout.s))
+				draw_line(path[k], path[k + 1], rim, maxf(1.0, 3.2 * layout.s))
 
 
 # DMG ZONA. Pas vede PODEL CELE CESTY - cim dele po nem poutnik jde, tim
@@ -1327,16 +1336,17 @@ func _draw_nodes() -> void:
 			draw_arc(p, rr * 2.4, 0.0, TAU, 28, Color(0.62, 0.74, 0.86), 2.0)
 
 
-# CIL: dira v mape s krizkem. Krizek je zamerne jiny tvar nez vsechny runy -
-# cili nikdo nevlastni a kdo tam dojde, stoji zivot. Popisek nema, deska je
-# bez textu.
+# CIL JE DIRA V MAPE, NE ZNACKA. Krizek v krouzku byl na desku moc
+# (Jan: "nebude mit tuto vyraznou znacku krizku v kruhu. Je to prilis
+# mnoho") - cesta z cile odchazi na okraj displeje a poutnik tam zmizi,
+# takze hrac cil vidi jako KONEC CESTY ZA OBRAZOVKOU. V bitve se proto
+# nekresli vubec. V editoru zustava maly tmavy bod na bunce uzlu: bez nej
+# by hrac nevedel, KAM presne cil polozil (driv to byla stejna chyba jako
+# u cile bez znacky - "a pak uz neni cil videt").
 func _draw_exit_mark(p: Vector2) -> void:
-	var r: float = game.net.exit_r
-	draw_circle(p, r, Color(0.13, 0.12, 0.11))
-	draw_arc(p, r, 0.0, TAU, 32, Color(0.62, 0.58, 0.52), 3.0)
-	var d: float = r * 0.42
-	draw_line(p - Vector2(d, d), p + Vector2(d, d), Color(0.72, 0.68, 0.60), 3.0)
-	draw_line(p + Vector2(d, -d), p - Vector2(d, -d), Color(0.72, 0.68, 0.60), 3.0)
+	if not menu.is_editor():
+		return
+	draw_circle(p, maxf(3.0, game.net.exit_r * 0.30), Color(0.11, 0.105, 0.10))
 
 
 func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:

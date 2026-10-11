@@ -189,9 +189,10 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 			lane_sel_index[idx] = k
 
 	# --- vstup do mapy
-	# VSECHNY vstupni useky. Validace pripousti prave jeden START, takze je
-	# tu zatim jeden - hra se ale ptá na seznam, ne na "ten prvni": az bude
-	# mit mapa vstupu vic, nesmi se to dohledavat po celem kodu.
+	# VSECHNY vstupni useky. Startu muze byt LIBOVOLNE MNOZSTVI (Jan: "Muze mit
+	# libovolny pocet startu/vstupu"), takze se bere kazdy usek z kazdeho STARTu
+	# a hra z nich losuje. `entry_lane` je prvni z nich a pouziva se jen tam, kde
+	# je potreba jedno cislo (odhad delky kola).
 	entry_lanes = []
 	for n in range(level.node_count()):
 		if level.node_kind(n) != Level.START:
@@ -398,8 +399,11 @@ func lane_deals_damage(lane: int) -> bool:
 
 # Usek, ze ktereho poutnici vstupuji do mapy. Neposkrzuje sam o sobe -
 # rozhoduje hodnota useku (vstupni usek je od vychoziho stavu KMEN).
+# VSTUPU MUZE BYT VIC (startu je libovolne mnozstvi), takze se ptame na
+# seznam - driv tu bylo "lane == entry_lane" a druhy vstup by se tváril
+# jako normalni poskozujici usek.
 func lane_is_entry(lane: int) -> bool:
-	return lane == entry_lane
+	return entry_lanes.has(lane)
 
 
 # Ktera vyhybka ten usek posila. Hrac na usek klepne a prepne tim SVOU vyhybku.

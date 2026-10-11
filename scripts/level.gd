@@ -341,6 +341,20 @@ func first_start() -> int:
 	return -1
 
 
+# VSECHNY starty. Startu muze byt LIBOVOLNE MNOZSTVI - kazdy je vlastni
+# vstup do mapy a hra z nich losuje (Jan: "chyba: mapa musi mit prave jeden
+# start (ma 2). To je blbost. Muze mit libovolny pocet startu/vstupu.").
+# `first_start()` zustava pro mista, ktera opravdu chteji JEDEN (kresleni
+# vstupniho useku v editoru); pravidla (validate, dosazitelnost) se musi
+# ptat TOHOHLE seznamu, jinak by druhy vstup zustal mimo kontrolu.
+func start_nodes() -> Array:
+	var out: Array = []
+	for i in range(nodes.size()):
+		if int(nodes[i]["kind"]) == START:
+			out.append(i)
+	return out
+
+
 func exit_count() -> int:
 	var c := 0
 	for i in range(nodes.size()):
@@ -508,8 +522,12 @@ func validate() -> Array:
 	for n in range(nodes.size()):
 		if node_kind(n) == START:
 			starts += 1
-	if starts != 1:
-		errs.append("mapa musí mít právě jeden start (má %d)." % starts)
+	# STARTU MUZE BYT LIBOVOLNE MNOZSTVI. Driv tu stalo "prave jeden" a
+	# druhy vstup se nedal vyexportovat, i kdyz graf s nim pocita
+	# (`Network` ma seznam `entry_lanes`, hra z nich losuje). Jedine, co
+	# plati, je "aspon jeden" - bez startu nema poutnik kudy vejit.
+	if starts < 1:
+		errs.append("mapa nemá žádný start.")
 	if exit_count() < 1:
 		errs.append("mapa nemá žádný cíl.")
 
@@ -606,13 +624,18 @@ func validate() -> Array:
 				errs.append("úsek %d prochází uzlem %d, aniž by tam končil." % [i, mn])
 				break
 
-	# --- dosazitelnost: ze startu se musi dat dojit na kazdy usek i cil
-	var st: int = first_start()
-	if st >= 0:
+	# --- dosazitelnost: z KAZDEHO startu se musi dat dojit na kazdy usek i cil
+	# Startu muze byt vic, takze se hleda ze vsech najednou (multi-source BFS).
+	# Ptat se jen na prvni start by u druheho vstupu tise propustilo
+	# nedosazitelny kus mapy.
+	var start_list: Array = start_nodes()
+	if not start_list.is_empty():
 		var seen_nodes: Dictionary = {}
 		var seen_lanes: Dictionary = {}
-		var queue: Array = [st]
-		seen_nodes[st] = true
+		var queue: Array = []
+		for s in start_list:
+			seen_nodes[int(s)] = true
+			queue.append(int(s))
 		while not queue.is_empty():
 			var n: int = int(queue.pop_front())
 			for ln in lanes_from(n):

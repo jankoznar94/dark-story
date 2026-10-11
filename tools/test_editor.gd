@@ -332,15 +332,20 @@ func _test_edit_existing() -> void:
 	e.sel_lane = 0
 	_check(e.level.lane_is_kmen(0), "usek ze startu neni kmen (je %s)"
 		% e.level.lane_type_name(0))
-	e.elem = Element.AIR
+	# CYKLUS VYCHAZI Z TYPU VYBRANEHO USEKU, ne z typu v palete: panel stoji
+	# na typu useku, takze stisk musi posunout PRESNE to, co hrac vidi
+	# (jinak prvni klepnuti u jineho useku "preskoci" na hodnotu, ktera
+	# s nim nesouvisi).
+	e.level.set_lane_element(0, Element.AIR)
 	e.press(Editor.BTN_ELEM)
 	_check(e.level.lane_element(0) == Level.NEUTRAL,
 		"vstupnimu useku se nezmenil typ (je %s)" % e.level.lane_type_name(0))
+	_check(e.elem == Level.NEUTRAL, "kreslici typ nekopiruje zmenu useku (je %s)"
+		% Level.value_name(e.elem))
 	_check(e.level.lane_deals_damage(0), "vstupni usek na elementu neposkozuje")
 	_check(e.slots_text().contains("míst %d" % e.level.lane_bonus_slots(0)),
 		"horni pruh nelze o poctu mist: " + e.slots_text())
 	_check(e.status.contains("Vstupní"), "status nemluvi o vstupnim useku: " + e.status)
-	e.elem = Level.NEUTRAL
 	e.press(Editor.BTN_ELEM)
 	_check(e.level.lane_element(0) == Level.KMEN,
 		"vstupni usek se neprepnul zpet na kmen (je %s)" % e.level.lane_type_name(0))
@@ -465,7 +470,9 @@ func _test_lane_types() -> void:
 	_lane_level(f)
 	f.sel_lane = 1
 	f.sel_node = -1
-	f.elem = Element.AIR
+	# CYKLUS TYPU VYCHAZI Z VYBRANEHO USEKU (panel stoji na jeho typu), takze
+	# se nastavuje typ useku - ne "kreslici" typ v palete.
+	f.level.set_lane_element(1, Element.AIR)
 	f.press(Editor.BTN_ELEM)
 	_check(f.level.lane_element(1) == Level.NEUTRAL, "neutralni usek se nenastavil")
 	_check(f.level.lane_is_neutral(1), "usek neni neutralni")
@@ -808,18 +815,23 @@ func _test_panels() -> void:
 	for a in [Editor.BTN_UNDO, Editor.BTN_LIST, Editor.BTN_EXPORT, Editor.BTN_PLAY]:
 		_check(acts.has(a), "v pruhu chybi akce %d" % a)
 
-	# NASTROJE: vsech sedm a klepnuti na kazdy opravdu prepne nastroj
+	# NASTROJE: vsechny a klepnuti na kazdy opravdu prepne nastroj
 	var tools: Array = _panel_acts(e, Editor.PANEL_TOOLS)
-	_check(tools.size() == Editor.TOOL_COUNT,
-		"panel nastroju nema %d tlacitek (ma %d)" % [Editor.TOOL_COUNT, tools.size()])
-	# DVE SKUPINY: mezi "co delam prstem" (cesta, guma) a "co pokladam"
-	# (start, cíl, výhybka, spojka, uzel) je prazdne misto.
+	var tool_acts: Array = []
+	for a in tools:
+		if int(a) < Editor.TOOL_COUNT:
+			tool_acts.append(int(a))
+	_check(tool_acts.size() == Editor.TOOL_COUNT,
+		"panel nastroju nema %d tlacitek (ma %d)" % [Editor.TOOL_COUNT, tool_acts.size()])
+	# PANEL NASTROJU MA DVA RADKY: nahore parametry (typ cesty + mista),
+	# dole samotne nastroje u pruhu. Hrac tak vidi, CIM pracuje i CO tim
+	# prave meni - a hodnoty jsou predvyplnene podle vyberu.
 	var rows0: Array = []
 	_save_panel(e, Editor.PANEL_TOOLS)
 	rows0 = e.panel_rows()
 	e.panel = Editor.PANEL_NONE
-	_check(rows0.size() == 1, "panel nastroju ma %d radku" % rows0.size())
-	if rows0.size() == 1:
+	_check(rows0.size() == 2, "panel nastroju ma %d radku" % rows0.size())
+	if rows0.size() == 2:
 		var line: Array = rows0[0]
 		var gaps: int = 0
 		for it in line:
@@ -828,12 +840,18 @@ func _test_panels() -> void:
 		_check(gaps == 1, "v panelu nastroju chybi predel mezi skupinami (%d)" % gaps)
 		var labels: Array = []
 		for it in line:
-			if int(it["act"]) >= 0:
+			if int(it["act"]) >= 0 and int(it["act"]) < Editor.TOOL_COUNT:
 				labels.append(str(it["label"]))
 		_check(labels.size() == Editor.TOOL_COUNT, "nastroje se v panelu ztratily: " + str(labels))
 		_check(labels[0] == Editor.TOOL_LABELS[Editor.TOOL_ROAD]
 			and labels[1] == Editor.TOOL_LABELS[Editor.TOOL_GUMA],
 			"prvni skupina nejsou kreslici nastroje: " + str(labels))
+		# A DRUHY RADEK JSOU PARAMETRY: typ cesty a mista se krokovaci.
+		var prm: Array = _panel_acts(e, Editor.PANEL_TOOLS)
+		for want in [Editor.BTN_ELEM, Editor.BTN_SLOTS_DOWN, Editor.BTN_SLOTS_UP]:
+			_check(prm.has(want), "v panelu nastroju chybi parametr %d" % want)
+		_check(not prm.has(Editor.BTN_DELETE),
+			"panel nastroju nabizi smazani useku - to patri do panelu vyber")
 	e.panel = Editor.PANEL_NONE
 	for t in range(Editor.TOOL_COUNT):
 		e.press(t)
@@ -993,6 +1011,76 @@ func _test_level_params() -> void:
 # NAD pruhem (ne pres nej) a popisky musi zustat citelne. Meri se na 640x360
 # (nejmensi podporovany) i na 960x600 - kresleni i test berou stejne cislo
 # z rozvrzeni, takze se nemuze stat, ze test meri neco jineho, nez hrac vidi.
+# Popisek tlacitka v KONKRETNIM panelu. `_panel_label` vraci prvni vyskyt
+# v celem editoru, takze u tlacitka, ktere je ve DVOU panelech (typ cesty),
+# by test meril porad jeden z nich.
+func _label_in_panel(e: Editor, p: int, act: int) -> String:
+	var save: int = e.panel
+	e.panel = p
+	var out: String = ""
+	for row in e.panel_rows():
+		for it in row:
+			if int(it["act"]) == act:
+				out = str(it["label"])
+	e.panel = save
+	return out
+
+
+# PANEL SE PREDVYPLNI PODLE VYBERU. Jan: "Pri oznaceni prvku se musi v
+# panelu nastroju predvyplnit parametry podle vybraneho prvku. Kdyz kliknu
+# na ohnivou cestu se 2 upgrade body, tak se v panelu nastroju vsechny tyto
+# udaje predvyplnit."
+#
+# Testuje se to, co hrac opravdu vidi: popisek tlacitka typu a hodnotovy
+# popisek mist v OBOU panelech (nastroje i vyber), ne vnitrni promenna.
+# A zaroven ze stisk meni PRESNE ten vybrany usek.
+func _test_params_prefill() -> void:
+	var e := _ed()
+	_lane_level(e)
+	# Usek 1 je ohniva vetev; dame ji 2 mista a zvolime JINY kreslici typ,
+	# aby se poznalo, ze se panel ridi vyberem, a ne tim, s cim se kresli.
+	e.level.set_lane_element(1, Element.FIRE)
+	e.level.set_lane_slots(1, 2)
+	e.elem = Element.WATER
+	e.sel_lane = -1
+	e.sel_node = -1
+	for p in [Editor.PANEL_TOOLS, Editor.PANEL_SEL]:
+		var lab0: String = _label_in_panel(e, p, Editor.BTN_ELEM)
+		_check(lab0 == Level.value_name(e.elem),
+			"bez vyberu panel %d neukazuje kreslici typ: %s" % [p, lab0])
+	# --- oznaceni ohnive cesty se 2 misty
+	e.tool = Editor.TOOL_ROAD
+	e.begin_draw(e.level.lane_cells(1)[3])
+	e.end_draw()
+	_check(e.sel_lane == 1, "usek 1 se nevybral (sel %d)" % e.sel_lane)
+	for p in [Editor.PANEL_TOOLS, Editor.PANEL_SEL]:
+		var lab: String = _label_in_panel(e, p, Editor.BTN_ELEM)
+		_check(lab == Level.value_name(Element.FIRE),
+			"panel %d nepredvyplnil typ vybraneho useku (%s)" % [p, lab])
+		var val: String = _panel_value_label(e, p, "míst")
+		_check(val.contains("míst 2"), "panel %d nepredvyplnil mista (%s)" % [p, val])
+		var sl: String = _panel_value_label(e, p, "úsek")
+		_check(sl.contains("úsek 1"), "panel %d nemluvi o vybranem useku (%s)" % [p, sl])
+	# --- stisk meni VYBRANY usek (a cyklus jde z jeho typu)
+	e.press(Editor.BTN_ELEM)
+	_check(e.level.lane_element(1) == Element.EARTH,
+		"typ vybraneho useku se nezmenil z ohnive (%s)" % e.level.lane_type_name(1))
+	e.press(Editor.BTN_SLOTS_UP)
+	_check(e.level.lane_slot_count(1) == 3, "mista vybraneho useku se nepridala (%d)"
+		% e.level.lane_slot_count(1))
+	# --- druhy usek ma SVOJE hodnoty: panel se preplni znovu
+	var other: int = 2
+	e.level.set_lane_element(other, Element.WATER)
+	e.level.set_lane_slots(other, 1)
+	e.begin_draw(e.level.lane_cells(other)[3])
+	e.end_draw()
+	_check(e.sel_lane == other, "druhy usek se nevybral (sel %d)" % e.sel_lane)
+	_check(_label_in_panel(e, Editor.PANEL_SEL, Editor.BTN_ELEM) == Level.value_name(Element.WATER),
+		"panel se nepreplnil na druhy usek")
+	var mv: String = _panel_value_label(e, Editor.PANEL_SEL, "míst")
+	_check(mv.contains("míst 1"), "panel neukazuje mista druheho useku: " + mv)
+
+
 func _test_editor_layout() -> void:
 	var e := _ed()
 	_lane_level(e)
@@ -1051,7 +1139,7 @@ func _test_editor_layout() -> void:
 			# KOMPAKTNI TLACITKA: v panelu nastroju musi byt uzke tlacitko
 			# ("cíl") opravdu uzsi nez siroke ("výhybka") a zadne nesmi
 			# spadnout pod dotykove minimum.
-			if p == Editor.PANEL_TOOLS and lay.ed_panel_rows.size() == 1:
+			if p == Editor.PANEL_TOOLS:
 				var w_cil: float = _tools_btn_w(lay, "cíl")
 				var w_vyh: float = _tools_btn_w(lay, "výhybka")
 				_check(w_cil > 0.0 and w_vyh > w_cil + 4.0,

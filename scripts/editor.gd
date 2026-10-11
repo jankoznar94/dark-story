@@ -403,7 +403,11 @@ func bar_entries() -> Array:
 func panel_rows() -> Array:
 	match panel:
 		PANEL_TOOLS:
-			return [_tools_row()]
+			# NASTROJE A PARAMETRY POD SEBOU. Radek s prvky stoji u pruhu
+			# (dole) a parametry nad nim, takze hrac vidi, CIM pracuje i
+			# CO tim prave meni (Jan: "Pri oznaceni prvku se musi v panelu
+			# nastroju predvyplnit parametry podle vybraneho prvku").
+			return [_tools_row(), _lane_params_row(false)]
 		PANEL_SEL:
 			return _sel_rows()
 		PANEL_LEVEL:
@@ -449,19 +453,56 @@ func _sel_rows() -> Array:
 			{"act": BTN_SLOTS, "label": _kind_label(), "w": 1.8, "on": false, "kind": "action"},
 			{"act": BTN_DELETE, "label": "smazat prvek", "w": 1.3, "on": false, "kind": "danger"},
 		]]
-	# BUNKA PARAMETRU: nazev s hodnotou jako TEXT, vedle jen "−" a "+".
+	return [_lane_params_row(true)]
+
+
+# RADKY S PARAMETRY USEKU: typ cesty, pocet mist a k nim "−"/"+" v jedne
+# skupine. Je to JEDNO misto pro oba panely - "vyber" i "nastroje" ho
+# pouzivaji, takze se nikdy nemuze stat, ze by jeden ukazoval neco jineho
+# nez druhy.
+#
+# PREDVYPLNENI PODLE VYBERU: hodnoty jsou z VYBRANEHO USEKU (`panel_element`,
+# `slots_text`), takze kdyz hrac klikne na ohnivou cestu se 2 misty, stoji
+# v panelu "Oheň", "míst 2" a tlacitka meni PRESNE ten usek. Driv panel
+# ukazoval, s cim se naposledy kreslilo, a u jineho useku lhal (Jan: "Kdyz
+# kliknu na ohnivou cestu se 2 upgrade body, tak se musi v panelu vsechny
+# tyto udaje predvyplnit."). Kdyz neni vybrany zadny usek, jsou to hodnoty,
+# se kterymi se kresli dalsi cesta.
+#
+# `include_delete` - tlacitko "smazat úsek" patri do panelu "vyber" (je to
+# akce nad vyberem), v panelu "nastroje" by byla jen dalsi nahodna vec
+# vedle kreslicich nastroju.
+func _lane_params_row(include_delete: bool) -> Array:
 	var g: String = "slots"
 	var row: Array = [
-		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.0, "on": false,
+		{"act": BTN_ELEM, "label": Level.value_name(panel_element()), "w": 1.0, "on": false,
 			"kind": "elem", "compact": true},
 		{"act": -1, "label": slots_text(), "w": 1.6, "on": false, "kind": "value",
 			"align": "right", "group": g},
 		_step_item(BTN_SLOTS_DOWN, "−", g),
 		_step_item(BTN_SLOTS_UP, "+", g),
 	]
-	if sel_lane >= 0 and sel_lane < level.lane_count():
+	if include_delete and sel_lane >= 0 and sel_lane < level.lane_count():
 		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
-	return [row]
+	return row
+
+
+# PARAMETRY V PANELU SE BEROU Z VYBERU. Kdyz je oznaceny usek, panel stoji
+# na JEHO typu a mistech; kdyz neni, jsou to hodnoty, se kterymi se kresli
+# dalsi cesta. Klepnuti na "typ" nebo "−"/"+" pak meni to, co je v panelu -
+# u vybraneho useku tedy jeho vlastnosti.
+#
+# Jan: "Kdyz kliknu na ohnivou cestu se 2 upgrade body, tak se musi v panelu
+# nastroju vsechny tyto udaje predvyplnit." Driv panel ukazoval hodnoty, se
+# kterymi se naposledy KRESLILO, takze u jineho useku lhal.
+#
+# `elem` a `draw_slots` zustavaji VYCHOZI HODNOTY PRO NOVOU CESTU a vyber je
+# NEMENI: kdyby je menil, nakresleni vstupniho useku (kmen) by preplo dalsi
+# cestu na kmen a hrac by kreslil neposkozujici pruhy, ani by nevedel proc.
+func panel_element() -> int:
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		return level.lane_element(sel_lane)
+	return elem
 
 
 # TLACITKO "−"/"+" (KROKOVAC). Vzdy ma pevnou malou sirku a stoji ve skupine
@@ -731,8 +772,8 @@ func end_draw() -> void:
 	# pruh a divil se, proc na nem nic nedela (Jan: "barvu má jak element
 	# a je to matoucí"). Tlacitkem "typ" ho pak hrac muze prepnout na
 	# element a zpet na kmen - je to normalni hodnota useku, zadny priznak.
-	var start_node: int = level.first_start()
-	var from_start: bool = (start_node >= 0 and a == start_node)
+	# STARTU MUZE BYT VIC, takze se ptame na DRUH uzlu, ne na "prvni start".
+	var from_start: bool = (level.node_kind(a) == Level.START)
 	var el: int = Level.KMEN if from_start else draw_elem
 	level.lanes.append({"cells": cs, "elem": el, "entry": false,
 		"slots": draw_slots})
@@ -1604,16 +1645,25 @@ func _paste_press() -> void:
 # se jako kmen. Jan: "Melo by byt mozne rucne tuto vstupni cestu take
 # prepnout na neco jineho nez kmen, nebo naopak prepnout na kmen."
 func _elem_press() -> void:
-	var at: int = TYPE_CYCLE.find(elem)
-	elem = int(TYPE_CYCLE[(at + 1) % TYPE_CYCLE.size()]) if at >= 0 else int(TYPE_CYCLE[0])
+	# CYKLUS VYCHAZI Z TOHO, CO JE V PANELU (u vybraneho useku z JEHO typu).
+	# Kdyby se cyklilo z "kresliciho" typu, prvni stisk by u jineho useku
+	# preskocil na hodnotu, ktera s tim, co hrac vidi, nesouvisi.
+	var cur: int = panel_element()
+	var at: int = TYPE_CYCLE.find(cur)
+	var nxt: int = int(TYPE_CYCLE[(at + 1) % TYPE_CYCLE.size()]) if at >= 0 else int(TYPE_CYCLE[0])
+	# S VYBRANYM USEKEM SE MENI ON a s nim i to, cim se kresli dal (hrac
+	# upravuje typ a chce pokracovat ve stejnem) - jen KRESLENI samo `elem`
+	# nikdy nemeni, jinak by nakresleni vstupniho useku preplo dalsi cestu
+	# na kmen.
+	elem = nxt
 	if sel_lane >= 0 and sel_lane < level.lane_count():
 		_snapshot()
-		level.set_lane_element(sel_lane, elem)
+		level.set_lane_element(sel_lane, nxt)
 		_after_change()
 		if level.lane_is_entry(sel_lane):
-			status = "Vstupní úsek %d je teď %s. Kmen neposkozuje, na elementu se staví." % [sel_lane, Level.value_name(elem)]
+			status = "Vstupní úsek %d je teď %s. Kmen neposkozuje, na elementu se staví." % [sel_lane, Level.value_name(nxt)]
 		else:
-			status = "Úsek %d je teď %s." % [sel_lane, Level.value_name(elem)]
+			status = "Úsek %d je teď %s." % [sel_lane, Level.value_name(nxt)]
 		return
 	status = "Kreslím typ cesty: %s." % Level.value_name(elem)
 
@@ -1762,7 +1812,10 @@ func _export() -> void:
 
 # Jedno misto, ktere se stara o vsechno po zmene mapy:
 #   * vstupni usek se pozná Z GRAFU (je to ten ze startu), ne z priznaku -
-#     hrac ho nemusi nikde zapinat a nemuze ho zapomenout prenastavit,
+#     hrac ho nemusi nikde zapinat a nemuze ho zapomenout prenastavit.
+#     STARTU MUZE BYT VIC, takze se znacka "entry" nastavi pro usek z
+#     KAZDEHO z nich - driv ji dostal jen usek z prvniho startu.
+#   * parametry v panelu se vezmou z vybraneho useku (`panel_element`,
 #   * zkontroluje se cela mapa a prvni chyba jde do statusu,
 #   * ulozi se. Save tlacitko nema smysl: hrac uklada kazdou zmenu.
 func _after_change() -> void:
@@ -1772,9 +1825,10 @@ func _after_change() -> void:
 		sel_lane = -1
 	if sel_node >= level.node_count():
 		sel_node = -1
-	var st: int = level.first_start()
+	var starts: Array = level.start_nodes()
 	for i in range(level.lane_count()):
-		level.lanes[i]["entry"] = (st >= 0 and level.lane_start_node(i) == st)
+		var a: int = level.lane_start_node(i)
+		level.lanes[i]["entry"] = (a >= 0 and starts.has(a))
 	var errs: Array = level.validate()
 	if not errs.is_empty():
 		status = errs[0]

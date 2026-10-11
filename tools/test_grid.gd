@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
 	_run("mapa z nakresu", _test_jan_map_shape)
+	_run("vic vstupu", _test_multi_start)
 	_run("posila se jen zivel s protikladem", _test_spawn_needs_opposite)
 	_run("diamant", _test_diamond_survives)
 	if fails.is_empty():
@@ -312,6 +313,45 @@ func _test_jan_map_shape() -> void:
 	# a vsechno se to vejde do kodu, ktery se da vlozit do zpravy
 	var code: String = lv.to_code()
 	_check(Level.from_code(code) != null, "kod teto mapy se neda nacist zpatky")
+
+
+# VIC VSTUPU JE PLATNA MAPA. Jan: "chyba: mapa musi mit prave jeden start
+# (ma 2). To je blbost. Muze mit libovolny pocet startu/vstupu."
+#
+# Dva starty = dva nezavisle vstupy do mapy. Hra z nich losuje
+# (`Network.entry_lanes`) a kazdy z nich je vstupni usek (kmen). Driv tuhle
+# mapu `validate()` odmitl, takze se nedala vyexportovat - a `from_code` by
+# ji vratil jako null.
+func _test_multi_start() -> void:
+	var lv := Level.new()
+	var s1 := lv.add_node(1, 2, Level.START)
+	var s2 := lv.add_node(1, 8, Level.START)
+	var j := lv.add_node(8, 5, Level.SPOJKA)
+	var cil := lv.add_node(14, 5, Level.CIL)
+	lv.add_lane(s1, j, "R R R R R R R D D D", Level.NEUTRAL)
+	lv.add_lane(s2, j, "R R R R R R R U U U", Level.NEUTRAL)
+	lv.add_lane(j, cil, "R R R R R R", Element.FIRE)
+	var errs: Array = lv.validate()
+	_check(errs.is_empty(), "mapa se dvema starty neprojde: " + str(errs))
+	_check(lv.start_nodes().size() == 2,
+		"start_nodes vraci %d startu" % lv.start_nodes().size())
+	# KAZDY usek ze startu je vstupni - ne jen ten z prvniho.
+	var net := Network.new()
+	net.build(Rect2(0, 0, 960, 600), 1.0, 600.0, lv)
+	_check(net.entry_lanes.size() == 2,
+		"sit nema dva vstupni useky (%d)" % net.entry_lanes.size())
+	for item in net.entry_lanes:
+		_check(net.lane_is_entry(int(item)), "usek %d ze startu neni vstupni" % int(item))
+	# kod si oba starty odnese a nacte se zpatky
+	var code: String = lv.to_code()
+	var back := Level.from_code(code)
+	_check(back != null, "kod se dvema starty se neda nacist")
+	if back != null:
+		_check(back.start_nodes().size() == 2,
+			"po nacteni ma mapa %d startu" % back.start_nodes().size())
+	# a bez startu mapa neplati (to jedine pravidlo zustava)
+	var empty := Level.new()
+	_check(not empty.validate().is_empty(), "mapa bez startu projde validaci")
 
 
 # ---------------------------------------------------------------- diamant
