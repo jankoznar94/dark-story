@@ -667,8 +667,12 @@ func _sel_body() -> String:
 		return "prvek %d · %s · %d vstupů · %d výstupů (tažením přesuneš, paletou změníš druh)" % [
 			sel_node, level.kind_name(level.node_kind(sel_node)), ins, outs]
 	if sel_lane >= 0 and sel_lane < level.lane_count():
-		return "úsek %d · %s · (úseků %d · uzlů %d)" % [sel_lane,
-			level.lane_type_name(sel_lane), level.lane_count(), level.node_count()]
+		# PRST TVARUJE CESTU. Jan (Oct 2026): "Stále nám nefunguje upravování
+		# cest pomocí tahu prstem... Chtěl bych vybrat jednu cestu a upravit
+		# ji." Vyber useku se pozna podle toho, ze je v pruhu napsany - a aby
+		# hrac nemusel hádat, ze se da tvarovat, rekne se to rovnou tady.
+		return "úsek %d · %s — tažením prstem ho prodloužíš, zkrátíš nebo ohneš" % [
+			sel_lane, level.lane_type_name(sel_lane)]
 	return "úseků %d · uzlů %d · nové cesty: %s — klepni na úsek nebo na prvek a vybereš ho" % [
 		level.lane_count(), level.node_count(), Level.value_name(elem)]
 
@@ -876,11 +880,16 @@ func _erase(cell: Vector2i) -> void:
 # PRESOUVANI UZLU
 # =========================================================================
 
-# Presouvat se da jen nastroji z palety. "cesta" kresli (tah = nova cesta),
-# "guma" maze a "výběr" obtahuje obdelnik - u tech trech by tah znamenal neco
-# jineho.
+# TAZENIM SE UPRAVUJE. Jen "guma" (tah = mazani) a "cesta" (tah = nova cesta)
+# maji tah pro neco jineho; VSECHNO ostatni tazenim upravuje - uzel se presune,
+# cesta ohne nebo posune.
+#
+# Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem. Tah
+# prstem teď dělá rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
+# "výběr" je nastroj, kterym se vybira A UPRAVUJE - kdo na ceste obtahoval
+# obdelnik, ten cestu tvarovat nemohl a myslel si, ze to vubec nejde.
 func can_move() -> bool:
-	return tool != TOOL_ROAD and tool != TOOL_GUMA and tool != TOOL_VYBER
+	return tool != TOOL_ROAD and tool != TOOL_GUMA
 
 
 # Zacatek tazeni na uzlu. Vraci true, kdyz se opravdu zacalo - klepnuti
@@ -938,8 +947,12 @@ func extend_move(target: Vector2i) -> bool:
 	if moved:
 		if first and pre != null:
 			_push_state(local_name, pre, sel_lane, sel_node)
-		var at: Vector2i = level.node_cell(move_node)
-		status = "Prvek %d přesunut na %d,%d." % [move_node, at.x, at.y]
+		if drag_lane >= 0:
+			# Chyceny KONEC cesty: hrac tvaruje usek, ne uzel - a to i v hlásce.
+			status = "Úsek %d · %d buněk." % [drag_lane + 1, level.lane_cells(drag_lane).size()]
+		else:
+			var at: Vector2i = level.node_cell(move_node)
+			status = "Prvek %d přesunut na %d,%d." % [move_node, at.x, at.y]
 	return moved
 
 
@@ -949,6 +962,8 @@ func end_move() -> void:
 	moving = false
 	var n: int = move_node
 	var from: Vector2i = move_from
+	var ln: int = drag_lane
+	var held: Vector2i = drag_cell
 	move_node = -1
 	move_from = Vector2i(-1, -1)
 	drag_lane = -1
@@ -956,11 +971,21 @@ func end_move() -> void:
 	drag_cell = Vector2i(-1, -1)
 	drag_bump = false
 	if move_steps == 0:
-		# TAH BEZ POHYBU = KLEPNUTI. Uzel meni druh podle zvoleneho nastroje,
-		# presne jak to delalo pred tim, nez se dalo presouvat.
+		# TAH BEZ POHYBU = KLEPNUTI. U "vyberu" se jen VYBIRA: klepnuti na cestu
+		# ji oznaci (a v pruhu se rekne, ze se da tvarovat prstem), neze se
+		# po ni obtahne obdelnik a neze se na ni neco polozi.
+		if tool == TOOL_VYBER:
+			_select_at(held if ln >= 0 else from)
+			return
+		# U prvku z palety meni druh, presne jak to delalo pred tim, nez se
+		# dalo presouvat.
 		tap_cell(from)
 		return
 	_after_change()
+	if ln >= 0:
+		status = "Úsek %d · %d buněk — tažením prstem ho zkrátíš, prodloužíš nebo ohneš." % [
+			ln + 1, level.lane_cells(ln).size()]
+		return
 	var at: Vector2i = level.node_cell(n)
 	status = "Uzel %d je teď na %d,%d." % [n, at.x, at.y]
 	move_steps = 0
@@ -1860,18 +1885,34 @@ var drag_cell: Vector2i = Vector2i(-1, -1)
 var drag_bump: bool = false
 
 
-func _begin_lane_grab(cell: Vector2i) -> bool:
-	var lane: int = _lane_at(cell)
-	if lane < 0:
+# CESTA POD PRSTEM SE CHYTA A TAHNE. Je to JEDNO misto, kde se rozhoduje, ze
+# hrac vzal do ruky CESTU (a tvaruje ji) - a plati i pro nastroje "cesta"
+# a "výběr", protoze tam se jinak deje neco, co cestu upravit NEDOVOLI.
+#
+# Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem. Tah
+# prstem teď dělá rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
+#
+# UZEL MA PREDNOST: klepnuti na uzel kresli novou cestu (nastrojem "cesta"),
+# klade prvek (paleta) nebo prvek presouva. Teprve kdyz pod prstem uzel neni
+# a je tam cesta, chyta se cesta.
+func begin_lane_drag(cell: Vector2i) -> bool:
+	if tool == TOOL_GUMA or moving:
 		return false
+	if level.node_at_cell(cell) >= 0:
+		return false
+	return _begin_lane_grab(cell)
+
+
+func _begin_lane_grab(cell: Vector2i) -> bool:
+	var hit: Array = _lane_grab(cell)
+	if hit.is_empty():
+		return false
+	var lane: int = int(hit[0])
+	var on: Vector2i = hit[1]
 	var cs: Array = level.lane_cells(lane)
 	if cs.size() < 2:
 		return false
-	var at: int = -1
-	for i in range(cs.size()):
-		if cs[i] == cell:
-			at = i
-			break
+	var at: int = _index_of(cs, on)
 	if at < 0:
 		return false
 	moving = true
@@ -1879,7 +1920,7 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 	move_from = cell
 	move_steps = 0
 	drag_lane = lane
-	drag_cell = cell
+	drag_cell = on
 	drag_bump = false
 	drag_end = -1
 	# Dve krajni bunky = konec cesty, zbytek = kus uprostred.
@@ -1898,13 +1939,29 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 	return true
 
 
-# KTERA CESTA VEDE TOUHLE BUNKOU. Prvni nalezena - v uzlu se cesty potkavaji,
-# ale uzel se chyta jako uzel (viz begin_move).
-func _lane_at(cell: Vector2i) -> int:
+# KTERA CESTA JE POD PRSTEM. Vraci [cislo cesty, bunka cesty], nebo prazdny
+# seznam. Presna bunka se zkousi prvni - v uzlu se cesty potkavaji, ale uzel se
+# chyta jako uzel (viz begin_move).
+#
+# U NASTROJE "VÝBĚR" se zkousi i ctyri sousedni bunky: prst neni mys a cesta je
+# na obrazovce jen tenká cara, takze hrac jinak cestu netrefi - a presne to mu
+# branilo ji upravit. U ostatnich nastroju se vedle NEHLEDA: hrac tam KLADE
+# prvek a polozit vyhybku vedle cesty je bezna prace; kdyby ji prst chytil
+# misto položení, mapa by se nedala stavet.
+func _lane_grab(cell: Vector2i) -> Array:
 	for j in range(level.lane_count()):
 		if _lane_uses_cell(j, cell):
-			return j
-	return -1
+			return [j, cell]
+	if tool != TOOL_VYBER:
+		return []
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var c: Vector2i = cell + d
+		if not level.in_bounds(c.x, c.y):
+			continue
+		for j in range(level.lane_count()):
+			if _lane_uses_cell(j, c):
+				return [j, c]
+	return []
 
 
 # SMER ROVNEHO KUSU V TÉ BUNCE. Bunky jsou sousedni, takze je to jednotkovy

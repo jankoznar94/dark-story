@@ -556,20 +556,28 @@ func _handle_editor_tap(pos: Vector2) -> void:
 	if not editor.level.in_bounds(cell.x, cell.y):
 		return
 	_click()
+	# PRST NA CESTE = TVAROVANI CESTY, a to u vsech nastroju krome gumy. Je to
+	# PRED ostatnimi gesty: "cesta" by tam kreslila novou cestu (a ta nikdy
+	# neplati - nova cesta musi zacit v uzlu) a "výběr" by pres ni obtahl
+	# obdelnik. Presne to Janovi branilo cestu upravit: "Tah prstem teď dělá
+	# rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
+	if editor.begin_lane_drag(cell):
+		return
 	# NASTROJ CESTA KRESLI TAZENIM, ostatni se kladou klepnutim. Drzet u
 	# kazdeho prvku zvlast "tahni" a "klepni" by hrace jen mátlo.
 	if editor.tool == Editor.TOOL_ROAD:
 		editor.draw_elem = editor.elem
 		editor.begin_draw(cell)
 		_push_editor_level()
-	elif editor.tool == Editor.TOOL_VYBER:
-		# TAZENIM se obtahne obdelnik, KLEPNUTIM se vybere jeden prvek -
-		# rozhodne se az pri pusteni prstu (viz `end_box`).
-		editor.begin_box(cell)
 	elif editor.begin_move(cell):
 		# UZEL SE PRESOUVA TAZENIM. Klepnuti (tah bez pohybu) se vyhodnoti
 		# az pri pusteni prstu - do te doby se jeste nevi, co to bude.
 		pass
+	elif editor.tool == Editor.TOOL_VYBER:
+		# OBDELNIK SE OBTÁHNE JEN NA PRAZDNEM MISTE. Kdo zacne tah na ceste,
+		# chce cestu tvarovat (viz vyse) - obdelnik se z prazdna mista porad
+		# da obtáhnout. KLEPNUTIM se vybere jeden prvek.
+		editor.begin_box(cell)
 	else:
 		editor.tap_cell(cell)
 		_push_editor_level()
