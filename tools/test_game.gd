@@ -27,6 +27,7 @@ func _init() -> void:
 	_run("vstupy v kole", _test_round_spawns)
 	_run("determinismus", _test_determinism)
 	_run("prohra pri zahlceni", _test_pile_up_loses)
+	_run("neutralni cesta zabiji vsechny zivly", _test_neutral_lane_kills_all)
 	if fails.is_empty():
 		print("GAME_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -584,3 +585,48 @@ func _test_pile_up_loses() -> void:
 	g.auto_round = true
 	g.run_for(30.0 * 60.0)
 	_check(g.lives < Level.BASE_LIVES, "bez bonusu hrac nikdy neztratil zivot")
+
+
+# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI. Pravidlo "z neutralni cesty chodi
+# vsechny ctyri zivly" stoji na tom, ze je opravdu cim je zabit - a to se neda
+# overit jinak nez hrou. Seda vez bere vsem 100 %, ale musi to stacit.
+# Test proto postavi obranu za ZAKLADNI zlato (ctyri veze) na neutralni cestu
+# a pozene po ni kazdy zivel - kazdy na CERSTVE hre (spolecna hra by dalsimu
+# poutnikovi pujcovala veze i zivoty toho predchoziho).
+func _test_neutral_lane_kills_all() -> void:
+	for el in range(Element.COUNT):
+		var g := _new_game(_neutral_level())
+		g.auto_round = false
+		var lane: int = _lane_with(g, Level.NEUTRAL)
+		_check(lane >= 0, "v mape neni neutralni usek")
+		if lane < 0:
+			return
+		var cells: Array = []
+		for cellv in g.net.strip_cells:
+			var c: Vector2i = cellv
+			if g.net.strip_lane_of(c) == lane:
+				cells.append(c)
+		cells.sort_custom(func(a, b): return a.x < b.x)
+		_check(cells.size() >= 4, "u neutralni cesty je malo mista na veze (%d)" % cells.size())
+		var built: int = 0
+		for k in range(4):
+			var idx: int = int(round(float(k) * float(cells.size() - 1) / 3.0))
+			if g.try_build(cells[idx]):
+				built += 1
+		_check(built == 4, "za zakladni zlato se postavily %d veze, cekaji se 4" % built)
+		var e: Enemy = _walk_lane(g, lane, el)
+		_check(not e.alive and not e.leaked,
+			"%s po neutralni ceste se ctyrmi vezmi prospel (hp %.1f z %.1f)" % [
+				Element.name_of(el), e.hp, e.max_hp])
+
+
+# Mapa s jednou neutralni cestou (a vstupnim kmenem). Zakladni zlato z ni dela
+# merici desku pro predchozi test.
+func _neutral_level() -> Level:
+	var lv := Level.new()
+	lv.add_node(2, 5, Level.START)
+	lv.add_node(6, 5, Level.UZEL)
+	lv.add_node(26, 5, Level.CIL)
+	lv.add_lane(0, 1, "R R R R", Level.KMEN)
+	lv.add_lane(1, 2, "R".repeat(20), Level.NEUTRAL)
+	return lv

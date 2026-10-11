@@ -380,17 +380,37 @@ func start_round() -> void:
 	spawn_wait = 0.0
 	spawned = 0
 	var msg: String = "Kolo %d začíná (%.0f s)." % [round, round_left]
-	# POUTNIK BEZ PROTIKLADU SE NEPOSILA (viz Level.spawn_elements). Hlaska to
-	# musi rict: kdyz by hrac videl, ze nechodi Zeme, hledal by chybu v siti -
-	# pritom staci do mapy pridat protikladny usek.
+	# PRAZDNY SEZNAM JE TA NEJHORSI ODPOVED. Hrac vidi, ze kolo bezi, deska
+	# zustava prazdna - a nema jak zjistit, ze chyba neni v siti, ale v mape.
+	# Jan (Oct 2026): "Po spuštění levelu v editoru teď nepřátelé vůbec
+	# nechodí. Nebo je to nějakým nastavením?" Proto se kazdy duvod rekne
+	# slovy; ticha funkce je neexistujici funkce.
 	if level != null:
-		var bad: Array = level.unkillable_elements()
-		if not bad.is_empty():
-			var names: String = ""
-			for e in bad:
-				names += ("" if names.is_empty() else ", ") + Element.name_of(e)
-			msg += " %s nemá v mapě protiklad — neposílá se." % names
+		if net.entry_lanes.is_empty() or spawn_pool.is_empty():
+			msg += " " + _empty_pool_reason()
+		else:
+			var bad: Array = level.unkillable_elements()
+			if not bad.is_empty():
+				var names: String = ""
+				for e in bad:
+					var el: int = e
+					names += ("" if names.is_empty() else ", ") + Element.name_of(el)
+				msg += " %s nemá v mapě protiklad — neposílá se." % names
 	_note(msg)
+
+
+# PROC NIKDO NECHODI. Tri ruzne priciny vypadaji na obrazovce stejne (kolo
+# bezi, deska je prazdna), takze se musi rozeznat SLOVY. Jedno misto pro
+# vsechny tri - kdyby si kazda vetev vymyslela vlastni vetu, rozejdou se.
+func _empty_pool_reason() -> String:
+	if net.entry_lanes.is_empty():
+		return "Mapa nemá start — poutníci nemají kudy vejít."
+	if level == null or level.present_elements().is_empty():
+		return "V mapě není ani jeden úsek s živlem — poutníci nechodí. " \
+			+ "Nakresli dva protikladné živly (oheň a vodu, zemi a vzduch) " \
+			+ "nebo aspoň jednu neutrální cestu."
+	return "Ani jeden živl v mapě nemá svůj protiklad — není čím je zabít, " \
+		+ "proto se z nich neposílá."
 
 
 # MEZERA DO DALSÍHO VSTUPU. Losuje se pro kazdou mezeru zvlast z rozpeti

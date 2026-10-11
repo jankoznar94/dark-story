@@ -26,6 +26,7 @@ func _init() -> void:
 	_run("mapa z nakresu", _test_jan_map_shape)
 	_run("vic vstupu", _test_multi_start)
 	_run("posila se jen zivel s protikladem", _test_spawn_needs_opposite)
+	_run("neutralni cesta posila vsechny zivly", _test_neutral_lane_sends_everyone)
 	_run("diamant", _test_diamond_survives)
 	if fails.is_empty():
 		print("GRID_ALL_PASS=true (%d kontrol)" % checks)
@@ -45,11 +46,19 @@ func _run(label: String, fn: Callable) -> void:
 
 
 # POSILA SE JEN ZIVEL, KTERY MA V MAPE SVUJ PROTIKLAD. Poutnik bez protikladu
-# se neda zabit (vlastni usek 0 %, ostatni jen polovina, a to ani s bonusem
+# se neda zabit (vlastni usek 0 %, ostatni jen polovinu, a to ani s bonusem
 # nestaci), takze by byl jen ztraceny zivot. Jan: "aby hra posilala jen zivly,
 # ktere maji v mape svuj protiklad".
+#
+# POZOR: neutralni usek je DRUHA cesta, jak je vsechno zabitelne (seda vez
+# dava vsem 100 %) - proto se z teto mapy nejdriv vyhodi. Jinak by test meril
+# neutralni zbran a pravidlo o protikladu by zustalo neoverene.
 func _test_spawn_needs_opposite() -> void:
 	var lv := Level.base()
+	for i in range(lv.lane_count()):
+		if lv.lane_element(i) == Level.NEUTRAL:
+			lv.set_lane_element(i, Level.KMEN)
+	_check(not lv.has_neutral_lane(), "v mape zustal neutralni usek")
 	_check(lv.spawn_elements() == [0, 1, 2, 3],
 		"zakladni deska neposila vsechny ctyri zivly: " + str(lv.spawn_elements()))
 	_check(lv.unkillable_elements().is_empty(),
@@ -86,11 +95,81 @@ func _test_spawn_needs_opposite() -> void:
 	_check(last.contains("protiklad"), "hlaska o chybejicim protikladu neni: " + last)
 	_check(g.spawn_pool.is_empty(), "sit si bere zivly, ktere se neposilaji")
 
+	# DRUHE DVE PRICINY, PROC NIKDO NECHODI, VYPAADAJI NA OBRAZOVCE STEJNE
+	# (kolo bezi, deska prazdna). Jan: "Po spuštění levelu v editoru teď
+	# nepřátelé vůbec nechodí. Nebo je to nějakým nastavením?" - presne proto
+	# to hra musi rict slovy.
+	var km := Level.new()
+	km.add_node(1, 5, Level.START)
+	km.add_node(13, 5, Level.CIL)
+	km.add_lane(0, 1, "R".repeat(12), Level.KMEN)
+	var g2 := Game.new()
+	g2.auto_round = false
+	g2.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, km)
+	g2.start_round()
+	var last2: String = str(g2.log[g2.log.size() - 1])
+	_check(last2.contains("živl"), "mapa bez jedineho zivlu to nerekne: " + last2)
+
+	# MAPA BEZ STARTU: poutnik nema kudy vejit. Siti v tom pripade nevznikne
+	# zadny vstupni usek, takze se neposle nikdo - i kdyz je z ceho.
+	var ns := Level.new()
+	ns.add_node(4, 5, Level.VYHYBKA)
+	ns.add_node(3, 1, Level.CIL)
+	ns.add_node(3, 9, Level.CIL)
+	ns.add_lane(0, 1, "L L U U U U", Element.FIRE)
+	ns.add_lane(0, 2, "L L D D D D", Element.WATER)
+	var g3 := Game.new()
+	g3.auto_round = false
+	g3.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, ns)
+	_check(g3.net.entry_lanes.is_empty(), "mape bez startu se nasel vstup")
+	_check(not g3.spawn_pool.is_empty(), "z teto mapy neni co posilat (test meri neco jineho)")
+	g3.start_round()
+	var last3: String = str(g3.log[g3.log.size() - 1])
+	_check(last3.contains("start"), "mapa bez startu to nerekne: " + last3)
+
 
 func _check(cond: bool, msg: String) -> void:
 	checks += 1
 	if not cond:
 		fails.append(msg)
+
+
+# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI. Seda vez dava vsem presne 100 %, takze
+# mapa z neutralnich cest nema jediny "nezabitelny" zivel - a proto z ni musi
+# chodit VSECHNY CTYRI. Jan (Oct 2026): "Aha, tak to je tím, že jsem vytvořil
+# pouze neutrální cesty. V takovém případě asi můžou chodit všechny elementy."
+#
+# Kontroluje se i OPAK: kdyz se neutralni usek z mapy vyhodi a zbude jen kmen,
+# neposila se nikdo - jinak by test neprokazal, ze to zpusobila neutralni cesta.
+func _test_neutral_lane_sends_everyone() -> void:
+	var lv := Level.new()
+	lv.add_node(1, 5, Level.START)
+	lv.add_node(6, 5, Level.UZEL)
+	lv.add_node(20, 5, Level.CIL)
+	lv.add_lane(0, 1, "R R R R R", Level.KMEN)
+	lv.add_lane(1, 2, "R".repeat(14), Level.NEUTRAL)
+	_check(lv.validate().is_empty(), "mapa s neutralni cestou neprojde: " + str(lv.validate()))
+	_check(lv.has_neutral_lane(), "neutralni usek se nenasel")
+	_check(lv.present_elements().is_empty(),
+		"z neutralni cesty se stal element: " + str(lv.present_elements()))
+	_check(lv.spawn_elements() == [0, 1, 2, 3],
+		"z neutralni cesty se neposilaji vsechny ctyri zivly: " + str(lv.spawn_elements()))
+	_check(lv.unkillable_elements().is_empty(),
+		"mapa s neutralni cestou hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
+
+	# HRA SI SEZNAM VEZME Z LEVELU - kdyby ho pocitala sama, meli bychom dve
+	# pravdy o tom, kdo muze chodit.
+	var g := Game.new()
+	g.auto_round = false
+	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
+	_check(g.spawn_pool == [0, 1, 2, 3], "sit posila %s" % str(g.spawn_pool))
+
+	# OPAK: neutralni usek pryc (jen kmen) -> neni cim zabijet, nikdo nechodi
+	lv.set_lane_element(1, Level.KMEN)
+	_check(not lv.has_neutral_lane(), "neutralni usek z mapy nezmizel")
+	_check(lv.spawn_elements().is_empty(),
+		"z mapy bez zivlu a bez neutralni cesty se posila poutnik: "
+		+ str(lv.spawn_elements()))
 
 
 # ---------------------------------------------------------------- zakladni deska
@@ -553,9 +632,13 @@ func _test_jan_map_shape() -> void:
 	# dve vyhybky v sérii, kazda se dvema vystupy
 	_check(lv.node_choice_count(j_up) == 2, "prvni vyhybka nema 2 vystupy")
 	_check(lv.node_choice_count(j_dn) == 2, "druha vyhybka nema 2 vystupy")
-	# mapa posila ohen i vodu
-	_check(lv.spawn_elements() == [0, 1], "mapa ma posilat ohen a vodu, posila %s"
+	# MAPA POSILA VSECHNY CTYRI ZIVLY: ma v sobe NEUTRALNI cesty (seda vez dava
+	# vsem 100 %), takze je kazdy zivel cim zabit - i bez protikladu.
+	_check(lv.has_neutral_lane(), "v mape z nakresu neni neutralni cesta")
+	_check(lv.spawn_elements() == [0, 1, 2, 3], "mapa ma posilat vsechny ctyri zivly, posila %s"
 		% str(lv.spawn_elements()))
+	_check(lv.unkillable_elements().is_empty(),
+		"mapa s neutralni cestou hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
 	# a vsechno se to vejde do kodu, ktery se da vlozit do zpravy
 	var code: String = lv.to_code()
 	_check(Level.from_code(code) != null, "kod teto mapy se neda nacist zpatky")
