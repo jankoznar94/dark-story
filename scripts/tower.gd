@@ -34,10 +34,11 @@ const CD := [1.00, 0.90, 0.80]
 # Jan (Oct 2026): "Missile věže by měl být daleko výraznější."
 const SHOT_FLASH := 0.18
 # KOLIK PROCENT INVESTICE SE VRATI PRI PRODEJI. Prodej musi byt PRODEJ, ne
-# druha pokladna: hrac dostane vetsinu zpatky (muzes prestat stavet jinam),
+# druha pokladna: hrac dostane polovinu zpatky (muzes prestat stavet jinam),
 # ale ne vsechno - jinak by se stavba a bourani daly otacet dokola zadarmo
 # a rozhodnuti "kam s vezi" by nic nestalo.
-const SELL_BACK := 0.7
+# Jan (Oct 2026): "Prodej vrátí 50 %."
+const SELL_BACK := 0.5
 
 var cell: Vector2i = Vector2i.ZERO
 # HODNOTA USEKU, KTERY TEHLE VEZI DAL ELEMENT (0..3, Level.NEUTRAL, Level.KMEN).

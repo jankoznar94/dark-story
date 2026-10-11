@@ -344,6 +344,11 @@ func _test_tower_select_sell() -> void:
 	var back: int = t.sell_back()
 	_check(back > 0, "prodej veze vraci nulu")
 	_check(back < t.spent, "prodej vraci vic, nez hrac do veze dal (%d z %d)" % [back, t.spent])
+	# PRODEJ VRACI POLOVINU INVESTICE (Jan: "Prodej vrátí 50 %.")
+	_check(back == int(floor(float(t.spent) * Tower.SELL_BACK)),
+		"prodej nevraci %.0f %% investice (%d z %d)" % [
+			Tower.SELL_BACK * 100.0, back, t.spent])
+	_check(is_equal_approx(Tower.SELL_BACK, 0.5), "prodej nevraci 50 %% (%.2f)" % Tower.SELL_BACK)
 	_check(g.try_sell(cell), "vez nejde prodat")
 	_check(g.tower_count() == 0, "prodana vez zustala na desce")
 	_check(g.gold - gold_before == back, "prodej nepridal zlato (%d)" % (g.gold - gold_before))

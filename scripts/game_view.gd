@@ -1400,11 +1400,25 @@ func _draw_tower_panel(t: Tower) -> void:
 		"%.0f poškození · %.2f s · dostřel %d" % [t.damage(), t.cooldown(), Tower.RANGE],
 		13, Color(0.58, 0.55, 0.49))
 	# VYLEPSIT: cena je na tlacitku, aby hrac nemusel nikam koukat.
+	# NA MAXIMU se misto slova "Maximalni" pise POCET ZUBU: uroven veze se
+	# na desce cte jako zuby nad ni (Jan, Oct 2026: "Počet zubů"), takze
+	# hrac vidi na vezi i v panelu to same cislo.
 	if t.can_upgrade():
 		_draw_bar_btn(layout.tower_up, "Vylepšit %d" % t.upgrade_cost(), col, true)
 	else:
-		_draw_bar_btn(layout.tower_up, "Maximální", col, false)
+		_draw_bar_btn(layout.tower_up, _teeth_text(t.level), col, false)
 	_draw_bar_btn(layout.tower_sell, "Prodat +%d" % t.sell_back(), Color(0.85, 0.42, 0.36), true)
+
+
+# ZUBY. Uroven veze se na desce cte jako zuby nad ni, takze se poctem zubu
+# pise i uroven v panelu na maximu (Jan, Oct 2026: "Počet zubů"). Ceske
+# sklonovani: 1 zub, 2-4 zuby, 5+ zubu.
+func _teeth_text(n: int) -> String:
+	if n == 1:
+		return "1 zub"
+	if n >= 2 and n <= 4:
+		return "%d zuby" % n
+	return "%d zubů" % n
 
 
 func _draw_bar_btn(r: Rect2, text: String, accent: Color, live: bool) -> void:
