@@ -51,6 +51,10 @@ const ED_GAP := 4.0
 # jako kresleni). Vic polozek do rady nejde, ale nemusi: vsechno ostatni
 # bydli v PANELU, ktery se rozbali nad pruhem.
 const ED_COUNT := 7
+# REFERENCNI SIRKA PRO "KOMPAKTNI" TLACITKO V PANELU. Tlacitko, ktere ma
+# `compact`, se neocekava na celou sirku - rozvrzeni si ho zmeri podle
+# popisku (viz `editor_panel`). Vaha 1.0 znamena tuhle sirku.
+const ED_COMPACT_REF := 56.0
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
@@ -83,7 +87,17 @@ var ed_buttons: Array = []
 # {"rect": Rect2, "item": {...}}. Prazdny = zadny panel otevreny.
 var ed_panel_rows: Array = []
 var ed_panel_top := 0.0
+# FONT PRO MERENI SIRKY TLACITEK PANELU. Editor vi, CO v panelu je; jak je
+# text siroky, vi jen obrazovka - proto si rozvrzeni bere font zvenku
+# (`set_editor_font`) a meri s nim stejnym cislem jako kresleni.
+var ed_font: Font = null
 var editor_arena := Rect2()
+
+
+# Font pro mereni popisku v panelu editoru. Vole se z obrazovky, ktera font
+# vlastni; bez nej se kompaktni tlacitka vezmou v puvodni (vyssi) vaze.
+func set_editor_font(f: Font) -> void:
+	ed_font = f
 
 
 func compute(v: Vector2) -> void:
@@ -219,12 +233,12 @@ func editor_panel(spec: Array) -> void:
 			continue
 		var sum: float = 0.0
 		for it in items:
-			sum += maxf(float(it.get("w", 1.0)), 0.05)
+			sum += maxf(_panel_weight(it), 0.05)
 		var avail: float = view.x - 2.0 * PAD * ui - gap * float(maxi(items.size() - 1, 0))
 		var x: float = PAD * ui
 		var line: Array = []
 		for it in items:
-			var bw: float = avail * maxf(float(it.get("w", 1.0)), 0.05) / sum
+			var bw: float = avail * maxf(_panel_weight(it), 0.05) / sum
 			line.append({"rect": Rect2(x, y, bw, rh), "item": it})
 			x += bw + gap
 		ed_panel_rows.append(line)
@@ -233,6 +247,23 @@ func editor_panel(spec: Array) -> void:
 		var top_row: Array = ed_panel_rows[ed_panel_rows.size() - 1]
 		var first: Dictionary = top_row[0]
 		ed_panel_top = float(first["rect"].position.y) - gap
+
+
+# VAHA POLOZKY V PANELU. Vetsina polozek si nosi vahu ("w") z editoru, ale
+# KOMPAKTNI tlacitko se meri podle sveho popisku: "cíl" ma byt uzke, "výhybka"
+# siroke. Driv mela vsechna tlacitka v panelu stejny obdelnik, i kdyz na nich
+# bylo jedno slovo (Jan: "Hodnoty ... mohou být daleko úspornější na prostor").
+# Podlaha je dotykove minimum, aby se zadne tlacitko nedalo minout prstem.
+func _panel_weight(it: Dictionary) -> float:
+	if not bool(it.get("compact", false)):
+		return float(it.get("w", 1.0))
+	var w: float = float(it.get("w", 1.0))
+	if ed_font != null:
+		var px: int = font(13.0)
+		var need: float = ed_font.get_string_size(str(it.get("label", "")),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, px).x + 26.0
+		w = maxf(need, MIN_TOUCH + 6.0) / ED_COMPACT_REF
+	return w
 
 
 # VSECHNA KLEPATKA EDITORU: pruh + otevreny panel. Jedno misto pro kontrolu,

@@ -106,6 +106,11 @@ func _panel_value_label(e: Editor, p: int, needle: String) -> String:
 	return out
 
 
+# Docasne prepnuti panelu, aby se daly prectit jeho radky.
+func _save_panel(e: Editor, p: int) -> void:
+	e.panel = p
+
+
 # TLACITKA V PANELU: cisla akci, ktera panel nabizi (bez hodnotovych popisku).
 func _panel_acts(e: Editor, p: int) -> Array:
 	var save: int = e.panel
@@ -301,6 +306,10 @@ func _test_edit_existing() -> void:
 	_check(e.level.lane_count() == 3, "klepnuti na usek neco nakreslilo")
 	_check(e.sel_lane == 1, "klepnuti na caru useku ho nevybralo (sel %d)" % e.sel_lane)
 	_check(e.status.contains("Vybran"), "status nemluvi o vyberu: " + e.status)
+	# NASTROJ JE VIDET I SE ZAVRENYM PANELEM: pruh s nastroji uz neni porad
+	# na ocich, takze horni pruh musi rict, cim se prave kresli.
+	_check(e.sel_text().begins_with(Editor.TOOL_LABELS[e.tool]),
+		"horni pruh nerekne, jaky je nastroj: " + e.sel_text())
 
 	# zivel se zmeni NA VYBRANEM useku a rovnou se s nim i kresli dal
 	e.elem = Element.FIRE
@@ -801,6 +810,28 @@ func _test_panels() -> void:
 	var tools: Array = _panel_acts(e, Editor.PANEL_TOOLS)
 	_check(tools.size() == Editor.TOOL_COUNT,
 		"panel nastroju nema %d tlacitek (ma %d)" % [Editor.TOOL_COUNT, tools.size()])
+	# DVE SKUPINY: mezi "co delam prstem" (cesta, guma) a "co pokladam"
+	# (start, cíl, výhybka, spojka, uzel) je prazdne misto.
+	var rows0: Array = []
+	_save_panel(e, Editor.PANEL_TOOLS)
+	rows0 = e.panel_rows()
+	e.panel = Editor.PANEL_NONE
+	_check(rows0.size() == 1, "panel nastroju ma %d radku" % rows0.size())
+	if rows0.size() == 1:
+		var line: Array = rows0[0]
+		var gaps: int = 0
+		for it in line:
+			if str(it["kind"]) == "spacer":
+				gaps += 1
+		_check(gaps == 1, "v panelu nastroju chybi predel mezi skupinami (%d)" % gaps)
+		var labels: Array = []
+		for it in line:
+			if int(it["act"]) >= 0:
+				labels.append(str(it["label"]))
+		_check(labels.size() == Editor.TOOL_COUNT, "nastroje se v panelu ztratily: " + str(labels))
+		_check(labels[0] == Editor.TOOL_LABELS[Editor.TOOL_ROAD]
+			and labels[1] == Editor.TOOL_LABELS[Editor.TOOL_GUMA],
+			"prvni skupina nejsou kreslici nastroje: " + str(labels))
 	e.panel = Editor.PANEL_NONE
 	for t in range(Editor.TOOL_COUNT):
 		e.press(t)
@@ -962,6 +993,7 @@ func _test_editor_layout() -> void:
 	for size in [Vector2(640.0, 360.0), Vector2(960.0, 600.0), Vector2(1024.0, 600.0)]:
 		var lay := ScreenLayout.new()
 		lay.compute(size)
+		lay.set_editor_font(font)
 		_check(lay.ed_buttons.size() == 7, "%s: pruh nema 7 tlacitek" % str(size))
 		for r in lay.ed_buttons:
 			var rr: Rect2 = r
@@ -1007,6 +1039,22 @@ func _test_editor_layout() -> void:
 				prev_bottom = row_top + float(line[0]["rect"].size.y)
 				var plpx: int = lay.panel_label_px(line, font)
 				_check(plpx >= 11, "%s: popisky panelu %d jsou jen %d px" % [str(size), p, plpx])
+			# KOMPAKTNI TLACITKA: v panelu nastroju musi byt uzke tlacitko
+			# ("cíl") opravdu uzsi nez siroke ("výhybka") a zadne nesmi
+			# spadnout pod dotykove minimum.
+			if p == Editor.PANEL_TOOLS and lay.ed_panel_rows.size() == 1:
+				var w_cil: float = _tools_btn_w(lay, "cíl")
+				var w_vyh: float = _tools_btn_w(lay, "výhybka")
+				_check(w_cil > 0.0 and w_vyh > w_cil + 4.0,
+					"%s: tlacitka nastroju maji stejnou sirku (cíl %.0f, výhybka %.0f)" % [
+						str(size), w_cil, w_vyh])
+				for row in lay.ed_panel_rows:
+					for en in row:
+						if str(en["item"].get("kind", "")) != "tool":
+							continue
+						_check(float(en["rect"].size.x) >= ScreenLayout.MIN_TOUCH - 0.5,
+							"%s: tlacitko nastroje \"%s\" je uzsi nez prst (%.0f px)" % [
+								str(size), str(en["item"]["label"]), float(en["rect"].size.x)])
 			# SLOUPCE MUSI SEDET: bunky v druhem radku zacinaji na stejnem x
 			# jako v prvnim. Kdyz se dorovnani rozbije, hrac vidi usklebene
 			# radky - a cisla to nepoznaji, jen oko.
@@ -1015,6 +1063,15 @@ func _test_editor_layout() -> void:
 					_check(absf(float(cells[0][k]) - float(cells[1][k])) < 0.6,
 						"%s: sloupce panelu level nesedi (radek 0: %s, radek 1: %s)" % [
 							str(size), str(cells[0]), str(cells[1])])
+
+
+# SIRKA TLACITKA NASTROJE PODLE POPISKU (v otevrenem panelu nastroju).
+func _tools_btn_w(lay: ScreenLayout, label: String) -> float:
+	for row in lay.ed_panel_rows:
+		for en in row:
+			if str(en["item"].get("label", "")) == label:
+				return float(en["rect"].size.x)
+	return 0.0
 
 
 func _rects_do_not_overlap(all: Array, r: Rect2) -> bool:

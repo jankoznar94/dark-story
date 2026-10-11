@@ -335,16 +335,32 @@ func bar_entries() -> Array:
 func panel_rows() -> Array:
 	match panel:
 		PANEL_TOOLS:
-			var row: Array = []
-			for i in range(TOOL_COUNT):
-				row.append({"act": i, "label": TOOL_LABELS[i], "w": 1.0,
-					"on": tool == i, "kind": "tool"})
-			return [row]
+			return [_tools_row()]
 		PANEL_SEL:
 			return _sel_rows()
 		PANEL_LEVEL:
 			return _level_rows()
 	return []
+
+
+# NASTROJE VE DVOU SKUPINACH, kazdy svou velikosti: "cesta" a "guma" jsou to,
+# co delam PRSTEM (kreslim a maze se tahem), "start/cíl/výhybka/spojka/uzel"
+# je to, co POKLADAM klepnutim. Mezi skupinami je prazdne misto, aby to nebyl
+# jeden nerozlisitelny pruh obdelniku. Tlacitka maji `compact`, takze je
+# rozvrzeni zmiri podle popisku ("cíl" je uzke, "výhybka" siroke).
+func _tools_row() -> Array:
+	var row: Array = []
+	for t in [TOOL_ROAD, TOOL_GUMA]:
+		row.append(_tool_item(t))
+	row.append({"act": -1, "label": "", "w": 0.5, "on": false, "kind": "spacer"})
+	for t in [TOOL_START, TOOL_CIL, TOOL_VYHYBKA, TOOL_SPOJKA, TOOL_UZEL]:
+		row.append(_tool_item(t))
+	return row
+
+
+func _tool_item(t: int) -> Dictionary:
+	return {"act": t, "label": TOOL_LABELS[t], "w": 1.0, "on": tool == t,
+		"kind": "tool", "compact": true}
 
 
 # PANEL "VYBER". Co se da delat, zavisi na tom, co je oznacene - a kdyz nic,
@@ -497,7 +513,14 @@ func is_play(button: int) -> bool:
 	return button == BTN_PLAY
 
 
+# TEXT VYBERU V HORNIM PRUHU. Zacina NASTROJEM: panel se da zavrit a hrac
+# musi i tak videt, jestli prave kresli cestu, nebo klade prvek - driv to
+# hlidal pruh, kde byly nastroje porad na ocich.
 func sel_text() -> String:
+	return "%s · %s" % [TOOL_LABELS[tool], _sel_body()]
+
+
+func _sel_body() -> String:
 	if sel_node >= 0 and sel_node < level.node_count():
 		var ins: int = level.lanes_into(sel_node).size()
 		var outs: int = level.lanes_from(sel_node).size()

@@ -111,6 +111,16 @@ func _ready() -> void:
 		editor.panel = Editor.PANEL_SEL
 		_push_editor_level()
 		_shot = true
+	elif args.has("--tools-shot"):
+		# Snimek panelu "nastroje": dve skupiny a tlacitka siroka podle popisku.
+		_open_editor()
+		editor.level = Level.base()
+		editor.sel_lane = -1
+		editor.sel_node = -1
+		editor.panel = Editor.PANEL_TOOLS
+		editor.tool = Editor.TOOL_VYHYBKA
+		_push_editor_level()
+		_shot = true
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
@@ -155,6 +165,8 @@ func _reflow() -> void:
 		# ROZVRZENI PANELU se pocita z OBSAHU, ktery dava editor: panel je
 		# jinak velky podle toho, co je v nem (nastroje = jeden radek,
 		# level = dva). Tady, aby se prelozilo i pri zmene velikosti okna.
+		# Font se predava kvuli mereni kompaktnich tlacitek.
+		layout.set_editor_font(_font)
 		layout.editor_panel(editor.panel_rows())
 		game.rebuild_network(layout.editor_arena, layout.s, layout.editor_bar_top())
 		return
