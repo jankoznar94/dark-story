@@ -1016,6 +1016,10 @@ func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
 	if cs.size() < 2:
 		return
 	if cs[0] == from:
+		# POSUN CELY KUSU DO STRANY (viz _shift_run) - kdyz to nejde, plati
+		# puvodni chovani: kus se prodlouzi nebo ohne.
+		if _index_of(cs, to) < 0 and _shift_run(lane, cs, false, to - from, to):
+			return
 		var k: int = _index_of(cs, to)
 		if k > 0:
 			level.lanes[lane]["cells"] = _slice(cs, k, cs.size())
@@ -1025,6 +1029,8 @@ func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
 		head.append_array(_slice(cs, 1, cs.size()))
 		level.lanes[lane]["cells"] = head
 		return
+	if cs[cs.size() - 1] == from and _index_of(cs, to) < 0 and _shift_run(lane, cs, true, to - from, to):
+		return
 	var kk: int = _index_of(cs, to)
 	if kk >= 0 and kk < cs.size() - 1:
 		level.lanes[lane]["cells"] = _slice(cs, 0, kk + 1)
@@ -1033,6 +1039,82 @@ func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
 	tail.append_array(_route_known(cs[cs.size() - 2], to, cs))
 	tail.append(to)
 	level.lanes[lane]["cells"] = tail
+
+
+# POSUN CELEHO ROVNEHO KUSU DO STRANY.
+# Jan (Oct 2026): "Chci posouvat konce cesty. Jakože celé úseky. Horizontální,
+# vertikální. Jako jeden úsek počítám kus po nejbližší rohy, nebo uzly."
+#
+# Kdyz hrac taha za KONEC cesty do strany, cesta se neohne jen v posledni
+# bunce - posune se CELY rovny kus za poslednim rohem (nebo uzlem) o bunku
+# vedle a zustane rovny; konec jde s nim.
+#
+# Na mrizce to jinak nejde: posunuty kus se musi s puvodni cestou nekde
+# spojit, takze cesta se o JEDNU bunku prodlouzi (spojka je ta jedna bunka
+# u rohu, ktera zustava na miste).
+#
+# Vraci false, kdyz tah neni do strany (po smeru kusu = prodlouzeni/zkraceni)
+# nebo kdyz by posunuty kus prejel neco jineho.
+func _shift_run(lane: int, cs: Array, at_end: bool, p: Vector2i, to: Vector2i) -> bool:
+	var n: int = cs.size()
+	if n < 2 or absi(p.x) + absi(p.y) != 1:
+		return false
+	var d: Vector2i = (cs[n - 1] - cs[n - 2]) if at_end else (cs[0] - cs[1])
+	if absi(d.x) + absi(d.y) != 1:
+		return false
+	# PO SMERU KUSU se cesta jen prodluzuje nebo zkracuje - to umi puvodni
+	# cesta kodu a je to jina operace nez posun.
+	if p == d or p == -d:
+		return false
+	# ROVNY KUS: od konce (nebo od zacatku) se jde, dokud se smer nemeni.
+	var a: int = 0
+	var b: int = n - 1
+	if at_end:
+		var k: int = n - 1
+		while k > 0 and (cs[k] - cs[k - 1]) == d:
+			k -= 1
+		a = k
+	else:
+		var k2: int = 0
+		while k2 < n - 1 and (cs[k2 + 1] - cs[k2]) == d:
+			k2 += 1
+		b = k2
+	# SESTAVENI: jedna bunka kusu zustava na miste (spojka u rohu), zbytek
+	# kusu se posune. Jinak by cesta nebyla souvisla.
+	var out: Array = []
+	var added: Array = []
+	if at_end:
+		out.append_array(_slice(cs, 0, a + 1))
+		for k3 in range(a, n):
+			var c1: Vector2i = cs[k3] + p
+			out.append(c1)
+			added.append(c1)
+	else:
+		for k4 in range(0, b + 1):
+			var c2: Vector2i = cs[k4] + p
+			out.append(c2)
+			added.append(c2)
+		out.append_array(_slice(cs, b, n))
+	# POSUNUTY KUS NESMI PREJET NIC JINEHO: vlastni cestu, jinou cestu, uzel
+	# ani okraj mapy.
+	for item in added:
+		var c: Vector2i = item
+		if not level.in_bounds(c.x, c.y):
+			return false
+		# CILOVA bunka uz patri PRESUNUTEMU uzlu - `_try_move_node` ji pred
+		# tim proveril (nema na ni byt jiny uzel ani cizi cesta).
+		if c == to:
+			continue
+		if level.node_at_cell(c) >= 0:
+			return false
+		var idx: int = _index_of(cs, c)
+		if idx >= 0 and (idx < a or idx > b):
+			return false
+		for j in range(level.lane_count()):
+			if j != lane and _lane_uses_cell(j, c):
+				return false
+	level.lanes[lane]["cells"] = out
+	return true
 
 
 func _index_of(cells: Array, cell: Vector2i) -> int:

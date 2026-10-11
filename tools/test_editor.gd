@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("uprava existujiciho useku", _test_edit_existing)
 	_run("mista jsou legacy", _test_lane_slots_are_legacy)
 	_run("delka cesty", _test_lane_len)
+	_run("posun kusu cesty", _test_move_run)
 	_run("typy cest", _test_lane_types)
 	_run("oznaceni prvku", _test_select_node)
 	_run("zpet", _test_undo)
@@ -380,6 +381,50 @@ func _test_edit_existing() -> void:
 # zvětšovat/zmenšovat existující cesty... abych nemusel vše dokola mazat
 # a znovu vkládat." Vybrany usek se prodlouzi/zkrati, uzly zustavaji, a jde
 # to vzit zpet.
+# POSUN CELEHO ROVNEHO KUSU. Jan (Oct 2026): "Chci posouvat konce cesty.
+# Jakože celé úseky. Horizontální, vertikální. Jako jeden úsek počítám kus po
+# nejbližší rohy, nebo uzly." Tah za konec do strany posune cely rovny kus
+# za poslednim rohem (nebo uzlem) o bunku vedle - kus zustane rovny.
+func _test_move_run() -> void:
+	var e := _ed()
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 5, Level.START)
+	var c: int = lv.add_node(6, 5, Level.CIL)
+	lv.add_lane(s, c, "RRRR", Element.FIRE)
+	e.level = lv
+	e.tool = 2   # "cíl" v TOOL_LABELS - tazenim se z prvku presouva
+	e.sel_lane = 0
+	e.sel_node = c
+	var was: int = e.level.lane_cells(0).size()
+	_check(was == 5, "testovaci cesta nema 5 bunek (%d)" % was)
+	# 1) TAH DO STRANY = POSUN CELEHO KUSU
+	_check(e.begin_move(Vector2i(6, 5)), "tazeni za konec cesty nezacalo")
+	e.extend_move(Vector2i(6, 6))
+	e.end_move()
+	var cs: Array = e.level.lane_cells(0)
+	_check(cs.size() == was + 1,
+		"posun kusu nepridal jednu spojovaci bunku (%d -> %d)" % [was, cs.size()])
+	_check(cs[cs.size() - 1] == Vector2i(6, 6), "konec cesty neni o bunku vedle")
+	_check(cs[0] == Vector2i(2, 5), "posun kusu utrhl zacatek cesty (%s)" % str(cs[0]))
+	var straight: bool = true
+	for i in range(cs.size() - 1, 1, -1):
+		if (cs[i] - cs[i - 1]) != Vector2i(1, 0):
+			straight = false
+	_check(straight, "kus u konce po posunu neni rovny: " + str(cs))
+	for i in range(cs.size() - 1):
+		var d: Vector2i = cs[i + 1] - cs[i]
+		_check(absi(d.x) + absi(d.y) == 1, "cesta po posunu neni souvisla (krok %d)" % i)
+	# 2) PO SMERU KUSU se dal prodluzuje - puvodni chovani musi zustat
+	var len2: int = e.level.lane_cells(0).size()
+	_check(e.begin_move(Vector2i(6, 6)), "tazeni za konec nezacalo")
+	e.extend_move(Vector2i(7, 6))
+	e.end_move()
+	var cs2: Array = e.level.lane_cells(0)
+	_check(cs2.size() == len2 + 1, "tah po smeru kusu cestu neprodlouzil (%d -> %d)" % [
+		len2, cs2.size()])
+	_check(cs2[cs2.size() - 1] == Vector2i(7, 6), "konec cesty neni na protazene bunce")
+
+
 func _test_lane_len() -> void:
 	var e := _ed()
 	_lane_level(e)
