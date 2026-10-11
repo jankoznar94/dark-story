@@ -449,6 +449,89 @@ func shift_run(lane: int, cell: Vector2i, grow: bool) -> bool:
 	return true
 
 
+# ROZŠÍŘENÍ / ZÚŽENÍ VRŠKU VYSTUPKU (posun po ose kusu).
+#
+# Jan (Oct 2026): "Ano, myslím tím i rozšíření vršku." Hrac vezme vrsek a taha
+# PODEL nej: na tu stranu, kam taha, se vrsek prodlouzi a roh (bocni strana) se
+# s nim posune - vyska vystupku zustava stejna. Tah zpet vrsek zase zuzi.
+#
+#   `side` = +1 znamena stranu ve smeru `d` (doprava), -1 opacnou.
+#   `grow` = true vrsek rozsiri, false zuzi.
+#
+# Vzdy se meni dve bunky: jedna se prida (kousek vrsku) a jedna se z cesty
+# vypusti (roh, ktery uz neni potreba) - proto cesta zustava souvisla a delka
+# se nemeni.
+func widen_run(lane: int, cell: Vector2i, side: int, grow: bool) -> bool:
+	var run: Dictionary = run_at(lane, cell)
+	if run.is_empty():
+		return false
+	var cs: Array = lane_cells(lane)
+	var n: int = cs.size()
+	var a: int = int(run["a"])
+	var b: int = int(run["b"])
+	var d: Vector2i = run["d"]
+	var s: Vector2i = run["s"]
+	var out: Array = []
+	var added: Array = []
+	if side > 0:
+		var Rm: Vector2i = cs[b]
+		if grow:
+			# Za koncem kusu musi cesta jeste pokracovat ve smeru `d` - jinak
+			# neni kam roh posunout (cesta by se musela ohne o roh dal).
+			if b + 2 >= n or (cs[b + 2] - cs[b + 1]) != d:
+				return false
+			var add: Vector2i = Rm + d
+			out.append_array(cs.slice(0, b + 1))
+			out.append(add)
+			out.append_array(cs.slice(b + 2, n))
+			added.append(add)
+		else:
+			# Vrsek musi mit aspon 3 bunky - jinak by po zuz... zbyl jednobunkovy
+			# "kus", ktery uz vystupek neni.
+			if b - a < 2:
+				return false
+			var back: Vector2i = Rm - d - s
+			out.append_array(cs.slice(0, b))
+			out.append(back)
+			out.append_array(cs.slice(b + 1, n))
+			added.append(back)
+	else:
+		var R0: Vector2i = cs[a]
+		if grow:
+			# Pred zacatkem kusu musi cesta vest ve smeru `d`
+			if a < 2 or (cs[a - 1] - cs[a - 2]) != d:
+				return false
+			var add2: Vector2i = R0 - d
+			out.append_array(cs.slice(0, a - 1))
+			out.append(add2)
+			out.append_array(cs.slice(a, n))
+			added.append(add2)
+		else:
+			if b - a < 2:
+				return false
+			var back2: Vector2i = R0 + d - s
+			out.append_array(cs.slice(0, a))
+			out.append(back2)
+			out.append_array(cs.slice(a + 1, n))
+			added.append(back2)
+	if not _is_simple_path(out):
+		return false
+	for item in added:
+		var c: Vector2i = item
+		if not in_bounds(c.x, c.y):
+			return false
+		if node_at_cell(c) >= 0:
+			return false
+		for j in range(lane_count()):
+			if j == lane:
+				continue
+			for o in lane_cells(j):
+				if o == c:
+					return false
+	lanes[lane]["cells"] = out
+	return true
+
+
 # SOUVISLA CESTA BEZ SMYCKY: sousedni bunky a zadna se neopakuje. Posun kusu
 # se tim da vyloucit, kdyby mel cestu preklopit sam na sebe.
 func _is_simple_path(cells: Array) -> bool:

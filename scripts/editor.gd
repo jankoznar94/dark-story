@@ -975,6 +975,8 @@ func end_move() -> void:
 	drag_run_cell = Vector2i(-1, -1)
 	drag_p = Vector2i.ZERO
 	drag_moved = 0
+	drag_d = Vector2i.ZERO
+	drag_along = false
 	drag_base = []
 	if move_steps == 0:
 		# TAH BEZ POHYBU = KLEPNUTI. U "vyberu" se jen VYBIRA: klepnuti na cestu
@@ -1896,6 +1898,10 @@ var drag_bump: bool = false
 var drag_run_cell: Vector2i = Vector2i(-1, -1)
 var drag_p: Vector2i = Vector2i.ZERO
 var drag_moved: int = 0
+# Smer sameho kusu - podle nej se vrsek rozsiruje a zuzuje (tah PODEL kusu).
+var drag_d: Vector2i = Vector2i.ZERO
+# Taha se po ose kusu (sirka), nebo kolmo na ni (vyska)?
+var drag_along: bool = false
 # Cesta, jak vypadala, nez hrac vzal kus do ruky. Kazda poloha prstu se stavi
 # ZNOVU z ni - jinak by tah zpet nemusel vratit presne to, co tam bylo.
 var drag_base: Array = []
@@ -1949,11 +1955,13 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 	if not run.is_empty():
 		drag_run_cell = on
 		drag_p = run["s"]
+		drag_d = run["d"]
+		drag_along = false
 		# SNIMEK PUVODNI CESTY. Kazda poloha prstu se stavi znovu z nej, takze
 		# tah zpet vrati presne puvodni tvar a zmenšování jde do stejne hloubky
 		# jako zvetsovani (i pod puvodni tvar - vystupek se da zplostit).
 		drag_base = level.lane_cells(lane).duplicate()
-		status = "Tažením kusu do strany posuneš celý výstupek — boční strany se natáhnou."
+		status = "Tažením kusu posuneš nebo rozšíříš výstupek — strany se natáhnou."
 		return true
 	# Dve krajni bunky = konec cesty, zbytek = kus uprostred.
 	if at <= 1:
@@ -2059,36 +2067,60 @@ func _extend_lane_run(target: Vector2i) -> bool:
 	var p: Vector2i = drag_p
 	if p == Vector2i.ZERO or drag_base.is_empty():
 		return false
-	# O kolik bunek prst odesel ve smeru posunu? (Vector2i `dot()` nema.)
-	var off: int = (target.x - drag_cell.x) * p.x + (target.y - drag_cell.y) * p.y
-	if off == drag_moved:
+	# O kolik bunek prst odesel? Po ose kusu (`d` = sirka) a kolmo na ni
+	# (`p` = vyska). (Vector2i `dot()` nema - pocita se rucne.)
+	var dx: int = target.x - drag_cell.x
+	var dy: int = target.y - drag_cell.y
+	var along: int = dx * drag_d.x + dy * drag_d.y
+	var perp: int = dx * p.x + dy * p.y
+	# KTERA OSA: rozhoduje vetsi odchylka, pri stejne vyhrava vyska (prst nikdy
+	# nejde presne po ose a tvar se tak nepreklapi).
+	var width: bool = absi(along) > absi(perp)
+	var want: int = along if width else perp
+	if want == drag_moved and width == drag_along:
 		return false
 	var work: Level = level.clone()
 	work.lanes[drag_lane]["cells"] = drag_base.duplicate()
 	var cell: Vector2i = drag_run_cell
 	var moved: int = 0
-	while moved != off:
-		var step: int = 1 if off > moved else -1
-		if not work.shift_run(drag_lane, cell, step > 0):
-			# Vic uz to nejde (zplosteni, prekazka, okraj) - zustava se na tom,
-			# co se podarilo; dalsi tah zpet to zase zvedne.
+	while moved != want:
+		var step: int = 1 if want > moved else -1
+		var ok: bool = false
+		if width:
+			# Sirka: kladna = vrsek se rozsiri na stranu `+d`, zaporna = zuzi
+			# na opacne strane (tam, kam prst taha).
+			ok = work.widen_run(drag_lane, cell, 1 if step > 0 else -1, step > 0)
+		else:
+			ok = work.shift_run(drag_lane, cell, step > 0)
+		if not ok:
 			break
-		cell += p * step
+		if work.lane_cells(drag_lane).has(cell):
+			# Chycena bunka jde s kusem (u sirky zustava na miste).
+			cell += (p if not width else drag_d) * step
+		elif width:
+			# Zuzovani vzalo prave bunku, kterou prst drzi - drzi se sousedni.
+			cell += drag_d * step
 		moved += step
-	if moved == drag_moved:
+	if moved == drag_moved and width == drag_along:
 		return false
 	var pre: Level = null
 	if move_steps == 0:
 		pre = level.clone()
 	level.lanes[drag_lane]["cells"] = work.lane_cells(drag_lane)
 	drag_moved = moved
+	drag_along = width
 	move_steps += 1
 	if pre != null:
 		_push_state(local_name, pre, sel_lane, sel_node)
 	var cs: Array = level.lane_cells(drag_lane)
-	status = "Výstupek %s o %d %s · úsek %d má %d buněk." % [
-		"posunutý" if drag_moved > 0 else "snížený", absi(drag_moved),
-		"buňku" if absi(drag_moved) == 1 else "buňky", drag_lane + 1, cs.size()]
+	if drag_moved == 0:
+		status = "Úsek %d zpět na původní tvar (%d buněk)." % [drag_lane + 1, cs.size()]
+	else:
+		status = "%s o %d %s · úsek %d má %d buněk." % [
+			("Vršek rozšířený" if drag_moved > 0 else "Vršek zúžený") if width else (
+				"Výstupek posunutý" if drag_moved > 0 else "Výstupek snížený"),
+			absi(drag_moved), "buňku" if absi(drag_moved) == 1 else "buňky",
+			drag_lane + 1, cs.size()]
 	return true
 
 

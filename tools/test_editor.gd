@@ -1648,6 +1648,23 @@ func _test_bump_shift() -> void:
 	for i in range(mini(back2.size(), was)):
 		_check(back2[i] == before[i], "po tahu zpet neni puvodni cesta (bunka %d: %s vs %s)" % [
 			i, str(back2[i]), str(before[i])])
+	# 8) ROZŠÍŘENÍ VRŠKU: tah PODEL vrsku (doprava) vrsek o bunku prodlouzi a
+	#    roh se posune s nim; tah zpet vrati presne puvodni cestu
+	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
+	e.extend_move(Vector2i(5, 4))
+	var wide: Array = e.level.lane_cells(0)
+	_check(wide.size() == was,
+		"rozsireni vrsku zmenilo pocet bunek (%d vs %d)" % [wide.size(), was])
+	_check(wide.has(Vector2i(6, 4)) and not wide.has(Vector2i(5, 5)),
+		"vrsek se nerozsiril doprava: " + str(wide))
+	e.extend_move(Vector2i(6, 4))
+	_check(e.level.lane_cells(0).has(Vector2i(7, 4)), "druhy krok rozsireni neprosel")
+	e.extend_move(Vector2i(4, 4))
+	var back3: Array = e.level.lane_cells(0)
+	_check(back3.size() == was, "tah zpet po rozsireni nedal puvodni delku (%d)" % back3.size())
+	for i in range(mini(back3.size(), was)):
+		_check(back3[i] == before[i], "tah zpet po rozsireni nedal puvodni cestu (bunka %d)" % i)
+	e.end_move()
 
 
 # MALA TLACITKA "−"/"+" NALEPENA NA HODNOTU + VIDITELNA MRIZKA.

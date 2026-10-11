@@ -365,6 +365,50 @@ func _test_bump_shift() -> void:
 	_check(lv6.validate().size() == 0, "zplosteni rozbilo mapu: %s" % str(lv6.validate()))
 	_check(not lv6.shift_run(0, Vector2i(4, 5), false),
 		"zplostena cesta se dala zmensovat dal")
+	# 12) ROZŠÍŘENÍ VRŠKU (tah PODEL kusu): vrsek se prodlouzi na tu stranu, kam
+	# prst taha, roh se s nim posune a vyska vystupku zustava
+	var lv7 := Level.new()
+	var s7: int = lv7.add_node(2, 5, Level.START)
+	var c7: int = lv7.add_node(7, 5, Level.CIL)
+	lv7.add_lane(s7, c7, "RRURDRR", Element.FIRE)
+	var b0: Array = lv7.lane_cells(0).duplicate()
+	_check(lv7.widen_run(0, Vector2i(4, 4), 1, true), "vrsek se neda rozsirit doprava")
+	var w1: Array = lv7.lane_cells(0)
+	_check(w1.size() == b0.size(),
+		"rozsireni vrsku zmenilo pocet bunek (%d vs %d)" % [w1.size(), b0.size()])
+	_check(w1.has(Vector2i(6, 4)) and not w1.has(Vector2i(5, 5)),
+		"vrsek se nerozsiril doprava: " + str(w1))
+	_check(lv7.validate().size() == 0, "rozsireni vrsku rozbilo mapu: %s" % str(lv7.validate()))
+	_check(lv7.widen_run(0, Vector2i(4, 4), 1, false), "vrsek se neda zuzit zpet")
+	var w2: Array = lv7.lane_cells(0)
+	_check(w2.size() == b0.size(), "zuz... zmenilo pocet bunek (%d)" % w2.size())
+	for i in range(mini(w2.size(), b0.size())):
+		_check(w2[i] == b0[i], "zuz... nedalo puvodni cestu (bunka %d: %s vs %s)" % [
+			i, str(w2[i]), str(b0[i])])
+	_check(lv7.widen_run(0, Vector2i(4, 4), -1, true), "vrsek se neda rozsirit doleva")
+	var w3: Array = lv7.lane_cells(0)
+	_check(w3.has(Vector2i(3, 4)) and not w3.has(Vector2i(4, 5)),
+		"vrsek se nerozsiril doleva: " + str(w3))
+	_check(lv7.validate().size() == 0, "rozsireni vrsku doleva rozbilo mapu")
+	# 13) NEJMENSI VRSEK (dve bunky) SE NEDA ZUZIT - zbyl by jednobunkovy kus,
+	# ktery uz vystupek neni
+	var lv8 := Level.new()
+	var s8: int = lv8.add_node(2, 5, Level.START)
+	var c8: int = lv8.add_node(7, 5, Level.CIL)
+	lv8.add_lane(s8, c8, "RRURDRR", Element.FIRE)
+	_check(not lv8.widen_run(0, Vector2i(4, 4), 1, false), "nejmensi vrsek se dal zuzit")
+	_check(not lv8.widen_run(0, Vector2i(4, 4), -1, false), "nejmensi vrsek se dal zuzit zleva")
+	_check(lv8.lane_cells(0).size() == 8, "odmitnute zuz... presto cestu zmenilo")
+	# 14) KDYBY CESTA ZA VRSKEM HNET ZATOCILA, rozsireni se odmitne (roh nema kam
+	# posunout); doleva to jde, tam cesta rovne pokracuje
+	var lv9 := Level.new()
+	var s9: int = lv9.add_node(2, 5, Level.START)
+	var c9: int = lv9.add_node(5, 7, Level.CIL)
+	lv9.add_lane(s9, c9, "RRURDDD", Element.FIRE)
+	_check(not lv9.run_at(0, Vector2i(4, 4)).is_empty(), "vystupek pred zatocenim se nenasel")
+	_check(not lv9.widen_run(0, Vector2i(4, 4), 1, true), "rozsireni pres zatoceni proslo")
+	_check(lv9.lane_cells(0).size() == 8, "odmitnute rozsireni presto cestu zmenilo")
+	_check(lv9.widen_run(0, Vector2i(4, 4), -1, true), "rozsireni doleva se odmitlo")
 
 
 func _test_code_round_trip() -> void:
