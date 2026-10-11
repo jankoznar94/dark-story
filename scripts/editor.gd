@@ -227,7 +227,10 @@ func reset() -> void:
 	clip_flip = false
 	paste_armed = false
 	paste_cell = Vector2i(-1, -1)
-	level.save()
+	# PRAZDNY LEVEL SE NEUKLADA. Hrac se mohl jen rozmyslet, jestli bude
+	# kreslit - a v seznamu by za kazde takove klepnuti zustala prazdna
+	# polozka (a pri starsi logice i jmeno te predchozi). Soubor vznikne
+	# az s prvni opravdovou zmenou (viz `_after_change`).
 
 
 # =========================================================================
@@ -287,16 +290,15 @@ func _snapshot_if_used() -> void:
 # Kazdy novy level dostane VLASTNI jmeno, aby ten predchozi neprepsal.
 # Prepsat cizi praci jednim klepnutim je to nejhorsi, co editor umi.
 #
-# Vyjimka: kdyz je ten soucasny level jeste PRAZDNY, novy ho prevezme.
-# Bez toho by kazde klepnuti na "novy" nechalo za sebou prazdnou skolku
-# a seznam by se zaplnil necem, co nikdo nikdy nechtel.
+# JMENO SE NIKDY NEPREVZIMA. Driv se prazdny level jmenoval po tom soucasnem
+# ("at po sobe nenecha prazdnou skolku") - jenze pak se v seznamu po klepnuti
+# na "novy level" neobjevilo nic noveho a hrac videl "nazev predchoziho
+# zustava" (Jan, Oct 2026). Prazdny level si navic soubor vubec nedela
+# (viz `reset`), takze se seznam plni jen tim, co ma obsah.
 func _free_name() -> String:
-	if level != null and local_name != "" \
-			and level.lane_count() == 0 and level.node_count() == 0:
-		return local_name
 	var keys: Array = level.saved_keys()
 	var n: int = 1
-	while keys.has("level-%d" % n):
+	while keys.has("level-%d" % n) or ("level-%d" % n) == local_name:
 		n += 1
 	return "level-%d" % n
 

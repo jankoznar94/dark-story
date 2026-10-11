@@ -19,6 +19,7 @@ func _init() -> void:
 	_run("guma", _test_erase)
 	_run("jidel a cil", _test_element_and_exit)
 	_run("uprava existujiciho useku", _test_edit_existing)
+	_run("ukladani a novy level", _test_level_store)
 	_run("mista jsou legacy", _test_lane_slots_are_legacy)
 	_run("delka cesty prstem", _test_lane_finger)
 	_run("posun kusu cesty", _test_move_run)
@@ -474,6 +475,80 @@ func _test_lane_finger() -> void:
 	e.end_move()
 	_check(e.level.lane_count() == lanes_before + 1,
 		"klepnuti na cestu ji nerozdelilo (%d)" % e.level.lane_count())
+
+
+# UKLADANI, NACITANI A NOVE LEVELY. Jan (Oct 2026): "Načítání, ukládání
+# a vytváření nových levelů nefunguje moc dobře. Některé nejdou otevřít, při
+# vytváření nového tam zůstává název předchozího."
+#
+# Hlida se pet veci:
+#   * novy level ma NOVE jmeno a nic se po nem neuklada,
+#   * nakresleny level se objevi v seznamu a da se otevrit,
+#   * otevreni levelu nemeni jeho soubor (neuklada se podruhe jinam),
+#   * ROZPRACOVANY level (s chybou v mape) se musi dat otevrit - prace
+#     hrace je v souboru a musi se k ni dostat,
+#   * po sobe uklidi (jinak by v seznamu zustavaly testovaci polozky).
+func _test_level_store() -> void:
+	var e := _ed()
+	_clean_test_levels()
+	# 1) NOVY LEVEL
+	e.reset()
+	var n1: String = e.local_name
+	_check(n1 != "", "novy level nema jmeno")
+	_check(e.level.name == n1, "jmeno levelu nesedi s klicem (%s vs %s)" % [
+		n1, e.level.name])
+	_check(e.level.lane_count() == 0 and e.level.node_count() == 0,
+		"novy level neni prazdny")
+	_check(not Level.saved_keys().has(n1),
+		"prazdny novy level se hned ulozil jako %s" % n1)
+	# 2) DRUHY NOVY LEVEL MA JINE JMENO
+	e.reset()
+	var n2: String = e.local_name
+	_check(n2 != n1, "druhy novy level ma stejne jmeno jako prvni (%s)" % n2)
+	# 3) NAKRESLI A ULOZ
+	var s: int = e.level.add_node(1, 1, Level.START)
+	var c: int = e.level.add_node(5, 1, Level.CIL)
+	e.level.add_lane(s, c, "RRRR", Element.FIRE)
+	e.level.save()
+	_check(Level.saved_keys().has(n2), "nakresleny level se neulozil jako %s" % n2)
+	# 4) OTEVRI HO ZNOVU ZE SEZNAMU
+	e.reset()
+	e.open_list()
+	var found: bool = false
+	for it in e.list_items():
+		if str(it["kind"]) == "level" and str(it["key"]) == n2:
+			found = true
+			e.pick(it)
+	_check(found, "ulozeny level %s neni v seznamu" % n2)
+	_check(e.level.lane_count() == 1,
+		"nacteny level nema cestu (%d)" % e.level.lane_count())
+	_check(e.level.node_count() == 2,
+		"nacteny level nema oba prvky (%d)" % e.level.node_count())
+	_check(e.local_name == n2, "po nacteni nesedi jmeno (%s vs %s)" % [e.local_name, n2])
+	var files: int = Level.saved_keys().size()
+	e.level.save()
+	_check(Level.saved_keys().size() == files,
+		"ulozene nacteneho levelu udelalo druhy soubor (%d -> %d)" % [
+			files, Level.saved_keys().size()])
+	# 5) ROZPRACOVANY LEVEL (CHYBA V MAPE) SE MUSI DAT OTEVRIT
+	var bad := Level.new()
+	bad.name = "test-rozepsany"
+	bad.add_node(2, 2, Level.START)
+	_check(not bad.validate().is_empty(), "testovaci level ma byt s chybou")
+	_check(bad.save(), "rozepsany level se neulozil")
+	var probe := Level.new()
+	_check(probe.load_from_disk("test-rozepsany"),
+		"rozepsany level se neda otevrit (presne to Jan videl)")
+	_check(probe.node_count() == 1, "otevreny rozepsany level nema svuj prvek")
+	# 6) UKLID
+	_clean_test_levels()
+
+
+func _clean_test_levels() -> void:
+	for k in ["test-rozepsany"]:
+		var p: String = Level.storage_dir() + str(k) + ".zily"
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(p)
 
 
 func _test_lane_slots_are_legacy() -> void:

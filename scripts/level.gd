@@ -890,6 +890,24 @@ static func from_code(code: String) -> Level:
 	return lv
 
 
+# NACTENI VLASTNIHO ROZPRACOVANEHO LEVELU - BEZ KONTROLY MAPY.
+#
+# `from_code` je pro kod z CIZIHO zdroje (vlozeny, poslany), takze u nej ma
+# smysl pozadovat, aby byl v poradku. Jenze `load_from_disk` ho pouzival taky
+# - a editor uklada level po KAZDE zmene, klidne i rozepsany (bez cile, s
+# cestou, ktera nikam nevede). Takovy level se pak "nepodarilo otevrit":
+# prace byla v souboru, ale hrac se k ni nedostal. Jan (Oct 2026):
+# "Načítání, ukládání a vytváření nových levelů nefunguje moc dobře. Některé
+# nejdou otevřít."
+#
+# Proto se pri nacitani z disku kontroluje JEN to, ze je to nas format.
+static func from_code_unchecked(code: String) -> Level:
+	var t: String = code.strip_edges()
+	if not t.begins_with("ZILY2;"):
+		return null
+	return from_json(t.substr(6))
+
+
 # =========================================================================
 # UKLADANI - lokalne, na server se neposila nic
 # =========================================================================
@@ -933,10 +951,14 @@ func load_from_disk(key: String) -> bool:
 		return false
 	var text: String = f.get_as_text()
 	f.close()
-	var lv := Level.from_code(text)
+	var lv := from_code_unchecked(text)
 	if lv == null:
 		return false
-	name = lv.name
+	# JMENO = JMENO SOUBORU. Kdyby zustalo jmeno z obsahu (klidne prazdne),
+	# ulozilo by se to podruhe do JINEHO souboru a v seznamu by zustala
+	# stara verze - hrac by mel dve mapy a ta, kterou upravoval, by se
+	# neukladala. Jedno jmeno, jeden soubor.
+	name = key if key != "" else lv.name
 	cols = lv.cols
 	rows = lv.rows
 	speed = lv.speed
