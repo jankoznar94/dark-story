@@ -151,11 +151,14 @@ func _setup_shot() -> void:
 			game.try_build(lane, 0, game.net.lane_element(lane))
 			if game.net.slot_count(lane) > 2:
 				game.try_build(lane, 2, game.net.lane_element(lane))
-	game.wave = 3
+	game.round = 3
 	game.gold = 240
 	game.lives = 9
-	game.phase = "wave"
-	game.spawn_left = 4
+	game.phase = "round"
+	# Kolo bezi, ale dalsi vstup je daleko - snimek ma ukazat poutniky na
+	# usecich, ne nahodne nove vstupy.
+	game.round_left = 60.0
+	game.spawn_wait = 40.0
 	game.set_switch(1)
 	for el in [Element.FIRE, Element.EARTH, Element.WATER, Element.AIR, Element.FIRE]:
 		game.debug_spawn(el)
@@ -1164,7 +1167,7 @@ func _draw_hud() -> void:
 		Color(0.28, 0.25, 0.21), 2.0)
 	var step: float = layout.view.x * 0.19
 	var x0: float = 18.0 * layout.s
-	_label(Vector2(x0, layout.hud_h * 0.48), "Vlna %d" % game.wave, 20, Color(0.90, 0.87, 0.80))
+	_label(Vector2(x0, layout.hud_h * 0.48), "Kolo %d" % game.round, 20, Color(0.90, 0.87, 0.80))
 	# Druhy radek leveho sloupce: faze a JMENO LEVELU. Jmeno musi byt videt -
 	# hrac ma vedet, co hraje. Driv viselo POD panelem, tedy na herni plose,
 	# a bralo desce pixel; v panelu je na to misto.
@@ -1173,7 +1176,7 @@ func _draw_hud() -> void:
 		Color(0.58, 0.55, 0.49))
 	_label(Vector2(x0 + step, layout.hud_h * 0.48), "Životy %d" % game.lives, 20,
 		Color(0.85, 0.42, 0.36) if game.lives <= 4 else Color(0.90, 0.87, 0.80))
-	_label(Vector2(x0 + step, layout.hud_h * 0.88), "z %d" % Game.START_LIVES, 13,
+	_label(Vector2(x0 + step, layout.hud_h * 0.88), "z %d" % game.lives_max, 13,
 		Color(0.58, 0.55, 0.49))
 	_label(Vector2(x0 + step * 2.0, layout.hud_h * 0.48), "Zlato %d" % game.gold, 20,
 		Color(0.88, 0.78, 0.45))
@@ -1197,12 +1200,23 @@ func _draw_hud() -> void:
 		sel_txt = "%s × %.1f" % [game.net.level.lane_type_name(sel),
 			Element.STRONG * game.lane_mult(sel)]
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.48), sel_txt, 18, Color(0.72, 0.70, 0.64))
+	# FAZE KOLA. Kolo nema pocet poutniku, takze hrac potrebuje dve cisla:
+	# kolik sekund jeste vstupy tecou a kolik poutniku je na desce. Ve fazi
+	# "dočištění" uz vstupy nejsou a hra jen dobíjí zbytek.
+	var info: String
+	var info_col: Color = Color(0.58, 0.55, 0.49)
 	if game.phase == "build":
-		_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.88),
-			"Příprava %.1f s" % game.build_timer, 13, Color(0.65, 0.78, 0.60))
+		info = "Příprava %.1f s" % game.build_timer
+		info_col = Color(0.65, 0.78, 0.60)
+	elif game.phase == "round":
+		info = "kolo %.0f s · v úsecích %d" % [game.round_left, game.enemies.size()]
+	elif game.phase == "clear":
+		info = "dočištění · v úsecích %d" % game.enemies.size()
+	elif game.phase == "lost":
+		info = "síť padla"
 	else:
-		_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.88),
-			"v úsecích: %d" % game.enemies.size(), 13, Color(0.58, 0.55, 0.49))
+		info = "v úsecích: %d" % game.enemies.size()
+	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.88), info, 13, info_col)
 
 	# NAVRAT DO EDITORU. Kresli se jen kdyz hrac hraje level z editoru - je to
 	# jedine tlacitko, ktere se v hornim panelu hry muze objevit, a je mimo
@@ -1222,7 +1236,8 @@ func _draw_hud() -> void:
 		draw_rect(Rect2(bp, Vector2(bw, bh)), Color(0.55, 0.25, 0.22), false, 3.0)
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.45), "SÍŤ PADLA", 30,
 			Color(0.88, 0.46, 0.38), true, bw)
-		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.78), "vydržels %d vln" % game.wave, 16,
+		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.78),
+			"vydržels %d %s" % [game.round, _rounds_word(game.round)], 16,
 			Color(0.75, 0.71, 0.65), true, bw)
 	if toast_t > 0.0:
 		_label(Vector2(layout.view.x * 0.5, layout.hud_h + 24.0 * layout.s), toast, 16,
@@ -1232,6 +1247,16 @@ func _draw_hud() -> void:
 func _draw_centered(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:
 	draw_string(_font, Vector2(r.position.x, baseline_y), text, HORIZONTAL_ALIGNMENT_CENTER,
 		r.size.x, layout.font(float(size)), col)
+
+
+# ČESKÉ SKLOŇOVÁNÍ POČTU KOL (1 kolo, 2-4 kola, 5+ kol). Rovnou tady, aby
+# text v prohře nelhal - "vydržels 1 kol" je vidět a hrac si toho vsimne.
+func _rounds_word(n: int) -> String:
+	if n == 1:
+		return "kolo"
+	if n >= 2 and n <= 4:
+		return "kola"
+	return "kol"
 
 
 func _label(at: Vector2, text: String, size: int, col: Color,

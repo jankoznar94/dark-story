@@ -67,7 +67,7 @@ func _one(w: int, h: int) -> void:
 	_check(layout.arena.size.x > 0.0 and layout.arena.size.y > 0.0,
 		"%s: arena je prazdna" % tag)
 	var g := Game.new()
-	g.auto_wave = false
+	g.auto_round = false
 	g.setup(layout.arena, layout.s, layout.board_bottom, Level.base())
 
 	# --- mrizka a cesty zustanou v arene. POLE VYPLNUJE ARENU CELOU:

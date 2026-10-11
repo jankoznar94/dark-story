@@ -23,30 +23,25 @@ const BASE_HP := 70.0
 const HP_GROWTH := 0.10
 const ENEMY_SPEED := 52.0
 const REWARD := 12
-# PRICHAZENI POUTNIKU: NEPRAVIDELNE, ALE OKNO SE RIDI PRUMERNOU MEZEROU, NE
-# DELKOU KOLA. Jan nejdriv chtel, aby poutnici chodili nepravidelne po celych
-# trech ctvtinach kola ("ne jen v prvnich par vterinach"), a pak: "Ale
-# nepřátelé teď chodí s šíleně velkými odstupy ... ne tak, že mezi každým
-# nepřítelem je 1 minuta odstup."
+# KOLO NENI VLNA Z TD. Jan: "Asi nebudeme dělat jednotlivé vlny jako u TD
+# žánru. ... Kolo bude mít časový limit. Třeba 2 minuty. Během této doby
+# budou v náhodném pořadí a intervalech (min 1s, max 5s) chodit nepřátelé
+# z náhodných vstupů. Po uplynutí časového limitu hra čeká na zabití všech
+# nepřátel nebo porážku hráče."
 #
-# Driv se okno pocitalo z projeti mapy (`ROUND_LAST_ENTRY` 0.75 znamenalo okno
-# 3x walk_time): na displeji to je pres 60 s, takze pri ctyrech poutnicich
-# vychazela mezera 20 s a hrac koukal do prazdne mapy. Tempo vlny je proto dane
-# PRUMERNOU MEZEROU (`Level.spawn`, ktera je zaroven podlaha hratelnosti - dve
-# klepnuti na vyhybku) a "nepravidelnost" dela jen to, ze se kazda mezera lije
-# v rozpeti 0.6 az 1.4 nasobku prumeru.
-#
-# Nejmensi mezera mezi dvema poutniky na vstupu. Hrac musi stihnout
-# PREPNOUT VYHYBKU PRO KAZDEHO ZVLAST, takze dve klepnuti (cca 0.4 s) se
-# musi do mezery vejit - stejne pravidlo jako driv, jen se ted meri
-# v pixelech (52 px/s * 1.73 s = 90 px).
-const MIN_GAP_PX := 90.0
-# Vychozi prumerna mezera mezi poutniky (level si ji muze prepsat pres
-# Level.spawn). Je to ZAROVEN podlaha prumerne mezery - rozptyl ji muze jen
-# mirne protahnout, nikdy zkratit.
-const SPAWN_INTERVAL := 1.9
+# Takze kolo = CASOVE OKNO, ve kterem vstupy jen TECOU: nahodny zivel,
+# nahodny vstup, nahodna mezera 1-5 s. Pocet poutniku v kole NENI dane
+# cislo (driv `3 + vlna`) - je to dusledek okna a prumerne mezery, na
+# zakladni desce ~40 za 2 minuty. Kolo konci teprve tehdy, kdyz je deska
+# PRAZDNA, takze hrac nikdy neprijde o cas na dobiti zbytku.
+const ROUND_TIME := 120.0
+# NEJKRATSI A NEJDELSI MEZERA MEZI DVA POUTNIKY. Hrac musi stihnout
+# prepnout vyhybku pro kazdeho zvlast, takze i ta nejkratsi mezera je
+# hratelnostni vec: 1 s = 52 px na zakladni rychlosti.
+const ROUND_GAP_MIN := 1.0
+const ROUND_GAP_MAX := 5.0
 const BUILD_TIME := 6.0
-const WAVE_BONUS := 40
+const ROUND_BONUS := 40
 # Poskozeni, ktere da usek poutnikovi za CELE PROJETI sve delky pri
 # jednotkovem nasobku. NENI to poskozeni za sekundu - to by záviselo na
 # tom, jak je displej velky (na malem telefonu je usek kratsi v pixelech,
@@ -64,29 +59,32 @@ var bonuses: Array = []
 var enemies: Array = []
 var gold: int = START_GOLD
 var lives: int = START_LIVES
-var wave: int = 0
+var round: int = 0
 var phase: String = "build"
 var build_timer: float = BUILD_TIME
-var spawn_left: int = 0
-# KDY KDO VSTOUPI. Ne perioda, ale ROZVRH: seznam absolutnich casu v ramci
-# vlny, ktery se losuje pri startu vlny (viz _spawn_schedule). Diky tomu
-# muzou byt mezery nepravidelne - hrac vi, ze jich prijde tolik, ale ne
-# presne kdy.
-var spawn_times: Array = []
-var spawn_elapsed: float = 0.0
-var spawn_done: int = 0
+# KOLIK SEKUND ZBYVA DO KONCE VSTUPU V TOMHLE KOLE. Nula znamena "vstupy
+# skoncity" - hra pak jeste ceka, nez desku dobehnou zabit nebo dojit.
+var round_left: float = 0.0
+# DO KDY VSTOUPI DALSÍ POUTNIK (v sekundach). Neni to perioda: po kazdem
+# vstupu se losuje nova mezera 1-5 s, takze hrac vi, ze jich prijde hodne,
+# ale ne kdy presne.
+var spawn_wait: float = 0.0
+# Kolik poutniku uz do TOHOTO kola vstoupilo. Kolo nema naplanovany pocet;
+# tenhle pocitac je jedina odpoved na "kolik jich bylo" (HUD, souhrn kola).
+var spawned: int = 0
 var rng: int = 20261009
 var log: Array = []
-# Kolik poutniku uz do mapy vstoupilo - kmeny se stridaji po poradi.
-var spawn_index: int = 0
 # ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Neni to vzdycky vsechny ctyri:
 # mapa, ktera ma jen vodu a ohen, posila jen vodni a ohnive poutniky - na
 # ostatni by v mape nebyl protiklad a hrac by je nemel jak zabit.
 # Pocita se pri stavbe site (rebuild_network), takze hra i zmena velikosti
 # okna ji maji vzdy stejnou jako level.
 var spawn_pool: Array = []
+# ZIVOTY NA ZACATKU PARTIE. HUD potrebuje vedet, z kolika hrac zacinal -
+# `Level.lives` si level muze prepsat, konstanta by v HUDu lhala.
+var lives_max: int = START_LIVES
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
-var auto_wave: bool = true
+var auto_round: bool = true
 # VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
 # ROZEHRANE PARTIE, ne level: proto to neni v Levelu a proto se to pri zmene
 # velikosti okna neztrati (sit se prelozi, volba hrace zustava).
@@ -102,14 +100,13 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	enemies = []
 	gold = level.gold
 	lives = level.lives
-	wave = 0
+	lives_max = level.lives
+	round = 0
 	phase = "build"
 	build_timer = BUILD_TIME
-	spawn_left = 0
-	spawn_times = []
-	spawn_elapsed = 0.0
-	spawn_done = 0
-	spawn_index = 0
+	round_left = 0.0
+	spawn_wait = 0.0
+	spawned = 0
 	log = []
 
 
@@ -316,16 +313,20 @@ func build_element(lane: int) -> int:
 	return net.lane_element(lane)
 
 
-# ---------------------------------------------------------------- vlny
+# ---------------------------------------------------------------- kola
 
-func start_wave() -> void:
-	wave += 1
-	phase = "wave"
-	spawn_left = 3 + wave
-	spawn_elapsed = 0.0
-	spawn_done = 0
-	spawn_times = _spawn_schedule(spawn_left)
-	var msg: String = "Vlna %d zacina (%d poutniku)." % [wave, spawn_left]
+func start_round() -> void:
+	round += 1
+	phase = "round"
+	round_left = ROUND_TIME
+	if level != null:
+		round_left = level.round_time
+	round_left = maxf(round_left, 1.0)
+	# PRVNI POUTNIK VSTUPUJE HNED: kdyby se losovalo i prvni cekani, hrac by
+	# na zacatku kola koukal do prazdne mapy a nevedel, ze kolo bezi.
+	spawn_wait = 0.0
+	spawned = 0
+	var msg: String = "Kolo %d začíná (%.0f s)." % [round, round_left]
 	# POUTNIK BEZ PROTIKLADU SE NEPOSILA (viz Level.spawn_elements). Hlaska to
 	# musi rict: kdyz by hrac videl, ze nechodi Zeme, hledal by chybu v siti -
 	# pritom staci do mapy pridat protikladny usek.
@@ -339,41 +340,19 @@ func start_wave() -> void:
 	_note(msg)
 
 
-# ROZVRH VSTUPU PRO CELOU VLNU. Mezery mezi poutniky nejsou stejne (hrac by
-# jinak videl starou periodu), ale jejich PRUMER je tempo levelu: kazda mezera
-# je 0.6 az 1.4 nasobek `Level.spawn` a nikdy nesmi klesnout pod hratelnostni
-# podlahu `MIN_GAP_PX` (dve klepnuti na vyhybku se musi do mezery vejit).
-# Nahodne cislo je z TEHOZ rng jako zivly poutniku, takze je hra dal
-# deterministicka (test na to ma kontrolu).
-func _spawn_schedule(count: int) -> Array:
-	var out: Array = []
-	if count <= 0:
-		return out
-	var gap_min: float = MIN_GAP_PX / _speed()
-	var avg_gap: float = level.spawn if level != null else SPAWN_INTERVAL
-	avg_gap = maxf(avg_gap, gap_min)
-	# OKNO JE (pocet - 1) KRAT PRUMERNA MEZERA. Zadne "rozlozeni do kola":
-	# to drive znamenalo 3x walk_time, tedy pres minutu na displeji a mezery
-	# 20 s pri ctyrech poutnicich (Jan: "ne tak, že mezi každým nepřítelem je
-	# 1 minuta odstup").
-	var win: float = float(count - 1) * avg_gap
-	var weights: Array = []
-	var total: float = 0.0
-	for i in range(count - 1):
-		var w: float = 0.6 + 0.8 * float(_next_int(1000)) / 1000.0
-		weights.append(w)
-		total += w
-	var t: float = 0.0
-	out.append(0.0)
-	for i in range(count - 1):
-		var g: float = win * float(weights[i]) / total
-		# Podlaha se hlida az tady: rozvrh se tim muze jen protahnout,
-		# nikdy zkratit, takze hracovo pravidlo "dve klepnuti do mezery"
-		# plati i na mape, kde by okno vyslo prilis male.
-		g = maxf(g, gap_min)
-		t += g
-		out.append(t)
-	return out
+# MEZERA DO DALSÍHO VSTUPU. Losuje se pro kazdou mezeru zvlast z rozpeti
+# 1-5 s, takze vstupy nejsou perioda (hrac nesmi videt "kazde 3 s"). Nahodne
+# cislo je z TEHOZ rng jako zivly poutniku, takze hra zustava
+# deterministicka - test na to ma kontrolu.
+func _next_gap() -> float:
+	var t: float = float(_next_int(1001)) / 1000.0
+	return ROUND_GAP_MIN + (ROUND_GAP_MAX - ROUND_GAP_MIN) * t
+
+
+# Bezi jeste vstupy? Jedine misto, kde se to rozhoduje - HUD, step i testy
+# se musi ptat tady, jinak by se "kolo skoncilo" pocitalo na trech mistech.
+func spawning() -> bool:
+	return phase == "round" and round_left > 0.0
 
 
 # Jak dlouho poutnik mapou jde: vstupni usek + nejdelsi usek, v sekundach.
@@ -398,18 +377,19 @@ func _speed() -> float:
 func _spawn(enemy_el: int) -> void:
 	var e := Enemy.new()
 	e.element = enemy_el
-	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(wave - 1))
+	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(round - 1))
 	e.hp = e.max_hp
 	e.speed = level.speed if level != null else ENEMY_SPEED
 	# POUTNIK VSTUPUJE NA VSTUPNI USEK. Vstup do mapy je v mrizce normalni
 	# usek ze startu (od vychoziho stavu kmen, takze neposkozuje). Vstupu
-	# muze byt vic - stridaji se po poradi, aby se zadny nepromarnil.
+	# muze byt vic a VSTUP SE LOSUJE - driv se kmeny stridaly po poradi
+	# ("kazdy druhy zleva"), coz hrac odhalil jako vzor.
 	# Kdyby mapa zadny start nemela, poutnik se neobjevi vubec.
 	if net.entry_lanes.is_empty():
 		return
-	e.lane = int(net.entry_lanes[spawn_index % net.entry_lanes.size()])
+	e.lane = int(net.entry_lanes[_next_int(net.entry_lanes.size())])
 	e.s = 0.0
-	spawn_index += 1
+	spawned += 1
 	enemies.append(e)
 
 
@@ -447,34 +427,43 @@ func step(delta: float) -> void:
 		build_timer -= delta
 		if build_timer <= 0.0:
 			build_timer = 0.0
-			if auto_wave:
-				start_wave()
-	else:
-		# POUTNICI VSTUPUJI PODLE ROZVRHU. Cas se scita od zacatku vlny a
-		# kdo ma vstup naplanovany na tenhle cas, vstoupi - mezery mezi
-		# nimi jsou losovane (viz _spawn_schedule), ne pravidelne.
-		spawn_elapsed += delta
-		while spawn_left > 0 and spawn_done < spawn_times.size() \
-				and float(spawn_times[spawn_done]) <= spawn_elapsed:
-			spawn_left -= 1
-			spawn_done += 1
+			if auto_round:
+				start_round()
+	elif phase == "round":
+		# VSTUPY TECOU PO CELOU DOBU KOLA. Po kazdem poutnikovi se losuje
+		# nova mezera 1-5 s (viz _next_gap), takze nikdo nevi, kolik jich
+		# prijde - vi jen, dokdy. `while` tu je kvuli velkemu kroku (testy
+		# umi skocit o par sekund), ale mezera >= 1 s ho necha bezet jednou.
+		round_left -= delta
+		spawn_wait -= delta
+		var guard: int = 0
+		while round_left > 0.0 and spawn_wait <= 0.0 and guard < 60:
+			guard += 1
 			var el: int = _next_element()
 			if el >= 0:
 				_spawn(el)
+			spawn_wait += _next_gap()
+		if round_left <= 0.0:
+			round_left = 0.0
+			phase = "clear"
+			_note("Kolo %d: vstupy skončily, dočisti desku." % round)
 
 	_move_enemies(delta)
 	_apply_damage(delta)
 
-	if phase == "wave" and spawn_left == 0 and enemies.is_empty():
-		wave_done()
+	# KOLO KONCI AZ PRAZDNOU DESKOU. Kdyz vstupy skoncily a na desce uz nic
+	# neni, kolo je odrazene. Dokud se poutnici dobíjejí, hra ceka - hrac
+	# tak nikdy neprijde o kolo s poutniky na ceste.
+	if phase == "clear" and enemies.is_empty():
+		round_done()
 
 
-func wave_done() -> void:
-	var bonus: int = WAVE_BONUS + 10 * wave
+func round_done() -> void:
+	var bonus: int = ROUND_BONUS + 10 * round
 	gold += bonus
 	phase = "build"
 	build_timer = BUILD_TIME
-	_note("Vlna %d odrazena (+%d zlata)." % [wave, bonus])
+	_note("Kolo %d odraženo (+%d zlata)." % [round, bonus])
 
 
 func _move_enemies(delta: float) -> void:

@@ -75,9 +75,9 @@ func _test_spawn_needs_opposite() -> void:
 
 	# A HRA TO REKNE V HLASCE - ticha zmena by nechala hrace hledat chybu v siti.
 	var g := Game.new()
-	g.auto_wave = false
+	g.auto_round = false
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
-	g.start_wave()
+	g.start_round()
 	var last: String = str(g.log[g.log.size() - 1])
 	_check(last.contains("protiklad"), "hlaska o chybejicim protikladu neni: " + last)
 	_check(g.spawn_pool.is_empty(), "sit si bere zivly, ktere se neposilaji")

@@ -62,7 +62,14 @@ const KMEN := -2
 # --------------------------------------------------------------- zakladni cisla
 const BASE_ZONE_DMG := 30.0
 const BASE_SPEED := 52.0
+# LEGACY: prumerna mezera mezi poutniky z modelu VLAK (0.6-1.4 nasobek).
+# Dnesni kolo si mezery losuje samo z rozpeti Game.ROUND_GAP_MIN..MAX, takze
+# hra tuhle hodnotu nikde necte. Zustava jen proto, aby se stary kod levelu
+# (klic "p") dal precti a zapsat - nic se podle ni nedeje.
 const BASE_SPAWN := 1.9
+# CASOVY LIMIT KOLA ve vterinach. Kolo neni pocet poutniku, ale okno, po
+# ktere vstupy tecou (Jan: "Kolo bude mít časový limit. Třeba 2 minuty.").
+const BASE_ROUND := 120.0
 const BASE_LIVES := 12
 const BASE_GOLD := 260
 # Kolik bonusu se vejde na jeden usek. Neni to geometrie - je to pocet
@@ -94,6 +101,7 @@ var lanes: Array = []
 var zone_dmg: float = BASE_ZONE_DMG
 var speed: float = BASE_SPEED
 var spawn: float = BASE_SPAWN
+var round_time: float = BASE_ROUND
 var lives: int = BASE_LIVES
 var gold: int = BASE_GOLD
 
@@ -451,6 +459,7 @@ func clone() -> Level:
 	lv.zone_dmg = zone_dmg
 	lv.speed = speed
 	lv.spawn = spawn
+	lv.round_time = round_time
 	lv.lives = lives
 	lv.gold = gold
 	lv.last_error = last_error
@@ -674,6 +683,7 @@ func to_dict() -> Dictionary:
 		"z": zone_dmg,
 		"s": speed,
 		"p": spawn,
+		"rt": round_time,
 		"l": lives,
 		"g": gold,
 		"u": ns,
@@ -689,6 +699,7 @@ static func from_dict(d: Dictionary) -> Level:
 	lv.zone_dmg = float(d.get("z", BASE_ZONE_DMG))
 	lv.speed = float(d.get("s", BASE_SPEED))
 	lv.spawn = float(d.get("p", BASE_SPAWN))
+	lv.round_time = float(d.get("rt", BASE_ROUND))
 	lv.lives = int(d.get("l", BASE_LIVES))
 	lv.gold = int(d.get("g", BASE_GOLD))
 	for raw in d.get("u", []):
