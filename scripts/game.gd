@@ -326,7 +326,18 @@ func start_wave() -> void:
 	spawn_elapsed = 0.0
 	spawn_done = 0
 	spawn_times = _spawn_schedule(spawn_left)
-	_note("Vlna %d zacina (%d poutniku)." % [wave, spawn_left])
+	var msg: String = "Vlna %d zacina (%d poutniku)." % [wave, spawn_left]
+	# POUTNIK BEZ PROTIKLADU SE NEPOSILA (viz Level.spawn_elements). Hlaska to
+	# musi rict: kdyz by hrac videl, ze nechodi Zeme, hledal by chybu v siti -
+	# pritom staci do mapy pridat protikladny usek.
+	if level != null:
+		var bad: Array = level.unkillable_elements()
+		if not bad.is_empty():
+			var names: String = ""
+			for e in bad:
+				names += ("" if names.is_empty() else ", ") + Element.name_of(e)
+			msg += " %s nemá v mapě protiklad — neposílá se." % names
+	_note(msg)
 
 
 # ROZVRH VSTUPU PRO CELOU VLNU. Losuje se z nej: mezery mezi poutniky

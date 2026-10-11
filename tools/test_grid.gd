@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
 	_run("mapa z nakresu", _test_jan_map_shape)
+	_run("posila se jen zivel s protikladem", _test_spawn_needs_opposite)
 	_run("diamant", _test_diamond_survives)
 	if fails.is_empty():
 		print("GRID_ALL_PASS=true (%d kontrol)" % checks)
@@ -37,6 +38,49 @@ func _run(label: String, fn: Callable) -> void:
 	fn.call()
 	if checks == before:
 		fails.append("test '%s' neudelal ani jednu kontrolu - spadl uvnitr" % label)
+
+
+# POSILA SE JEN ZIVEL, KTERY MA V MAPE SVUJ PROTIKLAD. Poutnik bez protikladu
+# se neda zabit (vlastni usek 0 %, ostatni jen polovina, a to ani s bonusem
+# nestaci), takze by byl jen ztraceny zivot. Jan: "aby hra posilala jen zivly,
+# ktere maji v mape svuj protiklad".
+func _test_spawn_needs_opposite() -> void:
+	var lv := Level.base()
+	_check(lv.spawn_elements() == [0, 1, 2, 3],
+		"zakladni deska neposila vsechny ctyri zivly: " + str(lv.spawn_elements()))
+	_check(lv.unkillable_elements().is_empty(),
+		"zakladni deska hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
+
+	# Vzduch z mapy pryc -> Zeme ztrati svuj protiklad a nesmi se posilat
+	for i in range(lv.lane_count()):
+		if lv.lane_element(i) == Element.AIR:
+			lv.set_lane_element(i, Level.KMEN)
+	_check(lv.present_elements() == [Element.FIRE, Element.WATER, Element.EARTH],
+		"z mapy nezmizel jen vzduch: " + str(lv.present_elements()))
+	_check(lv.spawn_elements() == [Element.FIRE, Element.WATER],
+		"Zeme bez vzduchu se porad posila: " + str(lv.spawn_elements()))
+	_check(lv.unkillable_elements() == [Element.EARTH],
+		"Zeme bez vzduchu neni hlasena jako nezabitelna: " + str(lv.unkillable_elements()))
+
+	# Zbyde Ohen a Zeme, oba bez protikladu -> neposila se nikdo a mapa to rekne
+	for i in range(lv.lane_count()):
+		if lv.lane_element(i) == Element.WATER:
+			lv.set_lane_element(i, Level.KMEN)
+	_check(lv.present_elements() == [Element.FIRE, Element.EARTH],
+		"z mapy nezmizela jen voda: " + str(lv.present_elements()))
+	_check(lv.spawn_elements().is_empty(),
+		"mapa bez jedineho protikladu posila poutniky: " + str(lv.spawn_elements()))
+	_check(lv.unkillable_elements() == [Element.FIRE, Element.EARTH],
+		"zivly bez protikladu nejsou hlaseny: " + str(lv.unkillable_elements()))
+
+	# A HRA TO REKNE V HLASCE - ticha zmena by nechala hrace hledat chybu v siti.
+	var g := Game.new()
+	g.auto_wave = false
+	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
+	g.start_wave()
+	var last: String = str(g.log[g.log.size() - 1])
+	_check(last.contains("protiklad"), "hlaska o chybejicim protikladu neni: " + last)
+	_check(g.spawn_pool.is_empty(), "sit si bere zivly, ktere se neposilaji")
 
 
 func _check(cond: bool, msg: String) -> void:

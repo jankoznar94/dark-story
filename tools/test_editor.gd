@@ -392,8 +392,14 @@ func _test_lane_types() -> void:
 	_check(f.level.lane_deals_damage(1), "neutralni usek neposkozuje")
 	_check(not f.level.spawn_elements().has(Level.NEUTRAL),
 		"z neutralniho useku se posila poutnik")
-	_check(f.level.spawn_elements() == [Element.FIRE],
-		"po zmene na neutralni se posilaji spatne zivly: " + str(f.level.spawn_elements()))
+	# PO ZMENE NA NEUTRALNI zbyde v mape jen Ohen - a ten tu nema svuj protiklad
+	# (vodu), takze se z nej neposila: poutnik Ohne by nemel kde zemrit.
+	_check(f.level.present_elements() == [Element.FIRE],
+		"po zmene na neutralni zbyva spatny zivel: " + str(f.level.present_elements()))
+	_check(f.level.spawn_elements().is_empty(),
+		"Ohen bez protikladu se posila: " + str(f.level.spawn_elements()))
+	_check(f.level.unkillable_elements() == [Element.FIRE],
+		"Ohen bez protikladu neni hlasen jako nezabitelny")
 
 
 # OZNACENI JIZ EXISTUJICIHO PRVKU. Jan: "chybi mi moznost oznacit jiz

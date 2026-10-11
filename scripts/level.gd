@@ -374,10 +374,27 @@ func next_lane(n: int, sel: int = 0) -> int:
 # ZIVLY V MAPE
 # =========================================================================
 
-# Zivly, ktere se v teto mape posilaji. Neutralni useky se nepocitaji.
-# Neni to kosmetika: poutnik s elementem, ktery v mape nema svuj protiklad,
-# se neda zabit (vlastni usek dava 0 %), takze by level byl nevyhratelny.
+# Zivly, ktere se v teto mape posilaji. Neni to kosmetika: poutnik, jehoz
+# protiklad v mape NENI, se neda zabit - na vlastnim useku dostava 0 %, na
+# ostatnich jen polovinu (a to ani s bonusem na zabiti nestaci). Posilame proto
+# JEN zivly, ktere maji v mape svuj protiklad.
+#
+# Jan: "aby hra posilala jen zivly, ktere maji v mape svuj protiklad". Hra to
+# rekne v hlasce na zacatku vlny a editor pres `unkillable_elements()`; ticha
+# zmena by hrace nechala hadat, proc poutnici nechodi.
 func spawn_elements() -> Array:
+	var present: Array = present_elements()
+	var out: Array = []
+	for e in present:
+		if not present.has(Element.opposite_of(e)):
+			continue
+		out.append(e)
+	out.sort()
+	return out
+
+
+# Zivly, ktere se v mape vubec vyskytuji (i kdyz se z nich treba neposila).
+func present_elements() -> Array:
 	var seen: Array = []
 	for i in range(lanes.size()):
 		var e: int = lane_element(i)
@@ -388,6 +405,17 @@ func spawn_elements() -> Array:
 			seen.append(e)
 	seen.sort()
 	return seen
+
+
+# Zivly, ktere v mape jsou, ale NEMAJI tu svuj protiklad: poutniky techto
+# zivlu nema co zabit, takze se z nich neposila. Slouzi k hlasce hrace.
+func unkillable_elements() -> Array:
+	var present: Array = present_elements()
+	var out: Array = []
+	for e in present:
+		if not present.has(Element.opposite_of(e)):
+			out.append(e)
+	return out
 
 
 # =========================================================================
