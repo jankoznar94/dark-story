@@ -201,22 +201,38 @@ func _test_spawn_gap() -> void:
 		var seen: Dictionary = {}
 		for i in range(1, n):
 			var gap: float = (float(g.spawn_times[i]) - float(g.spawn_times[i - 1]))
-			# mezera v pixelech: presne to, co hrac vidi mezi poutniky
+			# mezera v pixelech: presne to, co hrac vidi mezi poutniky.
+			# Podlaha je MIN_GAP_PX; toleruje se chlup, protoze se mezera
+			# pocita v sekundach a preponuje na pixely.
 			var px: float = gap * float(g.level.speed)
-			_check(px >= 90.0, "vlna %d: poutnici jsou moc u sebe (%.0f px)" % [w, px])
+			_check(px >= Game.MIN_GAP_PX - 1.0,
+				"vlna %d: poutnici jsou moc u sebe (%.0f px)" % [w, px])
 			seen[int(roundf(gap * 100.0))] = true
 		# NEPRAVIDELNE: kdyby vysly vsechny mezery stejne, je to porad ta
 		# stara perioda a Janovo "chodí předvídatelně" by zustalo.
 		_check(seen.size() >= 2, "vlna %d: mezery mezi poutniky jsou vsechny stejne" % w)
-		# ROZLOZENE DO KOLA: posledni poutnik vstoupi nejpozdeji ve trech
-		# ctvtinach kola. Zbytek kola uz jen dochazi do cile - presne to
-		# Jan chtel ("3/4 času kola ... a pak už jen hráč počká").
+		# TEMPO RIDI PRUMERNA MEZERA, NE DELKA KOLA. Driv se okno pocitalo
+		# z projeti mapy (3x walk_time), takze na displeji vysly mezery pres
+		# 20 s - Jan: "ne tak, že mezi každým nepřítelem je 1 minuta odstup".
+		# Prumer musi odpovidat tempu levelu a zadna mezera nesmi utect.
+		var avg: float = maxf(float(g.level.spawn), 90.0 / float(g.level.speed))
+		var sum: float = 0.0
+		var biggest: float = 0.0
+		for i in range(1, n):
+			var gp: float = float(g.spawn_times[i]) - float(g.spawn_times[i - 1])
+			sum += gp
+			biggest = maxf(biggest, gp)
+		var mean: float = sum / float(n - 1)
+		_check(mean <= avg * 1.6 and mean >= avg * 0.55,
+			"vlna %d: prumerna mezera %.2f s neodpovida tempu levelu %.2f s" % [w, mean, avg])
+		_check(biggest <= avg * 2.6,
+			"vlna %d: nejvetsi mezera je %.1f s, tempo levelu je %.1f s" % [w, biggest, avg])
+		# VSECHNY VSTUPY SE MUSI VEJT DO JEDNOHO PROJETI MAPY: kdyby vstupy
+		# trvaly dyl, hrac by na konci vlny zase jen koukal do prazdne mapy.
+		var last_in: float = float(g.spawn_times[n - 1])
 		var walk: float = g.walk_time()
-		var last: float = float(g.spawn_times[n - 1])
-		var share: float = last / maxf(last + walk, 0.001)
-		_check(share >= 0.6,
-			"vlna %d: poutnici vstupuji jen v %.0f %% kola, maji ve trech ctvtinach" % [
-				w, share * 100.0])
+		_check(last_in <= walk,
+			"vlna %d: vstupy trvaji %.1f s, projeti mapy je %.1f s" % [w, last_in, walk])
 
 
 # VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU:

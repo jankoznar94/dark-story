@@ -23,28 +23,27 @@ const BASE_HP := 70.0
 const HP_GROWTH := 0.10
 const ENEMY_SPEED := 52.0
 const REWARD := 12
-# PRICHAZENI POUTNIKU: NEPRAVIDELNE A ROZLOZENE PO CELYCH TRI CTVRTINACH
-# KOLA. Jan: "Nepřátelé by měly chodit nepravidelně během kola. Teď chodí
-# vždy předvídatelně, jen během prvních pár vteřin a zbytek kola hráč
-# kouká. Třeba 3/4 času kola by měli nepravidelně náhodně chodit a pak už
-# jen hráč počká, až dojde poslední do cíle nebo zemře."
+# PRICHAZENI POUTNIKU: NEPRAVIDELNE, ALE OKNO SE RIDI PRUMERNOU MEZEROU, NE
+# DELKOU KOLA. Jan nejdriv chtel, aby poutnici chodili nepravidelne po celych
+# trech ctvtinach kola ("ne jen v prvnich par vterinach"), a pak: "Ale
+# nepřátelé teď chodí s šíleně velkými odstupy ... ne tak, že mezi každým
+# nepřítelem je 1 minuta odstup."
 #
-# KOLO = doba, kterou vlna trvá, kdyz ji nikdo nezastavi: vstupy poutniku
-# + jedno projeti mapy. `ROUND_LAST_ENTRY` je podil kola, ve kterem jeste
-# poutnici VSTUPUJI: 0.75 znamena, ze posledni poutnik vstoupi ve trech
-# ctvtinach kola a zbytek kola uz jen dochazi do cile. Z toho vychazi
-# okno pro vstupy (`ROUND_SHARE` = 3x projeti mapy) - je to JEDNO cislo,
-# kterym se da tempo vlny posouvat nahoru i dolu.
-const ROUND_LAST_ENTRY := 0.75
+# Driv se okno pocitalo z projeti mapy (`ROUND_LAST_ENTRY` 0.75 znamenalo okno
+# 3x walk_time): na displeji to je pres 60 s, takze pri ctyrech poutnicich
+# vychazela mezera 20 s a hrac koukal do prazdne mapy. Tempo vlny je proto dane
+# PRUMERNOU MEZEROU (`Level.spawn`, ktera je zaroven podlaha hratelnosti - dve
+# klepnuti na vyhybku) a "nepravidelnost" dela jen to, ze se kazda mezera lije
+# v rozpeti 0.6 az 1.4 nasobku prumeru.
+#
 # Nejmensi mezera mezi dvema poutniky na vstupu. Hrac musi stihnout
 # PREPNOUT VYHYBKU PRO KAZDEHO ZVLAST, takze dve klepnuti (cca 0.4 s) se
 # musi do mezery vejit - stejne pravidlo jako driv, jen se ted meri
-# v pixelech (52 px/s * 1.73 s = 90 px). Rozlozeni do kola dela mezery
-# VETSI, tohle je podlaha, pod kterou hra nesmi jit ani na male mape.
+# v pixelech (52 px/s * 1.73 s = 90 px).
 const MIN_GAP_PX := 90.0
 # Vychozi prumerna mezera mezi poutniky (level si ji muze prepsat pres
-# Level.spawn). Je to ZAROVEN podlaha prumerne mezery: rozlozeni do kola
-# ji muze jen prodlouzit, nikdy zkratit.
+# Level.spawn). Je to ZAROVEN podlaha prumerne mezery - rozptyl ji muze jen
+# mirne protahnout, nikdy zkratit.
 const SPAWN_INTERVAL := 1.9
 const BUILD_TIME := 6.0
 const WAVE_BONUS := 40
@@ -340,28 +339,24 @@ func start_wave() -> void:
 	_note(msg)
 
 
-# ROZVRH VSTUPU PRO CELOU VLNU. Losuje se z nej: mezery mezi poutniky
-# nejsou stejne, ale jejich soucet zustava okno dane kolem - posledni
-# poutnik vstoupi tam, kam slibuje ROUND_LAST_ENTRY.
-#
-# Okno ma DVE podlazky a obe musi platit:
-#   * 3/4 kola - jinak by poutnici zase vysli v prvnich par vterinach,
-#   * prumerna mezera >= Level.spawn - jinak by na male mape (kratke
-#     kolo) prisli tak huste, ze by hrac nestihl prepnout vyhybku.
+# ROZVRH VSTUPU PRO CELOU VLNU. Mezery mezi poutniky nejsou stejne (hrac by
+# jinak videl starou periodu), ale jejich PRUMER je tempo levelu: kazda mezera
+# je 0.6 az 1.4 nasobek `Level.spawn` a nikdy nesmi klesnout pod hratelnostni
+# podlahu `MIN_GAP_PX` (dve klepnuti na vyhybku se musi do mezery vejit).
+# Nahodne cislo je z TEHOZ rng jako zivly poutniku, takze je hra dal
+# deterministicka (test na to ma kontrolu).
 func _spawn_schedule(count: int) -> Array:
 	var out: Array = []
 	if count <= 0:
 		return out
-	var walk: float = walk_time()
-	var share: float = ROUND_LAST_ENTRY / (1.0 - ROUND_LAST_ENTRY)
-	var win: float = share * walk
 	var gap_min: float = MIN_GAP_PX / _speed()
-	var avg_min: float = level.spawn if level != null else SPAWN_INTERVAL
-	if count > 1:
-		win = maxf(win, float(count - 1) * maxf(avg_min, gap_min))
-	# Nepravidelne mezery: kazda dostane nahodnou vahu 0.6 .. 1.4 a soucet
-	# vah se roztahne na okno. Nahodne cislo je z TEHOZ rng jako zivly
-	# poutniku, takze je hra dal deterministicka (test na to ma kontrolu).
+	var avg_gap: float = level.spawn if level != null else SPAWN_INTERVAL
+	avg_gap = maxf(avg_gap, gap_min)
+	# OKNO JE (pocet - 1) KRAT PRUMERNA MEZERA. Zadne "rozlozeni do kola":
+	# to drive znamenalo 3x walk_time, tedy pres minutu na displeji a mezery
+	# 20 s pri ctyrech poutnicich (Jan: "ne tak, že mezi každým nepřítelem je
+	# 1 minuta odstup").
+	var win: float = float(count - 1) * avg_gap
 	var weights: Array = []
 	var total: float = 0.0
 	for i in range(count - 1):
