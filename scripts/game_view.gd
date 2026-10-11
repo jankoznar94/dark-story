@@ -89,6 +89,28 @@ func _ready() -> void:
 		editor.tap_cell(Vector2i(5, 3))
 		_push_editor_level()
 		_shot = true
+	elif args.has("--panels-shot"):
+		# Snimek editoru S OTEVRENYM PANELEM: jediny zpusob, jak okem (a
+		# merenim pixelu) zkontrolovat, ze se panel kresli nad pruhem a ze
+		# se popisky vejdou do tlacitek.
+		_open_editor()
+		editor.level = Level.base()
+		editor.level.round_time = 90.0
+		editor.level.lives = 9
+		editor.sel_lane = 1
+		editor.panel = Editor.PANEL_LEVEL
+		_push_editor_level()
+		_shot = true
+	elif args.has("--sel-shot"):
+		# Snimek editoru s panelem "vyber" a vybranym usekem: kontrola, ze
+		# tlacitka "místa −/+" a "smazat úsek" opravdu jsou v panelu.
+		_open_editor()
+		editor.level = Level.base()
+		editor.sel_lane = 1
+		editor.sel_node = -1
+		editor.panel = Editor.PANEL_SEL
+		_push_editor_level()
+		_shot = true
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
@@ -130,6 +152,10 @@ func _reflow() -> void:
 	# Editor ma svou plochu - ma dole pruh tlacitek, ktery hra nema. Sit se
 	# prelozi podle toho, ktera obrazovka je otevrena.
 	if menu.is_editor():
+		# ROZVRZENI PANELU se pocita z OBSAHU, ktery dava editor: panel je
+		# jinak velky podle toho, co je v nem (nastroje = jeden radek,
+		# level = dva). Tady, aby se prelozilo i pri zmene velikosti okna.
+		layout.editor_panel(editor.panel_rows())
 		game.rebuild_network(layout.editor_arena, layout.s, layout.editor_bar_top())
 		return
 	game.rebuild_network(layout.arena, layout.s, layout.board_bottom)
@@ -390,8 +416,9 @@ func _handle_guide_tap(pos: Vector2) -> void:
 
 
 # EDITOR: klepnuti na bunku polozi prvek z palety, tazenim prstu se kresli
-# cesta. Poradi je dulezite: NEJDRIV tlacitka. Kdyby se hledala bunka prvni,
-# klepnuti na pruh by kreslilo cestu pod nim a tlacitko by nikdy nezabralo.
+# cesta. Poradi je dulezite: NEJDRIV pruh a panel. Kdyby se hledala bunka
+# prvni, klepnuti na panel by kreslilo cestu pod nim a tlacitko by nikdy
+# nezabralo.
 func _handle_editor_tap(pos: Vector2) -> void:
 	# SEZNAM: kazdy radek je level k nacteni (prvni je novy, posledni navrat).
 	if editor.is_list():
@@ -405,16 +432,40 @@ func _handle_editor_tap(pos: Vector2) -> void:
 				_push_editor_level()
 				return
 		return
-	for i in range(layout.ed_buttons.size()):
+	# PRUH: taby oteviraji panel, akce (zpet, seznam, export, hrat) se delaji hned.
+	var bar: Array = editor.bar_entries()
+	for i in range(mini(bar.size(), layout.ed_buttons.size())):
 		var r: Rect2 = layout.ed_buttons[i]
 		if not r.has_point(pos):
 			continue
 		_click()
-		var play: bool = editor.is_play(i)
-		editor.press(i)
+		var it: Dictionary = bar[i]
+		var act: int = int(it["act"])
+		editor.tap_bar(i)
 		_push_editor_level()
-		if play:
+		if editor.is_play(act):
 			_play_editor_level()
+		return
+	# PANEL: klepe se jen na tlacitka. Hodnota (act < 0) je popisek, ne
+	# tlacitko - klepnuti na ni nic nedela a NESMI propadnout na desku.
+	for row in layout.ed_panel_rows:
+		for e in row:
+			var pr: Rect2 = e["rect"]
+			if not pr.has_point(pos):
+				continue
+			var pact: int = int(e["item"].get("act", -1))
+			if pact < 0:
+				return
+			_click()
+			editor.press(pact)
+			_push_editor_level()
+			return
+	# KLEPNUTI NA DESKU S OTEVRENYM PANELEM PANEL JEN ZAVRE. Jinak by hrac
+	# polozil prvek pod panelem, tedy nekam, co nevidi.
+	if editor.panel != Editor.PANEL_NONE:
+		_click()
+		editor.close_panel()
+		_push_editor_level()
 		return
 	var cell: Vector2i = game.net.cell_at(pos)
 	if not editor.level.in_bounds(cell.x, cell.y):
@@ -482,7 +533,11 @@ func _draw_editor() -> void:
 	_draw_slots()
 	_draw_nodes()
 	_draw_editor_draft()
+	# PORADI JE DULEZITE: panel se kresli AZ PO desce (prekryva jeji spodni
+	# kus), ale PRED hornim pruhem, ktery je vždy videt cely.
+	_draw_editor_panel()
 	_draw_editor_bar()
+	_draw_editor_top()
 
 
 # SEZNAM ULOZENYCH LEVELU. Kazdy novy level dostane vlastni jmeno, takze se
@@ -531,61 +586,107 @@ func _draw_editor_draft() -> void:
 			Color(0.90, 0.87, 0.80), false, 2.0)
 
 
-func _draw_editor_bar() -> void:
-	var btns: Array = layout.ed_buttons
-	if btns.is_empty():
+func _draw_editor_top() -> void:
+	# HORNI PRUH EDITORU. Driv tu nebylo nic a vsechno se veslo nad tlacitka -
+	# jenze panel se rozbaluje prave tam, takze text by pod nim zmizel. Tady
+	# je vždy videt cely (je to mimo desku, stejne jako panel hry).
+	var pad: float = 14.0 * layout.ui
+	draw_rect(Rect2(0.0, 0.0, layout.view.x, layout.hud_h), Color(0.075, 0.07, 0.065))
+	draw_line(Vector2(0.0, layout.hud_h), Vector2(layout.view.x, layout.hud_h),
+		Color(0.28, 0.25, 0.21), 2.0)
+	var half: float = layout.view.x * 0.5 - pad
+	var lv_name: String = editor.level.name if editor.level != null else "?"
+	if lv_name.is_empty():
+		lv_name = "level"
+	_label(Vector2(pad, layout.hud_h * 0.48), lv_name, 20, Color(0.90, 0.87, 0.80))
+	_label(Vector2(pad, layout.hud_h * 0.88),
+		layout.fit_text(editor.sel_text(), _font, layout.font(13.0), half), 13,
+		Color(0.58, 0.55, 0.49))
+	# HLASKA ZPRAVA: rika, co se prave stalo a proc neco nejde. Kresli se
+	# z praveho okraje, aby se s vyberem vlevo nepretlacovala.
+	_label_right(layout.fit_text(editor.status, _font, layout.font(14.0), half),
+		layout.hud_h * 0.48, 14, Color(0.72, 0.70, 0.62), layout.view.x - pad)
+	# KOD LEVELU (kdyz je vyexportovany) je druha sance vedle schranky.
+	if not editor.code.is_empty():
+		_label_right(layout.fit_text(editor.code, _font, layout.font(11.0), half),
+			layout.hud_h * 0.88, 11, Color(0.80, 0.84, 0.70), layout.view.x - pad)
+
+
+# PANEL OTEVRENE KATEGORIE. Kresli se NAD pruhem a PREKRYVA spodni kus desky:
+# kdyby deska ujizdela, mrizka by pri kazdem otevreni menu uskocila a hrac by
+# ztratil misto, kde prave kreslil. Klepnuti na desku panel zavre.
+func _draw_editor_panel() -> void:
+	var rows: Array = layout.ed_panel_rows
+	if rows.is_empty():
 		return
-	var labels: Array = editor.button_labels()
+	var top: float = layout.ed_panel_top
+	var bot: float = layout.editor_bar_top()
+	draw_rect(Rect2(0.0, top, layout.view.x, bot - top), Color(0.105, 0.10, 0.09))
+	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.38, 0.35, 0.29), 2.0)
+	for row in rows:
+		var line: Array = row
+		var lpx: int = layout.panel_label_px(line, _font)
+		for e in line:
+			var r: Rect2 = e["rect"]
+			var it: Dictionary = e["item"]
+			var kind: String = str(it.get("kind", "action"))
+			if kind == "value":
+				# HODNOTA NENI TLACITKO. Kresli se jako text: ramecek by
+				# slibil klepnuti, ktere nic nedela.
+				_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
+					Color(0.94, 0.90, 0.80))
+				continue
+			draw_rect(r, Color(0.135, 0.125, 0.11))
+			var accent: Color = _panel_accent(it)
+			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+			_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.64, lpx,
+				Color(0.88, 0.85, 0.78))
+
+
+# CIM SE TLACITKO V PANELU VYZNACUJE. Barva je tu jen na to, co si ji
+# zaslouzi: zivel (barva je jeho identita), mazani (cervena) a prave
+# zvoleny nastroj (svetlejsi, ne barevny - barva patri zivlum).
+func _panel_accent(it: Dictionary) -> Color:
+	var kind: String = str(it.get("kind", "action"))
+	if kind == "elem":
+		return Level.value_color(editor.elem)
+	if kind == "danger":
+		return Color(0.66, 0.34, 0.30)
+	if kind == "tool" and bool(it.get("on", false)):
+		return Color(0.85, 0.82, 0.76)
+	return Color(0.44, 0.41, 0.36)
+
+
+func _draw_editor_bar() -> void:
+	var entries: Array = editor.bar_entries()
+	var btns: Array = layout.ed_buttons
+	if entries.is_empty() or btns.is_empty():
+		return
+	var labels: Array = []
+	for e in entries:
+		labels.append(str(e["label"]))
 	var label_px: int = layout.ed_label_px(labels, _font)
 	var top: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
-	# NAD PRUHEM JE JEDNO MISTO, KDE MUZE BYT TEXT: rika, ktery usek je
-	# vybrany a co se prave stalo. Deska zustava bez textu.
-	#
-	# HLASKA JE TO, CO HRA POTREBUJE VIDET - rika, co se stalo a proc neco
-	# nejde. Kresli se ZPRAVA (od praveho okraje) a vybrany usek se vejde do
-	# zbytku: kdyby se obe kreslily naslepo, prekryly by se presne ve chvili,
-	# kdy je hlaska nejdulezitejsi.
-	var bar_w: float = layout.view.x - 28.0 * layout.ui
-	var st: String = layout.fit_text(editor.status, _font, layout.font(14.0), bar_w)
-	var st_w: float = 0.0
-	if not st.is_empty():
-		st_w = _text_w(st, 14)
-		_label_right(st, top - 8.0 * layout.ui, 14, Color(0.72, 0.70, 0.62),
-			layout.view.x - 14.0 * layout.ui)
-	var cap_w: float = maxf(bar_w - st_w - 12.0 * layout.ui, 90.0)
-	_label(Vector2(14.0 * layout.ui, top - 8.0 * layout.ui),
-		layout.fit_text(editor.sel_text(), _font, layout.font(14.0), cap_w), 14,
-		Color(0.88, 0.85, 0.78))
-	# KOD LEVELU. Kdyz je vyexportovany, ukaze se nad pruhem - hrac ho odsud
-	# opise nebo zkopiruje a posle. Je pres 700 znaku dlouhy, takze se ZKRATI
-	# a ukonci teckami; cely je v souboru vedle (a v hlasce je cesta k nemu).
-	if not editor.code.is_empty():
-		var cw: float = layout.view.x - 28.0 * layout.ui
-		_label(Vector2(14.0 * layout.ui, top + 16.0 * layout.ui),
-			layout.fit_text(editor.code, _font, layout.font(11.0), cw), 11,
-			Color(0.80, 0.84, 0.70))
-	for i in range(btns.size()):
+	for i in range(mini(entries.size(), btns.size())):
 		var r: Rect2 = btns[i]
+		var e: Dictionary = entries[i]
 		draw_rect(r, Color(0.135, 0.125, 0.11))
-		var accent: Color = Color(0.42, 0.40, 0.35)
-		if i == Editor.BTN_EXPORT:
+		var accent: Color = Color(0.44, 0.41, 0.36)
+		var tab: int = int(e["tab"])
+		var act: int = int(e["act"])
+		if tab >= 0:
+			# TAB: kdyz je jeho panel otevreny, sviti - hrac vi, kde stoji.
+			accent = Color(0.85, 0.82, 0.76) if editor.panel == tab else Color(0.52, 0.49, 0.43)
+		elif act == Editor.BTN_EXPORT:
 			accent = Color(0.65, 0.78, 0.60)
-		elif i == Editor.BTN_PLAY:
+		elif act == Editor.BTN_PLAY:
 			accent = Color(0.78, 0.62, 0.30)
-		elif i == Editor.BTN_ELEM:
-			# Tlacitko zivlu nese BARVU TOHO ZIVLU, ktery se prave kresli -
-			# hrac tak vidi, cim kresli, aniz by to musel nekde cist.
-			accent = Level.value_color(editor.elem)
-		elif i == editor.tool:
-			# Zvoleny nastroj je svetlejsi. Ne barvou, ale jasem - barva je
-			# v teto hre vyhrazena zivlum.
-			accent = Color(0.85, 0.82, 0.76)
 		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
 		# Pismo popisku se bere z rozvrzeni (stejne cislo, kterym ho meri test):
 		# na uzkem displeji se o stupen zmensi, aby se popisek do tlacitka vesel.
-		_draw_centered(labels[i], r, r.position.y + r.size.y * 0.64, label_px,
+		_draw_centered(str(e["label"]), r, r.position.y + r.size.y * 0.64, label_px,
 			Color(0.88, 0.85, 0.78))
 
 

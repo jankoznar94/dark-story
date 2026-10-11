@@ -28,17 +28,62 @@ const TOOL_COUNT := 7
 const TYPE_CYCLE := [Element.FIRE, Element.WATER, Element.EARTH, Element.AIR,
 	Level.NEUTRAL, Level.KMEN]
 
-# Tlacitka za nastroji.
+# PRUH TABU + ROZBALOVACI PANELY. Editor uz nema jednu radu trinacti
+# tlacitek: dole je pruh s taby (nastroje / vyber / level) a ctyrmi akcemi
+# (zpet, seznam, export, hrat), a nad nim se rozbali panel te kategorie.
+#
+# Proc to: do rady se uz NIC neveslo (trinact je strop pro 640x360) a popisky
+# se musely zmensovat na 11 px. V panelu je na popisky vic mista a hlavne je
+# kam dat nove veci - parametry levelu (cas kola, rychlost, zivoty, zlato,
+# sila useku), ktere driv nemely vubec ovladani.
+#
+# CISLA TLACITEK ZUSTAVAJI (press(act)) - panel je jen to, KDE tlacitko bydli.
+# Vstup do UI je VZDY `bar_entries()` / `panel_rows()`: kdyby si kresleni
+# a klepnuti stavely vlastni seznam, rozejdou se a tlacitko bude jinde, nez
+# se macka.
+enum { PANEL_NONE, PANEL_TOOLS, PANEL_SEL, PANEL_LEVEL }
+const PANEL_LABELS := ["nástroje", "výběr", "level"]
+const PANEL_COUNT := 3
+const PANEL_HINTS := [
+	"",
+	"Nástroje: klepni na nástroj, kterým se kreslí nebo klade prvek.",
+	"Výběr: klepni na úsek nebo na prvek, pak tady měň, co k němu patří.",
+	"Level: kolo = čas vstupů · rychlost poutníků · životy · zlato · síla úseku = poskození za projetí.",
+]
+
+# Tlacitka za nastroji. Poradi je dane; cisla se nesmi prekryvat s nastroji.
 const BTN_ELEM := TOOL_COUNT
+# U VYBRANEHO PRVKU tohle tlacitko cykluje DRUH uzlu ("druh: výhybka").
+# U useku se pocet mist meni DVEMA tlacitky - cyklus 0..6 znamenal z "mista 3"
+# na "mista 0" ctyri klepnuti a hrac u toho preletel vsechno mezi tim.
 const BTN_SLOTS := TOOL_COUNT + 1
+const BTN_SLOTS_DOWN := TOOL_COUNT + 2
+const BTN_SLOTS_UP := TOOL_COUNT + 3
+# SMAZAT VYBER. Guma maze klepnutim na prvek nebo na cestu; tohle maze to,
+# co je prave oznacene - hrac nemusi trefovat maly uzel, ktery uz ma vybrany.
+const BTN_DELETE := TOOL_COUNT + 4
 # "ZPET" - vraci posledni upravu. Nahradilo tlacitko "novy": novy level se
 # da udelat prvnim radkem v seznamu (a "zpet" je pri kresleni potreba
 # mnohem casteji nez novy level).
-const BTN_UNDO := TOOL_COUNT + 2
-const BTN_LIST := TOOL_COUNT + 3
-const BTN_EXPORT := TOOL_COUNT + 4
-const BTN_PLAY := TOOL_COUNT + 5
-const BTN_COUNT := TOOL_COUNT + 6
+const BTN_UNDO := TOOL_COUNT + 5
+const BTN_LIST := TOOL_COUNT + 6
+const BTN_EXPORT := TOOL_COUNT + 7
+const BTN_PLAY := TOOL_COUNT + 8
+# PARAMETRY LEVELU. Dva za sebou (dolu, nahoru) pro kazdy parametr.
+const BTN_PARAM_DOWN := BTN_PLAY + 1
+# TABULKA PARAMETRU LEVELU je JEDNO misto, kde se o nich vi vsechno: jak se
+# jmenuji, jaky je krok a meze. Popisek tlacitka, klepnuti i test se ptaji
+# tady - jinak by popisek za chovani zaostal.
+# "f" = desetinne cislo, "i" = cele cislo (do levelu se zapisuje jako int).
+const PARAMS := [
+	{"key": "round_time", "label": "kolo", "kind": "f", "step": 15.0, "lo": 15.0, "hi": 600.0},
+	{"key": "speed", "label": "rychlost", "kind": "f", "step": 4.0, "lo": 12.0, "hi": 200.0},
+	{"key": "lives", "label": "životy", "kind": "i", "step": 2.0, "lo": 1.0, "hi": 99.0},
+	{"key": "gold", "label": "zlato", "kind": "i", "step": 20.0, "lo": 0.0, "hi": 2000.0},
+	{"key": "zone_dmg", "label": "síla", "kind": "f", "step": 5.0, "lo": 5.0, "hi": 200.0},
+]
+const PARAM_COUNT := 5
+const BTN_COUNT := BTN_PARAM_DOWN + PARAM_COUNT * 2
 
 const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
 	Level.SPOJKA, Level.UZEL, Level.NEUTRAL]
@@ -78,6 +123,10 @@ var status: String = ""
 var code: String = ""
 var local_name: String = ""
 var mode: int = MODE_EDIT
+# KTERY PANEL JE OTEVRENY. Panel prekryva spodni kus desky, takze klepnuti na
+# desku ho zavre (aby se pod panelem omylem nekladl prvek) - proto je to stav,
+# ktery znaji kresleni, klepnuti i rozvrzeni.
+var panel: int = PANEL_NONE
 
 # Prubeh tahnuti prstem. `draw_cells` je to, co hrac prave nakreslil, a
 # kresli se to zive - dokud prst nezvedne, neni to soucast levelu.
@@ -107,6 +156,7 @@ func reset() -> void:
 	local_name = keep
 	level.name = local_name
 	mode = MODE_EDIT
+	panel = PANEL_NONE
 	tool = TOOL_ROAD
 	status = "Prázdná mřížka. Polož START a pak tažením prstu kresli cesty."
 	code = ""
@@ -253,31 +303,163 @@ func pick(item: Dictionary) -> void:
 	close_list()
 
 
-func button_labels() -> Array:
-	var out: Array = []
-	for t in TOOL_LABELS:
-		out.append(t)
-	out.append(Level.value_name(elem))
-	out.append(_slots_label())
-	out.append("zpět")
-	out.append("seznam")
-	out.append("export")
-	out.append("hrát")
-	return out
+# =========================================================================
+# PRUH A PANELY
+# =========================================================================
+
+# SPODNI PRUH. Tri taby (oteviraji panel nad pruhem) a ctyri akce, ktere se
+# delaji hned. Kresleni, klepnuti i testy jdou pres tenhle jediny seznam:
+# kdyby si kazdy stavil vlastni, tlacitko by bylo jinde, nez se macka.
+func bar_entries() -> Array:
+	return [
+		{"tab": PANEL_TOOLS, "act": -1, "label": PANEL_LABELS[0]},
+		{"tab": PANEL_SEL, "act": -1, "label": PANEL_LABELS[1]},
+		{"tab": PANEL_LEVEL, "act": -1, "label": PANEL_LABELS[2]},
+		{"tab": -1, "act": BTN_UNDO, "label": "zpět"},
+		{"tab": -1, "act": BTN_LIST, "label": "seznam"},
+		{"tab": -1, "act": BTN_EXPORT, "label": "export"},
+		{"tab": -1, "act": BTN_PLAY, "label": "hrát"},
+	]
 
 
-# POPISEK TLACITKA "mista". Nekdy to nejsou mista:
-#   * vybrany PRVEK  -> "druh: výhybka" (tlacitkem se meni druh uzlu),
-#   * usek bez poskozeni (vstupni usek, kmen) -> "místa 0" (nic na nem
-#     postavit nejde a krouzky se tam ani nekresli).
-# Tlacitko NIKDY nelze: co je na nem napsane, to se stiskem zmeni.
-func _slots_label() -> String:
+# OBSAH OTEVRENEHO PANELU. Vraci RADKY ZDOLA NAHOR (prvni radek je u pruhu),
+# kazda polozka je:
+#   act   - cislo tlacitka pro press(); -1 = jen popisek hodnoty, ne tlacitko
+#   label - co je na nem napsane
+#   w     - vaha sirky (1.0 = obycejne tlacitko)
+#   on    - je to prave zvolena vec (kresli se svetleji)
+#   kind  - "tool" | "elem" | "danger" | "value" | "action" (podle toho barva)
+func panel_rows() -> Array:
+	match panel:
+		PANEL_TOOLS:
+			var row: Array = []
+			for i in range(TOOL_COUNT):
+				row.append({"act": i, "label": TOOL_LABELS[i], "w": 1.0,
+					"on": tool == i, "kind": "tool"})
+			return [row]
+		PANEL_SEL:
+			return _sel_rows()
+		PANEL_LEVEL:
+			return _level_rows()
+	return []
+
+
+# PANEL "VYBER". Co se da delat, zavisi na tom, co je oznacene - a kdyz nic,
+# meni se tim, cim se bude kreslit DALSI cesta (jako driv tlacitko "mista").
+# POCET MIST JE VIDET V HORNIM PRUHU (a v hlasce po kazdem klepnuti): tlacitka
+# jsou proto jen "místa −" a "místa +", ne jedno pretáčecí.
+func _sel_rows() -> Array:
 	if sel_node >= 0 and sel_node < level.node_count():
-		return "druh: %s" % level.kind_name(level.node_kind(sel_node))
-	if sel_lane >= 0 and sel_lane < level.lane_count() \
-			and not level.lane_deals_damage(sel_lane):
-		return "místa 0"
-	return "místa %d" % selected_slot_count()
+		return [[
+			{"act": BTN_SLOTS, "label": _kind_label(), "w": 1.6, "on": false, "kind": "action"},
+			{"act": BTN_DELETE, "label": "smazat prvek", "w": 1.3, "on": false, "kind": "danger"},
+		]]
+	var row: Array = [
+		{"act": BTN_ELEM, "label": Level.value_name(elem), "w": 1.4, "on": false, "kind": "elem"},
+		{"act": BTN_SLOTS_DOWN, "label": "místa −", "w": 1.0, "on": false, "kind": "action"},
+		{"act": BTN_SLOTS_UP, "label": "místa +", "w": 1.0, "on": false, "kind": "action"},
+	]
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
+	return [row]
+
+
+# PANEL "LEVEL". Dva radky parametru, kazdy jako [−] [hodnota] [+] - hodnota
+# je jen popisek, ne tlacitko (tlacitko, ktere nic nedela, je lez).
+func _level_rows() -> Array:
+	return [
+		_param_row([0, 1, 2]),
+		_param_row([3, 4]),
+	]
+
+
+func _param_row(ids: Array) -> Array:
+	var row: Array = []
+	for p in ids:
+		var par: Dictionary = PARAMS[p]
+		var key: String = str(par["key"])
+		row.append({"act": BTN_PARAM_DOWN + int(p) * 2, "label": "%s −" % str(par["label"]),
+			"w": 0.9, "on": false, "kind": "action"})
+		row.append({"act": -1, "label": _param_text(key), "w": 1.0, "on": false, "kind": "value"})
+		row.append({"act": BTN_PARAM_DOWN + int(p) * 2 + 1, "label": "%s +" % str(par["label"]),
+			"w": 0.9, "on": false, "kind": "action"})
+	return row
+
+
+# HODNOTA PARAMETRU jako text (popisek mezi − a +). Cela cisla se kresli bez
+# desetinne tecky, cas kola s jednotkou - jinak by "120.00" nikdo neprecetl.
+# POZOR: Godot v `%` formatu NEMA `%g` (spadne to na "unsupported format
+# character" a funkce se ukonci - popisek pak zustane syrovy s "%g" v sobe).
+func _param_text(key: String) -> String:
+	var v: float = float(level.get(key))
+	for p in PARAMS:
+		if str(p["key"]) == key:
+			var txt: String = str(int(round(v))) if str(p["kind"]) == "i" else _fmt_num(v)
+			return txt + (" s" if key == "round_time" else "")
+	return _fmt_num(v)
+
+
+func _fmt_num(v: float) -> String:
+	if is_equal_approx(v, roundf(v)):
+		return str(int(round(v)))
+	return "%.1f" % v
+
+
+# JE TO CISLO TLACITKA PARAMETRU? Jedno misto, kde se to rozhoduje - jinak by
+# se "cislo nad BTN_PARAM_DOWN" pocitalo na vice mistech a nekde by uteklo.
+func is_param_button(b: int) -> bool:
+	return b >= BTN_PARAM_DOWN and b < BTN_COUNT
+
+
+func param_of_button(b: int) -> int:
+	if not is_param_button(b):
+		return -1
+	return int((b - BTN_PARAM_DOWN) / 2)
+
+
+# OTEVRENI / ZAVRENI PANELU. Klepnuti na tentýž tab panel zavre - hrac tak
+# muze panel schovat, aniž by musel nekam jinam.
+func toggle_panel(p: int) -> void:
+	if p < 0 or p > PANEL_COUNT:
+		return
+	if panel == p:
+		panel = PANEL_NONE
+		status = "Panel zavřen (klepni na tab a otevřeš ho znovu)."
+		return
+	panel = p
+	status = str(PANEL_HINTS[p])
+
+
+func close_panel() -> void:
+	panel = PANEL_NONE
+
+
+# PRUH: klepnuti na polozku pruhu. Tab otevira/zavira panel, akce se dela hned.
+func tap_bar(i: int) -> void:
+	var e: Array = bar_entries()
+	if i < 0 or i >= e.size():
+		return
+	var it: Dictionary = e[i]
+	if int(it["tab"]) >= 0:
+		toggle_panel(int(it["tab"]))
+		return
+	press(int(it["act"]))
+
+
+# KOLIK MIST UKAZUJE HORNI PRUH. Pocet mist neni na tlacitku ("místa −/+"),
+# takze jedine, co hrac opravdu cte, je text vyberu nahore - testy se ptaji
+# tady, aby nemerily neco jineho, nez je na obrazovce.
+func slots_text() -> String:
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		return "úsek %d · míst %d" % [sel_lane, level.lane_bonus_slots(sel_lane)]
+	return "míst %d" % selected_slot_count()
+
+
+# POPISEK TLACITKA U VYBRANEHO PRVKU. Ukazuje DRUH uzlu, ktery stiskem
+# prekaci (start -> cíl -> výhybka -> spojka -> uzel). Tlacitko NIKDY nelze:
+# co je na nem napsane, to se stiskem zmeni.
+func _kind_label() -> String:
+	return "druh: %s" % level.kind_name(level.node_kind(sel_node))
 
 
 # KOLIK MIST MA VYBRANY USEK (nula, kdyz na nem nejde stavet). Pouziva se
@@ -304,8 +486,8 @@ func sel_text() -> String:
 		return "úsek %d · %s · míst %d · (úseků %d · uzlů %d)" % [sel_lane,
 			level.lane_type_name(sel_lane),
 			level.lane_bonus_slots(sel_lane), level.lane_count(), level.node_count()]
-	return "úseků %d · uzlů %d — klepni na úsek nebo na prvek a vybereš ho" % [
-		level.lane_count(), level.node_count()]
+	return "úseků %d · uzlů %d · nové cesty: %s, míst %d — klepni na úsek nebo na prvek a vybereš ho" % [
+		level.lane_count(), level.node_count(), Level.value_name(elem), selected_slot_count()]
 
 
 # =========================================================================
@@ -793,11 +975,20 @@ func press(button: int) -> void:
 			status = "Klepni, kam má %s přijít. Tažením z prvku ho přesuneš." \
 				% TOOL_LABELS[button]
 		return
+	if is_param_button(button):
+		_param_step(button)
+		return
 	match button:
 		BTN_ELEM:
 			_elem_press()
 		BTN_SLOTS:
 			_slots_press()
+		BTN_SLOTS_UP:
+			_slots_step(1)
+		BTN_SLOTS_DOWN:
+			_slots_step(-1)
+		BTN_DELETE:
+			_delete_press()
 		BTN_UNDO:
 			undo()
 		BTN_LIST:
@@ -831,19 +1022,31 @@ func _elem_press() -> void:
 	status = "Kreslím typ cesty: %s." % Level.value_name(elem)
 
 
-# TLACITKO "mista" JE VICEROLE:
-#   * vybrany PRVEK -> meni DRUH uzlu (start -> cíl -> výhybka -> spojka
-#     -> uzel), takze hrac, ktery si prvek oznacil, ho muze i upravit,
-#   * vybrany usek, ktery poskozuje -> meni pocet mist na bonus,
-#   * vybrany usek, ktery neposkozuje (vstupni usek, kmen) -> nic se meni
-#     a rekne se proc; tlacitko na nem ukazuje "místa 0",
-#   * bez vyberu -> s kolika misty se kresli dalsi cesta.
+# TLACITKO "DRUH" U VYBRANEHO PRVKU. Existuje jen pro prvek - u useku se pocet
+# mist meni tlacitky "místa −"/"místa +" (viz `_slots_step`).
 func _slots_press() -> void:
 	if sel_node >= 0 and sel_node < level.node_count():
 		_kind_press()
 		return
+	status = "Tenhle stisk patří prvku — klepni na uzel a změníš jeho druh. Místa na úseku měň přes „místa − / +“."
+
+
+# POCET MIST NA BONUS: JEDNO KLEPNUTI = JEDNO MISTO. Meni se bud na vybranem
+# useku, nebo (bez vyberu) na tom, s cim se kresli dalsi cesta.
+# Usek, ktery neposkozuje (vstupni usek, kmen), mista NEMA - rekne se proc,
+# protoze tiche odmitnuti necha hrace klepat dokola a hledat chybu v sobe.
+func _slots_step(dir: int) -> void:
 	var cur: int = selected_slot_count()
-	var nxt: int = (cur + 1) % (Level.MAX_SLOTS + 1)
+	var nxt: int = clampi(cur + dir, 0, Level.MAX_SLOTS)
+	if nxt == cur:
+		if dir < 0:
+			status = "Míň než 0 míst nejde — úsek je bez bonusů."
+		else:
+			status = "Víc než %d míst na jeden úsek nejde." % Level.MAX_SLOTS
+		return
+	if sel_node >= 0 and sel_node < level.node_count():
+		status = "Vybraný je prvek, ne úsek — místa se mění na úseku."
+		return
 	if sel_lane >= 0 and sel_lane < level.lane_count():
 		if not level.lane_deals_damage(sel_lane):
 			status = "Úsek %d neposkozuje (vstupní úsek nebo kmen) — bonus na něm nemá co posílit." % sel_lane
@@ -879,6 +1082,65 @@ func _kind_press() -> void:
 	else:
 		status = "Prvek %d je teď %s, ale mapa teď neplatí: %s" % [
 			sel_node, level.kind_name(nxt), level.validate()[0]]
+
+
+# SMAZAT VYBER. Guma maze klepnutim na prvek nebo na cestu; tenhle button
+# maze to, co je prave oznacene - hrac nemusi na maly uzel znovu trefovat,
+# kdyz uz ho ma vybrany. Po smazani vyber zmizi (indexy se posunuly, takze
+# drzet ho dal by znamenalo ukazovat na neco jineho, nez hrac smazal).
+func _delete_press() -> void:
+	if sel_node >= 0 and sel_node < level.node_count():
+		_snapshot()
+		level.nodes.remove_at(sel_node)
+		sel_node = -1
+		sel_lane = -1
+		_after_change()
+		status = "Prvek smazán."
+		return
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		_snapshot()
+		level.lanes.remove_at(sel_lane)
+		sel_lane = -1
+		sel_node = -1
+		_after_change()
+		status = "Úsek smazán."
+		return
+	status = "Není co smazat — klepni na úsek nebo na prvek."
+
+
+# ZMENA PARAMETRU LEVELU. Hodnota se nejdriv spocita a teprve kdyz se opravdu
+# zmeni, ulozi se krok "zpet" a zapise - klepnuti na doraz (cas kola na maximu)
+# by jinak plnilo historii kroky, ktere nic nemeni.
+func _param_step(act: int) -> void:
+	var p: int = param_of_button(act)
+	if p < 0:
+		return
+	var par: Dictionary = PARAMS[p]
+	var key: String = str(par["key"])
+	var up: bool = (act - BTN_PARAM_DOWN) % 2 == 1
+	var cur: float = float(level.get(key))
+	var nv: float = clampf(cur + (float(par["step"]) if up else -float(par["step"])),
+		float(par["lo"]), float(par["hi"]))
+	if str(par["kind"]) == "i":
+		nv = float(int(round(nv)))
+	if is_equal_approx(nv, cur):
+		status = "%s už je na %s — dál to nejde." % [str(par["label"]), _param_text(key)]
+		return
+	_snapshot()
+	if str(par["kind"]) == "i":
+		level.set(key, int(nv))
+	else:
+		level.set(key, nv)
+	_after_change()
+	status = "Level: %s" % _level_text()
+
+
+# VSE, CO SE V PANELU "LEVEL" DA NASTAVIT - jedna hlaska, aby hrac videl
+# souvislosti (a aby se hodnoty nemusely cist z peti tlacitek).
+func _level_text() -> String:
+	return "kolo %s · rychlost %s · životy %s · zlato %s · síla úseku %s" % [
+		_param_text("round_time"), _param_text("speed"), _param_text("lives"),
+		_param_text("gold"), _param_text("zone_dmg")]
 
 
 # EXPORT. Kod levelu se nejen vypise nad pruhem, ale ROVNOU SE ZKOPIRUJE do

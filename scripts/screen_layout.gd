@@ -45,14 +45,12 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-# TRINACT tlacitek. Na 640x360 dava kazde 44 px pri mezere 3.4 px - popisek
-# "výhybka" se do nej vejde pri 11 px (meri to `ed_label_px`, stejnym cislem
-# jako kresleni). Trinact je POSLEDNI pocet, ktery se do jedne rady vejde;
-# ctrnact uz by si vyzadalo druhou radu, a ta bere misto mrizce, kterou hrac
-# upravuje (mereno, ne odhadnuto). Tlacitko "místa" proto cykluje pocet mist
-# na vybranem useku (0..Level.MAX_SLOTS) - "+" a "−" by byla dve tlacitka a
-# ta se sem nevejdou.
-const ED_COUNT := 13
+# SEDM POLOZEEK V PRUHU: taby (nastroje / vyber / level) a akce (zpet,
+# seznam, export, hrat). Na 640x360 dava kazda 84 px pri mezere 3.4 px -
+# popisky se do toho vejdou pri 13 px (meri to `ed_label_px`, stejnym cislem
+# jako kresleni). Vic polozek do rady nejde, ale nemusi: vsechno ostatni
+# bydli v PANELU, ktery se rozbali nad pruhem.
+const ED_COUNT := 7
 
 # HERNI DESKA JE BEZ OVLADANI - jedina vyjimka je navrat do editoru, kdyz
 # hrac hraje level, ktery si prave vyrobil. Je to v HORNIM PANELU, ne na
@@ -79,8 +77,12 @@ var settings_toggle := Rect2()
 var settings_back := Rect2()
 # Navrat do editoru v hornim panelu hry (jen kdyz hrac hraje level z editoru).
 var hud_back := Rect2()
-# Editor: pruh tlacitek dole + plocha, kterou zabira.
+# Editor: pruh tabu dole, panel otevrene kategorie a plocha, kterou zabira.
 var ed_buttons: Array = []
+# OTEVRENY PANEL: seznam radku (dole -> nahoru), kazdy radek seznam polozek
+# {"rect": Rect2, "item": {...}}. Prazdny = zadny panel otevreny.
+var ed_panel_rows: Array = []
+var ed_panel_top := 0.0
 var editor_arena := Rect2()
 
 
@@ -164,6 +166,10 @@ func compute(v: Vector2) -> void:
 		egap = 2.0
 		ew = (etot - egap * float(ED_COUNT - 1)) / float(ED_COUNT)
 	ed_buttons = []
+	# Panel se pocita zvlast (`editor_panel`) z obsahu, ktery da editor -
+	# tady se jen uklidi, aby po zmene velikosti okna nezustaly stare recty.
+	ed_panel_rows = []
+	ed_panel_top = v.y
 	var ex0: float = PAD * ui
 	var ey: float = v.y - eh - 6.0 * ui
 	for i in range(ED_COUNT):
@@ -179,43 +185,95 @@ func compute(v: Vector2) -> void:
 # Horni hrana pruhu tlacitek editoru. Pocita se na JEDNOM miste: kresleni
 # pruhu, arena editoru i sit, ktera pod nej nesmi kreslit, pouzivaji tuhle
 # hodnotu. Kdyz si ji kazdy pocital sam, pruh prekryl kus herni plochy.
+#
+# NAD TALCITKY JE JEN MALE ODSTUPENI: driv tu bylo 26 px pro popiskovou
+# radku (vybrany usek + hlaska), ale ta se prestehovala do HORNIHO pruhu -
+# nechat tu rezervu by znamenalo brat desce 22 px a posouvat panel zbytecne
+# vysoko.
 func editor_bar_top() -> float:
 	if ed_buttons.is_empty():
 		return view.y
-	return float(ed_buttons[0].position.y) - 26.0 * ui
+	return float(ed_buttons[0].position.y) - 4.0 * ui
 
 
-# HERNI DESKA JE BEZ OVLADANI. Vraci prazdny seznam a testy na tom trvaji:
-# jedina interakce na desce je klepnuti na usek nebo na misto na bonus,
-# a to zadne tlacitko nepotrebuje. Kdyby tu nejake pribylo, ubralo by misto
-# hraci plose - presne to se stalo s pruhem, ktery jsme odstranili.
-func all_buttons() -> Array:
-	return []
+# ROZVRZENI OTEVRENEHO PANELU. `spec` = radky ZDOLA NAHOR, kazda polozka
+# {"w": vaha sirky}. Sirka se v ramci radku deli podle vah, vyska zustava na
+# dotykovem minimu (stejne pravidlo jako u pruhu: zmensuje se sirka, nikdy
+# vyska). Panel se kresli NAD pruhem a PREKRYVA spodni kus desky - kdyby
+# arena ujizdela, mrizka by pri kazdem otevreni menu uskocila a hrac by
+# ztratil misto, kde prave kreslil.
+#
+# Panel neni soucasti `editor_arena`: deska se neposouva, jen se pod panelem
+# neda klepat (klepnuti na desku panel zavre).
+func editor_panel(spec: Array) -> void:
+	ed_panel_rows = []
+	ed_panel_top = editor_bar_top()
+	if spec.is_empty():
+		return
+	var rh: float = maxf(MIN_TOUCH, ED_BAR_H * ui)
+	var gap: float = ED_GAP * ui
+	var y: float = editor_bar_top() - gap - rh
+	for row in spec:
+		var items: Array = row
+		if items.is_empty():
+			continue
+		var sum: float = 0.0
+		for it in items:
+			sum += maxf(float(it.get("w", 1.0)), 0.05)
+		var avail: float = view.x - 2.0 * PAD * ui - gap * float(maxi(items.size() - 1, 0))
+		var x: float = PAD * ui
+		var line: Array = []
+		for it in items:
+			var bw: float = avail * maxf(float(it.get("w", 1.0)), 0.05) / sum
+			line.append({"rect": Rect2(x, y, bw, rh), "item": it})
+			x += bw + gap
+		ed_panel_rows.append(line)
+		y -= rh + gap
+	if not ed_panel_rows.is_empty():
+		var top_row: Array = ed_panel_rows[ed_panel_rows.size() - 1]
+		var first: Dictionary = top_row[0]
+		ed_panel_top = float(first["rect"].position.y) - gap
 
 
-func menu_rect(i: int) -> Rect2:
-	var r: Rect2 = menu_buttons[i]
-	return r
-
-
-# Tlacitka EDITORU. Nejsou na herni desce - ta je porad bez ovladani; editor
-# je jina obrazovka se svym vlastnim pruhem dole.
+# VSECHNA KLEPATKA EDITORU: pruh + otevreny panel. Jedno misto pro kontrolu,
+# ze se tlacitka neprekryvaji a ze se vejdou na displej.
 func all_editor_buttons() -> Array:
 	var out: Array = []
 	for r in ed_buttons:
 		out.append(r)
+	for row in ed_panel_rows:
+		for e in row:
+			out.append(e["rect"])
 	return out
 
 
-# VELIKOST PISMA POPISKU V PRUHU EDITORU. Tlacitek je dvanact a popisek
-# "výhybka" je na 640x360 o par pixelu sirsi nez tlacitko - kdyby se pismo
-# zmensovat nemohlo, prisel by hrac o popisek (a tlacitko bez popisku je
-# horsi nez zadne). Pocita se na JEDNOM miste: kresleni i test meri stejnym
-# cislem, jinak by test meril neco jineho, nez hrac vidi.
+# VELIKOST PISMA POPISKU V PRUHU EDITORU. Tlacitek je sedm, ale popisek
+# "nástroje" je nejdelsi - kdyby se pismo zmensovat nemohlo, prisel by hrac
+# o popisek (a tlacitko bez popisku je horsi nez zadne). Pocita se na JEDNOM
+# miste: kresleni i test meri stejnym cislem, jinak by test meril neco
+# jineho, nez hrac vidi.
 func ed_label_px(labels: Array, f: Font) -> int:
 	if ed_buttons.is_empty():
 		return 13
-	var room: float = ed_buttons[0].size.x - 4.0
+	return label_px_for(labels, f, ed_buttons[0].size.x - 4.0)
+
+
+# VELIKOST PISMA V JEDNOM RADKU PANELU. Bere se NEJUZSI tlacitko radku -
+# popisek se musi vejit do kazdeho z nich. Kazdy radek muze mit jinou
+# velikost, protoze radky maji ruzny pocet parametru (tri v radku = uzsi
+# tlacitka nez dve).
+func panel_label_px(row: Array, f: Font) -> int:
+	var labels: Array = []
+	var room: float = 1.0e9
+	for e in row:
+		labels.append(str(e["item"].get("label", "")))
+		room = minf(room, float(e["rect"].size.x) - 4.0)
+	if labels.is_empty():
+		return 13
+	return label_px_for(labels, f, room)
+
+
+func label_px_for(labels: Array, f: Font, room: float) -> int:
 	for px in range(13, 9, -1):
 		var fpx: int = font(float(px))
 		var fits := true
@@ -226,6 +284,32 @@ func ed_label_px(labels: Array, f: Font) -> int:
 		if fits:
 			return px
 	return 10
+
+
+func menu_rect(i: int) -> Rect2:
+	var r: Rect2 = menu_buttons[i]
+	return r
+
+
+# HERNI DESKA JE BEZ OVLADANI. Vraci prazdny seznam a testy na tom trvaji:
+# jedina interakce na desce je klepnuti na usek nebo na misto na bonus,
+# a to zadne tlacitko nepotrebuje. Kdyby tu nejake pribylo, ubralo by misto
+# hraci plose - presne to se stalo s pruhem, ktery jsme odstranili.
+func all_buttons() -> Array:
+	return []
+
+
+# Tlacitka EDITORU. Nejsou na herni desce - ta je porad bez ovladani; editor
+# je jina obrazovka se svym vlastnim pruhem dole.
+func editor_bar_buttons() -> Array:
+	var out: Array = []
+	for r in ed_buttons:
+		out.append(r)
+	return out
+
+
+# VELIKOST PISMA POPISKU V PRUHU EDITORU je jen JEDNA (`ed_label_px` vyse):
+# druhy vypocet by se s nim rozešel a test by meril neco jineho, nez hrac vidi.
 
 
 # ZKRACENI TEXTOVÉHO POLE NA SIRKU. Dlouhy text (kod levelu je pres 700

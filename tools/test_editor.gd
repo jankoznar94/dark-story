@@ -26,6 +26,9 @@ func _init() -> void:
 	_run("presouvani uzlu", _test_move_node)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
+	_run("panely a pruh", _test_panels)
+	_run("parametry levelu", _test_level_params)
+	_run("rozvrzeni editoru", _test_editor_layout)
 	_run("seznam levelu", _test_list)
 	if fails.is_empty():
 		print("EDITOR_ALL_PASS=true (%d kontrol)" % checks)
@@ -67,6 +70,39 @@ func _ed() -> Editor:
 	var e := Editor.new()
 	e.reset()
 	return e
+
+
+# POPISEK TLACITKA ZE STEJNEHO ZDROJE JAKO UI. Tlacitko bydli bud v pruhu,
+# nebo v nekterem panelu - hleda se v obojim pres `bar_entries()` /
+# `panel_rows()`. Kdyby si test skladal popisek sam, mohl by projit i s
+# popiskem, ktery hrac nikde nevidi (a to je presne ta chyba, kterou hledame).
+func _panel_label(e: Editor, act: int) -> String:
+	for it in e.bar_entries():
+		if int(it["act"]) == act:
+			return str(it["label"])
+	var save: int = e.panel
+	for p in range(1, Editor.PANEL_COUNT + 1):
+		e.panel = p
+		for row in e.panel_rows():
+			for it in row:
+				if int(it["act"]) == act:
+					e.panel = save
+					return str(it["label"])
+	e.panel = save
+	return ""
+
+
+# TLACITKA V PANELU: cisla akci, ktera panel nabizi (bez hodnotovych popisku).
+func _panel_acts(e: Editor, p: int) -> Array:
+	var save: int = e.panel
+	e.panel = p
+	var out: Array = []
+	for row in e.panel_rows():
+		for it in row:
+			if int(it["act"]) >= 0:
+				out.append(int(it["act"]))
+	e.panel = save
+	return out
 
 
 # LEVEL SE DVEMA POSKOZUJICIMI USEKY: START -> VYHYBKA -> dva cile.
@@ -225,9 +261,10 @@ func _test_element_and_exit() -> void:
 		e.press(Editor.BTN_ELEM)
 	_check(seen.size() == Editor.TYPE_CYCLE.size(), "cyklus typu cest neprosel")
 	_check(e.elem == seen[0], "cyklus typu cest se nevratil na zacatek")
-	_check(e.button_labels().size() == Editor.BTN_COUNT, "pruh nema %d tlacitek"
-		% Editor.BTN_COUNT)
-	_check(e.button_labels()[Editor.BTN_ELEM] == Element.name_of(e.elem),
+	_check(e.bar_entries().size() == 7, "pruh nema 7 polozek (tabu a akci)")
+	_check(_panel_acts(e, Editor.PANEL_SEL).size() >= 2, "panel vyberu je prazdny")
+	_check(e.slots_text().contains("míst"), "horni pruh neukazuje mista")
+	_check(_panel_label(e, Editor.BTN_ELEM) == Element.name_of(e.elem),
 		"tlacitko zivlu neukazuje zvoleny zivel")
 
 
@@ -275,8 +312,8 @@ func _test_edit_existing() -> void:
 	_check(e.level.lane_element(0) == Level.NEUTRAL,
 		"vstupnimu useku se nezmenil typ (je %s)" % e.level.lane_type_name(0))
 	_check(e.level.lane_deals_damage(0), "vstupni usek na elementu neposkozuje")
-	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.level.lane_slot_count(0),
-		"tlacitko u poskozujiciho vstupniho useku nelze: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(e.slots_text().contains("míst %d" % e.level.lane_bonus_slots(0)),
+		"horni pruh nelze o poctu mist: " + e.slots_text())
 	_check(e.status.contains("Vstupní"), "status nemluvi o vstupnim useku: " + e.status)
 	e.elem = Level.NEUTRAL
 	e.press(Editor.BTN_ELEM)
@@ -299,47 +336,64 @@ func _test_edit_existing() -> void:
 func _test_slot_edit() -> void:
 	var e := _ed()
 	_lane_level(e)
-	# bez vyberu se meni, s kolika misty se kresli dalsi cesta
+	# BEZ VYBERU se meni, s kolika misty se kresli dalsi cesta - a jedno
+	# klepnuti = jedno misto (driv to byl cyklus, co preskakoval hodnoty).
 	e.sel_lane = -1
 	e.sel_node = -1
+	e.draw_slots = 0
 	var n0: int = e.draw_slots
-	e.press(Editor.BTN_SLOTS)
-	_check(e.draw_slots == (n0 + 1) % (Level.MAX_SLOTS + 1),
-		"pocet mist pro nove cesty se nezmenil")
-	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.draw_slots,
-		"tlacitko neukazuje pocet mist: " + e.button_labels()[Editor.BTN_SLOTS])
+	e.press(Editor.BTN_SLOTS_UP)
+	_check(e.draw_slots == n0 + 1, "pocet mist pro nove cesty se nezmenil")
+	_check(e.slots_text().contains("míst %d" % e.draw_slots),
+		"horni pruh neukazuje pocet mist pro nove cesty: " + e.slots_text())
+	e.press(Editor.BTN_SLOTS_UP)
+	_check(e.draw_slots == n0 + 2, "druhe klepnuti na + nepridalo misto")
+	e.press(Editor.BTN_SLOTS_DOWN)
+	e.press(Editor.BTN_SLOTS_DOWN)
+	_check(e.draw_slots == n0, "mista se po - nevratila na puvodni pocet")
+	# DORAZ DOLU: nula je podlaha a rekne se to (tlacitko nesmi mlcet)
+	e.press(Editor.BTN_SLOTS_DOWN)
+	_check(e.draw_slots == 0, "pocet mist sel pod nulu (%d)" % e.draw_slots)
+	_check(e.status.contains("0 míst"), "doraz dolu nerekne proc: " + e.status)
 
 	# VSTUPNI USEK: nic na nem postavit nejde, takze se pocet mist nemeni
-	# a tlacitko to rekne ("místa 0") - tlacitko nesmi lhat.
+	# a hrac to musi slyset - tiche odmitnuti necha klepat dokola.
 	e.sel_lane = 0
 	var entry_slots: int = e.level.lane_slot_count(0)
-	e.press(Editor.BTN_SLOTS)
+	e.press(Editor.BTN_SLOTS_UP)
 	_check(e.level.lane_slot_count(0) == entry_slots,
 		"vstupnimu useku se zmenil pocet mist")
-	_check(e.button_labels()[Editor.BTN_SLOTS] == "místa 0",
-		"tlacitko u vstupniho useku nelze: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(e.status.contains("neposkuzuje") or e.status.contains("neposkozuje"),
+		"odmitnuti u vstupniho useku nerekne proc: " + e.status)
 	_check(not e.level.lane_deals_damage(0), "vstupni usek poskozuje")
 
-	# POSKOZUJICI USEK: cyklus 0..MAX_SLOTS a dokola
+	# POSKOZUJICI USEK: jedno klepnuti = jedno misto, obema smery, s mezemi.
 	e.sel_lane = 1
-	var seen: Dictionary = {}
+	e.level.set_lane_slots(1, 0)
+	e.press(Editor.BTN_SLOTS_UP)
+	_check(e.level.lane_slot_count(1) == 1, "na useku se nepridalo misto")
+	_check(e.slots_text().contains("míst 1"), "pruh neukazuje 1 misto: " + e.slots_text())
 	for i in range(Level.MAX_SLOTS + 2):
-		var cur: int = e.level.lane_slot_count(1)
-		seen[cur] = true
-		e.press(Editor.BTN_SLOTS)
-		_check(e.level.lane_slot_count(1) == (cur + 1) % (Level.MAX_SLOTS + 1),
-			"pocet mist na vybranem useku se nezmenil z %d" % cur)
-		_check(e.button_labels()[Editor.BTN_SLOTS] == "místa %d" % e.level.lane_slot_count(1),
-			"tlacitko nelze o poctu mist na useku")
-	_check(seen.has(0), "na useku se nikdy nepodarilo udelat nula mist")
-	_check(seen.size() == Level.MAX_SLOTS + 1, "cyklus neprosel vsechny pocty mist")
+		e.press(Editor.BTN_SLOTS_UP)
+	_check(e.level.lane_slot_count(1) == Level.MAX_SLOTS,
+		"pocet mist presel strop (%d)" % e.level.lane_slot_count(1))
+	_check(e.status.contains("nejde"), "strop nerekne proc: " + e.status)
+	e.press(Editor.BTN_SLOTS_DOWN)
+	_check(e.level.lane_slot_count(1) == Level.MAX_SLOTS - 1,
+		"misto se po - neubralo")
 	# pocet mist musi prezit ulozeni a nacteni
+	e.level.set_lane_slots(1, 2)
 	var code: String = e.level.to_code()
 	var back := Level.from_code(code)
 	_check(back != null, "kod s upravenym poctem mist se neda nacist")
 	if back != null:
-		_check(back.lane_slot_count(1) == e.level.lane_slot_count(1),
-			"po nacteni ma usek jiny pocet mist")
+		_check(back.lane_slot_count(1) == 2, "po nacteni ma usek jiny pocet mist")
+	# ZPET VRATI I POCET MIST
+	var undo_before: int = e.level.lane_slot_count(1)
+	e.press(Editor.BTN_SLOTS_UP)
+	e.press(Editor.BTN_UNDO)
+	_check(e.level.lane_slot_count(1) == undo_before,
+		"zpet nevrátilo pocet mist (%d vs %d)" % [e.level.lane_slot_count(1), undo_before])
 
 
 # TYPY CEST: zivly + neutralni usek + kmen. Jan: "v nabidce typu cest
@@ -419,14 +473,14 @@ func _test_select_node() -> void:
 	_check(e.status.contains("prvek"), "status nemluvi o prvku: " + e.status)
 	_check(e.sel_text().contains("výhybka"), "vyber neukazuje druh prvku: " + e.sel_text())
 	# tlacitko "mista" se u prvku zmeni na "druh" a opravdu meni druh
-	_check(e.button_labels()[Editor.BTN_SLOTS].begins_with("druh:"),
-		"tlacitko u prvku neukazuje druh: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(_panel_label(e, Editor.BTN_SLOTS).begins_with("druh:"),
+		"tlacitko u prvku neukazuje druh: " + _panel_label(e, Editor.BTN_SLOTS))
 	var before: int = e.level.node_kind(1)
 	e.press(Editor.BTN_SLOTS)
 	_check(e.level.node_kind(1) == (before + 1) % Level.KIND_NAMES.size(),
 		"druh prvku se nezmenil")
-	_check(e.button_labels()[Editor.BTN_SLOTS] == "druh: %s" % e.level.kind_name(e.level.node_kind(1)),
-		"tlacitko nelze o druhu prvku: " + e.button_labels()[Editor.BTN_SLOTS])
+	_check(_panel_label(e, Editor.BTN_SLOTS) == "druh: %s" % e.level.kind_name(e.level.node_kind(1)),
+		"tlacitko nelze o druhu prvku: " + _panel_label(e, Editor.BTN_SLOTS))
 	# klepnuti na CARU useku (ne na uzel) oznaci usek
 	e.tool = Editor.TOOL_ROAD
 	e.begin_draw(Vector2i(6, 2))
@@ -443,8 +497,8 @@ func _test_select_node() -> void:
 # jedna uprava) a vcetne levelu, ktery hrac omylem prepsal novym.
 func _test_undo() -> void:
 	var e := _ed()
-	_check(e.button_labels()[Editor.BTN_UNDO] == "zpět",
-		"v pruhu neni tlacitko zpet: " + e.button_labels()[Editor.BTN_UNDO])
+	_check(_panel_label(e, Editor.BTN_UNDO) == "zpět",
+		"v pruhu neni tlacitko zpet: " + _panel_label(e, Editor.BTN_UNDO))
 	e.press(Editor.BTN_UNDO)
 	_check(e.status.contains("Není co vrátit"), "zpet na prazdnem levelu nehlasi: " + e.status)
 
@@ -482,7 +536,7 @@ func _test_undo() -> void:
 	e.sel_lane = 1
 	e.sel_node = -1
 	var slots_before: int = e.level.lane_slot_count(1)
-	e.press(Editor.BTN_SLOTS)
+	e.press(Editor.BTN_SLOTS_UP)
 	e.press(Editor.BTN_UNDO)
 	_check(e.level.lane_slot_count(1) == slots_before, "zpet nevratilo pocet mist")
 	e.sel_node = 1
@@ -698,6 +752,239 @@ func _test_lane_type_color() -> void:
 		"barva pruhu se pocita z elementu (u kmene je to barva Zeme)")
 	_check(not src.contains("Element.color_of(editor.draw_elem)"),
 		"nacrt cesty se pocita z elementu (u kmene je to barva Zeme)")
+
+
+# =========================================================================
+# PANELY, PARAMETRY, ROZVRZENI
+# =========================================================================
+
+# PRUH S TABY A ROZBALOVACI PANELY. Hlida se:
+#   * pruh ma 3 taby + 4 akce a cisla akci v nem nejsou nastroje,
+#   * panel "nastroje" nabizi VSECHNY nastroje a klepnuti na nej nastroj
+#     opravdu prepne (nastroj je na dvou mistech: v palete a v pruhu stavu),
+#   * panel "vyber" se meni podle toho, co je oznacene (usek / prvek / nic)
+#     - jinak by hrac videl tlacitka, ktera na jeho vyber neplati,
+#   * hodnotovy popisek v panelu "level" NENI tlacitko (nema akci) - kdyby
+#     mel, slibil by klepnuti, ktere nic nedela.
+func _test_panels() -> void:
+	var e := _ed()
+	var bar: Array = e.bar_entries()
+	_check(bar.size() == 7, "pruh nema 7 polozek (ma %d)" % bar.size())
+	var tabs: int = 0
+	var acts: Array = []
+	for it in bar:
+		if int(it["tab"]) >= 0:
+			tabs += 1
+		else:
+			acts.append(int(it["act"]))
+	_check(tabs == 3, "v pruhu nejsou tri taby (jsou %d)" % tabs)
+	for a in [Editor.BTN_UNDO, Editor.BTN_LIST, Editor.BTN_EXPORT, Editor.BTN_PLAY]:
+		_check(acts.has(a), "v pruhu chybi akce %d" % a)
+
+	# NASTROJE: vsech sedm a klepnuti na kazdy opravdu prepne nastroj
+	var tools: Array = _panel_acts(e, Editor.PANEL_TOOLS)
+	_check(tools.size() == Editor.TOOL_COUNT,
+		"panel nastroju nema %d tlacitek (ma %d)" % [Editor.TOOL_COUNT, tools.size()])
+	e.panel = Editor.PANEL_NONE
+	for t in range(Editor.TOOL_COUNT):
+		e.press(t)
+		_check(e.tool == t, "nastroj %d se nevybral (je %d)" % [t, e.tool])
+	e.toggle_panel(Editor.PANEL_TOOLS)
+	_check(e.panel == Editor.PANEL_TOOLS, "panel nastroju se neotevrel")
+	e.toggle_panel(Editor.PANEL_TOOLS)
+	_check(e.panel == Editor.PANEL_NONE, "klepnuti na tentýž tab panel nezavrelo")
+
+	# VYBER: obsah zavisi na tom, co je oznacene
+	_lane_level(e)
+	e.sel_lane = -1
+	e.sel_node = -1
+	var none_acts: Array = _panel_acts(e, Editor.PANEL_SEL)
+	_check(none_acts.has(Editor.BTN_ELEM) and none_acts.has(Editor.BTN_SLOTS_UP)
+		and none_acts.has(Editor.BTN_SLOTS_DOWN),
+		"bez vyberu panel nevyber nenabizi zivel a mista -/+: " + str(none_acts))
+	_check(not none_acts.has(Editor.BTN_DELETE),
+		"bez vyberu panel nabizi smazani: " + str(none_acts))
+	e.sel_lane = 1
+	var lane_acts: Array = _panel_acts(e, Editor.PANEL_SEL)
+	_check(lane_acts.has(Editor.BTN_DELETE), "u vybraneho useku chybi smazani")
+	e.sel_lane = -1
+	e.sel_node = 0
+	var node_acts: Array = _panel_acts(e, Editor.PANEL_SEL)
+	_check(node_acts.size() == 2 and node_acts.has(Editor.BTN_DELETE),
+		"u vybraneho prvku panel nabizi %s" % str(node_acts))
+	_check(_panel_label(e, Editor.BTN_SLOTS).begins_with("druh:"),
+		"u prvku tlacitko neukazuje druh: " + _panel_label(e, Editor.BTN_SLOTS))
+
+	# SMAZANI VYBERU
+	e.sel_node = 0
+	var nodes0: int = e.level.node_count()
+	e.press(Editor.BTN_DELETE)
+	_check(e.level.node_count() == nodes0 - 1, "smazani prvku nesmazalo prvek")
+	_check(e.sel_node == -1 and e.sel_lane == -1, "po smazani zustal vyber viset")
+	e.sel_lane = 1
+	var lanes0: int = e.level.lane_count()
+	e.press(Editor.BTN_DELETE)
+	_check(e.level.lane_count() == lanes0 - 1, "smazani useku nesmazalo usek")
+
+	# HODNOTOVY POPISEK NENI TLACITKO: v panelu "level" musi byt polozky bez
+	# akce (hodnoty) a klepnuti na ne nic nedela.
+	var values: int = 0
+	e.panel = Editor.PANEL_LEVEL
+	for row in e.panel_rows():
+		for it in row:
+			if int(it["act"]) < 0 and str(it["kind"]) == "value":
+				values += 1
+			_check(str(it["kind"]) != "value" or int(it["act"]) < 0,
+				"hodnota v panelu je zaroven tlacitko")
+	_check(values == Editor.PARAM_COUNT,
+		"v panelu level chybi hodnoty (%d z %d)" % [values, Editor.PARAM_COUNT])
+
+	# KLEPNUTI NA DESKU S OTEVRENYM PANELEM PANEL JEN ZAVRE (a nic nepolozi).
+	# game_view se v testu neinstanciuje (je to obrazovka s _draw), takze se
+	# hlida PORADI v kodu: zavreni panelu musi byt PRED prací s bunkou -
+	# kdyby bylo az za ni, hrac by polozil prvek pod panelem, tedy nekam,
+	# co nevidi.
+	var vsrc: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	var body: String = _func_body(vsrc, "_handle_editor_tap")
+	_check(body.contains("editor.close_panel()"), "klepnuti na desku nezavre panel")
+	var iclose: int = body.find("editor.close_panel()")
+	var icell: int = body.find("game.net.cell_at(pos)")
+	_check(iclose >= 0 and icell >= 0 and iclose < icell,
+		"panel se zavira az po praci s bunkou - hrac by polozil prvek pod panelem")
+	# A panel i horni pruh se musi opravdu kreslit: tlacitka, ktera existuji
+	# jen v datech, hrac nevidi (presne to se stalo s hlasenim chyb).
+	_check(vsrc.contains("_draw_editor_panel()"), "editor nekresli panel")
+	_check(vsrc.contains("_draw_editor_top()"), "editor nekresli horni pruh")
+
+
+func _func_body(src: String, name: String) -> String:
+	var i: int = src.find("func " + name)
+	if i < 0:
+		return ""
+	var j: int = src.find("\nfunc ", i + 5)
+	return src.substr(i, (j - i) if j > 0 else src.length() - i)
+
+
+# PARAMETRY LEVELU: kazdy se meni po svem kroku, drzi meze a jde s nim ven
+# i kod levelu. Kdyz hrac klepne na doraz, NESMI se do historie "zpet" zapsat
+# krok, ktery nic nemeni.
+func _test_level_params() -> void:
+	var e := _ed()
+	var seen_dirs: Dictionary = {}
+	for p in range(Editor.PARAM_COUNT):
+		var par: Dictionary = Editor.PARAMS[p]
+		var key: String = str(par["key"])
+		var up_act: int = Editor.BTN_PARAM_DOWN + p * 2 + 1
+		var down_act: int = Editor.BTN_PARAM_DOWN + p * 2
+		e.panel = Editor.PANEL_LEVEL
+		# NAHORU: hodnota vyroste o krok (a popisek v panelu ji ukaze)
+		var before: float = float(e.level.get(key))
+		e.press(up_act)
+		var after: float = float(e.level.get(key))
+		_check(after > before, "%s se po + nezvedl (%s -> %s)" % [key, str(before), str(after)])
+		_check(absf(after - (before + float(par["step"]))) < 0.001
+			or absf(after - float(par["hi"])) < 0.001,
+			"%s se nezmenil o krok (%s -> %s)" % [key, str(before), str(after)])
+		var label: String = _panel_label(e, up_act)
+		_check(label.ends_with(" +"), "%s: tlacitko + ma popisek %s" % [key, label])
+		_check(e.status.contains(str(par["label"])), "hlaska nemluvi o %s: %s" % [key, e.status])
+		# DOLU: zpatky
+		e.press(down_act)
+		_check(absf(float(e.level.get(key)) - before) < 0.001,
+			"%s se po - nevratil na puvodni hodnotu" % key)
+		# DORAZ: doklepat az na horni mez a pak zkusit jeste jednou. Klepnuti,
+		# ktere nic nemeni, NESMI zapsat krok do historie "zpet" (jinak by
+		# se hrac proklikal krokody, ktere nic nedelaji).
+		var guard: int = 0
+		while float(e.level.get(key)) < float(par["hi"]) - 0.001 and guard < 500:
+			e.press(up_act)
+			guard += 1
+		_check(is_equal_approx(float(e.level.get(key)), float(par["hi"])),
+			"%s nedrzi horni mez (%s)" % [key, str(float(e.level.get(key)))])
+		var undo_before: int = e.undo_stack.size()
+		e.press(up_act)
+		_check(e.undo_stack.size() == undo_before,
+			"%s: klepnuti na doraz zapsalo krok do historie" % key)
+		_check(e.status.contains("dál to nejde"), "%s: doraz nerekne proc: %s" % [key, e.status])
+		seen_dirs[key] = true
+
+	# KOD LEVELU SI HODNOTY ODNESE. Bez toho by hrac nastavil cas kola
+	# a level by se mu po exportu vratil jiny. `from_code` vraci null, kdyz
+	# mapa neplati, takze se nejdriv postavi platna mapa (START -> VYHYBKA ->
+	# dva cile) - parametry se pak meni na ni.
+	_lane_level(e)
+	var code: String = e.level.to_code()
+	var back := Level.from_code(code)
+	_check(back != null, "kod s upravenymi parametry se neda nacist")
+	if back != null:
+		_check(is_equal_approx(back.round_time, e.level.round_time),
+			"cas kola se v kodu ztratil (%s vs %s)" % [str(back.round_time), str(e.level.round_time)])
+		_check(is_equal_approx(back.speed, e.level.speed), "rychlost se v kodu ztratila")
+		_check(back.lives == e.level.lives, "zivoty se v kodu ztratily")
+		_check(back.gold == e.level.gold, "zlato se v kodu ztratilo")
+		_check(is_equal_approx(back.zone_dmg, e.level.zone_dmg), "sila useku se v kodu ztratila")
+
+
+# ROZVRZENI PRUHU A PANELU: vsechno se musi vejit na displej, panel musi byt
+# NAD pruhem (ne pres nej) a popisky musi zustat citelne. Meri se na 640x360
+# (nejmensi podporovany) i na 960x600 - kresleni i test berou stejne cislo
+# z rozvrzeni, takze se nemuze stat, ze test meri neco jineho, nez hrac vidi.
+func _test_editor_layout() -> void:
+	var e := _ed()
+	_lane_level(e)
+	e.sel_lane = 1
+	e.sel_node = -1
+	var font := ThemeDB.fallback_font
+	for size in [Vector2(640.0, 360.0), Vector2(960.0, 600.0), Vector2(1024.0, 600.0)]:
+		var lay := ScreenLayout.new()
+		lay.compute(size)
+		_check(lay.ed_buttons.size() == 7, "%s: pruh nema 7 tlacitek" % str(size))
+		for r in lay.ed_buttons:
+			var rr: Rect2 = r
+			_check(rr.position.x >= -0.5 and rr.end.x <= size.x + 0.5,
+				"%s: tlacitko pruhu utika z displeje" % str(size))
+			_check(rr.size.y >= ScreenLayout.MIN_TOUCH - 0.5,
+				"%s: tlacitko pruhu je nizsi nez prst (%.1f)" % [str(size), rr.size.y])
+		var labels: Array = []
+		for it in e.bar_entries():
+			labels.append(str(it["label"]))
+		var lpx: int = lay.ed_label_px(labels, font)
+		_check(lpx >= 11, "%s: popisky v pruhu jsou jen %d px" % [str(size), lpx])
+		# KAZDY PANEL ZVLAST: musi se vejit, byt nad pruhem a mit citelny popisek
+		for p in range(1, Editor.PANEL_COUNT + 1):
+			var save: int = e.panel
+			e.panel = p
+			lay.editor_panel(e.panel_rows())
+			e.panel = save
+			_check(lay.ed_panel_rows.size() > 0, "%s: panel %d se nerozvrstvil" % [str(size), p])
+			_check(lay.ed_panel_top < lay.editor_bar_top() - 1.0,
+				"%s: panel %d neni nad pruhem" % [str(size), p])
+			var prev_bottom: float = 1.0e9
+			for row in lay.ed_panel_rows:
+				var line: Array = row
+				var row_top: float = 1.0e9
+				for en in line:
+					var rr: Rect2 = en["rect"]
+					_check(rr.position.x >= -0.5 and rr.end.x <= size.x + 0.5,
+						"%s: panel %d utika z displeje" % [str(size), p])
+					_check(rr.size.y >= ScreenLayout.MIN_TOUCH - 0.5,
+						"%s: tlacitko panelu %d je nizsi nez prst" % [str(size), p])
+					row_top = minf(row_top, rr.position.y)
+					_check(_rects_do_not_overlap(lay.all_editor_buttons(), rr),
+						"%s: tlacitka editoru se prekryvaji" % str(size))
+				_check(row_top < prev_bottom, "%s: radky panelu %d se prekryvaji" % [str(size), p])
+				prev_bottom = row_top + float(line[0]["rect"].size.y)
+				var plpx: int = lay.panel_label_px(line, font)
+				_check(plpx >= 11, "%s: popisky panelu %d jsou jen %d px" % [str(size), p, plpx])
+
+
+func _rects_do_not_overlap(all: Array, r: Rect2) -> bool:
+	var hits: int = 0
+	for other in all:
+		var o: Rect2 = other
+		if o.intersects(r, false):
+			hits += 1
+	return hits <= 1
 
 
 # SEZNAM ULOZENYCH LEVELU. Hlida se hlavne to, ze "novy" NEPREPISE predchozi
