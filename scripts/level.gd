@@ -321,6 +321,149 @@ func _bend_cell_free(lane: int, old: Array, c: Vector2i) -> bool:
 	return true
 
 
+# =========================================================================
+# POSUN ROVNEHO KUSU UPROSTRED CESTY ("obdelnikovy vystupek")
+#
+# Jan (Oct 2026): "Představuji si to tak, že mám třeba cestu ve tvaru
+# obdélníkového výstupku, chytnu prstem horní část obdélníku, potáhnu nahoru,
+# a celá tato část se posune nahoru, přičemž boční strany se automaticky
+# natáhnou."
+#
+# Tvar, ktery se tim mysli:
+#
+#      ... --s--> R0 --d--> R1 --d--> ... --d--> Rm --(-s)--> ...
+#
+# `R0..Rm` je rovny kus (vrsek vystupku), `s` je smer, kterym vystupek trci
+# ven. Posun kusu o `s` znamena, ze se CELY vrsek posune a obe bocni strany se
+# prodlouzi o jednu bunku - cesta zustane souvisla a vystupek zustane
+# obdelnikovy (zadne schodky). Dve bunky u kusu (R0 a Rm) pri tom zustavaji na
+# miste a stanou se prvnimi bunkami bocnich stran.
+#
+# Tohle je jina operace nez `bend_lane` (ta do cesty vlozi vybouleni na JEDNOM
+# kroku) - Janovo pero kresli tenhle posun.
+
+# ROVNY KUS POD BUNKOU, KTERY SE DA POSUNOUT DO STRANY. Vraci {} nebo
+# {a, b, d, s}: kus jsou bunky cs[a..b], `d` je jeho smer a `s` smer, kterym
+# se posouva ven z tvaru.
+#
+# Kusa na KONCI cesty (u uzlu) se to netyka - tam se hybe uzel, ne kus.
+func run_at(lane: int, cell: Vector2i) -> Dictionary:
+	if lane < 0 or lane >= lane_count():
+		return {}
+	var cs: Array = lane_cells(lane)
+	var n: int = cs.size()
+	var i: int = -1
+	for k in range(n):
+		if cs[k] == cell:
+			i = k
+			break
+	if i < 0:
+		return {}
+	var here: Vector2i = cs[i]
+	# KUS MIMO STRED: bunka muze byt ROH (vstup a vystup se lisi), takze smer
+	# kusu neni jednoznacny - zkousi se oba a vezme se ten, ktery da vystupek.
+	var dirs: Array = []
+	if i + 1 < n:
+		var nxt: Vector2i = cs[i + 1]
+		dirs.append(nxt - here)
+	if i > 0:
+		var prv: Vector2i = cs[i - 1]
+		dirs.append(here - prv)
+	for item in dirs:
+		var d: Vector2i = item
+		if absi(d.x) + absi(d.y) != 1:
+			continue
+		var a: int = i
+		while a > 0 and (cs[a] - cs[a - 1]) == d:
+			a -= 1
+		var b: int = i
+		while b + 1 < n and (cs[b + 1] - cs[b]) == d:
+			b += 1
+		if a == 0 or b == n - 1:
+			continue
+		var A: Vector2i = cs[a - 1]
+		var B: Vector2i = cs[b + 1]
+		var s: Vector2i = cs[a] - A
+		# Obdelnikovy vystupek: prvni strana je kolma na kus a druha jde
+		# presne zpet. Kdyz ne, neni to vystupek a posun by cestu preklopil
+		# sam na sebe.
+		if absi(s.x) + absi(s.y) != 1:
+			continue
+		if s.x * d.x + s.y * d.y != 0:
+			continue
+		if B - cs[b] != -s:
+			continue
+		return {"a": a, "b": b, "d": d, "s": s}
+	return {}
+
+
+# POSUN ROVNEHO KUSU O JEDNU BUNKU DO STRANY (`grow`) NEBO ZPET (`false`).
+# Projde kontrolou: kus se musi vejit do mrizky, nove bunky nesmi byt na uzlu
+# ani na jine ceste a cesta musi zustat souvisla a bez smycky.
+func shift_run(lane: int, cell: Vector2i, grow: bool) -> bool:
+	var run: Dictionary = run_at(lane, cell)
+	if run.is_empty():
+		return false
+	var cs: Array = lane_cells(lane)
+	var n: int = cs.size()
+	var a: int = int(run["a"])
+	var b: int = int(run["b"])
+	var d: Vector2i = run["d"]
+	var s: Vector2i = run["s"]
+	var A: Vector2i = cs[a - 1]
+	var out: Array = []
+	var added: Array = []
+	if grow:
+		out.append_array(cs.slice(0, a))
+		out.append(cs[a])
+		for k in range(a, b + 1):
+			var c: Vector2i = cs[k] + s
+			out.append(c)
+			added.append(c)
+		out.append(cs[b])
+		out.append_array(cs.slice(b + 1, n))
+	else:
+		# STEJNA OPERACE ZPET: kus se vrati a bunky, ktere drzely bocni
+		# strany, se zase slozi (dopočítá se, co mezi krajnimi bunkami chybi).
+		out.append_array(cs.slice(0, a))
+		for k in range(1, b - a):
+			var c2: Vector2i = A + d * k
+			out.append(c2)
+			added.append(c2)
+		out.append_array(cs.slice(b + 1, n))
+	if not _is_simple_path(out):
+		return false
+	for item in added:
+		var c3: Vector2i = item
+		if not in_bounds(c3.x, c3.y):
+			return false
+		if node_at_cell(c3) >= 0:
+			return false
+		for j in range(lane_count()):
+			if j == lane:
+				continue
+			for o in lane_cells(j):
+				if o == c3:
+					return false
+	lanes[lane]["cells"] = out
+	return true
+
+
+# SOUVISLA CESTA BEZ SMYCKY: sousedni bunky a zadna se neopakuje. Posun kusu
+# se tim da vyloucit, kdyby mel cestu preklopit sam na sebe.
+func _is_simple_path(cells: Array) -> bool:
+	for k in range(cells.size()):
+		var c: Vector2i = cells[k]
+		if k > 0:
+			var p: Vector2i = cells[k - 1]
+			if absi(c.x - p.x) + absi(c.y - p.y) != 1:
+				return false
+		for m in range(k):
+			if cells[m] == c:
+				return false
+	return true
+
+
 func lane_type_color(lane: int) -> Color:
 	return Level.value_color(lane_element(lane))
 

@@ -29,6 +29,7 @@ func _init() -> void:
 	_run("presouvani uzlu", _test_move_node)
 	_run("obdelnikovy vyber a kopie", _test_box_copy)
 	_run("chytani cesty prstem", _test_lane_grab_tools)
+	_run("posun vystupku prstem", _test_bump_shift)
 	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
@@ -1563,6 +1564,77 @@ func _test_lane_grab_tools() -> void:
 	var txt: String = e.sel_text()
 	_check(txt.contains("tažením prstem"),
 		"pruh u vybraneho useku nerika, ze se da tvarovat prstem: " + txt)
+
+
+# VYSTUPEK SE POSOUVA TAHEM PRSTEM (Jan, Oct 2026): "chytnu prstem horní část
+# obdélníku, potáhnu nahoru, a celá tato část se posune nahoru, přičemž boční
+# strany se automaticky natáhnou."
+#
+# Tohle je jina operace nez "ohnutí kusu" (`_test_lane_finger`): tam se do rovne
+# cesty vybouleni vlozi, tady se cely rovny kus posune a strany se natahnou.
+func _test_bump_shift() -> void:
+	var e := _ed()
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 5, Level.START)
+	var c: int = lv.add_node(7, 5, Level.CIL)
+	lv.add_lane(s, c, "RRURDRR", Element.FIRE)
+	e.level = lv
+	e.tool = Editor.TOOL_VYBER
+	var before: Array = e.level.lane_cells(0).duplicate()
+	var was: int = before.size()
+	# 1) PRST NA VRSEK VYSTUPKU: chyta se KUS (posun do strany), ne ohnuti
+	_check(e.begin_move(Vector2i(4, 4)), "vystupek se neda chytit prstem")
+	_check(e.drag_p == Vector2i(0, -1), "chyceny kus nema smer posunu (%s)" % str(e.drag_p))
+	_check(e.drag_run_cell == Vector2i(4, 4), "chyta se jina bunka nez ta pod prstem")
+	# 2) TAH NAHORU: cely vrsek se posune, obe bocni strany se prodlouzi
+	e.extend_move(Vector2i(4, 3))
+	var cs: Array = e.level.lane_cells(0)
+	_check(cs.size() == was + 2, "tah vystupek neposunul (%d -> %d)" % [was, cs.size()])
+	_check(cs.has(Vector2i(4, 3)) and cs.has(Vector2i(5, 3)),
+		"vrsek neni o bunku vys: " + str(cs))
+	var want: Array = [Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(4, 4),
+		Vector2i(4, 3), Vector2i(5, 3), Vector2i(5, 4), Vector2i(5, 5),
+		Vector2i(6, 5), Vector2i(7, 5)]
+	_check(cs.size() == want.size(), "tvar vystupku ma %d bunek, ma mit %d: %s" % [
+		cs.size(), want.size(), str(cs)])
+	for i in range(mini(cs.size(), want.size())):
+		_check(cs[i] == want[i], "tvar vystupku nesedi v bunce %d: %s vs %s" % [
+			i, str(cs[i]), str(want[i])])
+	# 3) TAH O DVE BUNKY: krok se nesmi preskocit, strany maji tri bunky
+	e.extend_move(Vector2i(4, 2))
+	_check(e.level.lane_cells(0).size() == was + 4, "druhy krok tahu vystupek neposunul")
+	_check(e.drag_run_cell == Vector2i(4, 2), "chycena bunka nejde s kusem")
+	# 4) TAH ZPET DOLU: krok za krokem presne na puvodni cestu
+	e.extend_move(Vector2i(4, 3))
+	e.extend_move(Vector2i(4, 4))
+	var back: Array = e.level.lane_cells(0)
+	_check(back.size() == was, "tah zpet nedal puvodni delku (%d vs %d)" % [back.size(), was])
+	for i in range(mini(back.size(), was)):
+		_check(back[i] == before[i], "tah zpet nedal puvodni cestu (bunka %d)" % i)
+	e.end_move()
+	# 5) CELY TAH JE JEDNA POLOZKA "ZPET" (ne jedna za kazdou bunku)
+	e.extend_move(Vector2i(4, 3))
+	e.end_move()
+	_check(e.undo_stack.size() == 1, "tah prstem neni jedna polozka zpet (%d)" % e.undo_stack.size())
+	e.undo()
+	_check(e.level.lane_cells(0).size() == was, "zpet nevratil puvodni cestu")
+	# 6) KLEPNUTI NA VRSEK (tah bez pohybu) jen VYBERE usek
+	e.sel_lane = -1
+	e.sel_node = -1
+	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
+	e.end_move()
+	_check(e.sel_lane == 0, "klepnuti na vrsek nevybralo usek (%d)" % e.sel_lane)
+	_check(not e.box_active, "klepnuti na vrsek spustilo obdelnikovy vyber")
+	# 7) TAH POD PUVODNI TVAR VYSTUPEK NESMI SMIZET (tah zpet by ho nevratil)
+	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
+	e.extend_move(Vector2i(4, 3))
+	e.extend_move(Vector2i(4, 6))
+	e.end_move()
+	var flat: Array = e.level.lane_cells(0)
+	_check(flat.size() == was, "tah pod puvodni tvar nedal puvodni cestu (%d vs %d)" % [
+		flat.size(), was])
+	_check(flat.has(Vector2i(4, 4)) and flat.has(Vector2i(5, 4)),
+		"vystupek po tahu zpet zmizel: " + str(flat))
 
 
 # MALA TLACITKA "−"/"+" NALEPENA NA HODNOTU + VIDITELNA MRIZKA.

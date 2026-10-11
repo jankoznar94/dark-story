@@ -18,6 +18,7 @@ func _init() -> void:
 	_run("geometrie", _test_base_geometry)
 	_run("volba ve vyhybce", _test_choices)
 	_run("delka hotove cesty", _test_lane_bend)
+	_run("posun vystupku cesty", _test_bump_shift)
 	_run("kod levelu", _test_code_round_trip)
 	_run("mista na useku", _test_lane_slots)
 	_run("odmitnuti", _test_rejects)
@@ -232,6 +233,93 @@ func _test_lane_bend() -> void:
 
 
 # ---------------------------------------------------------------- kod levelu
+
+# POSUN "OBDELNIKOVEHO VYSTUPKU" (Jan, Oct 2026): "Představuji si to tak, že mám
+# třeba cestu ve tvaru obdélníkového výstupku, chytnu prstem horní část
+# obdélníku, potáhnu nahoru, a celá tato část se posune nahoru, přičemž boční
+# strany se automaticky natáhnou."
+#
+# Hlida se TVAR, ne jen delka: vrsek musi zustat rovny a obe bocni strany stejne
+# dlouhe (zadne schodky), a tah zpet musi dat PRESNE puvodni cestu.
+func _test_bump_shift() -> void:
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 5, Level.START)
+	var c: int = lv.add_node(7, 5, Level.CIL)
+	lv.add_lane(s, c, "RRURDRR", Element.FIRE)
+	var before: Array = lv.lane_cells(0).duplicate()
+	_check(before.size() == 8, "testovaci vystupek nema 8 bunek (%d)" % before.size())
+	# 1) KUS SE NAJDE: vrsek vystupku (4,4),(5,4) se posouva nahoru
+	var run: Dictionary = lv.run_at(0, Vector2i(4, 4))
+	_check(not run.is_empty(), "na vrsku vystupku se nenasel rovny kus")
+	if run.is_empty():
+		return
+	_check(run["d"] == Vector2i(1, 0), "kus vystupku nema vodorovny smer (%s)" % str(run["d"]))
+	_check(run["s"] == Vector2i(0, -1), "vystupek nemiri nahoru (%s)" % str(run["s"]))
+	# 1b) DRUHY KONEC VRSEKU je ROH (vstup i vystup se lisi) - i tam se kus
+	# musi najit, jinak by prst na pulce vrsku nic nedelal
+	var run2: Dictionary = lv.run_at(0, Vector2i(5, 4))
+	_check(not run2.is_empty(), "na druhem konci vrsku se vystupek nenajde")
+	if not run2.is_empty():
+		_check(int(run2["a"]) == int(run["a"]) and int(run2["b"]) == int(run["b"]),
+			"druhy konec vrsku vraci jiny kus (%d..%d vs %d..%d)" % [
+				int(run2["a"]), int(run2["b"]), int(run["a"]), int(run["b"])])
+	# 2) POSUN NAHORU: cely vrsek se posune, obe bocni strany se prodlouzi o bunku
+	_check(lv.shift_run(0, Vector2i(4, 4), true), "vystupek se neda posunout nahoru")
+	var up: Array = lv.lane_cells(0)
+	_check(up.size() == before.size() + 2,
+		"posun vystupku nepridal dve bunky (%d -> %d)" % [before.size(), up.size()])
+	for want in [Vector2i(4, 5), Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3),
+			Vector2i(5, 4), Vector2i(5, 5)]:
+		_check(up.has(want), "vystupek po posunu nema bunku %s: %s" % [str(want), str(up)])
+	_check(lv.validate().size() == 0, "posun vystupku rozbil mapu: %s" % str(lv.validate()))
+	# 3) DRUHY KROK: strany maji tri bunky (krok se nikdy nepreskoci)
+	_check(lv.shift_run(0, Vector2i(4, 3), true), "vystupek se neda posunout podruhe")
+	var up2: Array = lv.lane_cells(0)
+	_check(up2.size() == before.size() + 4,
+		"druhy posun nepridal dve bunky (%d -> %d)" % [before.size(), up2.size()])
+	_check(up2.has(Vector2i(4, 2)) and up2.has(Vector2i(5, 2)),
+		"vrsek neni o dve bunky vys: " + str(up2))
+	# 4) ZPET DOLU: presne puvodni cesta (krok za krokem)
+	_check(lv.shift_run(0, Vector2i(4, 2), false), "vystupek se neda posunout zpet")
+	_check(lv.shift_run(0, Vector2i(4, 3), false), "vystupek se neda posunout zpet podruhe")
+	var back: Array = lv.lane_cells(0)
+	_check(back.size() == before.size(),
+		"návrat nedal puvodni delku (%d vs %d)" % [back.size(), before.size()])
+	for i in range(mini(back.size(), before.size())):
+		_check(back[i] == before[i], "návrat nedal puvodni cestu (bunka %d: %s vs %s)" % [
+			i, str(back[i]), str(before[i])])
+	_check(lv.validate().size() == 0, "návrat rozbil mapu: %s" % str(lv.validate()))
+	# 5) ROVNY KUS NA KONCI CESTY SE TAKTO NEPOSOUVA - tam hybe uzlem
+	_check(lv.run_at(0, Vector2i(6, 5)).is_empty(),
+		"rovny kus u cile se tvari jako vystupek")
+	_check(not lv.shift_run(0, Vector2i(6, 5), true), "posun kusu u cile prosel")
+	_check(lv.run_at(0, Vector2i(4, 5)).is_empty(), "roh cesty se tvari jako vystupek")
+	# 6) PREKAZKA: kam se kus posouva, stoji prvek - posun se odmitne
+	var lv2 := Level.new()
+	var s2: int = lv2.add_node(2, 5, Level.START)
+	var c2: int = lv2.add_node(7, 5, Level.CIL)
+	lv2.add_lane(s2, c2, "RRURDRR", Element.FIRE)
+	lv2.add_node(4, 3, Level.VYHYBKA)
+	_check(not lv2.shift_run(0, Vector2i(4, 4), true), "posun vystupku prosel pres prvek")
+	_check(lv2.lane_cells(0).size() == 8, "odmitnuty posun presto cestu zmenil")
+	# 7) MIMO VYBER: neexistujici usek se neupravi
+	_check(not lv.shift_run(-1, Vector2i(4, 4), true), "posun neexistujiciho useku prosel")
+	_check(not lv.shift_run(lv.lane_count(), Vector2i(4, 4), true), "posun useku za koncem prosel")
+	# 8) VYSTUPEK HNED U UZLU: posun se dela z bunky uzlu, uzel zustava
+	var lv3 := Level.new()
+	var s3: int = lv3.add_node(2, 5, Level.START)
+	var c3: int = lv3.add_node(5, 5, Level.CIL)
+	lv3.add_lane(s3, c3, "URDRR", Element.FIRE)
+	_check(lv3.lane_cells(0)[0] == Vector2i(2, 5), "testovaci cesta nezacina v uzlu")
+	_check(not lv3.run_at(0, Vector2i(2, 4)).is_empty(),
+		"vystupek hned u uzlu se nenasel")
+	_check(lv3.shift_run(0, Vector2i(2, 4), true), "vystupek u uzlu se neda posunout")
+	var cs3: Array = lv3.lane_cells(0)
+	_check(cs3[0] == Vector2i(2, 5), "posun utrhl cestu z uzlu: " + str(cs3))
+	_check(cs3.has(Vector2i(2, 3)) and cs3.has(Vector2i(3, 3)),
+		"vystupek u uzlu neni o bunku vys: " + str(cs3))
+	_check(lv3.validate().size() == 0, "posun vystupku u uzlu rozbil mapu: %s" % str(lv3.validate()))
+
 
 func _test_code_round_trip() -> void:
 	var lv := Level.base()

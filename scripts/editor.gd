@@ -671,7 +671,7 @@ func _sel_body() -> String:
 		# cest pomocí tahu prstem... Chtěl bych vybrat jednu cestu a upravit
 		# ji." Vyber useku se pozna podle toho, ze je v pruhu napsany - a aby
 		# hrac nemusel hádat, ze se da tvarovat, rekne se to rovnou tady.
-		return "úsek %d · %s — tažením prstem ho prodloužíš, zkrátíš nebo ohneš" % [
+		return "úsek %d · %s — tažením prstem ho posuneš, prodloužíš nebo ohneš" % [
 			sel_lane, level.lane_type_name(sel_lane)]
 	return "úseků %d · uzlů %d · nové cesty: %s — klepni na úsek nebo na prvek a vybereš ho" % [
 		level.lane_count(), level.node_count(), Level.value_name(elem)]
@@ -921,10 +921,12 @@ func begin_move(cell: Vector2i) -> bool:
 func extend_move(target: Vector2i) -> bool:
 	if not moving:
 		return false
-	# CHYCENA CESTA UPROSTRED (ne uzel): kus se ohne nebo srovna. Chyceny
+	# CHYCENA CESTA UPROSTRED (ne uzel): kus se ohne nebo posune. Chyceny
 	# KONEC cesty se naopak hybe jako uzel (niz) - proto se pozna podle
 	# `drag_lane`, ne podle `move_node`.
 	if drag_lane >= 0 and (drag_end < 0 or move_node < 0):
+		if drag_p != Vector2i.ZERO:
+			return _extend_lane_run(target)
 		return _extend_lane_bump(target)
 	# Kopie stavu PRED prvnim krokem. Presun se dela po krocich, ale pro
 	# "zpet" je to jedna uprava - jinak by hrac musel mackat zpet za kazdou
@@ -970,6 +972,9 @@ func end_move() -> void:
 	drag_end = -1
 	drag_cell = Vector2i(-1, -1)
 	drag_bump = false
+	drag_run_cell = Vector2i(-1, -1)
+	drag_p = Vector2i.ZERO
+	drag_moved = 0
 	if move_steps == 0:
 		# TAH BEZ POHYBU = KLEPNUTI. U "vyberu" se jen VYBIRA: klepnuti na cestu
 		# ji oznaci (a v pruhu se rekne, ze se da tvarovat prstem), neze se
@@ -1873,8 +1878,9 @@ func _export() -> void:
 #   * u kraje cesty se chyti jeji KONEC (uzel na tom konci) - tahem po smeru
 #     se cesta prodlouzi nebo zkrati, tahem do strany se cely rovny kus
 #     posune (viz `_shift_run`);
-#   * uprostred cesty se chyti TEN KUS - tahem do strany se ohne (cesta se
-#     prodlouzi o dve bunky), tahem zpet se zase srovna.
+#   * na ROVNEM KUSE UPROSTRED ("vystupek") se chyti TEN KUS a tahem do strany
+#     se cely posune - bocni strany se pritom natahnou (viz `Level.shift_run`);
+#   * na obycejnem rovnem kuse se tahem do strany kus ohne (vybouleni).
 # Uzel je na telefonu maly cil, cesta je tlustá - proto se da chytit cesta.
 var drag_lane: int = -1
 # Ktery konec cesty se chytil: 0 = u startu, 1 = u cile, -1 = kus uprostred.
@@ -1883,6 +1889,12 @@ var drag_end: int = -1
 var drag_cell: Vector2i = Vector2i(-1, -1)
 # Je kus uz ohne­ty? Tah zpet ho srovna.
 var drag_bump: bool = false
+# ROVNY KUS ("vystupek"): bunka kusu, pod kterou prst lezi (hybe se s kusem),
+# smer, kterym se kus posouva ven z tvaru, a o kolik bunek uz se posunul.
+# Prazdny smer = kus se nenasel (chytil se obycejny rovny kus - ohne se).
+var drag_run_cell: Vector2i = Vector2i(-1, -1)
+var drag_p: Vector2i = Vector2i.ZERO
+var drag_moved: int = 0
 
 
 # CESTA POD PRSTEM SE CHYTA A TAHNE. Je to JEDNO misto, kde se rozhoduje, ze
@@ -1923,6 +1935,18 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 	drag_cell = on
 	drag_bump = false
 	drag_end = -1
+	drag_run_cell = Vector2i(-1, -1)
+	drag_p = Vector2i.ZERO
+	drag_moved = 0
+	# ROVNY KUS ("vystupek") MA PREDNOST: kdyz prst lezi na vystupku, hybe se
+	# CELY KUS a bocni strany se natahnou. Je to jednoznacny tvar, takze se
+	# tim nic neplete ani u uzlu (bocni strana proste roste z bunky uzlu).
+	var run: Dictionary = level.run_at(lane, on)
+	if not run.is_empty():
+		drag_run_cell = on
+		drag_p = run["s"]
+		status = "Tažením kusu do strany posuneš celý výstupek — boční strany se natáhnou."
+		return true
 	# Dve krajni bunky = konec cesty, zbytek = kus uprostred.
 	if at <= 1:
 		move_node = level.lane_start_node(lane)
@@ -2007,6 +2031,52 @@ func _extend_lane_bump(target: Vector2i) -> bool:
 		if pre != null:
 			_push_state(local_name, pre, sel_lane, sel_node)
 		status = "Kus cesty ohnutý." if drag_bump else "Kus cesty srovnaný."
+	return changed
+
+
+# TAH ZA ROVNY KUS ("obdelnikovy vystupek"): cely kus se posune o tolik bunek,
+# o kolik prst odesel do strany, a obe bocni strany se prodlouzi - tvar zustava
+# obdelnikovy, zadne schodky. Tah zpet ho zase snizi.
+#
+# Krokuje se po bunkach (jako u presunu uzlu): jeden krok = jedna bunka, aby se
+# kus nikdy nepreskocil a cesta zustala souvisla. Cely tah = jedna polozka
+# "zpet" (kopie stavu se dela jen pri prvnim kroku).
+func _extend_lane_run(target: Vector2i) -> bool:
+	if drag_lane < 0 or drag_lane >= level.lane_count():
+		return false
+	var p: Vector2i = drag_p
+	if p == Vector2i.ZERO:
+		return false
+	# O kolik bunek prst odesel ve smeru posunu? (Vector2i `dot()` nema.)
+	var off: int = (target.x - drag_cell.x) * p.x + (target.y - drag_cell.y) * p.y
+	# NIKDY POD PUVODNI TVAR: tah zpet jen vrati, co tah ven posunul. Kdyby
+	# sel i pod nulu, cesta by prisla o vystupek a tah zpet by ho uz nevratil
+	# (posun se dela z tvaru, ktery uz vystupek neni).
+	if off < 0:
+		off = 0
+	if off == drag_moved:
+		return false
+	var pre: Level = null
+	if move_steps == 0:
+		pre = level.clone()
+	var step: int = 1 if off > drag_moved else -1
+	var changed: bool = false
+	while drag_moved != off:
+		if not level.shift_run(drag_lane, drag_run_cell, step > 0):
+			break
+		# Chycena bunka jde s kusem - jinak by prst po prvnim posunu drzel
+		# bunku, ktera uz v kusu neni.
+		drag_run_cell += p * step
+		drag_moved += step
+		changed = true
+	if changed:
+		move_steps += 1
+		if pre != null:
+			_push_state(local_name, pre, sel_lane, sel_node)
+		var cs2: Array = level.lane_cells(drag_lane)
+		status = "Výstupek posunutý o %d %s · úsek %d má %d buněk." % [
+			absi(drag_moved), "buňku" if absi(drag_moved) == 1 else "buňky",
+			drag_lane + 1, cs2.size()]
 	return changed
 
 
