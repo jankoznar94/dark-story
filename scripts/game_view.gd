@@ -333,7 +333,7 @@ func _input(event: InputEvent) -> void:
 			var sd: InputEventScreenDrag = event
 			_editor_drag(sd.position)
 			return
-		if event is InputEventMouseMotion and (editor.drawing or editor.moving or editor.box_active):
+		if event is InputEventMouseMotion and (editor.drawing or editor.moving or editor.box_active or editor.box_move):
 			var mm: InputEventMouseMotion = event
 			_editor_drag(mm.position)
 			return
@@ -371,6 +371,11 @@ func _input(event: InputEvent) -> void:
 			# klepnuti a uzel jen zmeni druh podle zvoleneho nastroje.
 			editor.end_move()
 			_push_editor_level()
+		elif menu.is_editor() and editor.box_move:
+			# PUSTENI PRSTU UKONCI POSUN CELEHO VYBERU (a zapise ho jako jednu
+			# polozku "zpet").
+			editor.end_box_move()
+			_push_editor_level()
 		elif menu.is_editor() and editor.box_active:
 			# PUSTENI PRSTU UZAVRE OBDELNIKOVY VYBER. Kdyz se prst nehnul,
 			# je to klepnuti a vybere se jeden prvek pod nim.
@@ -382,6 +387,12 @@ func _input(event: InputEvent) -> void:
 # pri rychlem tahu neroztrhla. U uzlů se stejnym tahem uzel PRESOUVA - a do
 # site se kazdy krok posle hned, aby hrac videl, kam uzel leze.
 func _editor_drag(pos: Vector2) -> void:
+	if editor.box_move:
+		# POSUN CELEHO VYBERU: kazdy krok se posle do site, aby hrac videl, jak
+		# vyber jede s prstem.
+		if editor.extend_box_move(game.net.cell_at(pos)):
+			_push_editor_level()
+		return
 	if editor.drawing:
 		editor.extend_draw(game.net.cell_at(pos))
 		return
@@ -563,6 +574,13 @@ func _handle_editor_tap(pos: Vector2) -> void:
 	# rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
 	if editor.begin_lane_drag(cell):
 		return
+	# PRST UVNITR HOTOVEHO OBDELNIKU BERE CELY VYBER a tahem ho posune
+	# libovolnym smerem. Je to PRED presunem jednoho prvku: obdelnik ma uvnitr
+	# i prvky a klepnuti na ne by jinak vzalo jen ten prvek, ne cely vyber.
+	# Jen u "vyberu" - u ostatnich nastroju (hlavne u gumy) ma klepnuti do
+	# obdelniku porad svuj vyznam.
+	if editor.tool == Editor.TOOL_VYBER and editor.begin_box_move(cell):
+		return
 	# NASTROJ CESTA KRESLI TAZENIM, ostatni se kladou klepnutim. Drzet u
 	# kazdeho prvku zvlast "tahni" a "klepni" by hrace jen mátlo.
 	if editor.tool == Editor.TOOL_ROAD:
@@ -574,9 +592,8 @@ func _handle_editor_tap(pos: Vector2) -> void:
 		# az pri pusteni prstu - do te doby se jeste nevi, co to bude.
 		pass
 	elif editor.tool == Editor.TOOL_VYBER:
-		# OBDELNIK SE OBTÁHNE JEN NA PRAZDNEM MISTE. Kdo zacne tah na ceste,
-		# chce cestu tvarovat (viz vyse) - obdelnik se z prazdna mista porad
-		# da obtáhnout. KLEPNUTIM se vybere jeden prvek.
+		# PRST MIMO OBDELNIK OBTÁHNE NOVY OBDELNIK (a klepnuti bez pohybu
+		# vybere jeden prvek pod prstem, takze se da i velky vyber zrusit).
 		editor.begin_box(cell)
 	else:
 		editor.tap_cell(cell)

@@ -158,6 +158,31 @@ func lane_cells(lane: int) -> Array:
 	return a
 
 
+# POSUN CELYCH CCASTI MAPY: obdelnikovy vyber se da uchopit a posunout
+# libovolnym smerem (Jan, Oct 2026). Je to CISTA GEOMETRIE - posouvaji se bunky
+# useku a bunky uzlu, zadna pravidla se tu neresi. Jestli mapa po posunu plati,
+# se ptá az volajici (`Editor._after_change`), protoze jen on umi posun vzit
+# zpet a rict hracovi, co se rozbilo.
+func shift_cells(lane_ids: Array, node_ids: Array, d: Vector2i) -> void:
+	if d == Vector2i.ZERO:
+		return
+	for i in lane_ids:
+		var li: int = int(i)
+		if li < 0 or li >= lanes.size():
+			continue
+		var out: Array = []
+		for c in lanes[li]["cells"]:
+			var v: Vector2i = c
+			out.append(v + d)
+		lanes[li]["cells"] = out
+	for n in node_ids:
+		var ni: int = int(n)
+		if ni < 0 or ni >= nodes.size():
+			continue
+		nodes[ni]["c"] = int(nodes[ni]["c"]) + d.x
+		nodes[ni]["r"] = int(nodes[ni]["r"]) + d.y
+
+
 # KTERA CESTA VEDE TOUTO BUNKOU (-1, kdyz zadna). Jedno misto, kde se na to da
 # zeptat - testy si odpoved nesmi skladat z `lane_cells`, protoze pak meri svuj
 # vlastni preklad a ne to, co vidi hrac.

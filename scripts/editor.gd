@@ -162,6 +162,16 @@ var sel_box: Rect2i = Rect2i(0, 0, 0, 0)
 # PRAVE TAZENY OBDELNIK. Do levelu se nic nezapisuje - je to jen vyber.
 var box_active: bool = false
 var box_from: Vector2i = Vector2i(-1, -1)
+# POSUN CELEHO VYBERU: prst polozeny DO hotoveho obdelniku ho bere i s obsahem
+# a tahne po bunkach (viz `begin_box_move`). `box_base` je snimek mapy pred
+# tahem, ze ktereho se kazda poloha prstu stavi ZNOVU.
+var box_move: bool = false
+var box_grab: Vector2i = Vector2i(-1, -1)
+var box_shape: Rect2i = Rect2i(0, 0, 0, 0)
+var box_base: Level = null
+var box_shift: Vector2i = Vector2i.ZERO
+var box_sel_lanes: Array = []
+var box_sel_nodes: Array = []
 # KOPIE VYBERU. Nese PRESNE to, co v obdelniku bylo: bunky useku (tedy tvar i
 # smer), element, pocet mist i druhy prvku. Otoceni a zrcadleni meni ji, ne
 # desku - hrac si ji pripravi a teprve pak vlozi.
@@ -222,6 +232,11 @@ func reset() -> void:
 	sel_box = Rect2i(0, 0, 0, 0)
 	box_active = false
 	box_from = Vector2i(-1, -1)
+	box_move = false
+	box_base = null
+	box_shift = Vector2i.ZERO
+	box_sel_lanes = []
+	box_sel_nodes = []
 	clip = {}
 	clip_rot = 0
 	clip_flip = false
@@ -660,6 +675,8 @@ func _sel_body() -> String:
 			s += " · kopie %d×%d%s" % [sz.x, sz.y, _clip_turn_text()]
 		if paste_armed:
 			s += " · klepni, kam vložit (%d,%d)" % [paste_cell.x, paste_cell.y]
+		if box_shift != Vector2i.ZERO:
+			s += " · posun %s" % _shift_text(box_shift)
 		return s
 	if sel_node >= 0 and sel_node < level.node_count():
 		var ins: int = level.lanes_into(sel_node).size()
@@ -1388,6 +1405,121 @@ func end_box() -> void:
 
 func clear_box() -> void:
 	sel_box = Rect2i(0, 0, 0, 0)
+	box_move = false
+	box_base = null
+	box_shift = Vector2i.ZERO
+
+
+# =========================================================================
+# POSUN CELEHO VYBERU
+# =========================================================================
+# Jan (Oct 2026): "Ted by jeste melo byt mozne cely vyber uchopit a posunout
+# libovolnym smerem." Prst polozeny DO obdelniku bere CELY VYBER - vsechny
+# cesty i prvky v nem - a tahne ho po bunkach libovolnym smerem (i diagonalne).
+# Prst mimo obdelnik obtahne novy obdelnik.
+#
+# Kazda poloha prstu se stavi ZNOVU ze snimku (`box_base`), takze tah zpet vraci
+# presne puvodni mapu a cely tah je JEDNA polozka "zpet" - stejny vzor jako
+# u posunu vystupku. Snimek se uklada pri chyceni, "zpet" se zapise az pri
+# pusteni prstu (klepnuti do obdelniku nema co vracet).
+func begin_box_move(cell: Vector2i) -> bool:
+	if box_move or not has_box() or not _box_has(cell):
+		return false
+	var ls: Array = box_lanes()
+	var ns: Array = box_nodes()
+	if ls.is_empty() and ns.is_empty():
+		return false
+	box_move = true
+	box_grab = cell
+	box_shape = sel_box
+	box_base = level.clone()
+	box_shift = Vector2i.ZERO
+	box_sel_lanes = ls
+	box_sel_nodes = ns
+	status = "Tažením posuneš celý výběr — libovolným směrem."
+	return true
+
+
+# TAH: cely vyber jede s prstem. Posun se KLAMPUJE, aby vsechno zustalo v mrizce -
+# cesta vyjeta z mrizky by spadla na `validate()` a hrac by videl, ze "se nedeje
+# nic", presne tu chybu, kterou tu resime u kazdeho gesta.
+func extend_box_move(target: Vector2i) -> bool:
+	if not box_move:
+		return false
+	var want: Vector2i = _box_shift_limit(target - box_grab)
+	if want == box_shift:
+		return false
+	box_shift = want
+	level = box_base.clone()
+	level.shift_cells(box_sel_lanes, box_sel_nodes, want)
+	sel_box = Rect2i(box_shape.position + want, box_shape.size)
+	# VSTUPNI USEKY SE MUSI PREPOCITAT UZ BEHEM TAHU: posun muze odtahnout START
+	# a usek, ktery z nej vedl, se pak kresli jako poskozujici pruh, i kdyz
+	# vstupni je. Ukladani na disk patri az do `end_box_move`.
+	_refresh_entry_flags()
+	var errs: Array = level.validate()
+	if errs.is_empty():
+		status = "Výběr posunut: %s." % _shift_text(want)
+	else:
+		status = "Výběr posunut: %s — mapa teď neplatí: %s" % [_shift_text(want), errs[0]]
+	return true
+
+
+func end_box_move() -> void:
+	if not box_move:
+		return
+	var moved: Vector2i = box_shift
+	box_move = false
+	if moved != Vector2i.ZERO:
+		# CELY tah je jedna polozka "zpet": do historie jde mapa pred tahem.
+		_push_state(local_name, box_base, sel_lane, sel_node)
+	_after_change()
+	if moved != Vector2i.ZERO:
+		status = "Výběr posunut: %s." % _shift_text(moved)
+	box_base = null
+	box_shift = Vector2i.ZERO
+	box_sel_lanes = []
+	box_sel_nodes = []
+
+
+# MEZE POSUNU: pres ne by vyber vyjel z mrizky. Pocita se ze SNIMKU (nikdy
+# z posunute mapy), takze kazda poloha prstu dava stejny vysledek a tah zpet
+# vraci presne puvodni bunky.
+func _box_shift_limit(want: Vector2i) -> Vector2i:
+	var base: Level = box_base
+	if base == null:
+		return Vector2i.ZERO
+	var mn := Vector2i(1000000, 1000000)
+	var mx := Vector2i(-1000000, -1000000)
+	var any: bool = false
+	for i in box_sel_lanes:
+		for c in base.lane_cells(int(i)):
+			var v: Vector2i = c
+			mn.x = mini(mn.x, v.x)
+			mn.y = mini(mn.y, v.y)
+			mx.x = maxi(mx.x, v.x)
+			mx.y = maxi(mx.y, v.y)
+			any = true
+	for n in box_sel_nodes:
+		var vn: Vector2i = base.node_cell(int(n))
+		mn.x = mini(mn.x, vn.x)
+		mn.y = mini(mn.y, vn.y)
+		mx.x = maxi(mx.x, vn.x)
+		mx.y = maxi(mx.y, vn.y)
+		any = true
+	if not any:
+		return Vector2i.ZERO
+	return Vector2i(
+		clampi(want.x, -mn.x, level.cols - 1 - mx.x),
+		clampi(want.y, -mn.y, level.rows - 1 - mx.y))
+
+
+# POSUN SE PISE RUCNE: Godot v `%` nema "%+d" (spadlo by to stejne jako "%g") a
+# "o 2,-1 bunek" bez znamenka se cte spatne - u posunu je smer to hlavni.
+func _shift_text(v: Vector2i) -> String:
+	var sx: String = ("+%d" % v.x) if v.x > 0 else str(v.x)
+	var sy: String = ("+%d" % v.y) if v.y > 0 else str(v.y)
+	return "%s,%s buněk" % [sx, sy]
 
 
 # KOPIE VYBERU. Do kopie jdou CELA data useku (bunky = tvar i smer, element,
@@ -2246,11 +2378,19 @@ func _after_change() -> void:
 		sel_lane = -1
 	if sel_node >= level.node_count():
 		sel_node = -1
-	var starts: Array = level.start_nodes()
-	for i in range(level.lane_count()):
-		var a: int = level.lane_start_node(i)
-		level.lanes[i]["entry"] = (a >= 0 and starts.has(a))
+	_refresh_entry_flags()
 	var errs: Array = level.validate()
 	if not errs.is_empty():
 		status = errs[0]
 	level.save()
+
+
+# PRIZNAK "VSTUPNI USEK" JE ODVOZENY Z GRAFU (kdo vede ze STARTU), takze se musi
+# prepsat po kazde zmene, ktera muze pohnout se startem nebo s usekem. Je to
+# zvlast a bez ukladani na disk: posun celeho vyberu se prekresluje pri KAZDEM
+# kroku prstu a ukladat pri tom pokazde level na disk nema smysl.
+func _refresh_entry_flags() -> void:
+	var starts: Array = level.start_nodes()
+	for i in range(level.lane_count()):
+		var a: int = level.lane_start_node(i)
+		level.lanes[i]["entry"] = (a >= 0 and starts.has(a))

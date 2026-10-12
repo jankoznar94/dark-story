@@ -31,6 +31,7 @@ func _init() -> void:
 	_run("chytani cesty prstem", _test_lane_grab_tools)
 	_run("obdelnik vsudy a vsude", _test_box_everywhere)
 	_run("posun vystupku prstem", _test_bump_shift)
+	_run("posun celeho vyberu", _test_box_move)
 	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
@@ -1667,6 +1668,148 @@ func _test_box_everywhere() -> void:
 	_check(e.panel == Editor.PANEL_NONE,
 		"po zvoleni nastroje zustal otevreny panel - prvni tah na desku ho jen zavre")
 	_check(e.tool == Editor.TOOL_VYBER, "stisk nastroje ho nezvolil")
+
+
+# POSUN CELEHO VYBERU. Jan (Oct 2026): "Ted by jeste melo byt mozne cely vyber
+# uchopit a posunout libovolnym smerem." Prst polozeny DO obdelniku bere cely
+# vyber (cesty i prvky v nem), prst mimo obdelnik obtahne novy.
+#
+# Test meri TRI veci, ktere se daji splést dohromady:
+#   * hybe se opravdu VSECHNO ve vyberu a NIC mimo nej (druhy obdelnik),
+#   * kazda poloha prstu se stavi ZNOVU ze snimku, takze tah zpet vraci presne
+#     puvodni mapu a cely tah je JEDNA polozka "zpet",
+#   * posun, ktery utrhne zbytek mapy, se provede, ale REKNE to (ticha neplatna
+#     mapa je to, co hrac hleda pul hodiny).
+func _test_box_move() -> void:
+	var e := _ed()
+	_lane_level(e)
+	# 1) CELY LEVEL V OBDELNIKU: hybe se vsechno, takze mapa plati i po posunu.
+	e.tool = Editor.TOOL_VYBER
+	e.begin_box(Vector2i(0, 0))
+	e.extend_box(Vector2i(Level.COLS - 1, Level.ROWS - 1))
+	e.end_box()
+	_check(e.box_lanes().size() == 3 and e.box_nodes().size() == 4,
+		"cely level neni ve vyberu (%d useku, %d prvku)" % [
+			e.box_lanes().size(), e.box_nodes().size()])
+	var lanes_before: Array = []
+	for i in range(e.level.lane_count()):
+		lanes_before.append(e.level.lane_cells(i).duplicate())
+	var nodes_before: Array = []
+	for n in range(e.level.node_count()):
+		nodes_before.append(e.level.node_cell(n))
+	var undo_before: int = e.undo_stack.size()
+	var box_before: Rect2i = e.sel_box
+	# 2) LIBOVOLNY SMER - i diagonalne (x i y zaroven). Chyceno na (5,6),
+	#    prst na (6,7) = posun +1,+1.
+	_check(e.begin_box_move(Vector2i(5, 6)), "cely vyber se neda uchopit prstem")
+	_check(e.box_move, "chyceny vyber neni oznaceny jako tazeny")
+	_check(e.extend_box_move(Vector2i(6, 7)), "tah celym vyberem nic neposunul")
+	_check(e.box_shift == Vector2i(1, 1), "posun vysel %s, ma byt +1,+1" % str(e.box_shift))
+	var ok_cells: int = 0
+	for i in range(e.level.lane_count()):
+		var cs: Array = e.level.lane_cells(i)
+		var old: Array = lanes_before[i]
+		for k in range(mini(cs.size(), old.size())):
+			var now: Vector2i = cs[k]
+			var was: Vector2i = old[k]
+			if now == was + Vector2i(1, 1):
+				ok_cells += 1
+	_check(ok_cells == e.level.lane_cells(0).size() + e.level.lane_cells(1).size()
+			+ e.level.lane_cells(2).size(),
+		"posunuly se jen %d bunek, ma se posunout cely vyber" % ok_cells)
+	var ok_nodes: int = 0
+	for n in range(e.level.node_count()):
+		if e.level.node_cell(n) == (nodes_before[n] as Vector2i) + Vector2i(1, 1):
+			ok_nodes += 1
+	_check(ok_nodes == e.level.node_count(), "posunuly se jen %d prvky ze %d" % [
+		ok_nodes, e.level.node_count()])
+	_check(e.sel_box.position == box_before.position + Vector2i(1, 1),
+		"obdelnik nejede s vyberem (%s vs %s)" % [str(e.sel_box.position), str(box_before.position)])
+	_check(e.status.contains("posunut"), "posun vyberu nic nerekne: " + e.status)
+	# 3) ZPET NA CHYCENOU BUNKU = PRESNE PUVODNI MAPA (kazda poloha se stavi ze
+	#    snimku, ne krok za krokem).
+	e.extend_box_move(Vector2i(5, 6))
+	_check(e.box_shift == Vector2i.ZERO, "tah zpet nedal nulovy posun (%s)" % str(e.box_shift))
+	var back_ok: bool = true
+	for i in range(e.level.lane_count()):
+		if e.level.lane_cells(i) != lanes_before[i]:
+			back_ok = false
+	_check(back_ok, "tah zpet nedal presne puvodni cestu")
+	# 4) ZA HRANICI MRIZKY SE VYBER NEDOSTANE (jinak by spadl na `validate()` a
+	#    hrac by videl, ze se "nedeje nic"). Meze se pocitaji z CHYCENEHO stavu,
+	#    takze nejvyssi/nejlevejsi bunka vyberu musi skoncit presne na kraji.
+	e.extend_box_move(Vector2i(-99, -99))
+	var mn := Vector2i(1 << 20, 1 << 20)
+	for arr in lanes_before:
+		for c in arr:
+			var cv: Vector2i = c
+			mn.x = mini(mn.x, cv.x)
+			mn.y = mini(mn.y, cv.y)
+	for vn2 in nodes_before:
+		var vn3: Vector2i = vn2
+		mn.x = mini(mn.x, vn3.x)
+		mn.y = mini(mn.y, vn3.y)
+	_check(e.box_shift == -mn, "klampovani nedrzi vyber v mrizce (%s misto %s)" % [
+		str(e.box_shift), str(-mn)])
+	_check_in_grid(e)
+	# 5) KLEPNUTI DO OBDELNIKU (tah bez pohybu) JE ZADARMO: nema co vracet.
+	var u0: int = e.undo_stack.size()
+	e.extend_box_move(Vector2i(5, 6))
+	e.end_box_move()
+	_check(e.undo_stack.size() == u0, "klepnuti do obdelniku zapsalo krok zpet")
+	# 6) CELY TAH JE JEDNA POLOZKA "ZPET" - a vrati presne puvodni mapu.
+	e.begin_box_move(Vector2i(5, 6))
+	e.extend_box_move(Vector2i(5, 4))
+	e.end_box_move()
+	_check(e.undo_stack.size() == u0 + 1,
+		"cely tah vyberem neni jedna polozka zpet (%d)" % (e.undo_stack.size() - u0))
+	e.undo()
+	_check(e.level.lane_cells(0) == lanes_before[0], "zpet nevratilo posunuty vyber")
+	# 7) VYBER, KTERY UTRHNE ZBYTEK MAPY, SE POSUNE - A MAPA TO REKNE.
+	e.begin_box(Vector2i(1, 5))
+	e.extend_box(Vector2i(4, 5))
+	e.end_box()
+	_check(e.box_lanes() == [0] and e.box_nodes().size() == 2,
+		"vyber jen vstupniho useku nema usek a dva prvky: %s / %s" % [
+			str(e.box_lanes()), str(e.box_nodes())])
+	_check(e.level.validate().is_empty(), "vychozi mapa levelu neplati - test meri neco jineho")
+	_check(e.begin_box_move(Vector2i(2, 5)), "vyber se neda uchopit")
+	e.extend_box_move(Vector2i(2, 4))
+	_check(e.status.contains("neplatí"),
+		"posun, ktery utrhne zbytek mapy, to neřekne: " + e.status)
+	e.end_box_move()
+	# 8) PRST MIMO OBDELNIK VYBER NEUCHOPI - tam se obtahne novy obdelnik.
+	e.tool = Editor.TOOL_VYBER
+	_check(not e.begin_box_move(Vector2i(Level.COLS - 1, Level.ROWS - 1)),
+		"prst mimo obdelnik uchopil vyber")
+	# 9) PRST UVNITR OBDELNIKU MUSI VZIT CELY VYBER, NE JEDEN PRVEK - v game_view
+	#    je `begin_box_move` PRED `begin_move(cell)`. Obdelnik ma uvnitr i prvky,
+	#    takze opacne poradi by u nich vzalo jen ten jeden prvek.
+	var vsrc: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	var body: String = _func_body(vsrc, "_handle_editor_tap")
+	var bm: int = body.find("begin_box_move")
+	var one: int = body.find("begin_move(cell)")
+	_check(bm >= 0 and one >= 0 and bm < one,
+		"game_view bere jeden prvek driv nez cely vyber (%d vs %d)" % [bm, one])
+	var drag: String = _func_body(vsrc, "_editor_drag")
+	_check(drag.find("extend_box_move") >= 0 and drag.find("extend_box_move") < drag.find("extend_draw"),
+		"tah vyberem se v game_view nepreklada, nebo ho prebiji jina gesta")
+
+
+# Zadna bunka zadneho useku nesmi lezet mimo mrizku - jedna kontrola, aby se to
+# nemuselo psat do kazdeho kroku tahu.
+func _check_in_grid(e: Editor) -> void:
+	var bad: int = 0
+	for i in range(e.level.lane_count()):
+		for c in e.level.lane_cells(i):
+			var v: Vector2i = c
+			if not e.level.in_bounds(v.x, v.y):
+				bad += 1
+	for n in range(e.level.node_count()):
+		var vn: Vector2i = e.level.node_cell(n)
+		if not e.level.in_bounds(vn.x, vn.y):
+			bad += 1
+	_check(bad == 0, "posun vyjel z mrizky (%d bunek)" % bad)
 
 
 # VYSTUPEK SE POSOUVA TAHEM PRSTEM (Jan, Oct 2026): "chytnu prstem horní část
