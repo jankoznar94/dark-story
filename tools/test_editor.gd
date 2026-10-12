@@ -1753,12 +1753,22 @@ func _test_box_move() -> void:
 	_check(e.box_shift == -mn, "klampovani nedrzi vyber v mrizce (%s misto %s)" % [
 		str(e.box_shift), str(-mn)])
 	_check_in_grid(e)
-	# 5) KLEPNUTI DO OBDELNIKU (tah bez pohybu) JE ZADARMO: nema co vracet.
+	# 5) KLEPNUTI DO OBDELNIKU (TAH BEZ POHYBU) VYBER RUSI - a nic nezapise.
+	#    Jan: "vyber teď nelze zrušit. Jednoduché kliknutí do prázdného místa by
+	#    mělo zrušit výběr." Klepnuti do obdelniku driv spadlo do jeho posunu,
+	#    takze se nestalo NIC.
+	e.tool = Editor.TOOL_VYBER
 	var u0: int = e.undo_stack.size()
 	e.extend_box_move(Vector2i(5, 6))
 	e.end_box_move()
-	_check(e.undo_stack.size() == u0, "klepnuti do obdelniku zapsalo krok zpet")
+	_check(not e.has_box(), "klepnuti do prazdneho mista vyber nezrusilo")
+	_check(e.sel_lane == -1 and e.sel_node == -1, "po zruseni zustal vybrany prvek (%d/%d)" % [
+		e.sel_lane, e.sel_node])
+	_check(e.undo_stack.size() == u0, "zruseni vyberu zapsalo krok zpet")
 	# 6) CELY TAH JE JEDNA POLOZKA "ZPET" - a vrati presne puvodni mapu.
+	e.begin_box(Vector2i(0, 0))
+	e.extend_box(Vector2i(Level.COLS - 1, Level.ROWS - 1))
+	e.end_box()
 	e.begin_box_move(Vector2i(5, 6))
 	e.extend_box_move(Vector2i(5, 4))
 	e.end_box_move()

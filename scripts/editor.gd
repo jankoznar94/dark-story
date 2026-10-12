@@ -807,7 +807,12 @@ func _select_at(cell: Vector2i) -> bool:
 		sel_node = -1
 		status = "Vybran úsek %d (%s)." % [sel, level.lane_type_name(sel)]
 		return true
-	status = "Tady nic není — klepni na úsek nebo na prvek."
+	# KLEPNUTI DO PRAZDNEHO MISTA VYBER RUSI. Bez toho by se vyber, ktery kryje
+	# celou desku, nedal zrusit vubec - mimo nej uz neni kam klepnout
+	# (Jan: "vyber teď nelze zrušit").
+	sel_lane = -1
+	sel_node = -1
+	status = "Nic nevybráno — klepni na úsek nebo na prvek."
 	return false
 
 
@@ -1409,6 +1414,8 @@ func clear_box() -> void:
 	box_move = false
 	box_base = null
 	box_shift = Vector2i.ZERO
+	box_sel_lanes = []
+	box_sel_nodes = []
 
 
 # =========================================================================
@@ -1470,13 +1477,21 @@ func end_box_move() -> void:
 	if not box_move:
 		return
 	var moved: Vector2i = box_shift
+	var at: Vector2i = box_grab
 	box_move = false
-	if moved != Vector2i.ZERO:
-		# CELY tah je jedna polozka "zpet": do historie jde mapa pred tahem.
-		_push_state(local_name, box_base, sel_lane, sel_node)
+	if moved == Vector2i.ZERO:
+		# TAH BEZ POHYBU = KLEPNUTI, ne posun. Klepnuti znamena "vyber, co je pod
+		# prstem" - a kdyz je pod prstem prazdno, vyber se ZRUSI. Bez toho by
+		# vyber, ktery kryje celou desku, nesel zrusit vubec: mimo obdelnik uz
+		# neni kam klepnout (Jan: "vyber teď nelze zrušit").
+		clear_box()
+		_select_at(at)
+		_after_change()
+		return
+	# CELY tah je jedna polozka "zpet": do historie jde mapa pred tahem.
+	_push_state(local_name, box_base, sel_lane, sel_node)
 	_after_change()
-	if moved != Vector2i.ZERO:
-		status = "Výběr posunut: %s." % _shift_text(moved)
+	status = "Výběr posunut: %s." % _shift_text(moved)
 	box_base = null
 	box_shift = Vector2i.ZERO
 	box_sel_lanes = []
