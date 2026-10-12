@@ -823,13 +823,18 @@ func _draw_editor_panel() -> void:
 				# slibil klepnuti, ktere nic nedela. Je-li oznacena jako
 				# `align: right`, tiskne se k PRAVEMU okraji sve bunky -
 				# tlacitka "−"/"+" stoji hned za ni, takze je hrac vidi
-				# "nalepena na hodnotu" (Jan).
-				if str(it.get("align", "center")) == "right":
-					_draw_right(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
-						Color(0.96, 0.93, 0.84))
+				# "nalepena na hodnotu" (Jan). `align: left` je sloupec
+				# popisku v tabulce levelu: vsechny popisky zacinaji na
+				# stejnem x, aby hodnoty vedle nich staly pod sebou.
+				var al: String = str(it.get("align", "center"))
+				var base_y: float = r.position.y + r.size.y * 0.62
+				if al == "right":
+					_draw_right(str(it["label"]), r, base_y, lpx, Color(0.96, 0.93, 0.84))
+				elif al == "left":
+					_label(Vector2(r.position.x + 6.0 * layout.ui, base_y),
+						str(it["label"]), lpx, Color(0.80, 0.77, 0.70))
 				else:
-					_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.62, lpx,
-						Color(0.96, 0.93, 0.84))
+					_draw_centered(str(it["label"]), r, base_y, lpx, Color(0.96, 0.93, 0.84))
 				continue
 			draw_rect(r, PANEL_BTN)
 			var accent: Color = _panel_accent(it)
@@ -1284,6 +1289,14 @@ func _draw_lanes() -> void:
 	# aby usek porad cetl jako pruh s jasnejsim stredem, ne jako jedna
 	# plocha. Cesta je sirsi nez jedna bunka pasu, proto je porad videt,
 	# kde jsou veze a kam se klepe.
+	#
+	# ANTI-ALIASING A ZAOBLENE SPOJE (Jan: "Grafika cest se mi nelíbí. Je
+	# příliš pixelová. Udělejme něco modernějšího."): Godot kresli tlustou
+	# caru jako obdelnik bez vyhlazeni, takze v rozich vznikl ostry zlom
+	# a hrany byly zubate - na velkem displeji to bylo videt nejvic.
+	# `_lane_stroke` proto kresli kazdou usecku s antialiasingem a do
+	# kazdeho bodu cesty pridava krouzek, ktery zlom zaobli (a udela
+	# kulatou spicku na konci cesty). Plocha barva, zadny glow.
 	var lw: float = maxf(4.0, 18.0 * layout.s)
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
@@ -1301,17 +1314,27 @@ func _draw_lanes() -> void:
 		if sel:
 			var halo := col
 			halo.a = 0.16
-			for k in range(path.size() - 1):
-				draw_line(path[k], path[k + 1], halo, lw * 1.9)
-		for k in range(path.size() - 1):
-			draw_line(path[k], path[k + 1], faint, lw)
-		for k in range(path.size() - 1):
-			draw_line(path[k], path[k + 1], bright, core)
+			_lane_stroke(path, halo, lw * 1.9)
+		_lane_stroke(path, faint, lw)
+		_lane_stroke(path, bright, core)
 		if sel:
 			var rim := col
 			rim.a = 0.85
-			for k in range(path.size() - 1):
-				draw_line(path[k], path[k + 1], rim, maxf(1.0, 3.2 * layout.s))
+			_lane_stroke(path, rim, maxf(1.0, 3.2 * layout.s))
+
+
+# JEDEN TAH CESTY: usecky + KROUZEK V KAZDEM BODE.
+# Krouzek ma polomer presne poloviny sirky tahu, takze v rozich vznikne
+# zaobleny spoj (ostry zlom je to, co vypadalo "pixelove") a na konci cesty
+# kulata spicka. Antialiasing zapnuty u vsech tahu.
+func _lane_stroke(path: PackedVector2Array, col: Color, w: float) -> void:
+	if path.size() < 2:
+		return
+	for k in range(path.size() - 1):
+		draw_line(path[k], path[k + 1], col, w, true)
+	var r: float = w * 0.5
+	for k in range(path.size()):
+		draw_circle(path[k], r, col, true, -1.0, true)
 
 
 # PAS KOLEM CESTY. Kazda cesta ma po obou stranach jednu bunku ve SVETLEJSIM

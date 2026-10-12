@@ -81,12 +81,37 @@ const PARAMS := [
 	{"key": "speed", "label": "rychlost", "kind": "f", "step": 4.0, "lo": 12.0, "hi": 200.0},
 	{"key": "lives", "label": "životy", "kind": "i", "step": 2.0, "lo": 1.0, "hi": 99.0},
 	{"key": "gold", "label": "zlato", "kind": "i", "step": 20.0, "lo": 0.0, "hi": 2000.0},
+	# VELIKOST MRIZKY. Krok 2 od licheho zakladu = pocet zustava LICHY, takze
+	# prostredni bunka (kde muze byt start i cil presne ve stredu) existuje
+	# porad. Jan: "Grid by měl mít lichý počet řádků ... Ideálně si moci
+	# zvolit počet řádků a sloupců v gridu."
+	{"key": "cols", "label": "sloupce", "kind": "i", "step": 2.0, "lo": 9.0, "hi": 45.0},
+	{"key": "rows", "label": "řádky", "kind": "i", "step": 2.0, "lo": 7.0, "hi": 31.0},
 ]
-const PARAM_COUNT := 4
-# PANEL "LEVEL" JE MRIZKA 3 SLOUPCU. Pocet sloupcu je tady, protoze se podle
-# nej dorovnava druhy (kratsi) radek prazdnou bunkou.
-const PARAM_COLS := 3
+# PARAMETRY, KTERE MENI ROZMER MRIZKY. Zmena se ZKOUSI na kopii: zmenseni
+# muze nechat prvek mimo mrizku a takova mapa by se uz nedala vyexportovat
+# (a hrac by to zjistil az u exportu).
+const GRID_KEYS := ["cols", "rows"]
+# POCET PARAMETRU. Test hlida, ze sedi s `PARAMS` - kdyby se pridala polozka
+# do tabulky a zapomnela tahle konstanta, UI by posledni parametr ztratilo.
+const PARAM_COUNT := 6
+# PANEL "LEVEL" JE TABULKA: kazda bunka je SLOUPEC POPISKU, SLOUPEC HODNOTY
+# a dve tlacitka "−"/"+" - a vsechny tri sloupce maji ve vsech radcich STEJNOU
+# sirku, takze hodnoty stoji presne pod sebou. Jan (Oct 2026): "Mělo by to mít
+# vše nějaký řád. Řazeno do sloupců a řádků. Ať sloupce a řádky drží stejné
+# rozměry pro všechny hodnoty. Například: Zlato | 200g | (-) (+)."
+const PARAM_COLS := 2
 const BTN_PARAM_COUNT := PARAM_COUNT * 2
+# SIRKA SLOUPCE POPISKU (px, nasobi `ui`). Popisek je TEXT, ne tlacitko - nema
+# dotykove minimum, jen musi mit vsechny popisky stejne misto, aby hodnoty
+# vedle nich zacinay na jednom x.
+const CELL_LABEL_W := 84.0
+# SIRKA TLACITEK U USEKU ("typ cesty" a "smazat úsek"). Popisek typu se meni
+# ("Oheň" je kratke, "neutrální" dlouhe), a kdyz se sirka meri podle popisku,
+# tlacitko pri kazdem prepnuti poskoci - a s nim i tlacitko vedle. Jan
+# (Oct 2026): "Šířka tlačítek by měla být fixní. Takhle to neustále skáče tam
+# a zpět." Proto maji obe PEVNOU sirku, dost velkou na nejdelsi popisek.
+const LANE_BTN_W := 132.0
 
 # --- OBSTARANI VYBERU (obdelnikovy tah) ------------------------------------
 # Hromadny vyber funguje jako klavesnice: oznacit obdelnikem -> kopirovat ->
@@ -480,14 +505,25 @@ func _sel_rows() -> Array:
 func _lane_params_row(include_delete: bool) -> Array:
 	var row: Array = [
 		{"act": BTN_ELEM, "label": Level.value_name(panel_element()), "w": 1.0, "on": false,
-			"kind": "elem", "compact": true},
+			"kind": "elem", "abs_w": LANE_BTN_W},
 	]
-	if include_delete and sel_lane >= 0 and sel_lane < level.lane_count():
-		row.append({"act": BTN_DELETE, "label": "smazat úsek", "w": 1.3, "on": false, "kind": "danger"})
+	if include_delete:
+		row.append(_delete_lane_item())
 	# DELKA CESTY SE NEMENI TLACITKY. Jan (Oct 2026): "Nechci měnit velikost
 	# pomocí tlačítek. Chci ji měnit tahem prstem." Cesta se tvaruje tahem
 	# za ni (viz begin_move / _extend_lane_bump), zadna tlacitka na to nejsou.
 	return row
+
+
+# TLAČITKO "smazat úsek". Stoji VZDY na stejnem miste a ma stejnou pevnou
+# sirku; kdyz neni co smazat, je na tom miste jen prazdno se stejnou sirkou -
+# jinak by radek poskocil ve chvili, kdy si hrac usek vybere.
+func _delete_lane_item() -> Dictionary:
+	if sel_lane >= 0 and sel_lane < level.lane_count():
+		return {"act": BTN_DELETE, "label": "smazat úsek", "w": 1.0, "on": false,
+			"kind": "danger", "abs_w": LANE_BTN_W}
+	return {"act": -1, "label": "", "w": 1.0, "on": false, "kind": CELL_SPACER,
+		"abs_w": LANE_BTN_W}
 
 
 # PARAMETRY V PANELU SE BEROU Z VYBERU. Kdyz je oznaceny usek, panel stoji
@@ -544,42 +580,55 @@ func _box_rows() -> Array:
 # siroke a vsechno se tvarilo stejne velke (Jan: "Hodnoty u prvků ohledně
 # levelů mohou být daleko úspornější na prostor").
 func _level_rows() -> Array:
-	var row: Array = _param_row([0, 1, 2])
-	return [row, _param_row([3])]
+	var rows: Array = []
+	var ids: Array = []
+	for p in range(PARAM_COUNT):
+		ids.append(p)
+		if ids.size() == PARAM_COLS:
+			rows.append(_param_row(ids))
+			ids = []
+	if not ids.is_empty():
+		rows.append(_param_row(ids))
+	return rows
 
 
+# JEDEN RADEK TABULKY = PARAM_COLS BUNEK. Chybejici bunka se doplni PRAZDNou
+# se STEJNOU stavbou (popisek + hodnota + dve tlacitka) a stejnymi pevnymi
+# sirkami - jinak by mel kratsi radek jiny soucet siriek a sloupce by ujely.
 func _param_row(ids: Array) -> Array:
 	var row: Array = []
 	for p in ids:
-		var g: String = "p%d" % int(p)
-		row.append({"act": -1, "label": _param_label(p), "w": 1.0, "on": false,
-			"kind": "value", "align": "right", "group": g})
-		row.append(_step_item(BTN_PARAM_DOWN + int(p) * 2, "−", g))
-		row.append(_step_item(BTN_PARAM_DOWN + int(p) * 2 + 1, "+", g))
-	# DOROVNANI SLOUPCU. Chybejici bunka se doplni PRAZDNymi polozkami tak,
-	# aby mel kazdy radek STEJNY POCET POLOZek i stejny SOUCET VAH - jinak
-	# se rozjede jak deleni sirky, tak mezery mezi polozkami a sloupce
-	# v obou radcich prestanou sedet (odhalila to az vizualni kontrola).
-	# Prazdna bunka ma STEJNOU STAVBU jako opravdova (text + dve tlacitka):
-	# jinak by mel druhy radek jiny soucet pevnych sirek a sloupce by ujely.
-	var missing: int = PARAM_COLS - ids.size()
-	for i in range(missing):
-		var g: String = "f%d" % i
-		# text, "−", "+" - stejne poradi i stejna pevna sirka jako u opravdove
-		# bunky, aby sloupce v obou radcich sedely na pixel.
-		row.append({"act": -1, "label": "", "w": 1.0, "on": false,
-			"kind": CELL_SPACER, "group": g})
-		for k in range(2):
-			row.append({"act": -1, "label": "", "w": 1.0, "on": false,
-				"kind": CELL_SPACER, "group": g, "abs_w": STEP_W})
+		row.append_array(_param_cell(int(p)))
+	for i in range(PARAM_COLS - ids.size()):
+		row.append_array(_param_cell(-1))
 	return row
 
 
-# NAZEV PARAMETRU S HODNOTOU DOHROMADY ("kolo 120 s"). Je to jedna informace
-# a jedno misto, kde se sklada - jinak by se nazev a hodnota rozešly.
-func _param_label(p: int) -> String:
-	var par: Dictionary = PARAMS[p]
-	return "%s %s" % [str(par["label"]), _param_text(str(par["key"]))]
+# BUNKA TABULKY: popisek (text, pevna sirka) | hodnota (text, doplni zbytek,
+# tiskne se k pravemu okraji) | "−" "+" (pevna mala sirka, nalepena na hodnotu).
+func _param_cell(p: int) -> Array:
+	var g: String = "p%d" % p
+	var label: String = ""
+	var value: String = ""
+	var kind: String = CELL_SPACER
+	if p >= 0:
+		label = str(PARAMS[p]["label"])
+		value = _param_text(str(PARAMS[p]["key"]))
+		kind = "value"
+	var out: Array = [
+		{"act": -1, "label": label, "w": 1.0, "on": false, "kind": kind,
+			"align": "left", "abs_w": CELL_LABEL_W, "cell": g},
+		{"act": -1, "label": value, "w": 1.0, "on": false, "kind": kind,
+			"align": "right", "group": g, "cell": g},
+	]
+	if p < 0:
+		for k in range(2):
+			out.append({"act": -1, "label": "", "w": 1.0, "on": false,
+				"kind": CELL_SPACER, "abs_w": STEP_W, "group": g})
+	else:
+		out.append(_step_item(BTN_PARAM_DOWN + p * 2, "−", g))
+		out.append(_step_item(BTN_PARAM_DOWN + p * 2 + 1, "+", g))
+	return out
 
 
 # HODNOTA PARAMETRU jako text (popisek mezi − a +). Cela cisla se kresli bez
@@ -1072,9 +1121,15 @@ func _try_move_node(n: int, to: Vector2i, skip_lane: int = -1, check: bool = tru
 		var l: int = int(item)
 		if l == skip_lane:
 			continue
-		# pres jinou cestu uzel prejet nesmi - cesty se v tomto modelu nekrizi
+		# PRES JINOU CESTU UZEL PREJET NESMI - cesty se v tomto modelu nekrizi.
+		# CESTY, KTERE SE TOHOTO UZLU DOTYKAJI, SE ALE PRESKAKUJI: vsechny se
+		# prepoji na novou polohu uzlu, takze jejich bunky nejsou "cizi".
+		# Cilova bunka je casto DRUHA bunka jedne z nich (posun po smeru
+		# napojene cesty) - presne to branilo presunu spojky, na ktere visi
+		# vic cest. Jan (Oct 2026): "Mělo by být možné chytit například spojku
+		# a pohnout s ní i když jsou na ní napojené cesty."
 		for j in range(level.lane_count()):
-			if j == l:
+			if touching.has(j):
 				continue
 			if _lane_uses_cell(j, to):
 				return false
@@ -1111,7 +1166,7 @@ func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
 			level.lanes[lane]["cells"] = _slice(cs, k, cs.size())
 			return
 		var head: Array = [to]
-		head.append_array(_route_known(cs[1], to, cs))
+		head.append_array(_route_known(cs[1], to, cs, lane))
 		head.append_array(_slice(cs, 1, cs.size()))
 		level.lanes[lane]["cells"] = head
 		return
@@ -1122,7 +1177,7 @@ func _reroute_lane(lane: int, from: Vector2i, to: Vector2i) -> void:
 		level.lanes[lane]["cells"] = _slice(cs, 0, kk + 1)
 		return
 	var tail: Array = _slice(cs, 0, cs.size() - 1)
-	tail.append_array(_route_known(cs[cs.size() - 2], to, cs))
+	tail.append_array(_route_known(cs[cs.size() - 2], to, cs, lane))
 	tail.append(to)
 	level.lanes[lane]["cells"] = tail
 
@@ -1165,6 +1220,13 @@ func _shift_run(lane: int, cs: Array, at_end: bool, p: Vector2i, to: Vector2i) -
 		while k2 < n - 1 and (cs[k2 + 1] - cs[k2]) == d:
 			k2 += 1
 		b = k2
+	# JEDNOBUNKOVY "KUS" NENI KUS. Kdyz cesta od uzlu odchazi KOLMO, je rovny
+	# usek u uzlu jen ta jedna bunka - a "posun kusu" by z ni udelal okliku
+	# pres bunku, kterou uzel prave opousti (a ta casto patri jine napojene
+	# ceste, takze by vzniko krizeni). Ohnuti ma na starosti az volajici
+	# (`_reroute_lane`), ktery umi vybrat ohyb mimo cizi cesty.
+	if (at_end and a >= n - 1) or (not at_end and b <= 0):
+		return false
 	# SESTAVENI: jedna bunka kusu zustava na miste (spojka u rohu), zbytek
 	# kusu se posune. Jinak by cesta nebyla souvisla.
 	var out: Array = []
@@ -1228,12 +1290,32 @@ func _route(from: Vector2i, to: Vector2i) -> Array:
 	return _route_xy(from, to)
 
 
-func _route_known(from: Vector2i, to: Vector2i, known: Array) -> Array:
+func _route_known(from: Vector2i, to: Vector2i, known: Array, lane: int = -1) -> Array:
 	var a: Array = _route_xy(from, to)
 	var b: Array = _route_yx(from, to)
-	if _known_count(b, known) > _known_count(a, known):
+	# CESTY SE NESMI KRIZIT, A TO PLATI I PRO SPOJOVACI BUNKY: trasa, ktera by
+	# projela cizi cestou, je horsi nez trasa, ktera jen nevyuzije bunky, ktere
+	# uz v teto ceste jsou. Bez toho se usek po posunu uzlu "vratil" pres
+	# bunku, kterou mezitim zabrala jina cesta - a krok zpet se pak odmitl
+	# ("usek 3 se krizi s usekem 2 v bunce 10,5").
+	var sa: int = _known_count(a, known) - 100 * _foreign_count(a, lane)
+	var sb: int = _known_count(b, known) - 100 * _foreign_count(b, lane)
+	if sb > sa:
 		return b
 	return a
+
+
+# Kolik bunek trasy lezi na NEJINE ceste (krizeni by vzniklo hned).
+func _foreign_count(route: Array, lane: int) -> int:
+	var out: int = 0
+	for c in route:
+		var v: Vector2i = c
+		for j in range(level.lane_count()):
+			if j == lane:
+				continue
+			if _lane_uses_cell(j, v):
+				out += 1
+	return out
 
 
 func _known_count(route: Array, known: Array) -> int:
@@ -2024,11 +2106,23 @@ func _param_step(act: int) -> void:
 	if is_equal_approx(nv, cur):
 		status = "%s už je na %s — dál to nejde." % [str(par["label"]), _param_text(key)]
 		return
-	_snapshot()
+	# ZMENA VELIKOSTI MRIZKY SE ZKOUSI NA KOPII. Zmenseni muze nechat prvek
+	# mimo mrizku, a takova mapa se neda vyexportovat - hrac by to zjistil
+	# az u exportu, kde uz je pozde. Jine parametry (cas kola, zlato...) mapu
+	# nerozbiji, takze se zkousi jen tyhle.
+	var trial: Level = level.clone()
 	if str(par["kind"]) == "i":
-		level.set(key, int(nv))
+		trial.set(key, int(nv))
 	else:
-		level.set(key, nv)
+		trial.set(key, nv)
+	if GRID_KEYS.has(key):
+		var errs: Array = trial.validate()
+		if errs.size() > level.validate().size():
+			var why: String = str(errs[0]) if not errs.is_empty() else "mapa by přestala platit"
+			status = "Mřížku takto změnit nejde — %s" % why
+			return
+	_snapshot()
+	level = trial
 	_after_change()
 	status = "Level: %s" % _level_text()
 
@@ -2036,9 +2130,9 @@ func _param_step(act: int) -> void:
 # VSE, CO SE V PANELU "LEVEL" DA NASTAVIT - jedna hlaska, aby hrac videl
 # souvislosti (a aby se hodnoty nemusely cist z peti tlacitek).
 func _level_text() -> String:
-	return "kolo %s · rychlost %s · životy %s · zlato %s" % [
+	return "kolo %s · rychlost %s · životy %s · zlato %s · mřížka %s×%s" % [
 		_param_text("round_time"), _param_text("speed"), _param_text("lives"),
-		_param_text("gold")]
+		_param_text("gold"), _param_text("cols"), _param_text("rows")]
 
 
 # EXPORT. Kod levelu se nejen vypise nad pruhem, ale ROVNOU SE ZKOPIRUJE do

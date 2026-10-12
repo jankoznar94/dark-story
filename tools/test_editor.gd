@@ -27,6 +27,7 @@ func _init() -> void:
 	_run("oznaceni prvku", _test_select_node)
 	_run("zpet", _test_undo)
 	_run("presouvani uzlu", _test_move_node)
+	_run("presun spojky s cestami", _test_move_node_junction)
 	_run("obdelnikovy vyber a kopie", _test_box_copy)
 	_run("chytani cesty prstem", _test_lane_grab_tools)
 	_run("obdelnik vsudy a vsude", _test_box_everywhere)
@@ -34,6 +35,9 @@ func _init() -> void:
 	_run("posun celeho vyberu", _test_box_move)
 	_run("chytit usek a prodlouzit/zkratit", _test_lane_extend)
 	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
+	_run("tabulka v panelu level", _test_level_table)
+	_run("velikost mrizky", _test_grid_size)
+	_run("pevna sirka tlacitek useku", _test_lane_buttons_fixed)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
 	_run("panely a pruh", _test_panels)
@@ -100,6 +104,22 @@ func _panel_label(e: Editor, act: int) -> String:
 					return str(it["label"])
 	e.panel = save
 	return ""
+
+
+# TEXT Z BUNKY TABULKY "level". V bunce jsou dva texty (popisek vlevo,
+# hodnota vpravo) a hledaji se pres `cell` - stejne, jako je sklada
+# `Editor._param_cell`, aby test nemeril neco jineho, nez hrac vidi.
+func _param_text_in_panel(e: Editor, p: int, align: String) -> String:
+	var save: int = e.panel
+	e.panel = Editor.PANEL_LEVEL
+	var g: String = "p%d" % p
+	var out: String = ""
+	for row in e.panel_rows():
+		for it in row:
+			if str(it.get("cell", "")) == g and str(it.get("align", "")) == align:
+				out = str(it.get("label", ""))
+	e.panel = save
+	return out
 
 
 # TEXTOVA HODNOTA V PANELU (polozka bez akce) JEJIM NAZVEM. Hleda se podle
@@ -832,6 +852,92 @@ func _test_move_node() -> void:
 		"mapa po presunu vyhybky neprojde: " + str(e2.level.validate()))
 
 
+# SPOJKA SE POSOUVA I S NAPOJENYMI CESTAMI. Jan (Oct 2026): "Mělo by být možné
+# chytit například spojku a pohnout s ní i když jsou na ní napojené cesty. Cesty
+# by se zkrátka měly přizpůsobit nové pozici spojky. Natahnout, zkrátit, atd."
+#
+# Uzel s jednou cestou umel editor presouvat uz driv; tahle zkouska je o uzlu,
+# na kterem visi TRI cesty (spojka). Dve veci musi projit:
+#   * posun PO SMERU napojene cesty (ta se zkrati nebo prodlouzi),
+#   * posun DO STRANY (cesta se ohne a prodlouzi o spojovaci bunky),
+# a jedna se odmitnout: cilova bunka patri cizi ceste (cesty se nekrizi).
+func _test_move_node_junction() -> void:
+	var e := _ed()
+	e.tool = Editor.TOOL_START
+	e.tap_cell(Vector2i(1, 5))
+	e.tool = Editor.TOOL_VYHYBKA
+	e.tap_cell(Vector2i(5, 5))
+	e.tool = Editor.TOOL_SPOJKA
+	e.tap_cell(Vector2i(9, 5))
+	e.tool = Editor.TOOL_CIL
+	e.tap_cell(Vector2i(13, 5))
+	e.elem = Element.FIRE
+	_stroke(e, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5)])
+	_stroke(e, [Vector2i(5, 5), Vector2i(6, 5), Vector2i(7, 5), Vector2i(8, 5), Vector2i(9, 5)])
+	_stroke(e, [Vector2i(5, 5), Vector2i(5, 4), Vector2i(5, 3), Vector2i(6, 3),
+		Vector2i(7, 3), Vector2i(8, 3), Vector2i(9, 3), Vector2i(9, 4), Vector2i(9, 5)])
+	_stroke(e, [Vector2i(9, 5), Vector2i(10, 5), Vector2i(11, 5), Vector2i(12, 5), Vector2i(13, 5)])
+	_check(e.level.validate().is_empty(), "mapa pro presun spojky neprojde: " + str(e.level.validate()))
+	var j: int = e.level.node_at_cell(Vector2i(9, 5))
+	_check(j >= 0 and e.level.node_kind(j) == Level.SPOJKA, "ve 9,5 neni spojka")
+	_check(e.level.lanes_at(j).size() == 3,
+		"na spojce ma viset 3 cesty, visi %d" % e.level.lanes_at(j).size())
+	var out_lane: int = -1
+	for l in e.level.lanes_at(j):
+		var cs: Array = e.level.lane_cells(int(l))
+		if cs.size() > 0 and cs[cs.size() - 1] == Vector2i(13, 5):
+			out_lane = int(l)
+	_check(out_lane >= 0, "z trí cest na spojce zadna nevede do cíle")
+	var out_before: int = 0 if out_lane < 0 else e.level.lane_cells(out_lane).size()
+
+	# --- POSUN PO SMERU VYSTUPNI CESTY: ta se zkrati o bunku
+	e.tool = Editor.TOOL_UZEL
+	_check(e.begin_move(Vector2i(9, 5)), "spojku nelze chytit")
+	_check(e.extend_move(Vector2i(10, 5)), "spojka se neda posunout po sve ceste")
+	e.end_move()
+	_check(e.level.node_cell(j) == Vector2i(10, 5),
+		"spojka neni na 10,5 (je na %s)" % str(e.level.node_cell(j)))
+	_check(_all_lanes_touch(e.level, j), "po posunu se cesta odpojila od spojky")
+	_check(e.level.validate().is_empty(),
+		"po posunu spojky mapa neplati: " + str(e.level.validate()))
+	_check(e.level.lanes_at(j).size() == 3, "presun spojky zahodil napojenou cestu")
+	if out_lane >= 0:
+		_check(e.level.lane_cells(out_lane).size() == out_before - 1,
+			"vystupni cesta se nezkratila (%d -> %d)" % [out_before, e.level.lane_cells(out_lane).size()])
+
+	# --- ZPET NA PUVODNI MISTO: prodlouzi se presne na puvodni pocet bunek
+	_check(e.begin_move(Vector2i(10, 5)), "spojku nelze chytit podruhe")
+	_check(e.extend_move(Vector2i(9, 5)), "spojka se neda posunout zpet")
+	e.end_move()
+	if out_lane >= 0:
+		_check(e.level.lane_cells(out_lane).size() == out_before,
+			"cesta se zpet neprodlouzila (%d -> %d)" % [out_before, e.level.lane_cells(out_lane).size()])
+	_check(e.level.validate().is_empty(),
+		"po navratu spojky mapa neplati: " + str(e.level.validate()))
+
+	# --- POSUN DO STRANY: ostatni cesty se ohne a prodlouzi, mapa plati dal
+	_check(e.begin_move(Vector2i(9, 5)), "spojku nelze chytit potreti")
+	_check(e.extend_move(Vector2i(9, 6)), "spojka se neda posunout do strany")
+	e.end_move()
+	_check(e.level.node_cell(j) == Vector2i(9, 6),
+		"spojka neni dole (je na %s)" % str(e.level.node_cell(j)))
+	_check(_all_lanes_touch(e.level, j), "po posunu do strany se cesta odpojila")
+	_check(e.level.validate().is_empty(),
+		"po posunu do strany mapa neplati: " + str(e.level.validate()))
+
+
+# Visi vsechny cesty, ktere level hlasi u uzlu, svou bunkou na tom uzlu?
+func _all_lanes_touch(lv: Level, n: int) -> bool:
+	var c: Vector2i = lv.node_cell(n)
+	for l in lv.lanes_at(n):
+		var cs: Array = lv.lane_cells(int(l))
+		if cs.is_empty():
+			return false
+		if cs[0] != c and cs[cs.size() - 1] != c:
+			return false
+	return true
+
+
 func _test_export() -> void:
 	var e := _ed()
 	e.tool = Editor.TOOL_START
@@ -1037,17 +1143,24 @@ func _test_panels() -> void:
 	_check(e.level.lane_count() == lanes0 - 1, "smazani useku nesmazalo usek")
 
 	# HODNOTOVY POPISEK NENI TLACITKO: v panelu "level" musi byt polozky bez
-	# akce (hodnoty) a klepnuti na ne nic nedela.
+	# akce (popisky a hodnoty) a klepnuti na ne nic nedela. Pocitaji se ZVLAST:
+	# popisek je text leveho sloupce, hodnota text sloupce u tlacitek.
 	var values: int = 0
+	var names: int = 0
 	e.panel = Editor.PANEL_LEVEL
 	for row in e.panel_rows():
 		for it in row:
-			if int(it["act"]) < 0 and str(it["kind"]) == "value":
-				values += 1
+			if str(it["kind"]) == "value" and int(it["act"]) < 0:
+				if str(it.get("align", "")) == "right":
+					values += 1
+				elif str(it.get("align", "")) == "left":
+					names += 1
 			_check(str(it["kind"]) != "value" or int(it["act"]) < 0,
 				"hodnota v panelu je zaroven tlacitko")
 	_check(values == Editor.PARAM_COUNT,
 		"v panelu level chybi hodnoty (%d z %d)" % [values, Editor.PARAM_COUNT])
+	_check(names == Editor.PARAM_COUNT,
+		"v panelu level chybi popisky sloupcu (%d z %d)" % [names, Editor.PARAM_COUNT])
 
 	# KLEPNUTI NA DESKU S OTEVRENYM PANELEM PANEL JEN ZAVRE (a nic nepolozi).
 	# game_view se v testu neinstanciuje (je to obrazovka s _draw), takze se
@@ -1105,14 +1218,20 @@ func _test_level_params() -> void:
 		var label: String = _panel_label(e, up_act)
 		_check(label == "+", "%s: tlacitko + ma popisek %s" % [key, label])
 		_check(_panel_label(e, down_act) == "−", "%s: tlacitko - ma popisek %s" % [key, _panel_label(e, down_act)])
-		# NAZEV S HODNOTOU je v panelu jako TEXT (ne obdelnik): hrac vidi
-		# "kolo 120 s" a vedle jen dve mala tlacitka.
-		var value_label: String = _panel_value_label(e, Editor.PANEL_LEVEL, str(par["label"]))
-		_check(value_label.begins_with(str(par["label"]) + " "),
-			"%s: hodnota v panelu je \"%s\"" % [key, value_label])
-		_check(value_label.contains(e._param_text(key)) or value_label.length() > str(par["label"]).length(),
-			"%s: hodnota v panelu neukazuje cislo: \"%s\"" % [key, value_label])
-		_check(e.status.contains(str(par["label"])), "hlaska nemluvi o %s: %s" % [key, e.status])
+		# TABULKA MA V BUNCE DVA TEXTY: popisek (sloupec vlevo) a hodnotu
+		# (sloupec vpravo, hned u tlacitek "−"/"+"). Hrac vidi "kolo | 120 s |
+		# − +" a hodnoty stoji ve sloupcich pod sebou.
+		var cell_name: String = _param_text_in_panel(e, p, "left")
+		var cell_value: String = _param_text_in_panel(e, p, "right")
+		_check(cell_name == str(par["label"]),
+			"%s: popisek v panelu je \"%s\"" % [key, cell_name])
+		_check(cell_value == e._param_text(key),
+			"%s: hodnota v panelu je \"%s\", ma byt \"%s\"" % [key, cell_value, e._param_text(key)])
+		# HLAŠKA UKAZUJE, CO SE PRAVE ZMENILO. U velikosti mrizky stoji
+		# v hlasce "mřížka 29×15", takze se hleda HODNOTA (popisek "sloupce"
+		# by v ni byt nemusel) - hleda se to, co hrac opravdu vidi.
+		_check(e.status.contains(e._param_text(key)),
+			"hlaska nemluvi o %s: %s" % [key, e.status])
 		# DOLU: zpatky
 		e.press(down_act)
 		_check(absf(float(e.level.get(key)) - before) < 0.001,
@@ -2058,6 +2177,209 @@ func _test_steppers_and_grid() -> void:
 	_check(gsrc.contains("Level.GRID_STEP"), "mrizka nekresli kazdou ctvrtou caru vyrazneji")
 	_check(not gsrc.contains("Color(0.20, 0.185, 0.165"),
 		"v kresleni zustala stara (neviditelna) barva mrizky")
+
+# TABULKA V PANELU "LEVEL" MUSI DRZET SLOUPCE. Jan (Oct 2026): "Mělo by to mít
+# vše nějaký řád. Řazeno do sloupců a řádků. Ať sloupce a řádky drží stejné
+# rozměry pro všechny hodnoty. Například: Zlato | 200g | (-) (+)."
+#
+# Meri se SKUTECNE obdelniky z rozvrzeni (ne data): popisek kazdeho parametru
+# zacina na stejnem x, hodnota konci na stejnem x a tlacitka "−"/"+" stoji
+# u vsech parametru na stejnem x. Kdyby se sloupce rozjely, hrac to vidi jako
+# "divne rozprostrenou" listu - presne to, co nahlasil.
+func _test_level_table() -> void:
+	var e := _ed()
+	e.panel = Editor.PANEL_LEVEL
+	var font := ThemeDB.fallback_font
+	for size in [Vector2(640.0, 360.0), Vector2(960.0, 600.0), Vector2(1920.0, 1080.0)]:
+		var lay := ScreenLayout.new()
+		lay.compute(size)
+		lay.set_editor_font(font)
+		lay.editor_panel(e.panel_rows())
+		var seen: Dictionary = {}
+		for row in lay.ed_panel_rows:
+			for en in row:
+				var it: Dictionary = en["item"]
+				# BUNKA = `cell` u textu, `group` u tlacitek "−"/"+" (jsou to
+				# stejna jmena: "p0".."p3"), takze se vsechno ve bunce najde
+				# pod jednim klicem.
+				var g: String = str(it.get("cell", str(it.get("group", ""))))
+				if g == "":
+					continue
+				var r: Rect2 = en["rect"]
+				if not seen.has(g):
+					seen[g] = {}
+				if str(it.get("align", "")) == "left":
+					seen[g]["label_x"] = r.position.x
+				elif str(it.get("align", "")) == "right":
+					seen[g]["value_end"] = r.end.x
+				elif str(it.get("label", "")) == "−":
+					seen[g]["minus_x"] = r.position.x
+		_check(seen.size() == Editor.PARAM_COUNT,
+			"%s: v tabulce level je %d bunek, ceka se %d" % [str(size), seen.size(), Editor.PARAM_COUNT])
+		# SLOUPCE SE POROVNAVAJI V RAMCI SVÉHO SLOUPCE: prvni bunka radku
+		# a prvni bunka druheho radku musi stat na stejnem x (druha bunka
+		# s druhou). Porovnavat vsechno se vsim by hlasilo chybu i u spravne
+		# tabulky - bunky v jednom radku jsou vedle sebe, ne pod sebou.
+		var ref: Array = []
+		for i in range(Editor.PARAM_COLS):
+			ref.append({})
+		for g in seen.keys():
+			var c: Dictionary = seen[g]
+			var col: int = int(str(g).substr(1)) % Editor.PARAM_COLS
+			for key in ["label_x", "value_end", "minus_x"]:
+				_check(c.has(key), "%s: bunka %s nema %s" % [str(size), g, key])
+				if not c.has(key):
+					continue
+				if not ref[col].has(key):
+					ref[col][key] = float(c[key])
+					continue
+				_check(absf(float(c[key]) - float(ref[col][key])) < 0.6,
+					"%s sloupec %d: %s nejsou na stejnem x (%.1f vs %.1f)" % [
+						str(size), col, key, float(c[key]), float(ref[col][key])])
+		# VSE MUSI BYT NA DISPLEJI: tabulka se nesmi vylit vpravo.
+		for en in _panel_items(lay):
+			_check(float(en["rect"].end.x) <= size.x + 0.6,
+				"%s: polozka tabulky pretekla displej (%.1f > %.1f)" % [
+					str(size), float(en["rect"].end.x), size.x])
+	e.panel = Editor.PANEL_NONE
+
+
+# VELIKOST MRIZKY: LICHA CISLA A ZMENA, KTERA SE NEJDRIV ZKOUSI.
+# Jan (Oct 2026): "Grid by měl mít lichý počet řádků, aby mohl být cíl a start
+# i úplně vertikálně vycentrovaný. Ideálně si moci zvolit počet řádků a sloupců
+# v gridu."
+func _test_grid_size() -> void:
+	# TABULKA PARAMETRU A POCET PARAMETRU SE NESMI ROZEJIT: kdyby se do
+	# `PARAMS` pridala polozka a konstanta zustala, UI by ji neukazovalo.
+	_check(Editor.PARAM_COUNT == Editor.PARAMS.size(),
+		"PARAM_COUNT nesedi s PARAMS (%d vs %d)" % [Editor.PARAM_COUNT, Editor.PARAMS.size()])
+
+	# LICHE CISLO = PROSTREDNI BUNKA MA STRED PRESNE VE STREDU HRISTE.
+	# V sude mrizce lezi stred mezi dvema bunkami a start ani cil se
+	# doprostred postavit neda.
+	var base := Level.base()
+	_check(base.cols % 2 == 1 and base.rows % 2 == 1,
+		"zakladni mrizka nema lichy pocet (%dx%d)" % [base.cols, base.rows])
+	var midc: int = (base.cols - 1) / 2
+	var midr: int = (base.rows - 1) / 2
+	var mid: Vector2 = base.cell_center(midc, midr)
+	_check(is_equal_approx(mid.x, 0.5) and is_equal_approx(mid.y, 0.5),
+		"prostredni bunka nema stred ve stredu hriste (%s)" % str(mid))
+
+	# KROK 2 OD LICHYCH MEZI: pocet zustava lichy v CELYCH mezich a u obou
+	# rozmeru, takze prostredni bunka existuje porad.
+	var e := _ed()
+	# MAPA MUSI BYT PLATNA: `from_code` vraci null, kdyz level neprojde
+	# validaci (a prazdny level nema ani start) - na prazdnem levelu by test
+	# meril neco jineho, nez si mysli.
+	_lane_level(e)
+	e.panel = Editor.PANEL_LEVEL
+	for p in range(Editor.PARAM_COUNT):
+		var par: Dictionary = Editor.PARAMS[p]
+		var key: String = str(par["key"])
+		if not Editor.GRID_KEYS.has(key):
+			continue
+		_check(int(par["lo"]) % 2 == 1 and int(par["hi"]) % 2 == 1,
+			"%s: meze nejsou liche (%d..%d)" % [key, int(par["lo"]), int(par["hi"])])
+		_check(int(par["step"]) % 2 == 0, "%s: krok neni sudy" % key)
+		var up: int = Editor.BTN_PARAM_DOWN + p * 2 + 1
+		var guard: int = 0
+		while float(e.level.get(key)) < float(par["hi"]) - 0.001 and guard < 200:
+			e.press(up)
+			guard += 1
+			_check(int(e.level.get(key)) % 2 == 1,
+				"%s: %d neni liche" % [key, int(e.level.get(key))])
+		_check(int(e.level.get(key)) == int(par["hi"]),
+			"%s nedrzi horni mez (%d)" % [key, int(e.level.get(key))])
+	# ROZMER SE MUSI ODNEST V KODU LEVELU - jinak by se hracovi po exportu
+	# level vratil v puvodni mrizce.
+	var code: String = e.level.to_code()
+	var back := Level.from_code(code)
+	_check(back != null, "kod s jinou mrizkou se neda nacist")
+	if back != null:
+		_check(back.cols == e.level.cols and back.rows == e.level.rows,
+			"rozmer mrizky se v kodu ztratil (%dx%d vs %dx%d)" % [
+				back.cols, back.rows, e.level.cols, e.level.rows])
+
+	# ZMENSENI, KTERE BY NECHALO PRVEK MIMO MRIZKU, SE ODMITNE - a rekne se proc.
+	# `_lane_level` ma cile na radcích 2 a 8, takze pod 9 radku se mapa rozbije.
+	var f := _ed()
+	_lane_level(f)
+	f.panel = Editor.PANEL_LEVEL
+	var rows_p: int = -1
+	for p in range(Editor.PARAM_COUNT):
+		if str(Editor.PARAMS[p]["key"]) == "rows":
+			rows_p = p
+	_check(rows_p >= 0, "v PARAMS chybi radky")
+	var down: int = Editor.BTN_PARAM_DOWN + rows_p * 2
+	var guard2: int = 0
+	while float(f.level.get("rows")) > float(Editor.PARAMS[rows_p]["lo"]) + 0.001 and guard2 < 200:
+		f.press(down)
+		guard2 += 1
+	_check(f.level.rows >= 9, "mrizka se zmensila pres prvek mimo ni (%d radku)" % f.level.rows)
+	_check(f.status.contains("Mřížku") and f.status.contains("nejde"),
+		"odmitnuti zmenseni nerekne proc: " + f.status)
+	_check(f.level.validate().is_empty(),
+		"po odmitnutem zmenseni mapa neplati: " + str(f.level.validate()))
+	for n in range(f.level.node_count()):
+		var c: Vector2i = f.level.node_cell(n)
+		_check(f.level.in_bounds(c.x, c.y),
+			"prvek %d zustal mimo mrizku (%s)" % [n, str(c)])
+	f.panel = Editor.PANEL_NONE
+
+
+# SIRKA TLACITEK U USEKU JE PEVNA. Jan (Oct 2026): "Velikost tlačítek s výběrem
+# elementu cesty a 'smazat úsek' se neustále mění podle délky názvu elementu.
+# Šířka tlačítek by měla být fixní. Takhle to neustále skáče tam a zpět."
+#
+# Meri se u VSECH typu useku (kmen, neutralni, ctyri zivly) - kdyby se sirka
+# pocitala z popisku, "neutrální" by bylo jine nez "Oheň".
+func _test_lane_buttons_fixed() -> void:
+	var e := _ed()
+	_lane_level(e)
+	var font := ThemeDB.fallback_font
+	for size in [Vector2(640.0, 360.0), Vector2(960.0, 600.0)]:
+		for panel in [Editor.PANEL_TOOLS, Editor.PANEL_SEL]:
+			e.panel = panel
+			var widths: Array = []
+			var types: Array = [Level.KMEN, Level.NEUTRAL, Element.FIRE, Element.WATER,
+				Element.EARTH, Element.AIR]
+			for t in types:
+				e.sel_lane = 0
+				e.level.set_lane_element(0, t)
+				var lay := ScreenLayout.new()
+				lay.compute(size)
+				lay.set_editor_font(font)
+				lay.editor_panel(e.panel_rows())
+				for en in _panel_items(lay):
+					if int(en["item"].get("act", -1)) == Editor.BTN_ELEM:
+						widths.append(float(en["rect"].size.x))
+			_check(widths.size() == types.size(),
+				"%s: naslo se %d tlacitek typu useku" % [str(size), widths.size()])
+			for w in widths:
+				_check(absf(float(w) - float(widths[0])) < 0.6,
+					"%s panel %d: sirka tlacitka typu se meni podle popisku (%.1f vs %.1f)" % [
+						str(size), panel, float(w), float(widths[0])])
+			# TLACITKO "smazat úsek" ma taky pevnou sirku a stoji na stejnem
+			# miste, at je vybrany usek jakykoli.
+			var del_x: Array = []
+			for t in types:
+				e.sel_lane = 0
+				e.level.set_lane_element(0, t)
+				var lay2 := ScreenLayout.new()
+				lay2.compute(size)
+				lay2.set_editor_font(font)
+				lay2.editor_panel(e.panel_rows())
+				for en in _panel_items(lay2):
+					if int(en["item"].get("act", -1)) == Editor.BTN_DELETE:
+						del_x.append(float(en["rect"].position.x))
+			if del_x.size() > 0:
+				for x in del_x:
+					_check(absf(float(x) - float(del_x[0])) < 0.6,
+						"%s panel %d: tlacitko smazat se posouva podle popisku typu (%.1f vs %.1f)" % [
+							str(size), panel, float(x), float(del_x[0])])
+	e.sel_lane = -1
+	e.panel = Editor.PANEL_NONE
 
 
 # POLOZKY ROZVRZENEHO PANELU (kresleni i klepnuti jdou pres ne).

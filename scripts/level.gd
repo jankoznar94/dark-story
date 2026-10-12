@@ -39,8 +39,14 @@ extends RefCounted
 # 47x32, takze ohyb cesty stoji 33 px a dve trasy se daji slozit tesne
 # vedle sebe. Hranici je prst: na 640x360 (nejmensi podporovany displej)
 # vyjde bunka na 23x18 px a mensi uz by se nedala trefit.
-const COLS := 28
-const ROWS := 14
+# ROZMERY MRIZKY. LICHE CISLO NENI NAHODA: jen v liche mrizce ma prostredni
+# bunka svuj stred presne ve stredu hriste (radku 7 z 15 je stred 0.5), takze
+# start i cil se daji postavit PRESNE doprostred. V sude mrizce (28x14) lezi
+# stred mezi dvema bunkami a nikdo to netrefi. Jan (Oct 2026): "Grid by měl
+# mít lichý počet řádků, aby mohl být cíl a start i úplně vertikálně
+# vycentrovaný. Ideálně si moci zvolit počet řádků a sloupců v gridu."
+const COLS := 27
+const ROWS := 15
 
 # --------------------------------------------------------------- druhy uzlu
 const START := 0      # vstup poutniku, 1 vystup
