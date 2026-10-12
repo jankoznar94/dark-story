@@ -671,6 +671,12 @@ func _sel_body() -> String:
 		# cest pomocí tahu prstem... Chtěl bych vybrat jednu cestu a upravit
 		# ji." Vyber useku se pozna podle toho, ze je v pruhu napsany - a aby
 		# hrac nemusel hádat, ze se da tvarovat, rekne se to rovnou tady.
+		# U NASTROJE "VÝBĚR" TO ALE NENI PRAVDA: tam tah obtahne obdelnik.
+		# Napoveda, ktera u vyberu slibuje tvarovani, posle hrace hledat
+		# funkci, ktera v tom nastroji neexistuje.
+		if tool == TOOL_VYBER:
+			return "úsek %d · %s — tažením obtáhneš obdélník, tvaruj ho nástrojem „cesta“" % [
+				sel_lane, level.lane_type_name(sel_lane)]
 		return "úsek %d · %s — tažením prstem ho posuneš, prodloužíš nebo ohneš" % [
 			sel_lane, level.lane_type_name(sel_lane)]
 	return "úseků %d · uzlů %d · nové cesty: %s — klepni na úsek nebo na prvek a vybereš ho" % [
@@ -1306,6 +1312,27 @@ func box_nodes() -> Array:
 	return out
 
 
+# USEKY, KTERE OBDELNIK JEN PROTINA. Do kopie ani do smazani nepatri (viz
+# `box_lanes`), ale hrac se to MUSI DOZVEDIT: "V obdélníku nic není" u obdelniku,
+# ktery pres cesty zretelne vede, je lez a hrac ji vidi jako rozbity vyber.
+func box_lanes_cut() -> Array:
+	var out: Array = []
+	if not has_box():
+		return out
+	for i in range(level.lane_count()):
+		var any: bool = false
+		var whole: bool = true
+		for c in level.lane_cells(i):
+			var v: Vector2i = c
+			if _box_has(v):
+				any = true
+			else:
+				whole = false
+		if any and not whole:
+			out.append(i)
+	return out
+
+
 func _box_has(cell: Vector2i) -> bool:
 	if not has_box():
 		return false
@@ -1349,8 +1376,12 @@ func end_box() -> void:
 	var ln: int = box_lanes().size()
 	var nd: int = box_nodes().size()
 	if ln == 0 and nd == 0:
+		var cut: int = box_lanes_cut().size()
 		sel_box = Rect2i(0, 0, 0, 0)
-		status = "V obdélníku nic není — obtáhni úseky a prvky."
+		if cut > 0:
+			status = "Obdélník protíná %d úseků, ale ani jeden celý — obtáhni úsek od uzlu k uzlu." % cut
+		else:
+			status = "V obdélníku nic není — obtáhni úseky a prvky."
 		return
 	status = "Vybráno obdélníkem: %d úseků, %d prvků. Kopíruj nebo smaž." % [ln, nd]
 
@@ -1689,15 +1720,22 @@ func press(button: int) -> void:
 		return
 	if button < TOOL_COUNT:
 		tool = button
+		# VOLBA NASTROJE JE VOLBA MODU, NE UPRAVA LEVELU - a panel stoji NAD
+		# deskou, takze by hrac prvni tah na desku "obetoval" na jeho zavreni
+		# (klepnuti na desku s otevrenym panelem panel jen zavre). Zmereno na
+		# 932x430 pres game_view: zvolil "výběr", obtahl obdelnik a nestalo se
+		# NIC - teprve druhy tah vybral. Presne tak vypada "rectangle select
+		# nefunguje".
+		close_panel()
 		if button == TOOL_GUMA:
 			status = "Guma: klepni na prvek nebo na cestu."
 		elif button == TOOL_ROAD:
 			status = "Tažením prstu kresli cestu (%s). Klepnutím úsek nebo prvek vybereš." \
 				% Level.value_name(elem)
 		elif button == TOOL_VYBER:
-			status = "Výběr: tažením obtáhni obdélník, klepnutím vybereš jeden prvek. Pak kopíruj, otoč a vlož."
+			status = "Výběr: tažením obtáhni obdélník, klepnutím vybereš jeden prvek. Cesty tvaruj nástrojem „cesta“."
 		else:
-			status = "Klepni, kam má %s přijít. Tažením z prvku ho přesuneš." \
+			status = "Klepni, kam má %s přijít. Tažením z prvku ho přesuneš, tažením po cestě ji ohneš." \
 				% TOOL_LABELS[button]
 		return
 	if is_param_button(button):
@@ -1942,6 +1980,14 @@ func begin_lane_drag(cell: Vector2i) -> bool:
 
 
 func _begin_lane_grab(cell: Vector2i) -> bool:
+	# NASTROJ "VÝBĚR" NECHYTÁ CESTU. Jeho gestem je obdelnik a ten se musi dat
+	# spustit KDEKOLI - i pres cestu a v jejim sousedstvi, protoze prave tam
+	# hrac obtahuje to, co chce vzit. Dokud cesta vyhravala, prst kousek od
+	# cesty, prst obtahnul obdelnik jen na 42 % mrizky (mereno na zakladni desce)
+	# jinde se cestou nechtene posunulo - presne to bylo "rectangle select
+	# zase nefunguje". Tvarovani cesty je na "cesta" a na palete.
+	if tool == TOOL_VYBER:
+		return false
 	var hit: Array = _lane_grab(cell)
 	if hit.is_empty():
 		return false
@@ -2005,16 +2051,17 @@ func _begin_lane_grab(cell: Vector2i) -> bool:
 # seznam. Presna bunka se zkousi prvni - v uzlu se cesty potkavaji, ale uzel se
 # chyta jako uzel (viz begin_move).
 #
-# U NASTROJE "VÝBĚR" se zkousi i ctyri sousedni bunky: prst neni mys a cesta je
-# na obrazovce jen tenká cara, takze hrac jinak cestu netrefi - a presne to mu
-# branilo ji upravit. U ostatnich nastroju se vedle NEHLEDA: hrac tam KLADE
-# prvek a polozit vyhybku vedle cesty je bezna prace; kdyby ji prst chytil
-# misto položení, mapa by se nedala stavet.
+# U NASTROJE "CESTA" se zkousi i ctyri sousedni bunky: prst neni mys a cesta je
+# na obrazovce jen tenká cara, takze hrac jinak cestu netrefi. Prave tam nema
+# chytnuti cesty zadny jiny vyznam: nova cesta MUSI zacit v uzlu, takze tah z
+# prostredku cesty by skoncil jen hlasenim. U PALETY se vedle NEHLEDA - tam hrac
+# KLADE prvek a polozit vyhybku vedle cesty je bezna prace; s toleranci by prst
+# chytil cestu misto položení a mapa by se nedala stavet.
 func _lane_grab(cell: Vector2i) -> Array:
 	for j in range(level.lane_count()):
 		if _lane_uses_cell(j, cell):
 			return [j, cell]
-	if tool != TOOL_VYBER:
+	if tool != TOOL_ROAD:
 		return []
 	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		var c: Vector2i = cell + d

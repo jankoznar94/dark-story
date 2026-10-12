@@ -29,6 +29,7 @@ func _init() -> void:
 	_run("presouvani uzlu", _test_move_node)
 	_run("obdelnikovy vyber a kopie", _test_box_copy)
 	_run("chytani cesty prstem", _test_lane_grab_tools)
+	_run("obdelnik vsudy a vsude", _test_box_everywhere)
 	_run("posun vystupku prstem", _test_bump_shift)
 	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
 	_run("export", _test_export)
@@ -1502,15 +1503,18 @@ func _test_box_copy() -> void:
 	e4.panel = Editor.PANEL_NONE
 
 
-# CHYTANI CESTY PRSTEM JE DOSTUPNE I NASTROJI "CESTA" A "VYBER".
-# Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem. Tah
-# prstem teď dělá rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
+# CHYTANI CESTY PRSTEM: NASTROJ "CESTA" A PALETA ANO, "VYBER" NE.
+# Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem.
+# Chtěl bych vybrat jednu cestu a upravit ji." - a po case: "Presouvani
+# existujicich prvku uz funguje dobre, ale ted uz zase nefunguje rectangle
+# select. Musi fungovat oboji."
 #
-# Driv se cesta dala chytit JEN nastrojem z palety (start/cíl/výhybka/spojka/
-# uzel): na "ceste" se taháním kreslilo a na "vyberu" obtahoval obdelnik, takze
-# hrac cestu upravit NEMOHL - a presne to Jan psal. Test to hlida z obou stran:
-# cesta se chyti vsude, kde tah nic jineho znamenat nema, a nechyti se tam, kde
-# tah znamena neco jineho (uzel, prazdne misto, guma).
+# Obe gesta zacínaji na stejnem miste, takze se musi rozdelit PO NASTROJICH:
+#   * "cesta" a paleta (start/cíl/výhybka/spojka/uzel) = tah TVARUJE cestu nebo
+#     presouva prvek - presne tam, kde tah nic jineho znamenat nema,
+#   * "výběr" = tah OBTAHNE OBDELNIK, a to vsude, i pres cestu.
+# Test hlida obe strany: cesta se chyti tam, kde tvarovani znamena, a NECHYTI se
+# tam, kde tah znamena neco jineho (uzel, prazdne misto, guma, vyber).
 func _test_lane_grab_tools() -> void:
 	var e := _ed()
 	var lv := Level.new()
@@ -1518,7 +1522,7 @@ func _test_lane_grab_tools() -> void:
 	var c: int = lv.add_node(6, 5, Level.CIL)
 	lv.add_lane(s, c, "RRRR", Element.FIRE)
 	e.level = lv
-	# 1) NASTROJ "CESTA": prst na ceste chyti CESTSAMU - kreslit by tam stejne
+	# 1) NASTROJ "CESTA": prst na ceste chyti CESTU SAMU - kreslit by tam stejne
 	#    neslo, protoze nova cesta musi zacit v uzlu.
 	e.tool = Editor.TOOL_ROAD
 	_check(e.begin_lane_drag(Vector2i(4, 5)),
@@ -1526,25 +1530,43 @@ func _test_lane_grab_tools() -> void:
 	_check(e.moving and e.drag_lane == 0,
 		"chycena cesta neni oznacena jako tazena (moving=%s, lane=%d)" % [str(e.moving), e.drag_lane])
 	e.end_move()
-	# 2) NASTROJ "VYBER": tah PO OSE cesty u jejiho konce ji PRODLOUZI (uzel
-	#    jede s prstem) - a neobtahne pritom obdelnik.
-	e.tool = Editor.TOOL_VYBER
+	# 2) NASTROJ "CESTA" MA TOLERANCI: prst VEDLE cesty ji porad chyti (cesta je
+	#    na displeji jen tenká cara a prst neni mys). Chytá se ale BUNKA NA
+	#    CESTE, ne ta pod prstem - jinak by se hledal kus pod bunkou, kde nic
+	#    neni.
+	_check(e.begin_lane_drag(Vector2i(4, 4)), "nastrojem cesta se cesta vedle netrefi")
+	_check(e.drag_cell == Vector2i(4, 5),
+		"tolerance chytila bunku %s, ma chytit bunku na ceste" % str(e.drag_cell))
+	e.end_move()
+	# 3) TAH PO OSE cesty u jejiho konce ji PRODLOUZI (uzel jede s prstem) - a
+	#    neobtahne pritom obdelnik.
 	var was: int = e.level.lane_cells(0).size()
-	_check(e.begin_lane_drag(Vector2i(5, 5)), "nastrojem vyber se cesta neda chytit")
+	_check(e.begin_lane_drag(Vector2i(5, 5)), "nastrojem cesta se cesta nedá chytit za konec")
 	_check(e.drag_node_end, "kus u konce cesty nema konec jako uzel")
 	e.extend_move(Vector2i(6, 5))
 	e.end_move()
 	var now: int = e.level.lane_cells(0).size()
 	_check(now == was + 1, "tahem za konec se cesta neprodouzila (%d -> %d)" % [was, now])
-	# 3) KLEPNUTI (tah bez pohybu) nastrojem "vyber" jen VYBERE: neobtahne
-	#    obdelnik a nepolovi cestu prvkem
+	# 4) NASTROJ "VÝBĚR" CESTU NECHYTÁ - jeho gestem je OBDELNIK, a ten se musi
+	#    dat spustit KDEKOLI, i pres cestu a v jejim sousedstvi. Dokud cesta
+	#    vyhravala, obdelnik se spustil jen na 42 % mrizky zakladni desky.
+	e.tool = Editor.TOOL_VYBER
+	_check(not e.begin_lane_drag(Vector2i(4, 5)),
+		"nastrojem vyber se cesta chytila misto obdelniku")
+	_check(not e.moving, "nastrojem vyber zacalo tazeni cestou")
+	_check(not e.begin_lane_drag(Vector2i(4, 4)),
+		"nastrojem vyber se chytila cesta VEDLE (tolerance)")
+	# 5) KLEPNUTI (tah bez pohybu) nastrojem "vyber" jen VYBERE: neposune cestu
+	#    a nepolovi ji prvkem.
 	var lanes: int = e.level.lane_count()
-	_check(e.begin_lane_drag(Vector2i(4, 5)), "cesta se neda chytit")
-	e.end_move()
+	var before: Array = e.level.lane_cells(0).duplicate()
+	e.begin_box(Vector2i(4, 5))
+	e.end_box()
 	_check(e.sel_lane == 0, "klepnuti na cestu ji nevybralo (sel_lane=%d)" % e.sel_lane)
-	_check(not e.box_active, "klepnuti na cestu spustilo obdelnikovy vyber")
+	_check(not e.moving, "klepnuti na cestu spustilo tazeni cestou")
 	_check(e.level.lane_count() == lanes, "klepnuti na cestu ji rozdelilo")
-	# 4) PRAZDNE MISTO: obdelnik se porad da obtáhnout - tah z prazdna mista
+	_check(e.level.lane_cells(0) == before, "klepnuti na cestu ji posunulo")
+	# 5) PRAZDNE MISTO: obdelnik se porad da obtáhnout - tah z prazdna mista
 	#    cestu nechyti
 	e.sel_lane = -1
 	_check(not e.begin_lane_drag(Vector2i(4, 9)), "prazdne misto se chytilo jako cesta")
@@ -1553,17 +1575,17 @@ func _test_lane_grab_tools() -> void:
 	e.end_box()
 	_check(e.box_lanes().size() >= 1, "obdelnik obtazeny z prazdna mista nic nevybral")
 	e.sel_box = Rect2i(0, 0, 0, 0)
-	# 5) UZEL: klepnuti na uzel musi zustat uzel - kresli se z nej nova cesta
+	# 6) UZEL: klepnuti na uzel musi zustat uzel - kresli se z nej nova cesta
 	#    a paleta na nem klade prvek. Uzel se v kroku 2 posunul, tak se bere
 	#    JEHO skutecna bunka (test si ji nesmi pamatovat z minula).
 	_check(not e.begin_lane_drag(e.level.node_cell(c)),
 		"uzel na %s se chytil jako cesta" % str(e.level.node_cell(c)))
 	_check(not e.begin_lane_drag(e.level.node_cell(s)),
 		"start na %s se chytil jako cesta" % str(e.level.node_cell(s)))
-	# 6) GUMA: tahem se maze, ne tvaruje
+	# 7) GUMA: tahem se maze, ne tvaruje
 	e.tool = Editor.TOOL_GUMA
 	_check(not e.begin_lane_drag(Vector2i(4, 5)), "gumou se cesta chytila misto mazani")
-	# 7) V game_view musi byt chytani cesty PRED vetvi "cesta kresli" - jinak by
+	# 8) V game_view musi byt chytani cesty PRED vetvi "cesta kresli" - jinak by
 	#    kresleni vyhralo a cesta by se nikdy nechytila.
 	var vsrc: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
 	var body: String = _func_body(vsrc, "_handle_editor_tap")
@@ -1571,13 +1593,80 @@ func _test_lane_grab_tools() -> void:
 	var draw_at: int = body.find("editor.begin_draw(cell)")
 	_check(grab_at >= 0 and draw_at >= 0 and grab_at < draw_at,
 		"game_view zkousi chytnuti cesty az po kresleni (%d vs %d)" % [grab_at, draw_at])
-	# 8) Hrac se to musi DOZVEDIT: u vybraneho useku to stoji v hornim pruhu
-	e.tool = Editor.TOOL_VYBER
+	# 9) Hrac se to musi DOZVEDIT - a napoveda musi byt PRAVDIVA v tom nastroji,
+	#    ktery ji ukazuje: u "cesty" slibuje tvarovani, u "vyberu" obdelnik.
+	e.tool = Editor.TOOL_ROAD
 	e.sel_lane = 0
 	e.sel_node = -1
 	var txt: String = e.sel_text()
 	_check(txt.contains("tažením prstem"),
 		"pruh u vybraneho useku nerika, ze se da tvarovat prstem: " + txt)
+	e.tool = Editor.TOOL_VYBER
+	var vtxt: String = e.sel_text()
+	_check(vtxt.contains("obdélník") and vtxt.contains("cesta"),
+		"u vyberu napoveda neslibuje obdelnik a neposila tvarovani na cestu: " + vtxt)
+
+
+# OBDELNIKOVY VYBER MUSI FUNGOVAT V TOM NASTROJI, KTERY JE NA NEJ URCENY - a to
+# KDEKOLI NA DESCE. Jan (Oct 2026): "Presouvani existujicich prvku uz funguje
+# dobre, ale ted uz zase nefunguje rectangle select. Musi fungovat oboji."
+# Dve veci to branily (obe zmerene, ne odhadovane):
+#   * tah zacaty na ceste nebo VEDLE ni cestu chytil a nechtene posunul -
+#     obdelnik se dal spustit jen na 42 % bunek zakladni desky,
+#   * zvoleni nastroje nechalo otevreny panel, takze prvni tah pres desku panel
+#     jen zavrel a neudelal nic.
+func _test_box_everywhere() -> void:
+	var e := _ed()
+	e.level = Level.base()
+	e.tool = Editor.TOOL_VYBER
+	# 1) BUNKA NA CESTE i BUNKA VEDLE Ni: obdelnik se spusti vsude.
+	var on_lane := Vector2i(15, 1)      # ohniva vetev
+	var beside_lane := Vector2i(15, 2)  # hned pod ni
+	_check(e.level.lane_at_cell(on_lane) >= 0, "(%d,%d) neni na ceste - test meri neco jineho" % [
+		on_lane.x, on_lane.y])
+	_check(e.level.lane_at_cell(beside_lane) < 0, "(%d,%d) ma byt vedle cesty" % [
+		beside_lane.x, beside_lane.y])
+	for cell in [on_lane, beside_lane]:
+		_check(not e.begin_lane_drag(cell),
+			"obdelnik se nespusti z bunky %s" % str(cell))
+	# 2) KAZDA bunka mrizky je pouzitelna (zadna nesmi spadnout do chytani cesty).
+	var blocked: int = 0
+	for r in range(Level.ROWS):
+		for c in range(Level.COLS):
+			if e.begin_lane_drag(Vector2i(c, r)):
+				blocked += 1
+			e.moving = false
+	_check(blocked == 0, "%d bunek mrizky spousti misto obdelniku tazeni cestou" % blocked)
+	# 3) OBDELNIK, KTERY CESTU JEN PROTINA, NESMI TVRDIT, ZE JE PRAZDNY. Presne
+	#    to hrac vidi jako rozbity vyber: vede pres cesty a nic nevybere.
+	#    Mala deska, aby se dalo presne rict, co je uvnitr: jeden usek (2,5)-(6,5).
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 5, Level.START)
+	var c: int = lv.add_node(6, 5, Level.CIL)
+	lv.add_lane(s, c, "RRRR", Element.FIRE)
+	e.level = lv
+	e.begin_box(Vector2i(3, 5))
+	e.extend_box(Vector2i(4, 5))
+	_check(e.box_lanes().is_empty(), "testovaci obdelnik ma usek protinat, ne obsahovat cely")
+	_check(e.box_lanes_cut() == [0], "obdelnik pres usek nerekne, ktery usek protina: %s" % str(e.box_lanes_cut()))
+	e.end_box()
+	_check(e.status.contains("protíná") and e.status.contains("od uzlu k uzlu"),
+		"obdelnik pres usek hlasi neco jineho nez ze usek protina: " + e.status)
+	# 4) A CELY USEK V OBDELNIKU SE VYBRAT DA (jinak by test meril jen hlasku).
+	e.begin_box(Vector2i(1, 4))
+	e.extend_box(Vector2i(7, 6))
+	e.end_box()
+	_check(e.box_lanes() == [0] and e.box_nodes().size() == 2,
+		"cely usek i oba prvky v obdelniku se nevybraly: %s / %s" % [
+			str(e.box_lanes()), str(e.box_nodes())])
+	# 5) ZVOLENI NASTROJE ZAVRE PANEL. Otevreny panel jinak "sezere" prvni tah
+	#    pres desku (klepnuti na desku s otevrenym panelem panel jen zavre).
+	e.close_panel()
+	e.panel = Editor.PANEL_TOOLS
+	e.press(Editor.TOOL_VYBER)
+	_check(e.panel == Editor.PANEL_NONE,
+		"po zvoleni nastroje zustal otevreny panel - prvni tah na desku ho jen zavre")
+	_check(e.tool == Editor.TOOL_VYBER, "stisk nastroje ho nezvolil")
 
 
 # VYSTUPEK SE POSOUVA TAHEM PRSTEM (Jan, Oct 2026): "chytnu prstem horní část
@@ -1593,7 +1682,8 @@ func _test_bump_shift() -> void:
 	var c: int = lv.add_node(7, 5, Level.CIL)
 	lv.add_lane(s, c, "RRURDRR", Element.FIRE)
 	e.level = lv
-	e.tool = Editor.TOOL_VYBER
+	# TVAROVANI JE NA "CESTE" A PALETE, ne na "vyberu" - tam tah obtahne obdelnik.
+	e.tool = Editor.TOOL_START
 	var before: Array = e.level.lane_cells(0).duplicate()
 	var was: int = before.size()
 	# 1) PRST NA VRSEK VYSTUPKU: chyta se KUS (posun do strany), ne ohnuti
@@ -1637,16 +1727,20 @@ func _test_bump_shift() -> void:
 	_check(e.undo_stack.size() == 1, "tah prstem neni jedna polozka zpet (%d)" % e.undo_stack.size())
 	e.undo()
 	_check(e.level.lane_cells(0).size() == was, "zpet nevratil puvodni cestu")
-	# 6) KLEPNUTI NA VRSEK (tah bez pohybu) jen VYBERE usek
+	# 6) KLEPNUTI NA VRSEK (tah bez pohybu) jen VYBERE usek - a to i nastrojem
+	#    "cesta", kde je klepnuti na desku prave to, cim se vybira (u "vyberu"
+	#    klepnuti vybira taky, ale jinou cestou - obdelnik 1x1 v `end_box`).
 	e.sel_lane = -1
 	e.sel_node = -1
-	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
+	e.tool = Editor.TOOL_ROAD
+	_check(e.begin_lane_drag(Vector2i(4, 4)), "vrsek se neda chytit")
 	e.end_move()
 	_check(e.sel_lane == 0, "klepnuti na vrsek nevybralo usek (%d)" % e.sel_lane)
 	_check(not e.box_active, "klepnuti na vrsek spustilo obdelnikovy vyber")
 	# 7) ZMENŠOVÁNÍ: tah opacnym smerem vystupek SNIZI (az do zplosteni) a tah
 	#    zpet ho znovu zvedne. Kazda poloha prstu se stavi z puvodni cesty,
 	#    takze se pri tom nic neztrati.
+	e.tool = Editor.TOOL_START
 	_check(e.begin_move(Vector2i(4, 4)), "vrsek se neda chytit")
 	e.extend_move(Vector2i(4, 5))
 	e.extend_move(Vector2i(4, 6))

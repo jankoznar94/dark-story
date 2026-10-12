@@ -158,6 +158,18 @@ func lane_cells(lane: int) -> Array:
 	return a
 
 
+# KTERA CESTA VEDE TOUTO BUNKOU (-1, kdyz zadna). Jedno misto, kde se na to da
+# zeptat - testy si odpoved nesmi skladat z `lane_cells`, protoze pak meri svuj
+# vlastni preklad a ne to, co vidi hrac.
+func lane_at_cell(cell: Vector2i) -> int:
+	for i in range(lanes.size()):
+		for c in lane_cells(i):
+			var v: Vector2i = c
+			if v == cell:
+				return i
+	return -1
+
+
 func lane_element(lane: int) -> int:
 	if lane < 0 or lane >= lanes.size():
 		return NEUTRAL
