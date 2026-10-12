@@ -58,6 +58,11 @@ var junction_of_node: Array = []  # uzel -> poradi vyhybky nebo -1
 # --- useky
 var lane_path: Array = []       # usek -> PackedVector2Array stredu bunek
 var lane_len: Array = []        # usek -> delka v pixelech
+# BODY, KDE SE MA ZAOBLIT ROH (a zakulaceny konec). Predpocitava se pri
+# stavbe site, protoze se to jinak pocitalo PRI KAZDEM SNIMKU pro kazdy bod
+# kazde cesty - a kresleni pak bylo to nejdrazsi, co hra mela (krouzek
+# v kazdem bode cesty = stovky kreslicich prikazu za snimek).
+var lane_joint: Array = []      # usek -> Array indexu bodu, ktere se zaobluji
 var lane_from_node: Array = []
 var lane_to_node: Array = []
 var lanes_out: Array = []       # uzel -> seznam useku, ktere z nej vedou
@@ -190,8 +195,43 @@ func build(r: Rect2, scale_hint: float = 1.0, bar_top_hint: float = 1.0e9,
 	# --- poutnici vstupuji z okraje displeje a v cili z nej zase zmizi
 	_extend_ends()
 
+	# --- zaoblene rohy a konce (pro kresleni, pocita se jednou)
+	_build_joints()
+
 	# --- pas kolem cest: jedina stavebni plocha hry
 	_build_strip()
+
+
+# KDE MA BYT KROUZEK. Kresleni cesty je slozeny z rovnych tahu a z krouzku
+# v bodech, kde se smer lame - krouzek udela zaobleny roh a na konci cesty
+# kulatou spicku. Krouzek v KAZDEM bode cesty byl zbytecny: na rovnem useku
+# je stejne pod tahem a nikdo ho nevidi. Tady se proto vyberou jen rohy
+# a oba konce.
+#
+# Pocita se pri stavbe site (pri zmene rozliseni nebo levelu), takze kresleni
+# za snimek uz jen cte hotovy seznam.
+func _build_joints() -> void:
+	lane_joint = []
+	for i in range(lane_path.size()):
+		var p: PackedVector2Array = lane_path[i]
+		var idx: Array = []
+		if p.size() <= 0:
+			lane_joint.append(idx)
+			continue
+		# KULATE SPICKY: prvni a posledni bod cesty.
+		if p.size() == 1:
+			idx.append(0)
+			lane_joint.append(idx)
+			continue
+		idx.append(0)
+		for k in range(1, p.size() - 1):
+			var d1: Vector2 = (p[k] - p[k - 1]).normalized()
+			var d2: Vector2 = (p[k + 1] - p[k]).normalized()
+			# Smer se zmenil = roh. Rovna cesta ma d1 == d2, tam se nezaobluje.
+			if d1.dot(d2) < 0.999:
+				idx.append(k)
+		idx.append(p.size() - 1)
+		lane_joint.append(idx)
 
 
 # PAS KOLEM CESTY. Pro kazdou cestu se vezme osm okoli kazde jeji bunky

@@ -32,6 +32,11 @@ const ENEMY_R_OUT := 20.0
 const ENEMY_R_IN := 17.0
 const ENEMY_GLYPH := 11.0
 const ENEMY_HP_R := 25.0
+# DELKA OCASKU STRELY. Strela je kratky tlusty tah s hlavou na svem miste
+# a ocáskem zpet - delka je proto v pixelech a v meritku desky, ne zlomek
+# drahy (driv se ocásek pocital z cele drahy strely, takze byl jednou
+# kratky a jednou pres pul desky).
+const SHOT_TAIL := 30.0
 
 var layout := ScreenLayout.new()
 var game: Game = null
@@ -226,16 +231,18 @@ func _setup_shot() -> void:
 	game.run_for(11.0)
 	# UKAZKOVE NALEZITOSTI PRO KONTROLU VZHLEDU: vybrana vez (aby byl na
 	# snimku videt i panel s vylepsenim/prodejem) a ROZJETA STRELA. Strela se
-	# jinak neda vyfotit - leti 0,18 s a snimek se dela po trech snimcich.
+	# jinak neda vyfotit - leti 0,25 s a snimek se dela po trech snimcich.
 	# V rezimu snimku se hra nehybe (viz _process), takze zustane viset.
 	for item in game.towers:
 		var t: Tower = item
-		# Vez i cil musi byt na DESCE: kdyby cil vysel nad horni radek, kreslil
-		# by se nad HUDem a snimek by strelu vubec neukazal.
+		# Vez i strela musi byt na DESCE: kdyby cíl vysel nad horni radek,
+		# kreslil by se nad HUDem a snimek by strelu vubec neukazal.
 		if t.cell.y >= 2 and t.cell.y < game.net.level.rows / 2 and t.cell.x < game.net.level.cols - 3:
 			game.select_tower(t.cell)
-			t.shot_to = game.net.cell_center(Vector2i(t.cell.x + 2, t.cell.y - 1))
-			t.shot_t = Tower.SHOT_FLASH * 0.12
+			var aim: Vector2 = game.net.cell_center(Vector2i(t.cell.x + 2, t.cell.y - 1))
+			var sc: Shot = game.debug_fire(t, null, aim)
+			if sc != null:
+				sc.pos = sc.from.lerp(aim, 0.55)
 			break
 	_shot = true
 
@@ -945,6 +952,7 @@ func _draw_battle() -> void:
 	_draw_nodes()
 	_draw_towers()
 	_draw_enemies()
+	_draw_shots()
 	# VYBRANA VEZ: oznaceni na desce a panel s vylepsenim/prodejem. Kresli se
 	# jako POSLEDNI nad deskou, aby tlacitka nikdy neprekryla nic, co hrac
 	# potrebuje videt (panel si sam hlida, na ktere strane lezi).
@@ -1322,27 +1330,35 @@ func _draw_lanes() -> void:
 		if sel:
 			var halo := col
 			halo.a = 0.16
-			_lane_stroke(path, halo, lw * 1.9)
-		_lane_stroke(path, faint, lw)
-		_lane_stroke(path, bright, core)
+			_lane_stroke(lane, path, halo, lw * 1.9)
+		_lane_stroke(lane, path, faint, lw)
+		_lane_stroke(lane, path, bright, core)
 		if sel:
 			var rim := col
 			rim.a = 0.85
-			_lane_stroke(path, rim, maxf(1.0, 3.2 * layout.s))
+			_lane_stroke(lane, path, rim, maxf(1.0, 3.2 * layout.s))
 
 
-# JEDEN TAH CESTY: usecky + KROUZEK V KAZDEM BODE.
-# Krouzek ma polomer presne poloviny sirky tahu, takze v rozich vznikne
-# zaobleny spoj (ostry zlom je to, co vypadalo "pixelove") a na konci cesty
-# kulata spicka. Antialiasing zapnuty u vsech tahu.
-func _lane_stroke(path: PackedVector2Array, col: Color, w: float) -> void:
+# JEDEN TAH CESTY: cela cesta jednim tahem (polyline) + KROUZEK v bodech,
+# kde se smer lame. Krouzek ma polomer presne poloviny sirky tahu, takze
+# v rozich vznikne zaobleny spoj (ostry zlom je to, co vypadalo "pixelove")
+# a na konci cesty kulata spicka. Antialiasing je zapnuty u vsech tahu.
+#
+# KROUZKY JEN V ROHACH, NE V KAZDEM BODE. Krouzek na rovnem useku je stejne
+# pod tahem a nikdo ho nevidi - a byl to nejdrazsi kus celeho snimku: sest
+# cest x ctyri tahy x kazdy bod znamenalo pres sest set kreslicich prikazu
+# za snimek a hra se kvuli tomu sekala. Seznam rohu je predpocitany v siti
+# (`Network.lane_joint`), takze se za snimek nic nepocita.
+func _lane_stroke(lane: int, path: PackedVector2Array, col: Color, w: float) -> void:
 	if path.size() < 2:
 		return
-	for k in range(path.size() - 1):
-		draw_line(path[k], path[k + 1], col, w, true)
+	draw_polyline(path, col, w, true)
+	if lane < 0 or lane >= game.net.lane_joint.size():
+		return
 	var r: float = w * 0.5
-	for k in range(path.size()):
-		draw_circle(path[k], r, col, true, -1.0, true)
+	var joints: Array = game.net.lane_joint[lane]
+	for k in joints:
+		draw_circle(path[int(k)], r, col, true, -1.0, true)
 
 
 # PAS KOLEM CESTY. Kazda cesta ma po obou stranach jednu bunku ve SVETLEJSIM
@@ -1374,8 +1390,6 @@ func _draw_towers() -> void:
 		var t: Tower = item
 		var p: Vector2 = game.net.cell_center(t.cell)
 		var col: Color = Level.value_color(t.element)
-		if t.shot_t > 0.0:
-			_draw_shot(p, t.shot_to, col, t.shot_t)
 		var pts: PackedVector2Array = _octagon(p, r)
 		draw_colored_polygon(pts, col)
 		_draw_poly_outline(pts, Color(0.09, 0.085, 0.08), maxf(1.5, 3.0 * layout.s))
@@ -1389,17 +1403,29 @@ func _draw_towers() -> void:
 				p.y - r - 5.0 * layout.s - pw, pw, pw), Color(0.95, 0.88, 0.60))
 
 
+# STRELY, KTERE PRÁVĚ LETÍ. Strela je predmet s vlastni pozici, takze se
+# kresli z toho, kde OPRAVDU je - ne z casovace veze. Driv to byla jen
+# znacka u veze, ktera zmizela za 0,18 s; poskozeni pritom prislo hned.
+func _draw_shots() -> void:
+	for item in game.shots:
+		var s: Shot = item
+		var dir: Vector2 = s.pos - s.from
+		if dir.length_squared() < 0.000001:
+			dir = Vector2(1.0, 0.0)
+		dir = dir.normalized()
+		var tail: Vector2 = s.pos - dir * maxf(8.0, SHOT_TAIL * layout.s)
+		_draw_missile(tail, s.pos, Level.value_color(s.element))
+
+
 # STRELA. Neni to tenka linka: je to tlusta cara s tmavym podkladem, barevnym
-# telem a svetlym jadrem, ktera NAVIC LETI - hlava se posouva od veze k cili.
+# telem a svetlym jadrem. Hlava je presne tam, kde strela prave je, ocásek
+# ukazuje, ODKUD leti.
 # Jan (Oct 2026): "Missile věže by měl být daleko výraznější. Teď je to tak
 # tenká linka, že skoro není vidět."
 #
 # Tmavy podklad je tam proto, ze pas je svetly: bez nej by strela na svetlem
 # pasu zmizela. Svetle jadro neni efekt (zadny glow) - je to plocha barva.
-func _draw_shot(from: Vector2, to: Vector2, col: Color, left: float) -> void:
-	var k: float = clampf(1.0 - left / Tower.SHOT_FLASH, 0.0, 1.0)
-	var head: Vector2 = from.lerp(to, k)
-	var tail: Vector2 = from.lerp(to, maxf(k - 0.45, 0.0))
+func _draw_missile(tail: Vector2, head: Vector2, col: Color) -> void:
 	draw_line(tail, head, Color(0.09, 0.085, 0.08), maxf(3.0, 7.4 * layout.s))
 	draw_line(tail, head, col, maxf(2.2, 4.8 * layout.s))
 	draw_line(tail, head, col.lightened(0.45), maxf(1.0, 2.0 * layout.s))
@@ -1610,9 +1636,7 @@ func _draw_enemies() -> void:
 
 
 func _enemy_pos(e: Enemy) -> Vector2:
-	if e.on_lane():
-		return game.net.point_at(e.lane, e.s)
-	return Vector2.ZERO
+	return e.pos
 
 
 # HORNI PANEL. Dva radky s písmem 20/13 px se vejdou do 52 px, takze je

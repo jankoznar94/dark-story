@@ -53,6 +53,15 @@ var towers: Array = []
 # ptaji tady a obrazovka si to jen cte.
 var sel_tower: Vector2i = Vector2i(-1, -1)
 var enemies: Array = []
+# STRELY, KTERE PRÁVĚ LETÍ. Rana neni hotova ve chvili vystrelu - je to
+# predmet na ceste k poutnikovi a poskozeni ubira teprve pri DOPADU
+# (viz `_move_shots`). Hrac tak vidi, ze rana neprichazi okamzite.
+var shots: Array = []
+# SLOVNIK BUNKA -> POUTNICI, postaveny jednou za snimek. Vez, ktera nema
+# v dosahu nikoho, zustava NABITA (cd = 0) a hleda cil znovu kazdy snimek;
+# prohledavat kvuli tomu vsechny poutniky by bylo O(veze x poutnici).
+# Takhle si vez precte jen sve ctvercove okoli (2 bunky na kazdou stranu).
+var cell_enemies: Dictionary = {}
 var gold: int = START_GOLD
 var lives: int = START_LIVES
 var round: int = 0
@@ -95,6 +104,8 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	towers = []
 	sel_tower = Vector2i(-1, -1)
 	enemies = []
+	shots = []
+	cell_enemies = {}
 	gold = level.gold
 	lives = level.lives
 	lives_max = level.lives
@@ -461,6 +472,7 @@ func _spawn(enemy_el: int) -> void:
 		return
 	e.lane = int(net.entry_lanes[_next_int(net.entry_lanes.size())])
 	e.s = 0.0
+	e.pos = net.point_at(e.lane, 0.0)
 	spawned += 1
 	enemies.append(e)
 
@@ -473,6 +485,20 @@ func debug_spawn(enemy_el: int) -> Enemy:
 		return null
 	var e: Enemy = enemies[enemies.size() - 1]
 	return e
+
+
+# VYSTREL PRO NAHLED (snimek vzhledu). Strela leti 0,25 s, takze ji zadny
+# snimek nechyta - nahled si ji proto vyrobi rucne a `aim_at` mu dovoli
+# postavit ji tam, kam se na snimek vejde. `e` muze byt i null: strela
+# v nahledu nikam nedoleti, takze cil nepotrebuje. V hernim kode se nevola.
+func debug_fire(t: Tower, e: Enemy, aim_at: Vector2) -> Shot:
+	if t == null:
+		return null
+	t.cd = t.cooldown()
+	var s: Shot = Shot.launch(t, e, net.cell_center(t.cell), aim_at, t.damage())
+	shots.append(s)
+	return s
+
 
 func _next_int(limit: int) -> int:
 	rng = (rng * 1103515245 + 12345) & 0x7fffffff
@@ -522,6 +548,10 @@ func step(delta: float) -> void:
 
 	_move_enemies(delta)
 	_fire(delta)
+	_move_shots(delta)
+	# Uklid na jednom miste: kdo umrel (dopadem strely) nebo dosel do cile,
+	# je z desky pryc jeste pred vyhodnocenim kola.
+	_prune()
 	if lives <= 0:
 		phase = "lost"
 		_note("PROHRA.")
@@ -542,10 +572,10 @@ func round_done() -> void:
 
 
 func _move_enemies(delta: float) -> void:
-	var still: Array = []
 	for item in enemies:
 		var e: Enemy = item
 		if not e.alive:
+			# Mrtve vyhazuje `_prune` na konci kroku - tady se jen preskakuji.
 			continue
 		# Poutnik mimo trasu znamena, ze mapa nema start. Nema kam jit.
 		if not e.on_lane():
@@ -554,8 +584,8 @@ func _move_enemies(delta: float) -> void:
 			lives -= 1
 			continue
 		e.s += e.speed * delta
+		e.pos = net.point_at(e.lane, e.s)
 		if e.s < float(net.lane_len[e.lane]):
-			still.append(e)
 			continue
 		# KONEC USEKU = POUTNIK JE V UZLU. Tam se rozhodne:
 		#   vyhybka             - hrac svou volbou posle poutnika na jeden
@@ -584,78 +614,148 @@ func _move_enemies(delta: float) -> void:
 			continue
 		e.lane = nxt
 		e.s = 0.0
-		still.append(e)
-	enemies = still
+		e.pos = net.point_at(nxt, 0.0)
 
 
 # ---------------------------------------------------------------- strelba
 
 # VEZE STRILEJI. Kazda vez ma svuj nabijeci cas; kdyz je nabita a ma v dosahu
 # poutnika, vystreli. Vez, ktera ceka na cil, zustava NABITA (cd = 0) - kdyz
-# poutnik vstoupi do dosahu, dostane ránu hned, ne az za nabijeci dobu.
+# poutnik vstoupi do dosahu, dostane zásah hned, ne az za nabijeci dobu.
 #
 # CIL: poutnik, kteremu do cile zbyva NEJMENE. Hrac tak neztraci rany na tom,
 # kdo stejne jeste daleko; vez pomaha tam, kde to nejvic hrozi. Pri shode
 # rozhoduje poradi v seznamu (determinismus).
 func _fire(delta: float) -> void:
-	var keep: Array = []
+	_index_enemies()
 	for titem in towers:
 		var t: Tower = titem
-		t.shot_t = maxf(t.shot_t - delta, 0.0)
 		t.cd -= delta
 		if t.cd > 0.0:
 			continue
 		var target: Enemy = _target_for(t)
 		if target == null:
 			# Nabita vez zustava nabita: az poutnik vstoupi do dosahu,
-			# dostane ránu HNED, ne az za nabijeci dobu.
+			# dostane zásah HNED, ne az za nabijeci dobu.
 			t.cd = 0.0
 			continue
 		_shot(t, target)
-	for item in enemies:
-		var e: Enemy = item
-		if e.alive:
-			keep.append(e)
-	enemies = keep
 
 
-# Kdo to schytá. Poutnik, kteremu do cile zbyva NEJMENE - vez pomaha tam,
-# kde to nejvic hrozi. Pri shode rozhoduje poradi v seznamu (determinismus).
-func _target_for(t: Tower) -> Enemy:
-	var best: Enemy = null
-	var best_left: float = 1.0e12
+# BUNKA -> POUTNICI. Jednou za snimek, protoze veze se na cil ptaji kazdy
+# snimek znovu (nabita vez zustava nabita).
+func _index_enemies() -> void:
+	cell_enemies = {}
+	if enemies.is_empty():
+		return
 	for item in enemies:
 		var e: Enemy = item
 		if not e.alive or not e.on_lane():
 			continue
 		if e.lane < 0 or e.lane >= net.lane_len.size():
 			continue
-		# NA SVEHO SE NEUTOCI. Vez, ktera by poutnikovi stejneho elementu
-		# neublizila, na nej nesmi ani vystrelit - prisla by o ranu pro
-		# nekoho, komu opravdu ublizi (Jan, Oct 2026).
-		if not t.can_hurt(e.element):
-			continue
-		if not t.in_range(net.cell_at(net.point_at(e.lane, e.s))):
-			continue
-		var left: float = float(net.lane_len[e.lane]) - e.s
-		if left < best_left:
-			best_left = left
-			best = e
+		var c: Vector2i = net.cell_at(e.pos)
+		if cell_enemies.has(c):
+			var arr: Array = cell_enemies[c]
+			arr.append(e)
+		else:
+			cell_enemies[c] = [e]
+
+
+# Kdo to schytá. Poutnik, kteremu do cile zbyva NEJMENE - vez pomaha tam,
+# kde to nejvic hrozi. Hleda se v bunce veze a jejim okoli (ctverec 2 bunky
+# na kazdou stranu, stejne jako `Tower.in_range`), ne ve vsech poutnicich:
+# vez se na cil ptá i tehdy, kdyz v dosahu nikdo neni, a prohledavat kvuli
+# tomu celou desku by hru zpomalovalo s kazdou vezi a kazdym poutnikem.
+func _target_for(t: Tower) -> Enemy:
+	var best: Enemy = null
+	var best_left: float = 1.0e12
+	var r: int = Tower.RANGE
+	for dx in range(-r, r + 1):
+		for dy in range(-r, r + 1):
+			var c := Vector2i(t.cell.x + dx, t.cell.y + dy)
+			if not cell_enemies.has(c):
+				continue
+			var arr: Array = cell_enemies[c]
+			for item in arr:
+				var e: Enemy = item
+				# NA SVEHO SE NEUTOCI. Vez, ktera by poutnikovi stejneho
+				# elementu neublizila, na nej nesmi ani vystrelit - prisla
+				# by o ranu pro nekoho, komu opravdu ublizi (Jan, Oct 2026).
+				if not t.can_hurt(e.element):
+					continue
+				var left: float = float(net.lane_len[e.lane]) - e.s
+				if left < best_left:
+					best_left = left
+					best = e
 	return best
 
 
-# Jedna rana. Nasobek je z JEDNE tabulky (Element.tower_multiplier): vlastni
-# zivel 0 %, jiny 50 %, neutralni vez (sedy pas) 100 %, protiklad 200 %.
+# VYSTREL. Tady se poutnikovi jeste NEBERE nic - jen vznikne strela, ktera
+# k nemu leti (viz `Shot`). Poskozeni ubira az jeji dopad.
 func _shot(t: Tower, e: Enemy) -> void:
 	t.cd = t.cooldown()
-	t.shot_to = net.point_at(e.lane, e.s)
-	t.shot_t = Tower.SHOT_FLASH
-	var dmg: float = t.damage() * Element.tower_multiplier(e.element, t.element)
+	shots.append(Shot.launch(t, e, net.cell_center(t.cell), e.pos,
+		t.damage() * Element.tower_multiplier(e.element, t.element)))
+
+
+# LET STREL. Strela leti za svym poutnikem (je to strela, ne past polozena
+# na ceste), a kdyz doleti, teprve ubere zivoty. Poutnik, ktery cestou umre,
+# strelu "nechá doletet" na posledni misto - strela pak vyhasi a nikoho
+# jineho nezrani; rana patri tomu, na koho vez vystrelila.
+func _move_shots(delta: float) -> void:
+	if shots.is_empty():
+		return
+	var still: Array = []
+	for item in shots:
+		var s: Shot = item
+		var live: bool = s.target != null and s.target.alive and s.target.on_lane()
+		if live:
+			# NAVADENA STRELA: miri na skutecnou pozici poutnika, takze
+			# leti za nim a neda se "utect" - jen se neda zasahnout
+			# nekdo, kdo uz umrel.
+			s.aim = s.target.pos
+		var step: float = s.speed * delta
+		var d: float = s.pos.distance_to(s.aim)
+		if d <= step:
+			s.pos = s.aim
+			if live:
+				_impact(s.target, s.dmg)
+			continue
+		s.pos += (s.aim - s.pos) / d * step
+		still.append(s)
+	shots = still
+
+
+# DOPAD. Jedine misto, kde poutnik dostava poskozeni od veze.
+func _impact(e: Enemy, dmg: float) -> void:
+	_damage(e, dmg)
+
+
+# UBERTE ZIVOTY. Jedno misto, kde se ubira, aby se nikde nezapomnelo na
+# odmenu, na hlasku ani na smrt poutnika.
+func _damage(e: Enemy, dmg: float) -> void:
 	e.hp -= dmg
 	if e.hp <= 0.0:
 		e.alive = false
 		gold += REWARD
 		_note("Poutník %s zničen (+%d)." % [Element.name_of(e.element), REWARD])
+
+
+# MRTVÍ POUTNÍCI SE VYHAZUJÍ NA JEDNOM MISTE. Driv si kazda faze (pohyb,
+# strelba) vedla vlastni seznam "kdo zustava" - a jakmile pribyl dopad
+# strely, musela by si ho vest i strelba. Jedno misto znamena, ze "kdo je
+# na desce" ma jen jednu pravdu.
+func _prune() -> void:
+	if enemies.is_empty():
+		return
+	var keep: Array = []
+	for item in enemies:
+		var e: Enemy = item
+		if e.alive:
+			keep.append(e)
+	if keep.size() != enemies.size():
+		enemies = keep
 
 
 # ---------------------------------------------------------------- pomocne

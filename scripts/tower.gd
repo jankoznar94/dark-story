@@ -28,11 +28,6 @@ const COST := [60, 100, 160]
 # poskozeni.").
 const DMG := [7.0, 12.0, 20.0]
 const CD := [1.00, 0.90, 0.80]
-# Jak dlouho leti strela. Je to ZNACKA, ne mechanika - hrac z ni pozna, ze
-# vez opravdu strili a na koho. Ranu dostane poutnik hned (hitscan); strela
-# je jen to, co hrac vidi, takze se da prodlouzit bez zasahu do pravidel.
-# Jan (Oct 2026): "Missile věže by měl být daleko výraznější."
-const SHOT_FLASH := 0.18
 # KOLIK PROCENT INVESTICE SE VRATI PRI PRODEJI. Prodej musi byt PRODEJ, ne
 # druha pokladna: hrac dostane polovinu zpatky (muzes prestat stavet jinam),
 # ale ne vsechno - jinak by se stavba a bourani daly otacet dokola zadarmo
@@ -49,9 +44,6 @@ var level: int = 1
 var spent: int = 0
 # Kolik sekund zbyva, nez muze vystrelit znovu. Nula = vez je pripravena.
 var cd: float = 0.0
-# Odkud a kam naposledy vystrelila a jak dlouho jeste leti strela.
-var shot_to: Vector2 = Vector2.ZERO
-var shot_t: float = 0.0
 
 
 # Cena za postaveni veze dane urovne. Jedno misto, kde o cenach vi vsechno -

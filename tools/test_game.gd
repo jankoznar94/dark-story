@@ -15,6 +15,8 @@ func _init() -> void:
 	_run("hra se postavi", _test_setup)
 	_run("cesta sama nebere", _test_path_deals_no_damage)
 	_run("vez bere protikladu dvojnasobek", _test_tower_damage)
+	_run("poskozeni prijde az pri dopadu strely", _test_damage_on_impact)
+	_run("strela na mrtveho cili nikoho nezrani", _test_shot_on_dead_target_hurts_nobody)
 	_run("obrana zabiji", _test_defense_kills)
 	_run("vlastni zivel je imunni", _test_own_element_is_free)
 	_run("vez nestrili na sveho", _test_tower_skips_own_element)
@@ -160,7 +162,94 @@ func _test_tower_damage() -> void:
 	_check(got > 0.0, "vodni poutnik po ohnive ceste s ohnivou vezi nedostal nic")
 	_check(got > t.damage() * Element.STRONG,
 		"jedna rana ma byt aspon %.1f, dostal %.1f" % [t.damage() * Element.STRONG, got])
-	_check(e.hp > 0.0, "jedna vez prvniho levelu nemá sama zabíjet (balance)")
+	_check(e.hp > 0.0, "jedna vez prvního levelu nemá sama zabíjet (balance)")
+
+
+# POSKOZENI PRIJDE AZ PRI DOPADU. Jan (Oct 2026): "Nepřátelé obdrží poškození
+# instantně po výstřelu věže. Hra nebere v potaz dobu letu projektilu.
+# Nepřítel musí obdržet poškození při impactu."
+#
+# Test hlida obe strany pravidla: po vystrelu jeste NIKDO nic nedostal a po
+# dobe letu rana doopravdy sedne - presne jednou.
+func _test_damage_on_impact() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	if not g.net.strip_has(cell):
+		return
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	var t: Tower = g.tower_at(cell)
+	if t == null:
+		return
+	# Segment v dosahu veze: bunka hned nad pasem.
+	var seg: Vector2i = Vector2i(cell.x, cell.y - 1)
+	var s: float = _s_at_cell(g, fire, seg)
+	if s < 0.0:
+		return
+	var e: Enemy = g.debug_spawn(Element.WATER)
+	e.lane = fire
+	e.s = s
+	e.pos = g.net.point_at(e.lane, e.s)
+	# Poutnik stoji: test tak meri jen dobu letu strely, ne jeho pohyb.
+	e.speed = 0.0
+	# JEDEN SNIMEK: vez vystrelila, ale rana je teprve na ceste.
+	g.step(1.0 / 60.0)
+	_check(g.shots.size() == 1, "po vystrelu leti %d strel, ceka se 1" % g.shots.size())
+	_check(e.hp >= e.max_hp - 0.001,
+		"poskozeni prislo uz pri vystrelu (hp %.2f z %.2f)" % [e.hp, e.max_hp])
+	_check(t.cd > 0.0, "vez po vystrelu nema nabijeci dobu (cd %.2f)" % t.cd)
+	# PO DOBE LETU rana sedne.
+	g.run_for(Shot.FLIGHT + 0.05)
+	_check(g.shots.is_empty(), "strela po dopadu zustala ve vzduchu")
+	var want: float = t.damage() * Element.tower_multiplier(e.element, t.element)
+	var got: float = e.max_hp - e.hp
+	_check(is_equal_approx(got, want),
+		"po dopadu dostal %.2f, ceka se %.2f" % [got, want])
+
+
+# STRELA NA MRTVEHO CILI NIKOHO NEZRANI. Rana patri tomu poutnikovi, na
+# ktereho vez vystrelila - kdyz ten cestou umre, strela vyhasi a NEPRENESE
+# se na souseda. Kdyby se prenasela, hrac by dostaval rany, ktere si
+# nezaslouzil, a obrana by byla silnejsi, nez rikaji cisla v panelu.
+func _test_shot_on_dead_target_hurts_nobody() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	if not g.net.strip_has(cell):
+		return
+	_check(g.try_build(cell), "vez do pasu nejde postavit")
+	var seg: Vector2i = Vector2i(cell.x, cell.y - 1)
+	var s: float = _s_at_cell(g, fire, seg)
+	if s < 0.0:
+		return
+	# DVA POUTNICI VE STEJNEM MISTE: oba v dosahu, oba stejne daleko od cile.
+	# Vez si vezme prvniho z nich - a prave ten mezitim umre.
+	var e: Enemy = g.debug_spawn(Element.WATER)
+	e.lane = fire
+	e.s = s
+	e.pos = g.net.point_at(e.lane, e.s)
+	e.speed = 0.0
+	var mate: Enemy = g.debug_spawn(Element.WATER)
+	mate.lane = fire
+	mate.s = s
+	mate.pos = g.net.point_at(mate.lane, mate.s)
+	mate.speed = 0.0
+	g.step(1.0 / 60.0)
+	_check(g.shots.size() == 1, "po vystrelu leti %d strel, ceka se 1" % g.shots.size())
+	var mate_hp: float = mate.hp
+	# CIL UMRE DRIV, NEZ RANA DOLETI (napr. ho dorazila jina vez).
+	e.alive = false
+	e.hp = 0.0
+	g.run_for(Shot.FLIGHT + 0.1)
+	_check(g.shots.is_empty(), "strela po mrtvem cili zustala ve vzduchu")
+	_check(is_equal_approx(mate.hp, mate_hp),
+		"rana po mrtvem cili ubrala zivemu sousedovi (%.2f -> %.2f)" % [mate_hp, mate.hp])
 
 
 # CELA OBRANA ZABIJI. Tri vodni veze pod ohnivou cestou (vez je 2 bunky od
@@ -290,13 +379,14 @@ func _test_tower_skips_own_element() -> void:
 	g.run_for(0.30)
 	_check(own.hp >= own.max_hp - 0.001,
 		"vez vystrelila na poutnika sveho elementu (hp %.1f z %.1f)" % [own.hp, own.max_hp])
-	_check(t.shot_t <= 0.0, "vez si vystrelem na sveho vybila strelu")
+	_check(g.shots.is_empty(), "vez si vystrelem na sveho vybila strelu")
 	_check(t.cd <= 0.0, "vez si na sveho vybila nabijeni (cd %.2f)" % t.cd)
-	# 2) PRIJDE CIZI: vez vystreli na NEJ, ne na sveho.
+	# 2) PRIJDE CIZI: vez vystreli na NEJ, ne na sveho. POZOR: rana leti
+	# 0,25 s, takze se na dopad musi pockat dele nez na vystrel.
 	var other: Enemy = g.debug_spawn(Element.WATER)
 	other.lane = fire
 	other.s = s
-	g.run_for(0.30)
+	g.run_for(0.60)
 	_check(other.hp < other.max_hp - 0.001,
 		"vodni poutnik v dosahu ohnive veze nedostal ránu (hp %.1f z %.1f)" %
 		[other.hp, other.max_hp])
