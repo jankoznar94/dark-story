@@ -32,6 +32,7 @@ func _init() -> void:
 	_run("obdelnik vsudy a vsude", _test_box_everywhere)
 	_run("posun vystupku prstem", _test_bump_shift)
 	_run("posun celeho vyberu", _test_box_move)
+	_run("chytit usek a prodlouzit/zkratit", _test_lane_extend)
 	_run("mala tlacitka -/+ a mrizka", _test_steppers_and_grid)
 	_run("export", _test_export)
 	_run("barva a mista podle typu useku", _test_lane_type_color)
@@ -1810,6 +1811,55 @@ func _check_in_grid(e: Editor) -> void:
 		if not e.level.in_bounds(vn.x, vn.y):
 			bad += 1
 	_check(bad == 0, "posun vyjel z mrizky (%d bunek)" % bad)
+
+
+# TVAROVANI EXISTUJICIHO USEKU: CHYTIT A PRODLOUZIT NEBO ZKRATIT.
+# Jan (Oct 2026): "Není možné teď chytit existující úsek cesty a prodloužit ho
+# nebo zkrátit." Pricina: kdyz kus na svem konci v tom smeru NEMA uzel (je tam
+# roh, za kterym cesta pokracuje), zkouselo se jen rozsireni vrsku - a to
+# u obycejne cesty neprojde, takze se NEDELO NIC. Presne tenhle tvar ma i ohniva
+# vetev zakladni desky (svisly kus od vyhybky, pak dlouhy rovny kus do cile).
+func _test_lane_extend() -> void:
+	var e := _ed()
+	var lv := Level.new()
+	var s: int = lv.add_node(2, 2, Level.START)
+	var c: int = lv.add_node(7, 5, Level.CIL)
+	# cesta: dolu ze startu, pak doprava do cile (jako ohniva vetev desky)
+	lv.add_lane(s, c, "DDDRRRRR", Element.FIRE)
+	e.level = lv
+	e.tool = Editor.TOOL_ROAD
+	var was: int = e.level.lane_cells(0).size()
+	_check(was == 9, "testovaci cesta nema 9 bunek (%d) - test meri neco jineho" % was)
+	# 1) TAH DOPREUD (po ose kusu, na jehoz konci je uzel): cesta se prodlouzi
+	_check(e.begin_lane_drag(Vector2i(4, 5)), "usek se neda chytit prstem")
+	e.extend_move(Vector2i(6, 5))
+	e.end_move()
+	var cs: Array = e.level.lane_cells(0)
+	_check(cs.size() == was + 2, "tah dopredu cestu neprodlouzil (%d -> %d)" % [was, cs.size()])
+	_check(cs[cs.size() - 1] == Vector2i(9, 5), "konec cesty neni na protazene bunce (%s)" % str(cs[cs.size() - 1]))
+	# 2) TAH ZPET (dovnitr): cesta se ZKRATI. Tady kus zacina ROHem (svisly kus
+	#    nad nim) - driv se nedelo vubec nic.
+	e.level = lv
+	_check(e.begin_lane_drag(Vector2i(4, 5)), "usek se neda chytit prstem (druhy tah)")
+	e.extend_move(Vector2i(2, 5))
+	e.end_move()
+	var cs2: Array = e.level.lane_cells(0)
+	_check(cs2.size() == was - 2, "tah zpet cestu nezkratil (%d -> %d)" % [was, cs2.size()])
+	_check(cs2[cs2.size() - 1] == Vector2i(5, 5), "zkracena cesta nekonci na spravne bunce (%s)" % str(cs2[cs2.size() - 1]))
+	# 3) A SOUVISLOST MUSI ZUSTAT: zadny krok tahu nesmi cestu prelomit.
+	var ok_path: bool = true
+	for i in range(cs2.size() - 1):
+		var a: Vector2i = cs2[i]
+		var b: Vector2i = cs2[i + 1]
+		if absi(a.x - b.x) + absi(a.y - b.y) != 1:
+			ok_path = false
+	_check(ok_path, "zkracena cesta neni souvisla: " + str(cs2))
+	_check(e.level.validate().is_empty(), "mapa po zkraceni neplati: " + str(e.level.validate()))
+	# 4) NAZEV NASTROJE RIKA, CO DELA: obdelnik se zapina svym tlacitkem a hrac to
+	#    musi z popisku poznat (jinak sedi v obdelniku a mysli si, ze tvarovani
+	#    cest je rozbite).
+	_check(Editor.TOOL_LABELS[Editor.TOOL_VYBER] == "obdélník",
+		"nastroj obdelniku se jmenuje \"%s\"" % Editor.TOOL_LABELS[Editor.TOOL_VYBER])
 
 
 # VYSTUPEK SE POSOUVA TAHEM PRSTEM (Jan, Oct 2026): "chytnu prstem horní část

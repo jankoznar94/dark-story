@@ -24,7 +24,7 @@ enum { TOOL_ROAD, TOOL_START, TOOL_CIL, TOOL_VYHYBKA, TOOL_SPOJKA, TOOL_UZEL, TO
 	TOOL_VYBER }
 
 const TOOL_LABELS := ["cesta", "start", "cíl", "výhybka", "spojka", "uzel", "guma",
-	"výběr"]
+	"obdélník"]
 const TOOL_COUNT := 8
 
 # TYP CESTY, KTERY SE KRESLI. Ctyri zivly + neutralni usek + kmen. Jan:
@@ -909,8 +909,9 @@ func _erase(cell: Vector2i) -> void:
 #
 # Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem. Tah
 # prstem teď dělá rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
-# "výběr" je nastroj, kterym se vybira A UPRAVUJE - kdo na ceste obtahoval
-# obdelnik, ten cestu tvarovat nemohl a myslel si, ze to vubec nejde.
+# Tvarovani je na "ceste" a na palete, kde tah nic jineho neznamena; nastroj
+# "obdélník" tahá obdelnik (a presun celeho vyberu) - proto se v nem cesta
+# nechyta. Kdo si plete nastroje, uvidi v hornim pruhu, ktery prave ma.
 func can_move() -> bool:
 	return tool != TOOL_ROAD and tool != TOOL_GUMA
 
@@ -1865,7 +1866,7 @@ func press(button: int) -> void:
 			status = "Tažením prstu kresli cestu (%s). Klepnutím úsek nebo prvek vybereš." \
 				% Level.value_name(elem)
 		elif button == TOOL_VYBER:
-			status = "Výběr: tažením obtáhni obdélník, klepnutím vybereš jeden prvek. Cesty tvaruj nástrojem „cesta“."
+			status = "Obdélník: tažením obtáhni výběr, klepnutím vybereš jeden prvek. Cesty tvaruj nástrojem „cesta“."
 		else:
 			status = "Klepni, kam má %s přijít. Tažením z prvku ho přesuneš, tažením po cestě ji ohneš." \
 				% TOOL_LABELS[button]
@@ -2094,8 +2095,10 @@ var drag_snapshot: Level = null
 
 
 # CESTA POD PRSTEM SE CHYTA A TAHNE. Je to JEDNO misto, kde se rozhoduje, ze
-# hrac vzal do ruky CESTU (a tvaruje ji) - a plati i pro nastroje "cesta"
-# a "výběr", protoze tam se jinak deje neco, co cestu upravit NEDOVOLI.
+# hrac vzal do ruky CESTU (a tvaruje ji) - plati pro "cestu" a paletu. Nastroj
+# "obdélník" ji NECHYTA: tam tah znamena obdelnik (a posun celeho vyberu), takze
+# by se cestu upravit nedalo - a prave to Jan popsal jako "stale funguje jen
+# rectangle select".
 #
 # Jan (Oct 2026): "Stále nám nefunguje upravování cest pomocí tahu prstem. Tah
 # prstem teď dělá rectangle select. Chtěl bych vybrat jednu cestu a upravit ji."
@@ -2344,7 +2347,23 @@ func _piece_step(width: bool, step: int, cell: Vector2i) -> bool:
 			if ni < 0:
 				return false
 			return _try_move_node(ni, level.node_cell(ni) + drag_d * step)
-		return level.widen_run(drag_lane, cell, side, step > 0)
+		# PRST TAHNE PO OSE KUSU, ALE NA JEHO KONCI V TOM SMERU UZEL NENI (je
+		# tam roh, za kterym cesta pokracuje). Nejdric se zkusi rozsireni vrsku
+		# (vystupek ma vlastni operaci) a kdyz to nejde, hybe se VOLNY KONEC
+		# CELE CESTY - cesta se prodlouzi (tah ven), nebo zkrati (tah zpet).
+		# Driv se tu delalo jen rozsireni, takze u kazde cesty, ktera ma na
+		# konci kusu roh a ne uzel, se NEDELO NIC - presne to Jan popsal jako
+		# "chytit existujici usek a prodlouzit ho nebo zkratit".
+		if level.widen_run(drag_lane, cell, side, step > 0):
+			return true
+		# KTERY KONEC: dopredu se prodluzuje KONEC cesty, dozadu se bud vraci
+		# ZACATEK (kdyz kus zacina na zacatku cesty), nebo se konec cesty
+		# stahuje zpet - to je zkraceni.
+		var free_i: int = level.lane_start_node(drag_lane) if (side < 0 and drag_node_start) \
+			else level.lane_end_node(drag_lane)
+		if free_i < 0:
+			return false
+		return _try_move_node(free_i, level.node_cell(free_i) + drag_d * step)
 	# VYSKA
 	var res: Dictionary = level.move_piece(drag_lane, cell, drag_p * step, drag_d)
 	if not bool(res.get("ok", false)):
