@@ -26,7 +26,7 @@ func _init() -> void:
 	_run("mapa z nakresu", _test_jan_map_shape)
 	_run("vic vstupu", _test_multi_start)
 	_run("posila se jen zivel s protikladem", _test_spawn_needs_opposite)
-	_run("neutralni cesta posila vsechny zivly", _test_neutral_lane_sends_everyone)
+	_run("neutralni cesta neposila nikoho", _test_neutral_lane_sends_nobody)
 	_run("diamant", _test_diamond_survives)
 	if fails.is_empty():
 		print("GRID_ALL_PASS=true (%d kontrol)" % checks)
@@ -50,28 +50,30 @@ func _run(label: String, fn: Callable) -> void:
 # nestaci), takze by byl jen ztraceny zivot. Jan: "aby hra posilala jen zivly,
 # ktere maji v mape svuj protiklad".
 #
-# POZOR: neutralni usek je DRUHA cesta, jak je vsechno zabitelne (seda vez
-# dava vsem 100 %) - proto se z teto mapy nejdriv vyhodi. Jinak by test meril
-# neutralni zbran a pravidlo o protikladu by zustalo neoverene.
+# ZAKLADNI DESKA MA V SOBE I NEUTRALNI USEK a ten se tu ZAMERNE NECHAAVA: je to
+# presne to misto, kde stalo zrusene pravidlo. Jan (Oct 2026): "Zrušíme
+# pravidlo, že při přítomnosti neutrální cesty se spawnují všechny druhy
+# nepřátel. Budou se zkrátka spawnovat jen ty, co mají protiklad."
 func _test_spawn_needs_opposite() -> void:
 	var lv := Level.base()
-	for i in range(lv.lane_count()):
-		if lv.lane_element(i) == Level.NEUTRAL:
-			lv.set_lane_element(i, Level.KMEN)
-	_check(not lv.has_neutral_lane(), "v mape zustal neutralni usek")
+	_check(lv.has_neutral_lane(), "zakladni deska nema neutralni usek (test meri neco jineho)")
 	_check(lv.spawn_elements() == [0, 1, 2, 3],
 		"zakladni deska neposila vsechny ctyri zivly: " + str(lv.spawn_elements()))
 	_check(lv.unkillable_elements().is_empty(),
 		"zakladni deska hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
 
-	# Vzduch z mapy pryc -> Zeme ztrati svuj protiklad a nesmi se posilat
+	# Vzduch z mapy pryc -> Zeme ztrati svuj protiklad a nesmi se posilat.
+	# NEUTRALNI CESTA V MAPE PORAD JE - a presto se neposila vsechno: presne
+	# tady vracel stary kod vsechny ctyri zivly.
 	for i in range(lv.lane_count()):
 		if lv.lane_element(i) == Element.AIR:
 			lv.set_lane_element(i, Level.KMEN)
 	_check(lv.present_elements() == [Element.FIRE, Element.WATER, Element.EARTH],
 		"z mapy nezmizel jen vzduch: " + str(lv.present_elements()))
+	_check(lv.has_neutral_lane(), "neutralni usek z mapy zmizel (test meri neco jineho)")
 	_check(lv.spawn_elements() == [Element.FIRE, Element.WATER],
-		"Zeme bez vzduchu se porad posila: " + str(lv.spawn_elements()))
+		"Zeme bez vzduchu se porad posila (neutralni cesta se pocita jako protiklad): "
+		+ str(lv.spawn_elements()))
 	_check(lv.unkillable_elements() == [Element.EARTH],
 		"Zeme bez vzduchu neni hlasena jako nezabitelna: " + str(lv.unkillable_elements()))
 
@@ -134,14 +136,15 @@ func _check(cond: bool, msg: String) -> void:
 		fails.append(msg)
 
 
-# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI. Seda vez dava vsem presne 100 %, takze
-# mapa z neutralnich cest nema jediny "nezabitelny" zivel - a proto z ni musi
-# chodit VSECHNY CTYRI. Jan (Oct 2026): "Aha, tak to je tím, že jsem vytvořil
-# pouze neutrální cesty. V takovém případě asi můžou chodit všechny elementy."
+# NEUTRALNI CESTA SAMA O SOBE NEPOSILA NIKOHO. Seda vez bere sice vsem 100 %,
+# takze se z ni dalo poslat vsechno - ale Jan to zrusil (Oct 2026): "Zrušíme
+# pravidlo, že při přítomnosti neutrální cesty se spawnují všechny druhy
+# nepřátel. Budou se zkrátka spawnovat jen ty, co mají protiklad."
 #
-# Kontroluje se i OPAK: kdyz se neutralni usek z mapy vyhodi a zbude jen kmen,
-# neposila se nikdo - jinak by test neprokazal, ze to zpusobila neutralni cesta.
-func _test_neutral_lane_sends_everyone() -> void:
+# Kontroluje se i to, co je na obrazovce stejne (kolo bezi, deska prazdna):
+# hra musi rict SLOVY, proc nikdo nechodi - neutralni usek neni element,
+# takze plati veta "v mape neni ani jeden usek s zivlem".
+func _test_neutral_lane_sends_nobody() -> void:
 	var lv := Level.new()
 	lv.add_node(1, 5, Level.START)
 	lv.add_node(6, 5, Level.UZEL)
@@ -152,24 +155,38 @@ func _test_neutral_lane_sends_everyone() -> void:
 	_check(lv.has_neutral_lane(), "neutralni usek se nenasel")
 	_check(lv.present_elements().is_empty(),
 		"z neutralni cesty se stal element: " + str(lv.present_elements()))
-	_check(lv.spawn_elements() == [0, 1, 2, 3],
-		"z neutralni cesty se neposilaji vsechny ctyri zivly: " + str(lv.spawn_elements()))
+	_check(lv.spawn_elements().is_empty(),
+		"z neutralni cesty se posilaji poutnici: " + str(lv.spawn_elements()))
 	_check(lv.unkillable_elements().is_empty(),
-		"mapa s neutralni cestou hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
+		"mapa bez jedineho zivlu hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
 
 	# HRA SI SEZNAM VEZME Z LEVELU - kdyby ho pocitala sama, meli bychom dve
 	# pravdy o tom, kdo muze chodit.
 	var g := Game.new()
 	g.auto_round = false
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
-	_check(g.spawn_pool == [0, 1, 2, 3], "sit posila %s" % str(g.spawn_pool))
+	_check(g.spawn_pool.is_empty(), "sit posila %s" % str(g.spawn_pool))
+	g.start_round()
+	var last: String = str(g.log[g.log.size() - 1])
+	_check(last.contains("živl"), "mapa z neutralnich cest to nerekne: " + last)
 
-	# OPAK: neutralni usek pryc (jen kmen) -> neni cim zabijet, nikdo nechodi
-	lv.set_lane_element(1, Level.KMEN)
+	# OPAK NA DRUHE STRANE: neutralni usek se zmeni na OHEŇ - a ten svuj
+	# protiklad (vodu) v mape nema, takze se z nej taky neposila. Rozhoduje
+	# protiklad, ne "je to neutralni".
+	lv.set_lane_element(1, Element.FIRE)
 	_check(not lv.has_neutral_lane(), "neutralni usek z mapy nezmizel")
+	_check(lv.present_elements() == [Element.FIRE],
+		"z mapy neni jen ohen: " + str(lv.present_elements()))
 	_check(lv.spawn_elements().is_empty(),
-		"z mapy bez zivlu a bez neutralni cesty se posila poutnik: "
-		+ str(lv.spawn_elements()))
+		"ohen bez vody se posila: " + str(lv.spawn_elements()))
+	_check(lv.unkillable_elements() == [Element.FIRE],
+		"ohen bez vody neni hlasen jako nezabitelny: " + str(lv.unkillable_elements()))
+	var g2 := Game.new()
+	g2.auto_round = false
+	g2.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
+	g2.start_round()
+	var last2: String = str(g2.log[g2.log.size() - 1])
+	_check(last2.contains("protiklad"), "ohen bez vody se nerekne: " + last2)
 
 
 # ---------------------------------------------------------------- zakladni deska
@@ -632,13 +649,15 @@ func _test_jan_map_shape() -> void:
 	# dve vyhybky v sérii, kazda se dvema vystupy
 	_check(lv.node_choice_count(j_up) == 2, "prvni vyhybka nema 2 vystupy")
 	_check(lv.node_choice_count(j_dn) == 2, "druha vyhybka nema 2 vystupy")
-	# MAPA POSILA VSECHNY CTYRI ZIVLY: ma v sobe NEUTRALNI cesty (seda vez dava
-	# vsem 100 %), takze je kazdy zivel cim zabit - i bez protikladu.
+	# MAPA Z NAKRESU POSILA JEN TO, CO MA PROTIKLAD: ma v sobe ohen, vodu
+	# a neutralni cesty - a posilaji se prave Ohen a Voda, protoze ty maji
+	# svuj protiklad. (Neutralni cesta je zbran na kohokoli, ale zivly z ni
+	# nechodi - Jan: "spawnovat se budou jen ty, co mají protiklad.")
 	_check(lv.has_neutral_lane(), "v mape z nakresu neni neutralni cesta")
-	_check(lv.spawn_elements() == [0, 1, 2, 3], "mapa ma posilat vsechny ctyri zivly, posila %s"
-		% str(lv.spawn_elements()))
+	_check(lv.spawn_elements() == [Element.FIRE, Element.WATER],
+		"mapa z nakresu ma posilat ohen a vodu, posila %s" % str(lv.spawn_elements()))
 	_check(lv.unkillable_elements().is_empty(),
-		"mapa s neutralni cestou hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
+		"mapa z nakresu hlasi nezabitelny zivel: " + str(lv.unkillable_elements()))
 	# a vsechno se to vejde do kodu, ktery se da vlozit do zpravy
 	var code: String = lv.to_code()
 	_check(Level.from_code(code) != null, "kod teto mapy se neda nacist zpatky")

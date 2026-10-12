@@ -938,27 +938,26 @@ func next_lane(n: int, sel: int = 0) -> int:
 # ZIVLY V MAPE
 # =========================================================================
 
-# JE ZIVEL Z TÉTO MAPY ZABITELNY? Jsou dva zpusoby, jak poutnika zabit, a staci
-# jeden z nich:
+# JE ZIVEL Z TÉTO MAPY ZABITELNY? Jedine meritko je PROTIKLAD: vez na ceste
+# protikladu dava 200 %, a to poutnika (s bonusem) polozi. Jan (Oct 2026):
+# "Zrušíme pravidlo, že při přítomnosti neutrální cesty se spawnují všechny
+# druhy nepřátel. Budou se zkrátka spawnovat jen ty, co mají protiklad."
 #
-#   * v mape je jeho PROTIKLAD - vez na te ceste mu dava 200 %,
-#   * v mape je NEUTRALNI USEK - seda cesta dava vsem presne 100 %, takze vez
-#     u ni zabije kohokoli. Jan (Oct 2026): "Aha, tak to je tím, že jsem
-#     vytvořil pouze neutrální cesty. V takovém případě asi můžou chodit
-#     všechny elementy." Zmereno: na mape s neutralni cestou umrou se ctyrmi
-#     vezmi vsechny ctyri zivly.
+# NEUTRALNI USEK SE DO TOHOTO ROZHODNUTI NEPOCITA. Seda vez bere sice vsem
+# 100 %, ale "neutralni cesta = chodi vsechno" posilalo i zivly, ktere v mape
+# nemaji svuj usek - mapa tim ztratila rukopis. Z mista, kde poutnik svuj
+# protiklad nema, se neposila (a hra to rekne v hlasce).
 #
 # KMEN zabit neda: nema pas, vez se u nej postavit neda (a dava 0 %).
 func element_killable(e: int) -> bool:
 	if e < 0 or e >= Element.COUNT:
 		return false
-	if has_neutral_lane():
-		return true
 	return present_elements().has(Element.opposite_of(e))
 
 
 # Je v mape neutralni usek? Seda cesta bere vsem 100 %, takze je to zbran na
-# kazdy zivel - mapa z neutralnich cest proto posila vsechny ctyri.
+# kazdy zivel - ale POSILANI POUTNIKU z toho uz nic nevyvozuje (viz
+# `element_killable`): kdo v mape nema svuj protiklad, nechodi.
 func has_neutral_lane() -> bool:
 	for i in range(lanes.size()):
 		if lane_element(i) == NEUTRAL:
@@ -968,18 +967,16 @@ func has_neutral_lane() -> bool:
 
 # Zivly, ktere se v teto mape posilaji. Neni to kosmetika: poutnik, jehoz
 # v mape NENI cim zabit, je ztraceny zivot bez sance zasahnout. Posilame proto
-# JEN zivly, ktere jsou zabitelne (viz `element_killable`) - ostatni se
-# vynechavaji a hra to rekne v hlasce na zacatku kola.
+# JEN zivly, ktere maji v mape svuj usek A svuj PROTIKLAD (viz
+# `element_killable`). Zivly, ktere v mape nejsou vubec, do hry nepatri - mapa
+# ma svuj "rukopis" (Jan: "mapa, ktera ma jen vodu a ohen, posila jen vodni
+# a ohnive poutniky"). Ostatni se vynechavaji a hra to rekne v hlasce na
+# zacatku kola.
+#
+# NEUTRALNI CESTA DO TOHOTO SEZNAMU NIC NEPRIDAVA (Jan: "Budou se zkrátka
+# spawnovat jen ty, co mají protiklad."). Mapa z neutralnich cest sama o sobe
+# neposila nikoho.
 func spawn_elements() -> Array:
-	# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI (seda vez bere vsem 100 %), takze
-	# z takove mapy chodi vsechny ctyri zivly - i ty, ktere svuj vlastni usek
-	# v mape nemaji. Jan: "V takovém případě asi můžou chodit všechny elementy."
-	if has_neutral_lane():
-		return [Element.FIRE, Element.WATER, Element.EARTH, Element.AIR]
-	# Bez neutralni cesty se posila jen to, co ma v mape svuj usek A svuj
-	# protiklad. Zivly, ktere v mape nejsou vubec, do hry nepatri - mapa ma
-	# svuj "rukopis" (Jan: "mapa, ktera ma jen vodu a ohen, posila jen vodni
-	# a ohnive poutniky").
 	var out: Array = []
 	for e in present_elements():
 		if element_killable(e):

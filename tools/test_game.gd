@@ -587,9 +587,11 @@ func _test_pile_up_loses() -> void:
 	_check(g.lives < Level.BASE_LIVES, "bez bonusu hrac nikdy neztratil zivot")
 
 
-# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI. Pravidlo "z neutralni cesty chodi
-# vsechny ctyri zivly" stoji na tom, ze je opravdu cim je zabit - a to se neda
-# overit jinak nez hrou. Seda vez bere vsem 100 %, ale musi to stacit.
+# NEUTRALNI CESTA JE ZBRAN NA KOHOKOLI. Seda vez bere vsem presne 100 %, takze
+# se na ni da položit kazdy zivl - a prave to je duvod, proc se z neutralni
+# cesty dalo kdysi poslat vsechno. Spawnovani se tim uz NERIDI (Jan: "spawnovat
+# se budou jen ty, co mají protiklad"), ale poskozeni plati dal a neda se
+# overit jinak nez hrou.
 # Test proto postavi obranu za ZAKLADNI zlato (ctyri veze) na neutralni cestu
 # a pozene po ni kazdy zivel - kazdy na CERSTVE hre (spolecna hra by dalsimu
 # poutnikovi pujcovala veze i zivoty toho predchoziho).

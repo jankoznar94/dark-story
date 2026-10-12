@@ -407,8 +407,7 @@ func _empty_pool_reason() -> String:
 		return "Mapa nemá start — poutníci nemají kudy vejít."
 	if level == null or level.present_elements().is_empty():
 		return "V mapě není ani jeden úsek s živlem — poutníci nechodí. " \
-			+ "Nakresli dva protikladné živly (oheň a vodu, zemi a vzduch) " \
-			+ "nebo aspoň jednu neutrální cestu."
+			+ "Nakresli dva protikladné živly (oheň a vodu, zemi a vzduch)."
 	return "Ani jeden živl v mapě nemá svůj protiklad — není čím je zabít, " \
 		+ "proto se z nich neposílá."
 

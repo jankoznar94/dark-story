@@ -627,18 +627,18 @@ func _test_lane_types() -> void:
 	_check(f.level.lane_is_neutral(1), "usek neni neutralni")
 	_check(not f.level.spawn_elements().has(Level.NEUTRAL),
 		"z neutralniho useku se posila poutnik")
-	# PO ZMENE NA NEUTRALNI zbyde v mape jen Ohen - ale NEUTRALNI USEK JE ZBRAN
-	# NA KOHOKOLI (seda vez dava vsem 100 %), takze se z teto mapy posilaji
-	# VSECHNY CTYRI zivly. Jan: "Aha, tak to je tím, že jsem vytvořil pouze
-	# neutrální cesty. V takovém případě asi můžou chodit všechny elementy."
+	# PO ZMENE NA NEUTRALNI zbyde v mape jen Ohen - a ten svuj protiklad
+	# (vodu) nema, takze se z teto mapy NEPOSILA NIC. Neutralni usek je zbran
+	# na kohokoli, ale poutniky neposila (Jan: "spawnovat se budou jen ty,
+	# co mají protiklad").
 	_check(f.level.present_elements() == [Element.FIRE],
 		"po zmene na neutralni zbyva spatny zivel: " + str(f.level.present_elements()))
 	_check(f.level.has_neutral_lane(), "neutralni usek se nenasel")
-	_check(f.level.spawn_elements() == [0, 1, 2, 3],
-		"z mapy s neutralni cestou se neposilaji vsechny zivly: "
+	_check(f.level.spawn_elements().is_empty(),
+		"ohen bez vody se z teto mapy posila: "
 		+ str(f.level.spawn_elements()))
-	_check(f.level.unkillable_elements().is_empty(),
-		"mapa s neutralni cestou hlasi nezabitelny zivel: "
+	_check(f.level.unkillable_elements() == [Element.FIRE],
+		"ohen bez vody neni hlasen jako nezabitelny: "
 		+ str(f.level.unkillable_elements()))
 
 
