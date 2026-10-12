@@ -32,6 +32,9 @@ const ENEMY_R_OUT := 20.0
 const ENEMY_R_IN := 17.0
 const ENEMY_GLYPH := 11.0
 const ENEMY_HP_R := 25.0
+# BARVA ZNACKY CILE. KOST je jedina barva na desce, ktera neznamena zivel -
+# cil se proto neda splest s cestou ani s poutnikem.
+const CIL_RING := Color(0.90, 0.87, 0.80)
 # DELKA OCASKU STRELY. Strela je kratky tlusty tah s hlavou na svem miste
 # a ocáskem zpet - delka je proto v pixelech a v meritku desky, ne zlomek
 # drahy (driv se ocásek pocital z cele drahy strely, takze byl jednou
@@ -145,6 +148,15 @@ func _ready() -> void:
 		editor.sel_node = -1
 		editor.panel = Editor.PANEL_TOOLS
 		editor.tool = Editor.TOOL_VYHYBKA
+		_push_editor_level()
+		_shot = true
+	elif args.has("--code-shot"):
+		# Snimek KODU LEVELU: panel s kodem se jinak neda vyfotit (zavira se
+		# klepnutim na desku) a je to jedina cesta, jak zkontrolovat, ze je
+		# cely a citelny. Tlacitko se macka tou PRAVOU cestou (`press`).
+		_open_editor()
+		editor.level = Level.base()
+		editor.press(Editor.BTN_EXPORT)
 		_push_editor_level()
 		_shot = true
 	elif args.has("--battle"):
@@ -553,6 +565,12 @@ func _handle_editor_tap(pos: Vector2) -> void:
 			editor.press(pact)
 			_push_editor_level()
 			return
+	# KOD NA DESCE SE ZAVRE KLEPNUTIM KAMKOLI. Je to PRED klepnuti na desku:
+	# hrac cte kod a prvni klepnuti ma jen zavrit okno, ne neco udelat.
+	if editor.code_show:
+		_click()
+		editor.close_code()
+		return
 	# VLOZENI PRIPRAVENE KOPIE: klepnuti na desku rekne, KAM. Je to PRED
 	# pravidlem o zavreni panelu - hrac musi mit tlacitka panelu na ocich,
 	# dokud vlozeni nepotvrdi (a muze ho vzit zpet).
@@ -665,6 +683,52 @@ func _draw_editor() -> void:
 	_draw_editor_panel()
 	_draw_editor_bar()
 	_draw_editor_top()
+	# KOD LEVELU JE NAD VSIM: hrac ho cte a prekryva vsechno ostatni.
+	_draw_editor_code()
+
+
+# KÓD LEVELU. Klepnuti na "export" kod zkopiruje do schranky - ale ten zapis
+# umi prohlizec i system odmitnout a na telefonu se vypsany radek neda
+# oznacit. Proto se kod vykresli I SEM: cely, zalomeny na radky a tak velkym
+# pismem, aby se dal precist (a vyfotit). Klepnuti kamkoli okno zavre.
+#
+# VELIKOST SE HLEDA SHORA DOLU: dokud se cely kod nevejde do desky, pismo se
+# zmensuje. Meri se i kresli stejnym pismem (`layout.font`) - jinak by se
+# zalomeni rozejislo s tim, co je videt.
+func _draw_editor_code() -> void:
+	var code: String = editor.code
+	if not editor.code_show or code.is_empty():
+		return
+	var bw: float = layout.view.x * 0.94
+	var bx: float = (layout.view.x - bw) * 0.5
+	var inner: float = bw - 24.0 * layout.ui
+	# PANEL ZUSTAVA NAD SPODNI LISTOU. Kdyby pres ni pretekl, hrac by nemel
+	# jak zmacknout znovu export (a klepnuti do listy by zaviralo kod).
+	var top: float = layout.editor_arena.position.y
+	var max_h: float = maxf(layout.editor_bar_top() - top - 52.0 * layout.ui, 40.0)
+	var px: int = 20
+	var lines: Array = []
+	var lh: float = 0.0
+	while px >= 8:
+		var dpx: int = layout.font(float(px))
+		lh = float(dpx) * 1.30
+		lines = Editor.code_lines(_font, dpx, inner, code)
+		if float(lines.size()) * lh <= max_h:
+			break
+		px -= 1
+	var bh: float = float(lines.size()) * lh + 52.0 * layout.ui
+	var by: float = top + maxf((max_h - float(lines.size()) * lh) * 0.5, 0.0)
+	var box := Rect2(bx, by, bw, bh)
+	draw_rect(box, Color(0.10, 0.095, 0.085, 0.97))
+	draw_rect(box, Color(0.78, 0.62, 0.30), false, layout.ul(2.0))
+	_draw_centered("KÓD LEVELU — klepni kamkoli a zavřeš",
+		Rect2(box.position, Vector2(bw, 34.0 * layout.ui)), box.position.y + 22.0 * layout.ui,
+		15, Color(0.90, 0.87, 0.80))
+	var y: float = box.position.y + 44.0 * layout.ui
+	for l in lines:
+		_label(Vector2(box.position.x + 12.0 * layout.ui, y + float(layout.font(float(px))) * 0.86),
+			str(l), px, Color(0.84, 0.82, 0.76))
+		y += lh
 
 
 # SEZNAM ULOZENYCH LEVELU. Kazdy novy level dostane vlastni jmeno, takze se
@@ -1594,17 +1658,28 @@ func _draw_nodes() -> void:
 			draw_arc(p, rr * 2.4, 0.0, TAU, 28, Color(0.62, 0.74, 0.86), 2.0)
 
 
-# CIL JE DIRA V MAPE, NE ZNACKA. Krizek v krouzku byl na desku moc
-# (Jan: "nebude mit tuto vyraznou znacku krizku v kruhu. Je to prilis
-# mnoho") - cesta z cile odchazi na okraj displeje a poutnik tam zmizi,
-# takze hrac cil vidi jako KONEC CESTY ZA OBRAZOVKOU. V bitve se proto
-# nekresli vubec. V editoru zustava maly tmavy bod na bunce uzlu: bez nej
-# by hrac nevedel, KAM presne cil polozil (driv to byla stejna chyba jako
-# u cile bez znacky - "a pak uz neni cil videt").
+# CIL MA ZNACKU: DIRA S PRSTENCEM. Cesta z cile odchazi na okraj displeje a
+# poutnik tam zmizi, takze v bitve cil vidi jako konec cesty za obrazovkou -
+# tam se nekresli nic.
+#
+# V EDITORU ALE ZNACKU MIT MUSI. Jan (Oct 2026): "zdá se, že cíl nemá žádnou
+# značku. Možná proto jsem si nevšiml, že je zároveň na spojce. Musíme mu dát
+# nějakou značku." Maly tmavy bod (co tu byl) na tmave desce splyne - hrac
+# cil polozi a nevi, kam presne padl, ani ze stoji na uzlu.
+#
+# DVOJITY PRSTENEC je zamer: uzly maji uvnitr Y (vyhybka) nebo obracene Y
+# (spojka), poutnik ma runu - kruh s necim uvnitr je vzdy neco jineho. Dve
+# soustredne kruznice nema nikdo, takze se cil neplete s nicim. Krizek v
+# kruhu tu byt NESMI (Jan: "nebude mit tuto vyraznou znacku krizku v kruhu.
+# Je to prilis mnoho"). Barva je kost - jedina barva na desce, ktera
+# neznamena zivel (a proto se cilem neda splest s cestou).
 func _draw_exit_mark(p: Vector2) -> void:
 	if not menu.is_editor():
 		return
-	draw_circle(p, maxf(3.0, game.net.exit_r * 0.30), Color(0.11, 0.105, 0.10))
+	var r: float = maxf(6.0, game.net.exit_r * 0.62)
+	draw_circle(p, r, Color(0.105, 0.10, 0.095))
+	draw_arc(p, r, 0.0, TAU, 28, CIL_RING, maxf(2.0, 3.4 * layout.s))
+	draw_arc(p, r * 0.52, 0.0, TAU, 20, CIL_RING, maxf(1.2, 2.0 * layout.s))
 
 
 func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:

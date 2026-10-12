@@ -171,6 +171,10 @@ var move_from: Vector2i = Vector2i(-1, -1)
 var move_steps: int = 0
 var status: String = ""
 var code: String = ""
+# JE KOD VYPSANY NA DESCE? Kod se sice kopiruje do schranky, ale ten zapis
+# muze prohlizec i system odmitnout - a na telefonu se vypsany radek neda
+# oznacit. Kdyz je kod cely na desce, hrac ho vzdycky dostane ven.
+var code_show: bool = false
 var local_name: String = ""
 var mode: int = MODE_EDIT
 # KTERY PANEL JE OTEVRENY. Panel prekryva spodni kus desky, takze klepnuti na
@@ -2142,14 +2146,50 @@ func _level_text() -> String:
 # odmitne (a hrac to v hlasce vidi).
 func _export() -> void:
 	code = level.to_code()
+	# KOD SE VZDY VYPISE NA DESKU. Zapis do schranky umi selhat - prohlizec
+	# ho odmitne, system vraci jiny text, na telefonu se vypsany radek neda
+	# oznacit. Kdyz je kod na desce cely a citelny, hrac ho vzdy dostane ven
+	# (precte ho nebo vyfoti), at se schranka zachova jakkoli.
+	code_show = true
 	var errs: Array = level.validate()
 	if not errs.is_empty():
-		status = "Mapa má chybu: %s" % errs[0]
+		status = "Mapa má chybu: %s (kód je na desce)" % errs[0]
 		return
 	if Clipboard.copy(code):
 		status = "Kód (%d znaků) je ve schránce — vlož ho jako text." % code.length()
 	else:
-		status = "Kód se nepodařilo zkopírovat — zkus Export znovu."
+		status = "Kód (%d znaků) se nepodařilo zkopírovat — je vypsaný na desce, přečti ho odtud." % code.length()
+
+
+# KOD JE VYPSANY NA DESCE, dokud ho hrac nezavre. Klepnuti kamkoli ho zavre.
+func close_code() -> void:
+	code_show = false
+
+
+# ZALOMENI KODU NA RADKY. Kod levelu je jedno dlouhe slovo (bez mezer), takze
+# se lama PO ZNACICH - `Guide.caption` (po slovech) by vratil jeden radek pres
+# cely displej. Kolik znaku se vejde, se pocita ze sirky jednoho znaku: merit
+# cely radek pro kazdy znak znovu by bylo mereni stokrát za snimek.
+static func code_lines(font: Font, px: int, max_w: float, text: String) -> Array:
+	var per: int = code_chars_per_line(font, px, max_w)
+	var out: Array = []
+	if per <= 0:
+		return out
+	var i: int = 0
+	while i < text.length():
+		out.append(text.substr(i, per))
+		i += per
+	return out
+
+
+# Kolik znaku se vejde na jeden radek pri velikosti pisma `px`.
+static func code_chars_per_line(font: Font, px: int, max_w: float) -> int:
+	if px <= 0:
+		return 0
+	var one: float = font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, px).x
+	if one <= 0.0:
+		return 0
+	return maxi(int(max_w / one), 1)
 
 
 # =========================================================================

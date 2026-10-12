@@ -965,6 +965,25 @@ func _test_export() -> void:
 	_check(esrc.contains("Clipboard.copy(code)"), "export nekopiruje kod do schranky")
 	_check(esrc.contains("je ve schránce"), "hrac se nedozvi, ze kod je ve schrance")
 	_check(not Clipboard.copy(""), "prazdny text se do schranky kopirovat nema")
+	# DRUHA CESTA VEN: zapis do schranky umi prohlizec i system odmitnout
+	# (a na telefonu se vypsany radek neda oznacit), takze se kod musi VZDY
+	# vypsat cely na desku - citelne, zalomeny na radky.
+	_check(e.code_show, "export nevypise kod na desku (druha cesta ven chybi)")
+	_check(esrc.contains("code_show"), "export nezapina vypis kodu na desce")
+	var font: Font = ThemeDB.fallback_font
+	var px: int = 14
+	var lines: Array = Editor.code_lines(font, px, 200.0, e.code)
+	_check(lines.size() > 1, "dlouhy kod se nezalomil (%d radku)" % lines.size())
+	var joined: String = ""
+	for l in lines:
+		joined += str(l)
+		_check(font.get_string_size(str(l), HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= 200.0,
+			"radek kodu je sirsi nez panel: %s" % str(l))
+	_check(joined == e.code, "zalomeni kod rozbilo")
+	_check(Editor.code_chars_per_line(font, 14, 0.0) >= 1,
+		"nulova sirka panelu nema dat nula znaku na radek")
+	e.close_code()
+	_check(not e.code_show, "kod na desce se neda zavrit")
 
 
 # BARVA A MISTA PODLE HODNOTY USEKU. Kmen (-2) a neutralni usek (-1) NEJSOU

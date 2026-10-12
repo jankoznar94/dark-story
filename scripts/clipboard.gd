@@ -25,7 +25,21 @@ static func copy(text: String) -> bool:
 	if not DisplayServer.has_feature(DisplayServer.FEATURE_CLIPBOARD):
 		return false
 	DisplayServer.clipboard_set(text)
-	return DisplayServer.clipboard_get() == text
+	# WINDOWS VRACI TEXT SE SVYMI KONCI RADKU (\r\n). Kdyby se porovnavalo
+	# presne, vypsalo by se "nepodařilo se zkopírovat", i kdyz kod ve schrance
+	# opravdu je - a hrac by ho zbytecne hledal jinde. Porovnava se proto
+	# NORMALIZOVANE.
+	return _same(DisplayServer.clipboard_get(), text)
+
+
+# Jsou to ty same texty? Rozdily ve koncich radku a mezerach na okraji se
+# ignoruji - to jsou rozdily formatu, ne obsahu.
+static func _same(a: String, b: String) -> bool:
+	return _norm(a) == _norm(b)
+
+
+static func _norm(s: String) -> String:
+	return s.replace("\r\n", "\n").replace("\r", "\n").strip_edges()
 
 
 # Na webu NELZE zjistit vysledek: navigator.clipboard.writeText vraci Promise,
