@@ -680,7 +680,7 @@ func _draw_editor_list() -> void:
 		elif kind == "back":
 			accent = Color(0.72, 0.70, 0.62)
 		draw_rect(r, Color(0.135, 0.125, 0.11))
-		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
 		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
 			str(it["name"]), 17, Color(0.88, 0.85, 0.78))
 
@@ -703,7 +703,7 @@ func _draw_editor_draft() -> void:
 		var mp: Vector2 = game.net.origin + Vector2(
 			(float(editor.mark.x) + 0.5) * cw, (float(editor.mark.y) + 0.5) * ch)
 		draw_rect(Rect2(mp - Vector2(cw, ch) * 0.5, Vector2(cw, ch)),
-			Color(0.90, 0.87, 0.80), false, 2.0)
+			Color(0.90, 0.87, 0.80), false, layout.bl(2.0))
 
 
 # BUNKA JAKO OBDELNIK NA OBRAZOVCE. Jedno misto, kde se z bunky mrizky stane
@@ -726,7 +726,7 @@ func _draw_editor_box() -> void:
 		return
 	var r: Rect2 = _cell_rect(editor.sel_box)
 	draw_rect(r, Color(0.62, 0.74, 0.86, 0.10))
-	draw_rect(r, Color(0.62, 0.74, 0.86, 0.80), false, 2.0)
+	draw_rect(r, Color(0.62, 0.74, 0.86, 0.80), false, layout.bl(2.0))
 	if editor.paste_armed and not editor.clip.is_empty():
 		_draw_paste_ghost()
 
@@ -749,16 +749,16 @@ func _draw_paste_ghost() -> void:
 			(float(p.x) + 0.5) * cw, (float(p.y) + 0.5) * ch)
 		var kind: int = int(n["kind"])
 		draw_circle(c, rr, Color(0.10, 0.095, 0.085, 0.8))
-		draw_arc(c, rr, 0.0, TAU, 20, Color(0.90, 0.87, 0.80, 0.9), 2.0)
+		draw_arc(c, rr, 0.0, TAU, 20, Color(0.90, 0.87, 0.80, 0.9), layout.bl(2.0))
 		if kind == Level.START:
 			draw_circle(c, rr * 0.5, Color(0.62, 0.58, 0.50))
 		elif kind == Level.CIL:
 			var d: float = rr * 0.55
-			draw_line(c - Vector2(d, d), c + Vector2(d, d), Color(0.90, 0.87, 0.80), 2.0)
-			draw_line(c + Vector2(d, -d), c - Vector2(d, -d), Color(0.90, 0.87, 0.80), 2.0)
+			draw_line(c - Vector2(d, d), c + Vector2(d, d), Color(0.90, 0.87, 0.80), layout.bl(2.0))
+			draw_line(c + Vector2(d, -d), c - Vector2(d, -d), Color(0.90, 0.87, 0.80), layout.bl(2.0))
 	# RÁM CELÉ KOPIE: hrac vidi, jak velky kus se polozi (i kdyz je v nem
 	# treba jen jeden usek).
-	draw_rect(_cell_rect(Rect2i(at, editor.clip_size())), Color(0.90, 0.87, 0.80, 0.55), false, 2.0)
+	draw_rect(_cell_rect(Rect2i(at, editor.clip_size())), Color(0.90, 0.87, 0.80, 0.55), false, layout.bl(2.0))
 
 
 func _draw_editor_top() -> void:
@@ -768,7 +768,7 @@ func _draw_editor_top() -> void:
 	var pad: float = 14.0 * layout.ui
 	draw_rect(Rect2(0.0, 0.0, layout.view.x, layout.hud_h), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, layout.hud_h), Vector2(layout.view.x, layout.hud_h),
-		Color(0.28, 0.25, 0.21), 2.0)
+		Color(0.28, 0.25, 0.21), layout.ul(2.0))
 	var half: float = layout.view.x * 0.5 - pad
 	var lv_name: String = editor.level.name if editor.level != null else "?"
 	if lv_name.is_empty():
@@ -806,7 +806,7 @@ func _draw_editor_panel() -> void:
 	var top: float = layout.ed_panel_top
 	var bot: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, bot - top), PANEL_BG)
-	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.46, 0.42, 0.35), 2.0)
+	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.46, 0.42, 0.35), layout.ul(2.0))
 	for row in rows:
 		var line: Array = row
 		var lpx: int = layout.panel_label_px(line, _font)
@@ -838,7 +838,7 @@ func _draw_editor_panel() -> void:
 				continue
 			draw_rect(r, PANEL_BTN)
 			var accent: Color = _panel_accent(it)
-			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.7), false, 2.0)
+			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.7), false, layout.ul(2.0))
 			_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.64, lpx,
 				Color(0.90, 0.87, 0.80))
 
@@ -868,7 +868,7 @@ func _draw_editor_bar() -> void:
 	var label_px: int = layout.ed_label_px(labels, _font)
 	var top: float = layout.editor_bar_top()
 	draw_rect(Rect2(0.0, top, layout.view.x, layout.view.y - top), Color(0.075, 0.07, 0.065))
-	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), 2.0)
+	draw_line(Vector2(0.0, top), Vector2(layout.view.x, top), Color(0.28, 0.25, 0.21), layout.ul(2.0))
 	for i in range(mini(entries.size(), btns.size())):
 		var r: Rect2 = btns[i]
 		var e: Dictionary = entries[i]
@@ -883,7 +883,7 @@ func _draw_editor_bar() -> void:
 			accent = Color(0.65, 0.78, 0.60)
 		elif act == Editor.BTN_PLAY:
 			accent = Color(0.78, 0.62, 0.30)
-		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
 		# Pismo popisku se bere z rozvrzeni (stejne cislo, kterym ho meri test):
 		# na uzkem displeji se o stupen zmensi, aby se popisek do tlacitka vesel.
 		_draw_centered(str(e["label"]), r, r.position.y + r.size.y * 0.64, label_px,
@@ -986,7 +986,7 @@ func _draw_menu() -> void:
 		if i == 0:
 			accent = Color(0.78, 0.62, 0.30)
 		draw_rect(r, Color(0.135, 0.125, 0.11))
-		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
 		_draw_centered(names[i], r, r.position.y + r.size.y * 0.52, 22, Color(0.90, 0.87, 0.80))
 		_draw_centered(subs[i], r, r.position.y + r.size.y * 0.86, 12, Color(0.56, 0.53, 0.48))
 
@@ -1016,13 +1016,20 @@ func _draw_guide() -> void:
 	var avail_h: float = layout.guide_back.position.y - top - 8.0 * layout.ui
 	var wide: bool = layout.view.x >= 700.0
 
-	var px: int = Guide.fit_px(_font, avail_w, avail_h, wide)
-	var fs: int = maxi(px, Guide.MIN_PX)
+	# MERITKO NAVODU. `_label` kresli pismo jako `size * ui`, takze se vsechno
+	# MERI ve stejnem meritku, v jakem se kresli: `fit_px` dostane plochu
+	# vydelenou `ui` (hleda tedy velikost pro zakladni displej) a `dpx` je
+	# velikost, kterou hra opravdu vykresli. Driv se merilo v zakladnich
+	# pixelech a kreslilo ve skalovanych, takze na displeji s dvojnasobnou
+	# hustotou text pretekal z bloku (a na telefonu se zase zbytecne zmensoval).
+	var base: int = Guide.fit_px(_font, avail_w / layout.ui, avail_h / layout.ui, wide)
+	var fs: int = maxi(base, Guide.MIN_PX)
+	var dpx: int = layout.font(float(fs))
 	var count: int = Guide.BLOCKS.size()
 	var cols: int = 2 if wide else 1
 	var rows: int = int(ceil(float(count) / float(cols)))
 	var cell_w: float = avail_w / float(cols)
-	var cell_h: float = (avail_h - float(fs) * 1.9) / float(rows)
+	var cell_h: float = (avail_h - float(dpx) * 1.9) / float(rows)
 
 	_label(Vector2(left, top + float(fs) * 1.1), Guide.TITLE, fs + 7,
 		Color(0.90, 0.87, 0.80), false, avail_w)
@@ -1031,33 +1038,34 @@ func _draw_guide() -> void:
 		var b: Dictionary = Guide.BLOCKS[i]
 		var col: int = i % cols
 		var row: int = i / cols
-		var origin := Vector2(left + cell_w * float(col), top + float(fs) * 1.9 + cell_h * float(row))
-		_draw_guide_block(b, origin, cell_w, cell_h, fs)
+		var origin := Vector2(left + cell_w * float(col), top + float(dpx) * 1.9 + cell_h * float(row))
+		_draw_guide_block(b, origin, cell_w, cell_h, fs, dpx)
 
 	var br: Rect2 = layout.guide_back
 	draw_rect(br, Color(0.20, 0.19, 0.17))
-	draw_rect(br, Color(0.38, 0.35, 0.30), false, 2.0)
+	draw_rect(br, Color(0.38, 0.35, 0.30), false, layout.ul(2.0))
 	_draw_centered(Guide.BACK, br, br.position.y + br.size.y * 0.64, 18, Color(0.85, 0.82, 0.76))
 
 
 func _draw_guide_block(b: Dictionary, origin: Vector2, cell_w: float, cell_h: float,
-		fs: int) -> void:
-	var pad: float = float(fs) * 0.8
+		fs: int, dpx: int) -> void:
+	var pad: float = float(fs) * 0.8 * layout.ui
 	var art_w: float = Guide.art_width(cell_w, cell_h, true)
-	var art_h: float = maxf(float(fs) * 3.0, cell_h - pad * 2.0)
+	var art_h: float = maxf(float(dpx) * 3.0, cell_h - pad * 2.0)
 	var art := Rect2(origin.x + pad, origin.y + pad, art_w, art_h)
 	draw_rect(art, Color(0.125, 0.115, 0.10))
-	draw_rect(art, Color(0.24, 0.22, 0.19), false, 1.0)
+	draw_rect(art, Color(0.24, 0.22, 0.19), false, layout.ul(1.0))
 
-	var txt_x: float = art.end.x + float(fs) * 1.1
+	var txt_x: float = art.end.x + float(fs) * 1.1 * layout.ui
 	var txt_w: float = origin.x + cell_w - pad - txt_x
-	_label(Vector2(txt_x, origin.y + pad + float(fs) * 0.95), str(b["title"]),
+	_label(Vector2(txt_x, origin.y + pad + float(fs) * 0.95 * layout.ui), str(b["title"]),
 		fs + 4, Color(0.86, 0.83, 0.75), false, txt_w)
-	var lines: Array = Guide.caption(_font, fs, txt_w, str(b["text"]))
-	var ly: float = origin.y + pad + float(fs) * 0.95 + float(fs) * 1.5
+	# SIRKA TEXTU SE MERI TEMIS PISMEM, KTERE SE KRESLI (`dpx`), ne zakladnim.
+	var lines: Array = Guide.caption(_font, dpx, txt_w, str(b["text"]))
+	var ly: float = origin.y + pad + float(fs) * 0.95 * layout.ui + float(dpx) * 1.5
 	for line in lines:
 		_label(Vector2(txt_x, ly), str(line), fs, Color(0.70, 0.67, 0.60), false, txt_w)
-		ly += float(fs) * 1.35
+		ly += float(dpx) * 1.35
 
 	# Obrazek kresli hra sama - stejnymi znackami, jake ma na desce.
 	match str(b["art"]):
@@ -1238,14 +1246,14 @@ func _draw_settings() -> void:
 		var bx: float = row.end.x - 108.0 * layout.ui
 		var by: float = row.get_center().y
 		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), Color(0.09, 0.085, 0.08))
-		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), col, false, 2.0)
+		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), col, false, layout.ul(2.0))
 		if on:
 			draw_line(Vector2(bx + 3.0, by), Vector2(bx + 8.0, by + 6.0), col, 3.0)
 			draw_line(Vector2(bx + 8.0, by + 6.0), Vector2(bx + 18.0, by - 7.0), col, 3.0)
 
 	var br: Rect2 = layout.settings_back
 	draw_rect(br, Color(0.20, 0.19, 0.17))
-	draw_rect(br, Color(0.38, 0.35, 0.30), false, 2.0)
+	draw_rect(br, Color(0.38, 0.35, 0.30), false, layout.ul(2.0))
 	_draw_centered("ZPĚT", br, br.position.y + br.size.y * 0.62, 20, Color(0.85, 0.82, 0.76))
 
 
@@ -1440,7 +1448,7 @@ func _draw_tower_panel(t: Tower) -> void:
 	var bar: Rect2 = layout.tower_bar
 	draw_rect(bar, PANEL_BG)
 	draw_line(Vector2(bar.position.x, bar.position.y),
-		Vector2(bar.end.x, bar.position.y), Color(0.46, 0.42, 0.35), 2.0)
+		Vector2(bar.end.x, bar.position.y), Color(0.46, 0.42, 0.35), layout.ul(2.0))
 	var col: Color = Level.value_color(t.element)
 	_label(Vector2(layout.text_x, bar.position.y + bar.size.y * 0.42),
 		"Věž %s · úroveň %d" % [Level.value_name(t.element), t.level], 18, col)
@@ -1472,7 +1480,7 @@ func _teeth_text(n: int) -> String:
 func _draw_bar_btn(r: Rect2, text: String, accent: Color, live: bool) -> void:
 	draw_rect(r, PANEL_BTN)
 	if live:
-		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
 	_label(Vector2(r.get_center().x, r.position.y + r.size.y * 0.64), text, 16,
 		Color(0.90, 0.87, 0.80) if live else Color(0.42, 0.40, 0.36), true, r.size.x)
 
@@ -1496,13 +1504,15 @@ func _draw_grid() -> void:
 		var x: float = o.x + cw * float(i)
 		var major: bool = i > 0 and i < game.net.level.cols and i % Level.GRID_STEP == 0
 		draw_line(Vector2(x, o.y), Vector2(x, o.y + gh),
-			Level.GRID_MAJOR if major else Level.GRID_LINE, 2.0 if major else 1.5)
+			Level.GRID_MAJOR if major else Level.GRID_LINE,
+			layout.bl(2.0) if major else layout.bl(1.5))
 	for j in range(game.net.level.rows + 1):
 		var y: float = o.y + ch * float(j)
 		var major: bool = j > 0 and j < game.net.level.rows and j % Level.GRID_STEP == 0
 		draw_line(Vector2(o.x, y), Vector2(o.x + gw, y),
-			Level.GRID_MAJOR if major else Level.GRID_LINE, 2.0 if major else 1.5)
-	draw_rect(Rect2(o, Vector2(gw, gh)), Color(0.42, 0.39, 0.33, 0.9), false, 2.0)
+			Level.GRID_MAJOR if major else Level.GRID_LINE,
+			layout.bl(2.0) if major else layout.bl(1.5))
+	draw_rect(Rect2(o, Vector2(gw, gh)), Color(0.42, 0.39, 0.33, 0.9), false, layout.bl(2.0))
 
 
 # UZLY. Kazdy uzel je znacka na sve bunce a hrac z ni pozna, co se tam deje:
@@ -1540,11 +1550,11 @@ func _draw_nodes() -> void:
 				var lane: int = game.selected_lane(game.net.junction_index_of_node(n))
 				var col: Color = _lane_color(lane) if lane >= 0 else rim
 				draw_circle(p, rr, Color(0.10, 0.095, 0.085))
-				draw_arc(p, rr, 0.0, TAU, 24, col, 3.0)
+				draw_arc(p, rr, 0.0, TAU, 24, col, layout.bl(3.0))
 				_draw_y(p, rr * 0.52, col, false)
 			Level.SPOJKA:
 				draw_circle(p, rr, Color(0.10, 0.095, 0.085))
-				draw_arc(p, rr, 0.0, TAU, 24, rim, 3.0)
+				draw_arc(p, rr, 0.0, TAU, 24, rim, layout.bl(3.0))
 				_draw_y(p, rr * 0.52, Color(0.68, 0.64, 0.56), true)
 		# OZNACENY PRVEK je obkresleny - hrac musi videt, co si vybral
 		# klepnutim. Kresli se JEN v editoru; v hre se neoznacuje nic.
@@ -1612,7 +1622,7 @@ func _enemy_pos(e: Enemy) -> Vector2:
 func _draw_hud() -> void:
 	draw_rect(Rect2(0.0, 0.0, layout.view.x, layout.hud_h), Color(0.075, 0.07, 0.065))
 	draw_line(Vector2(0.0, layout.hud_h), Vector2(layout.view.x, layout.hud_h),
-		Color(0.28, 0.25, 0.21), 2.0)
+		Color(0.28, 0.25, 0.21), layout.ul(2.0))
 	var step: float = layout.view.x * 0.19
 	var x0: float = 18.0 * layout.s
 	_label(Vector2(x0, layout.hud_h * 0.48), "Kolo %d" % game.round, 20, Color(0.90, 0.87, 0.80))
@@ -1668,7 +1678,7 @@ func _draw_hud() -> void:
 	if _from_editor:
 		var br: Rect2 = layout.hud_back
 		draw_rect(br, Color(0.20, 0.19, 0.17))
-		draw_rect(br, Color(0.78, 0.62, 0.30), false, 2.0)
+		draw_rect(br, Color(0.78, 0.62, 0.30), false, layout.ul(2.0))
 		_draw_centered("EDITOR", br, br.position.y + br.size.y * 0.66, 16,
 			Color(0.90, 0.87, 0.80))
 
@@ -1677,7 +1687,7 @@ func _draw_hud() -> void:
 		var bh: float = 116.0 * layout.s
 		var bp := Vector2((layout.view.x - bw) * 0.5, layout.view.y * 0.38)
 		draw_rect(Rect2(bp, Vector2(bw, bh)), Color(0.13, 0.09, 0.09))
-		draw_rect(Rect2(bp, Vector2(bw, bh)), Color(0.55, 0.25, 0.22), false, 3.0)
+		draw_rect(Rect2(bp, Vector2(bw, bh)), Color(0.55, 0.25, 0.22), false, layout.ul(3.0))
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.45), "SÍŤ PADLA", 30,
 			Color(0.88, 0.46, 0.38), true, bw)
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.78),

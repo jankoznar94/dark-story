@@ -122,6 +122,21 @@ func set_editor_font(f: Font) -> void:
 	ed_font = f
 
 
+# TLOUSTKA TAHU ODVOZENA Z MERITKA. Jan (Oct 2026): "Ať to vypadá stejně
+# nehledě na rozlišení." Vsechny obrysy, kresba uzlu, mrizka a linky se proto
+# kresli NASOBCEM `s` (deska), nebo `ui` (pruh, panel, menu, HUD) - ne pevnym
+# poctem pixelu. Duvod je fyzikalni: displej s dvojnasobnou hustotou dostane
+# dvojnasobne platno, takze pevny 2px tah je na nem relativne POLOVICNI -
+# prave proto vypadala hra na velkem displeji jinak nez na malem. Podlaha
+# 0.6 px je jen aby tah nezmizel na drobnem displeji.
+func bl(w: float) -> float:
+	return maxf(0.6, w * s)
+
+
+func ul(w: float) -> float:
+	return maxf(0.6, w * ui)
+
+
 func compute(v: Vector2) -> void:
 	view = v
 	s = clampf(minf(v.x / REF_W, v.y / REF_H), 0.45, 4.0)

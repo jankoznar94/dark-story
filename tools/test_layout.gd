@@ -38,6 +38,7 @@ var checks: int = 0
 func _init() -> void:
 	for r in RESOLUTIONS:
 		_one(r[0], r[1])
+	_strokes_scale()
 	if fails.is_empty():
 		print("LAYOUT_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -52,6 +53,63 @@ func _check(cond: bool, msg: String) -> void:
 	checks += 1
 	if not cond:
 		fails.append(msg)
+
+
+# TLOUSTKA TAHU SE MUSI MENIT S ROZLISENIM. Jan (Oct 2026): "Ať to vypadá
+# stejně nehledě na rozlišení."
+#
+# Displej s dvojnasobnou hustotou dostane dvojnasobne platno, takze PEVNY pocet
+# pixelu na tahu je na nem relativne polovicni - hra pak vypadala na velkem
+# displeji jinak (hrany, mrizka a obrysy byly tenci, nebot se kreslily porad
+# stejnym poctem pixelu). Vsechny tahy se proto berou z `layout.bl()` (deska)
+# a `layout.ul()` (pruh, panel, HUD).
+func _strokes_scale() -> void:
+	var small := ScreenLayout.new()
+	small.compute(Vector2(960.0, 600.0))
+	var big := ScreenLayout.new()
+	big.compute(Vector2(1440.0, 900.0))
+	# Dvojnasobny displej = dvojnasobny tah (v pixelech), tedy STEJNA relativni
+	# tloušťka. Presna shoda se neda cekat (krok meritka je spojity), ale
+	# pomer musi odpovidat pomeru meritka - a ten se bere z rozvrzeni, aby
+	# test nezavisle neuhadal, jak jsou meritka definovana.
+	var r_s: float = big.bl(2.0) / maxf(small.bl(2.0), 0.001)
+	var want_s: float = big.s / small.s
+	_check(absf(r_s - want_s) < 0.05,
+		"tah desky se meni jinak nez s meritkem (pomer %.2f, ceka se %.2f)" % [r_s, want_s])
+	var r_u: float = big.ul(2.0) / maxf(small.ul(2.0), 0.001)
+	var want_u: float = big.ui / small.ui
+	_check(absf(r_u - want_u) < 0.05,
+		"tah UI se meni jinak nez s meritkem (pomer %.2f, ceka se %.2f)" % [r_u, want_u])
+	# Male rozliseni nesmi tah ztloustnout na nulu.
+	var tiny := ScreenLayout.new()
+	tiny.compute(Vector2(640.0, 360.0))
+	_check(tiny.bl(2.0) >= 1.0 and tiny.ul(2.0) >= 1.0,
+		"tah na malem displeji zmizel (%.2f / %.2f)" % [tiny.bl(2.0), tiny.ul(2.0)])
+
+	# A KRESLENI JE MUSI OPRAVDU POUZIT: kdyby si nekdo napsal do kresleni
+	# pevne "2.0", test to shodi - hodnota by se na velkem displeji neměnila.
+	# (Hledaji se jen tvary, ktere v kresleni desky a UI opravdu jsou.)
+	var src: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	_check(src.contains("func bl(") == false, "hlavicka testu se plete s kodem")
+	var lay: String = FileAccess.get_file_as_string("res://scripts/screen_layout.gd")
+	_check(lay.contains("func bl(") and lay.contains("func ul("),
+		"rozvrzeni nema meritko tahu (bl/ul)")
+	for bad in ["Level.GRID_MAJOR if major else Level.GRID_LINE, 2.0",
+			"Color(0.42, 0.39, 0.33, 0.9), false, 2.0",
+			"Color(accent.r, accent.g, accent.b, 0.55), false, 2.0",
+			"Color(accent.r, accent.g, accent.b, 0.7), false, 2.0",
+			"Color(0.38, 0.35, 0.30), false, 2.0",
+			"Color(0.28, 0.25, 0.21), 2.0",
+			"Color(0.46, 0.42, 0.35), 2.0",
+			"Color(0.62, 0.74, 0.86, 0.80), false, 2.0",
+			"Color(0.90, 0.87, 0.80, 0.55), false, 2.0",
+			"Color(0.90, 0.87, 0.80, 0.9), 2.0",
+			"Color(0.78, 0.62, 0.30), false, 2.0",
+			"Color(0.55, 0.25, 0.22), false, 3.0"]:
+		_check(not src.contains(bad),
+			"v kresleni zustala pevna tloušťka tahu (%s)" % bad)
+	_check(src.contains("layout.bl(2.0) if major else layout.bl(1.5)"),
+		"mrizka nekresli tahy pres meritko")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
