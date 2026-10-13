@@ -23,6 +23,10 @@ const MAX_TOAST := 3.0
 # VEZ je osmihran (viz _draw_towers). Polomer je VETSI nez u nepritele:
 # vez ma byt stavba, ktera je videt, ne drobna krabicka.
 const TOWER_SIDE := 16.0
+# CILOVE PLATNO USPORNEHO REZIMU (viz `_apply_render_scale`). Hra se v nem
+# kresli a na displej se roztahne.
+const RENDER_W := 960
+const RENDER_H := 600
 
 # VELIKOST POUTNIKA. Je to znacka, ktera musi byt citelna na telefonu -
 # poutnik je to, na co se hrac cely cas kouka, takze je vetsi nez zbytek
@@ -69,6 +73,7 @@ func _ready() -> void:
 	settings.load_from_disk()
 	_setup_audio()
 	_place_to_window()
+	_apply_render_scale()
 	get_viewport().size_changed.connect(_on_resize)
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.has("--shot"):
@@ -221,6 +226,35 @@ func _on_resize() -> void:
 	layout.compute(get_viewport_rect().size)
 	# Stav hry zustava, prelozi se jen geometrie site.
 	_reflow()
+
+
+# USPORNE ROZHLEDNI. Hra se jinak kresli v NATIVNIM rozliseni displeje: kazdy
+# snimek vyplni cely displej nekolikrat pres sebe (pozadi, pás, cesty) a na
+# telefonu s DPR 2-3 je pixelu 6-9x vic nez na stolnim displeji. Kdyz se
+# snimek nevejde do 16,7 ms, poutnik popojde o delsi cas najednou - pohyb
+# skube. Usporny rezim kresli do 960x600 a na displej se roztahne.
+#
+# NIKDY NEPRIRAZUJE, KDYBY TO ZHORSILO: na displeji mensim nez cilove platno
+# (nebo jen o chlup vetsim) zustava nativni rozliseni - jinak by se kreslilo
+# do vetsiho platna, nez je obrazovka.
+func _apply_render_scale() -> void:
+	var w: Window = get_window()
+	var size: Vector2i = w.size
+	var big: bool = size.x >= RENDER_W * 1.2 and size.y >= RENDER_H * 1.2
+	if settings.lowres and big:
+		w.content_scale_size = Vector2i(RENDER_W, RENDER_H)
+		w.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+		# POZOR: MUSI to byt VIEWPORT, ne CANVAS_ITEMS. V CANVAS_ITEMS se
+		# zmensuji jen souradnice, ale obraz se porad rasterizuje do plneho
+		# rozliseni displeje (zmereno: cas snimku se vubec nezmenil), takze
+		# by hrac dostal mekci obraz a zadnou usporu. VIEWPORT kresli do
+		# mensiho platna a to se na displej ROZTAHNE - to je cela uspora.
+		w.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+	else:
+		w.content_scale_mode = Window.CONTENT_SCALE_MODE_DISABLED
+	# Rozvrzeni se pocita z VELIKOSTI VIEWPORTU, ktera se zmenou meritka
+	# zmenila - bez prelozeni by hra kreslila do starych souradnic.
+	_on_resize()
 
 
 # Nahledovy rezim pro kontrolu vzhledu: postavi ukazkovou sit a zmrazi hru
@@ -1008,18 +1042,22 @@ func _handle_settings_tap(pos: Vector2) -> void:
 		_click()
 		menu.open_menu()
 		return
-	# Prepinace jsou prvni dva radky (hudba, zvuky); treti je ZPET vyse.
+	# Prepinace jsou prvni tri radky (hudba, zvuky, rozliseni); ZPET je vyse.
 	var gap: float = layout.row_gap()
 	var r: Rect2 = layout.settings_toggle
-	for i in range(2):
+	for i in range(ScreenLayout.SETTINGS_ROWS):
 		var row := Rect2(r.position.x, r.position.y + float(i) * (r.size.y + gap),
 			r.size.x, r.size.y)
 		if row.has_point(pos):
 			_click()
 			if i == 0:
 				settings.toggle_music()
-			else:
+			elif i == 1:
 				settings.toggle_sfx()
+			else:
+				settings.toggle_lowres()
+				# Zmena rozliseni plati HNET - hrac musi videt, co si zapnul.
+				_apply_render_scale()
 			return
 
 
@@ -1350,23 +1388,28 @@ func _draw_settings() -> void:
 		Color(0.90, 0.87, 0.80), true, layout.view.x)
 
 	var r: Rect2 = layout.settings_toggle
-	var labels := ["Hudba", "Zvuky"]
-	var values := [settings.music, settings.sfx]
+	var labels := ["Hudba", "Zvuky", "Rozlišení"]
+	# Treti radek neni ZAPNUTO/VYPNUTO ale DVE MOZNOSTI - hrac vybira mezi
+	# nativnim a uspornym rozlisenim, coz se slovem "zapnuto" rict neda.
+	var values: Array = ["ZAPNUTO" if settings.music else "VYPNUTO",
+		"ZAPNUTO" if settings.sfx else "VYPNUTO", settings.lowres_text()]
+	var ons: Array = [settings.music, settings.sfx, settings.lowres]
 	var sgap: float = layout.row_gap()
-	for i in range(2):
+	for i in range(ScreenLayout.SETTINGS_ROWS):
 		var row := Rect2(r.position.x, r.position.y + float(i) * (r.size.y + sgap),
 			r.size.x, r.size.y)
 		draw_rect(row, Color(0.135, 0.125, 0.11))
-		var on: bool = bool(values[i])
+		var on: bool = bool(ons[i])
 		var col: Color = Color(0.65, 0.78, 0.60) if on else Color(0.42, 0.39, 0.35)
 		draw_rect(row, Color(col.r, col.g, col.b, 0.55), false, 2.0)
 		_label(Vector2(row.position.x + 18.0 * layout.ui,
 			row.position.y + row.size.y * 0.62), labels[i], 18, Color(0.88, 0.85, 0.78))
 		# Stav prepinace k pravemu okraji radku - zarovnany DOPRAVA, aby
 		# nepretekl mimo obrazovku (viz _label_right).
-		_label_right("ZAPNUTO" if on else "VYPNUTO",
+		_label_right(str(values[i]),
 			row.position.y + row.size.y * 0.62, 15, col, row.end.x - 18.0 * layout.ui)
-		# Zaskrtavatko je druha znacka krome barvy - ne jen barva.
+		# Zaskrtavatko je druha znacka krome barvy - ne jen barva. U rozliseni
+		# je to ctverecek, ktery je "plny", kdyz je zapnuty usporny rezim.
 		var bx: float = row.end.x - 108.0 * layout.ui
 		var by: float = row.get_center().y
 		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), Color(0.09, 0.085, 0.08))

@@ -79,6 +79,10 @@ var menu_buttons: Array = []
 var menu_title_y := 0.0
 var settings_toggle := Rect2()
 var settings_back := Rect2()
+# Kolik radku ma obrazovka NASTAVENI (bez tlacitka ZPET). Cislo je tady,
+# protoze z nej pocita rozvrzeni, kresleni, vstup i testy - kdyby si ho
+# kazdy psal sam, rozesly by se a klepnuti by nesedlo na obrazek.
+const SETTINGS_ROWS := 3
 # Navrat do editoru v hornim panelu hry (jen kdyz hrac hraje level z editoru).
 var hud_back := Rect2()
 
@@ -236,18 +240,19 @@ func compute(v: Vector2) -> void:
 	menu_title_y = my0 - 28.0 * ui
 
 	# --- NASTAVENI ---
-	# Dva prepinace a ZPET pod sebou, svisle vycentrovane. Stejna logika
+	# Tri prepinace a ZPET pod sebou, svisle vycentrovane. Stejna logika
 	# jako u menu: vyska zustava na dotykovem minimu, zmensuje se jen
 	# mezera - spatne stisknutelne policko je horsi nez tesnejsi rozvrzeni.
 	var sh: float = mh
 	var sgap: float = 10.0 * ui
-	var stot: float = sh * 3.0 + sgap * 2.0
+	var srows: int = SETTINGS_ROWS
+	var stot: float = sh * float(srows + 1) + sgap * float(srows)
 	if stot > v.y - 40.0 * ui:
-		sgap = maxf(4.0, (v.y - 40.0 * ui - sh * 3.0) * 0.5)
-		stot = sh * 3.0 + sgap * 2.0
+		sgap = maxf(4.0, (v.y - 40.0 * ui - sh * float(srows + 1)) / float(srows))
+		stot = sh * float(srows + 1) + sgap * float(srows)
 	var sy0: float = (v.y - stot) * 0.5
 	settings_toggle = Rect2((v.x - mw) * 0.5, sy0, mw, sh)
-	settings_back = Rect2((v.x - mw) * 0.5, sy0 + (sh + sgap) * 2.0, mw, sh)
+	settings_back = Rect2((v.x - mw) * 0.5, sy0 + (sh + sgap) * float(srows), mw, sh)
 
 	# --- EDITOR ---
 	# Pruh tlacitek dole, vyska z dotykoveho minima pro prst (nemeni se),
@@ -538,14 +543,14 @@ func all_menu_buttons() -> Array:
 	return out
 
 
-# Vsechny dotykove cile NASTAVENI: dva prepinace a ZPET.
+# Vsechny dotykove cile NASTAVENI: vsechny radky prepinacu a ZPET.
 func all_settings_buttons() -> Array:
 	var out: Array = []
 	var sh: float = settings_toggle.size.y
 	var gap: float = row_gap()
-	out.append(settings_toggle)
-	out.append(Rect2(settings_toggle.position.x,
-		settings_toggle.position.y + sh + gap, settings_toggle.size.x, sh))
+	for i in range(SETTINGS_ROWS):
+		out.append(Rect2(settings_toggle.position.x,
+			settings_toggle.position.y + float(i) * (sh + gap), settings_toggle.size.x, sh))
 	out.append(settings_back)
 	return out
 
@@ -554,7 +559,8 @@ func all_settings_buttons() -> Array:
 # vstup i testy pouzivaly PRESNE stejnou hodnotu - kdyby si ji kazdy
 # pocital sam, rozesly by se a klikacka by nesedela na obrazek.
 func row_gap() -> float:
-	return settings_back.position.y - settings_toggle.position.y - settings_toggle.size.y * 2.0
+	return (settings_back.position.y - settings_toggle.position.y
+		- settings_toggle.size.y * float(SETTINGS_ROWS)) / float(SETTINGS_ROWS)
 
 
 func overlaps_with(rect: Rect2, margin: float = 0.0) -> bool:

@@ -320,3 +320,23 @@ func _one(w: int, h: int) -> void:
 		_check(bar_below == want_top2,
 			"%s: obchod je na stejne strane jako misto (nahore=%s, misto nahore=%s)" % [
 				tag, not bar_below, want_top2])
+
+	# --- NASTAVENI: obrazovka se rozsirila o radek ROZLIŠENÍ, takze se na
+	# malem displeji musi vejit tri prepinace + ZPET, kazdy nad dotykovym
+	# minimem a bez prekryvu. Klepnuti na radek musi sedet na obrazek.
+	var sbtns: Array = layout.all_settings_buttons()
+	_check(sbtns.size() == ScreenLayout.SETTINGS_ROWS + 1,
+		"%s: nastaveni ma %d dotykovych cilu, ceka se %d" % [
+			tag, sbtns.size(), ScreenLayout.SETTINGS_ROWS + 1])
+	for si in range(sbtns.size()):
+		var sr: Rect2 = sbtns[si]
+		_check(sr.position.x >= -0.6 and sr.end.x <= float(w) + 0.6,
+			"%s: cíl nastaveni %d utika vodorovne (%.1f..%.1f)" % [tag, si, sr.position.x, sr.end.x])
+		_check(sr.position.y >= -0.6 and sr.end.y <= float(h) + 0.6,
+			"%s: cíl nastaveni %d utika svisle (%.1f..%.1f)" % [tag, si, sr.position.y, sr.end.y])
+		_check(sr.size.y >= ScreenLayout.MIN_TOUCH * layout.ui - 0.6,
+			"%s: cíl nastaveni %d je nizky %.1f px" % [tag, si, sr.size.y])
+		for sj in range(si + 1, sbtns.size()):
+			var sr2: Rect2 = sbtns[sj]
+			_check(not sr.intersects(sr2),
+				"%s: cile nastaveni %d a %d se prekryvaji" % [tag, si, sj])
