@@ -668,6 +668,12 @@ func _handle_editor_tap(pos: Vector2) -> void:
 		var it: Dictionary = bar[i]
 		var act: int = int(it["act"])
 		editor.tap_bar(i)
+		# ODCHOD DO MENU. Je to PRED `_push_editor_level()`: klepnuti na
+		# "menu" nema co delat s deskou (a hra by se zbytecne prekreslila
+		# pod menu). Level zustava v editoru i na disku (autosave).
+		if editor.is_menu(act):
+			menu.open_menu()
+			return
 		_push_editor_level()
 		if editor.is_play(act):
 			_play_editor_level()

@@ -124,6 +124,14 @@ func _strokes_scale() -> void:
 		"obchod si nabidku nebere ze hry")
 	_check(not src.contains("Tower.kind_label"),
 		"obchod kresli popisky druhu, ne voleb mista")
+	# ODCHOD Z EDITORU: klepnuti na "menu" musi opravdu prepnout obrazovku.
+	# Hlida se MISTO VOLANI (`is_menu` -> `menu.open_menu()`), ne existence
+	# funkce - tlacitko, ktere se nakresli a nic nedela, je presne ta chyba,
+	# kterou hrac vidi jako "z editoru se neda vratit do menu".
+	_check(src.contains("if editor.is_menu(act):"),
+		"pruh editoru nepozná tlacitko menu")
+	_check(src.contains("if editor.is_menu(act):\n			menu.open_menu()"),
+		"klepnuti na menu v editoru neotevre menu")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici

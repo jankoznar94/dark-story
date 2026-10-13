@@ -45,12 +45,17 @@ const MENU_COUNT := 5
 # bere editoru misto na mrizku, kterou upravuje.
 const ED_BAR_H := 40.0
 const ED_GAP := 4.0
-# SEDM POLOZEEK V PRUHU: taby (nastroje / vyber / level) a akce (zpet,
-# seznam, export, hrat). Na 640x360 dava kazda 84 px pri mezere 3.4 px -
-# popisky se do toho vejdou pri 13 px (meri to `ed_label_px`, stejnym cislem
-# jako kresleni). Vic polozek do rady nejde, ale nemusi: vsechno ostatni
-# bydli v PANELU, ktery se rozbali nad pruhem.
-const ED_COUNT := 7
+# OSM POLOZEEK V PRUHU: taby (nastroje / vyber / level) a akce (zpet,
+# seznam, export, hrat, menu). Na 640x360 dava osm polozek 73,6 px pri mezere
+# 3,4 px - popisky zustavaji na 13 px (mereno sondou, stejne jako u sedmi).
+# Vic polozek do rady nejde, ale nemusi: vsechno ostatni bydli v PANELU,
+# ktery se rozbali nad pruhem.
+#
+# POZOR: tohle cislo je pocet tlacitek ROZVRZENI a MUSI sedet s
+# `Editor.bar_entries().size()` - kdyz se polozka prida do pruhu a tady se
+# zapomene, osmá polozka se vubec nevykresli a neda se na ni klepnout
+# (přesne to se stalo u "menu"; hlida to `test_editor._test_editor_layout`).
+const ED_COUNT := 8
 # REFERENCNI SIRKA PRO "KOMPAKTNI" TLACITKO V PANELU. Tlacitko, ktere ma
 # `compact`, se neocekava na celou sirku - rozvrzeni si ho zmeri podle
 # popisku (viz `editor_panel`). Vaha 1.0 znamena tuhle sirku.

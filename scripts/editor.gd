@@ -70,8 +70,14 @@ const BTN_UNDO := TOOL_COUNT + 3
 const BTN_LIST := TOOL_COUNT + 4
 const BTN_EXPORT := TOOL_COUNT + 5
 const BTN_PLAY := TOOL_COUNT + 6
+# ODCHOD Z EDITORU. Editor byl jedina obrazovka, ze ktere se hrac nemel jak
+# dostat zpet do menu: pruh mel undo, seznam, export a hrat - a nic z toho
+# obrazovku neopousti. Je to AKCE (ne tab) a stoji na konci rady, kde ji hrac
+# hleda. Osm polozek se do pruhu vejde: na 640x360 zbude 73,6 px na polozku
+# a popisky zustanou na 13 px (mereno sondou, 8 polozek vs 7 nic nemeni).
+const BTN_MENU := BTN_PLAY + 1
 # PARAMETRY LEVELU. Dva za sebou (dolu, nahoru) pro kazdy parametr.
-const BTN_PARAM_DOWN := BTN_PLAY + 1
+const BTN_PARAM_DOWN := BTN_MENU + 1
 # TABULKA PARAMETRU LEVELU je JEDNO misto, kde se o nich vi vsechno: jak se
 # jmenuji, jaky je krok a meze. Popisek tlacitka, klepnuti i test se ptaji
 # tady - jinak by popisek za chovani zaostal.
@@ -415,9 +421,12 @@ func pick(item: Dictionary) -> void:
 # PRUH A PANELY
 # =========================================================================
 
-# SPODNI PRUH. Tri taby (oteviraji panel nad pruhem) a ctyri akce, ktere se
+# SPODNI PRUH. Tri taby (oteviraji panel nad pruhem) a pet akci, ktere se
 # delaji hned. Kresleni, klepnuti i testy jdou pres tenhle jediny seznam:
 # kdyby si kazdy stavil vlastni, tlacitko by bylo jinde, nez se macka.
+#
+# "menu" stoji na KONCI rady: je to odchod z obrazovky, ne prace s levelem -
+# a klepnuti na nej level necha byt (autosave uz probehl pri kazde zmene).
 func bar_entries() -> Array:
 	return [
 		{"tab": PANEL_TOOLS, "act": -1, "label": PANEL_LABELS[0]},
@@ -427,6 +436,7 @@ func bar_entries() -> Array:
 		{"tab": -1, "act": BTN_LIST, "label": "seznam"},
 		{"tab": -1, "act": BTN_EXPORT, "label": "export"},
 		{"tab": -1, "act": BTN_PLAY, "label": "hrát"},
+		{"tab": -1, "act": BTN_MENU, "label": "menu"},
 	]
 
 
@@ -708,6 +718,13 @@ func _kind_label() -> String:
 # misto, kde se rozhoduje, co se stane po klepnuti.
 func is_play(button: int) -> bool:
 	return button == BTN_PLAY
+
+
+# Je to tlacitko "menu"? Plati pro nej to same co pro "hrát": pruh je jeden
+# seznam a obrazovku podle nej meni `game_view` - bez toho by se hrac z
+# editoru nikdy nedostal zpet (presne to Janovi chybelo).
+func is_menu(button: int) -> bool:
+	return button == BTN_MENU
 
 
 # TEXT VYBERU V HORNIM PRUHU. Zacina NASTROJEM: panel se da zavrit a hrac
@@ -1999,6 +2016,12 @@ func press(button: int) -> void:
 		BTN_EXPORT:
 			_export()
 		BTN_PLAY:
+			pass
+		BTN_MENU:
+			# ODCHOD Z EDITORU neni uprava levelu: obrazovku prepina
+			# `game_view` (stejne jako u "hrát"), editor o nem vi jen tolik,
+			# ze to je jeho tlacitko (`is_menu`). Level zustava, jak je -
+			# autosave probehl pri kazde zmene.
 			pass
 
 

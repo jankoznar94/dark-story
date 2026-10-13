@@ -323,7 +323,7 @@ func _test_element_and_exit() -> void:
 		e.press(Editor.BTN_ELEM)
 	_check(seen.size() == Editor.TYPE_CYCLE.size(), "cyklus typu cest neprosel")
 	_check(e.elem == seen[0], "cyklus typu cest se nevratil na zacatek")
-	_check(e.bar_entries().size() == 7, "pruh nema 7 polozek (tabu a akci)")
+	_check(e.bar_entries().size() == 8, "pruh nema 8 polozek (tabu a akci)")
 	_check(_panel_acts(e, Editor.PANEL_SEL).size() >= 1, "panel vyberu je prazdny")
 	_check(_panel_label(e, Editor.BTN_ELEM) == Element.name_of(e.elem),
 		"tlacitko zivlu neukazuje zvoleny zivel")
@@ -1062,7 +1062,10 @@ func _test_lane_type_color() -> void:
 # =========================================================================
 
 # PRUH S TABY A ROZBALOVACI PANELY. Hlida se:
-#   * pruh ma 3 taby + 4 akce a cisla akci v nem nejsou nastroje,
+#   * pruh ma 3 taby + 5 akci a cisla akci v nem nejsou nastroje,
+#   * "menu" je jedna z tech akci a editor ji pozná (`is_menu`) - bez ni se
+#     hrac z editoru nema jak dostat do menu (jedina obrazovka, ktera ho
+#     nemela; obrazovku pak prepina `game_view`),
 #   * panel "nastroje" nabizi VSECHNY nastroje a klepnuti na nej nastroj
 #     opravdu prepne (nastroj je na dvou mistech: v palete a v pruhu stavu),
 #   * panel "vyber" se meni podle toho, co je oznacene (usek / prvek / nic)
@@ -1072,7 +1075,7 @@ func _test_lane_type_color() -> void:
 func _test_panels() -> void:
 	var e := _ed()
 	var bar: Array = e.bar_entries()
-	_check(bar.size() == 7, "pruh nema 7 polozek (ma %d)" % bar.size())
+	_check(bar.size() == 8, "pruh nema 8 polozek (ma %d)" % bar.size())
 	var tabs: int = 0
 	var acts: Array = []
 	for it in bar:
@@ -1081,8 +1084,17 @@ func _test_panels() -> void:
 		else:
 			acts.append(int(it["act"]))
 	_check(tabs == 3, "v pruhu nejsou tri taby (jsou %d)" % tabs)
-	for a in [Editor.BTN_UNDO, Editor.BTN_LIST, Editor.BTN_EXPORT, Editor.BTN_PLAY]:
+	for a in [Editor.BTN_UNDO, Editor.BTN_LIST, Editor.BTN_EXPORT, Editor.BTN_PLAY,
+			Editor.BTN_MENU]:
 		_check(acts.has(a), "v pruhu chybi akce %d" % a)
+	# ODCHOD Z EDITORU. "menu" se musi poznat podle cisla tlacitka (podle
+	# toho `game_view` prepina obrazovku) a NESMI se plest s "hrát" ani s
+	# zadnou upravou levelu - jinak by klepnuti na nej neco zmenilo na mape.
+	_check(e.is_menu(Editor.BTN_MENU), "editor nepozná tlacitko menu")
+	_check(not e.is_menu(Editor.BTN_PLAY), "tlacitko menu se plete s hrat")
+	_check(not e.is_play(Editor.BTN_MENU), "tlacitko hrat se plete s menu")
+	_check(_panel_label(e, Editor.BTN_MENU) == "menu",
+		"tlacitko odchodu se jmenuje „%s“" % _panel_label(e, Editor.BTN_MENU))
 
 	# NASTROJE: vsechny a klepnuti na kazdy opravdu prepne nastroj
 	var tools: Array = _panel_acts(e, Editor.PANEL_TOOLS)
@@ -1363,7 +1375,15 @@ func _test_editor_layout() -> void:
 		var lay := ScreenLayout.new()
 		lay.compute(size)
 		lay.set_editor_font(font)
-		_check(lay.ed_buttons.size() == 7, "%s: pruh nema 7 tlacitek" % str(size))
+		_check(lay.ed_buttons.size() == ScreenLayout.ED_COUNT,
+			"%s: rozvrzeni nema %d tlacitek pruhu" % [str(size), ScreenLayout.ED_COUNT])
+		# POCET TLACITEK ROZVRZENI == POCET POLOZEK PRUHU. Dve cisla na dvou
+		# mistech se rozejdou snadno: staci pridat polozku do `bar_entries()`
+		# a zapomenout na `ScreenLayout.ED_COUNT` - a nova polozka se vubec
+		# nevykresli a neda se na ni klepnout (presne tak zmizelo "menu").
+		_check(lay.ed_buttons.size() == e.bar_entries().size(),
+			"%s: rozvrzeni ma %d tlacitek, pruh %d polozek" % [str(size),
+				lay.ed_buttons.size(), e.bar_entries().size()])
 		for r in lay.ed_buttons:
 			var rr: Rect2 = r
 			_check(rr.position.x >= -0.5 and rr.end.x <= size.x + 0.5,
