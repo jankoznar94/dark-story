@@ -173,6 +173,18 @@ func _ready() -> void:
 			if game.tower_at(c) == null and game.select_build_cell(c):
 				print("SHOP_CELL=%s" % str(c))
 				break
+	elif args.has("--towers-shot"):
+		# Snimek TECEK UROVNE: jediny zpusob, jak zmerit, ze je uroven veze
+		# opravdu videt na vezi (a ze uz NENI nic nad vezi). Stavi se ctyri veze
+		# u ohnive cesty - tri s elementem cesty na urovni 1, 2 a 3 a posledni
+		# NEUTRALNI (nove pravidlo: neutralni vez smi stat i na elementarni
+		# ceste). Vypisuje se stred a polomer kazde veze, aby se dala kresba
+		# merit v PNG, ne od oka.
+		_start_battle()
+		game.auto_round = false
+		game.gold = 9000
+		_setup_towers_shot()
+		_shot = true
 
 # Most z JavaScriptu zpet do hry. JavaScriptBridge.eval vrati u Promise
 # null, ne vysledek, takze vysledky (otisk buildu, stav aktualizace) musi
@@ -309,6 +321,43 @@ func _setup_shot() -> void:
 				sc.pos = sc.from.lerp(aim, 0.55)
 			break
 	_shot = true
+
+
+# ROZESTAVENI SNIMKU TECEK: ctyri veze u ohnive cesty v jedne radě, daleko
+# od sebe (aby se daly merit jednotlive), tri s elementem cesty na urovni
+# 1/2/3 a posledni neutralni. Do `game.log` se nic neposila - snimek je jen
+# obrazek, ne partie.
+func _setup_towers_shot() -> void:
+	var cells: Array = []
+	for cellv in game.net.strip_cells:
+		var c: Vector2i = cellv
+		if game.net.strip_element(c) != Element.FIRE:
+			continue
+		if game.tower_at(c) != null:
+			continue
+		var far: bool = true
+		for cc in cells:
+			var p: Vector2i = cc
+			if absi(p.x - c.x) < 5 or absi(p.y - c.y) > 1:
+				far = false
+				break
+		if far:
+			cells.append(c)
+		if cells.size() >= 4:
+			break
+	for i in range(cells.size()):
+		var cell: Vector2i = cells[i]
+		# Posledni vez je NEUTRALNI - na elementarni ceste smi stat taky.
+		var el: int = Tower.NEUTRAL if i == cells.size() - 1 else Element.FIRE
+		if not game.try_build(cell, Tower.DEFAULT_KIND, el):
+			continue
+		for u in range(i):
+			game.try_upgrade(cell)
+		var t: Tower = game.tower_at(cell)
+		var p2: Vector2 = game.net.cell_center(cell)
+		print("TOWERSHOT=%d,%d,%d,%d,%d" % [int(p2.x), int(p2.y),
+			int(maxf(5.0, TOWER_SIDE * layout.s)), t.level, t.element])
+	game.clear_selection()
 
 
 func _process(delta: float) -> void:
