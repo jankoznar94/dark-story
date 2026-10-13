@@ -18,10 +18,18 @@ extends RefCounted
 # na kazdem rozliseni i na kazde desce, takze se mechanika nerozjede podle
 # toho, jak velky displej hrac ma.
 #
-# 0,25 s je videt (strela opravdu leti a hrac stihne koukat, kam), ale
-# nestihne to zmenit hru: vez ma nabijeci dobu 0,8-1,0 s, takze doba letu je
-# vzdy kratsi nez doba do dalsi rany.
-const FLIGHT := 0.25
+# JE TO SKORO INSTANTNI (Jan, Oct 2026): "Laser je teď hodně pomalý. Měl by
+# být skoro instantní. Hra ale musí s poškozením čekat na impact." Paprsek
+# proto doleti za 0,07 s (cca 4 snimky pri 60 fps) - hrac vidi zapulsovani
+# z veze, ne putujici strelu. Poskozeni se ale porad nepocita pri vystrelu:
+# ceka se na DOPAD (`_impact`), takze rana sedne presne ve chvili, kdy se
+# spicka paprsku dotkne poutnika.
+#
+# NESMI BYT NULA ani pod jeden snimek: hra je deterministicka a testy meri
+# "po vystrelu jeste leti, po dobe letu uz ne" - s nulovou dobou by strela
+# dopadla ve stejnem snimku, ve kterem vznikla, a poskozeni by bylo zase
+# instantni (presne to, co Jan nechce).
+const FLIGHT := 0.07
 
 # Ktery zivel strela nese. Barvu si z toho bere kresleni, aby strela mela
 # barvu sve veze - stejne jako vez.
