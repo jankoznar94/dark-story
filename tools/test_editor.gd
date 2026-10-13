@@ -1250,7 +1250,7 @@ func _test_level_params() -> void:
 		_check(label == "+", "%s: tlacitko + ma popisek %s" % [key, label])
 		_check(_panel_label(e, down_act) == "−", "%s: tlacitko - ma popisek %s" % [key, _panel_label(e, down_act)])
 		# TABULKA MA V BUNCE DVA TEXTY: popisek (sloupec vlevo) a hodnotu
-		# (sloupec vpravo, hned u tlacitek "−"/"+"). Hrac vidi "kolo | 120 s |
+		# (sloupec vpravo, hned u tlacitek "−"/"+"). Hrac vidi "nepřátel | 6 |
 		# − +" a hodnoty stoji ve sloupcich pod sebou.
 		var cell_name: String = _param_text_in_panel(e, p, "left")
 		var cell_value: String = _param_text_in_panel(e, p, "right")
@@ -1283,7 +1283,7 @@ func _test_level_params() -> void:
 		_check(e.status.contains("dál to nejde"), "%s: doraz nerekne proc: %s" % [key, e.status])
 		seen_dirs[key] = true
 
-	# KOD LEVELU SI HODNOTY ODNESE. Bez toho by hrac nastavil cas kola
+	# KOD LEVELU SI HODNOTY ODNESE. Bez toho by hrac nastavil obtiznost
 	# a level by se mu po exportu vratil jiny. `from_code` vraci null, kdyz
 	# mapa neplati, takze se nejdriv postavi platna mapa (START -> VYHYBKA ->
 	# dva cile) - parametry se pak meni na ni.
@@ -1292,8 +1292,8 @@ func _test_level_params() -> void:
 	var back := Level.from_code(code)
 	_check(back != null, "kod s upravenymi parametry se neda nacist")
 	if back != null:
-		_check(is_equal_approx(back.round_time, e.level.round_time),
-			"cas kola se v kodu ztratil (%s vs %s)" % [str(back.round_time), str(e.level.round_time)])
+		_check(back.wave_count == e.level.wave_count,
+			"pocet poutniku se v kodu ztratil (%d vs %d)" % [back.wave_count, e.level.wave_count])
 		_check(is_equal_approx(back.speed, e.level.speed), "rychlost se v kodu ztratila")
 		_check(back.lives == e.level.lives, "zivoty se v kodu ztratily")
 		_check(back.gold == e.level.gold, "zlato se v kodu ztratilo")
@@ -2155,7 +2155,7 @@ func _test_steppers_and_grid() -> void:
 		var lay := ScreenLayout.new()
 		lay.compute(size)
 		lay.set_editor_font(font)
-		# Krokovaci "−"/"+" ma jen panel "level" (kolo, rychlost, zivoty,
+		# Krokovaci "−"/"+" ma jen panel "level" (nepřátel, rychlost, životy,
 		# zlato). Panel "vyber" uz zadny nema - mista na bonus z nej zmizela;
 		# test se proto pta na KAZDY panel, kolik dvojic v nem opravdu je,
 		# a rovnou to overi (panel bez dvojice je povolen, kdyz nema co

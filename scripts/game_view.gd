@@ -105,7 +105,7 @@ func _ready() -> void:
 		# se popisky vejdou do tlacitek.
 		_open_editor()
 		editor.level = Level.base()
-		editor.level.round_time = 90.0
+		editor.level.wave_count = 12
 		editor.level.lives = 9
 		editor.sel_lane = 1
 		editor.panel = Editor.PANEL_LEVEL
@@ -181,7 +181,7 @@ func _ready() -> void:
 		# ceste). Vypisuje se stred a polomer kazde veze, aby se dala kresba
 		# merit v PNG, ne od oka.
 		_start_battle()
-		game.auto_round = false
+		game.auto_wave = false
 		game.gold = 9000
 		_setup_towers_shot()
 		_shot = true
@@ -281,13 +281,14 @@ func _setup_shot() -> void:
 		game.try_build(c)
 		if game.towers.size() >= 14:
 			break
-	game.round = 3
+	game.wave = 3
 	game.gold = 240
 	game.lives = 9
-	game.phase = "round"
-	# Kolo bezi, ale dalsi vstup je daleko - snimek ma ukazat poutniky na
+	game.phase = "wave"
+	# Vlna bezi, ale dalsi vstup je daleko - snimek ma ukazat poutniky na
 	# usecich, ne nahodne nove vstupy.
-	game.round_left = 60.0
+	game.plan = game.wave_plan(3)
+	game.spawn_index = 2
 	game.spawn_wait = 40.0
 	game.set_switch(1)
 	# UKAZKOVE DRUHY: oba nove druhy poutniku chodi s ostatnimi.
@@ -1967,12 +1968,12 @@ func _draw_hud() -> void:
 		Color(0.28, 0.25, 0.21), layout.ul(2.0))
 	var step: float = layout.view.x * 0.19
 	var x0: float = 18.0 * layout.s
-	_label(Vector2(x0, layout.hud_h * 0.48), "Kolo %d" % game.round, 20, Color(0.90, 0.87, 0.80))
+	_label(Vector2(x0, layout.hud_h * 0.48), "Vlna %d" % game.wave, 20, Color(0.90, 0.87, 0.80))
 	# Druhy radek leveho sloupce: faze a JMENO LEVELU. Jmeno musi byt videt -
 	# hrac ma vedet, co hraje. Driv viselo POD panelem, tedy na herni plose,
 	# a bralo desce pixel; v panelu je na to misto.
 	var lv_name: String = game.level.name if game.level != null else "?"
-	_label(Vector2(x0, layout.hud_h * 0.88), "%s · %s" % [game.phase, lv_name], 13,
+	_label(Vector2(x0, layout.hud_h * 0.88), "%s · %s" % [_phase_word(), lv_name], 13,
 		Color(0.58, 0.55, 0.49))
 	_label(Vector2(x0 + step, layout.hud_h * 0.48), "Životy %d" % game.lives, 20,
 		Color(0.85, 0.42, 0.36) if game.lives <= 4 else Color(0.90, 0.87, 0.80))
@@ -1996,16 +1997,18 @@ func _draw_hud() -> void:
 		var n: int = game.towers_of_lane(sel)
 		sel_txt = "%s · %d %s" % [game.net.level.lane_type_name(sel), n, _towers_word(n)]
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.48), sel_txt, 18, Color(0.72, 0.70, 0.64))
-	# FAZE KOLA. Kolo nema pocet poutniku, takze hrac potrebuje dve cisla:
-	# kolik sekund jeste vstupy tecou a kolik poutniku je na desce. Ve fazi
-	# "dočištění" uz vstupy nejsou a hra jen dobíjí zbytek.
+	# FAZE VLNY. Vlna ma POCET poutniku, takze hrac potrebuje dve cisla: kolik
+	# jich jeste prijde a kolik jich je na desce. Ve fazi "dočištění" uz vstupy
+	# nejsou a hra jen dobíjí zbytek.
 	var info: String
 	var info_col: Color = Color(0.58, 0.55, 0.49)
 	if game.phase == "build":
-		info = "Příprava %.1f s" % game.build_timer
+		info = "Příprava %.1f s · dál %d poutníků" % [game.build_timer,
+			game.wave_size(game.wave + 1)]
 		info_col = Color(0.65, 0.78, 0.60)
-	elif game.phase == "round":
-		info = "kolo %.0f s · v úsecích %d" % [game.round_left, game.enemies.size()]
+	elif game.phase == "wave":
+		info = "zbývá %d · v úsecích %d" % [game.plan.size() - game.spawn_index,
+			game.enemies.size()]
 	elif game.phase == "clear":
 		info = "dočištění · v úsecích %d" % game.enemies.size()
 	elif game.phase == "lost":
@@ -2033,7 +2036,7 @@ func _draw_hud() -> void:
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.45), "SÍŤ PADLA", 30,
 			Color(0.88, 0.46, 0.38), true, bw)
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.78),
-			"vydržels %d %s" % [game.round, _rounds_word(game.round)], 16,
+			"vydržels %d %s" % [game.wave, _waves_word(game.wave)], 16,
 			Color(0.75, 0.71, 0.65), true, bw)
 	if toast_t > 0.0:
 		_label(Vector2(layout.view.x * 0.5, layout.hud_h + 24.0 * layout.s), toast, 16,
@@ -2065,14 +2068,29 @@ func _towers_word(n: int) -> String:
 	return "věží"
 
 
-# ČESKÉ SKLOŇOVÁNÍ POČTU KOL (1 kolo, 2-4 kola, 5+ kol). Rovnou tady, aby
-# text v prohře nelhal - "vydržels 1 kol" je vidět a hrac si toho vsimne.
-func _rounds_word(n: int) -> String:
+# ČESKÉ SKLOŇOVÁNÍ POČTU VLN (1 vlna, 2-4 vlny, 5+ vln). Rovnou tady, aby
+# text v prohře nelhal - "vydržels 1 vln" je vidět a hrac si toho vsimne.
+func _waves_word(n: int) -> String:
 	if n == 1:
-		return "kolo"
+		return "vlna"
 	if n >= 2 and n <= 4:
-		return "kola"
-	return "kol"
+		return "vlny"
+	return "vln"
+
+
+# FAZE SLOVY. Uvnitr hry je faze anglicky ("build", "wave", "clear") - hrac
+# ale nema cist "wave · zakladni", to je polovina veci, kterym nerozumi.
+func _phase_word() -> String:
+	match game.phase:
+		"build":
+			return "příprava"
+		"wave":
+			return "vlna"
+		"clear":
+			return "dočištění"
+		"lost":
+			return "prohra"
+	return game.phase
 
 
 func _label(at: Vector2, text: String, size: int, col: Color,

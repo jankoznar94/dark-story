@@ -31,7 +31,9 @@ func _init() -> void:
 	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
-	_run("vstupy v kole", _test_round_spawns)
+	_run("vlny: pocet, poradi a mezery", _test_wave_spawns)
+	_run("kazda vlna je tezsi", _test_waves_get_harder)
+	_run("pocet poutniku je vlastnost levelu", _test_wave_count_is_level_data)
 	_run("determinismus", _test_determinism)
 	_run("prohra pri zahlceni", _test_pile_up_loses)
 	_run("neutralni cesta zabiji vsechny zivly", _test_neutral_lane_kills_all)
@@ -60,7 +62,7 @@ func _check(cond: bool, msg: String) -> void:
 
 func _new_game(lv: Level = null) -> Game:
 	var g := Game.new()
-	g.auto_round = false
+	g.auto_wave = false
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv if lv != null else Level.base())
 	return g
 
@@ -207,33 +209,33 @@ func _test_enemy_tiers() -> void:
 		Game.REWARD, basic.reward()])
 	_check(light.reward() < basic.reward(), "lehky poutnik se vyplati vic nez zakladni")
 	_check(heavy.reward() > basic.reward(), "tezky poutnik se nevyplati vic nez zakladni")
-	# KOLA 1-2: CHODI JEN ZAKLADNI DRUH. Hrac se musi nejdriv rozkoukat.
+	# PRVNI DVE VLNY: CHODI JEN ZAKLADNI DRUH. Hrac se musi nejdriv
+	# rozkoukat a pochopit vyhybku, nez zacne resit, co vlastne jde.
 	for r in [1, 2]:
-		g.round = r
-		var w: Array = g.tier_weights()
-		_check(int(w[Enemy.TIER_LIGHT]) == 0 and int(w[Enemy.TIER_HEAVY]) == 0,
-			"v kole %d chodi i jine druhy nez zakladni" % r)
-		_check(is_equal_approx(g.dual_chance(), 0.0),
-			"v kole %d muze prijit dvojzivelny poutnik" % r)
-	# OD TRETIHO KOLA TEZCI, OD PATEHO DVOJZIVELNI
-	g.round = 3
-	_check(int(g.tier_weights()[Enemy.TIER_HEAVY]) > 0, "od 3. kola nechodi tezci")
-	_check(is_equal_approx(g.dual_chance(), 0.0), "ve 3. kole muze prijit dvojzivelny poutnik")
-	g.round = 4
-	_check(is_equal_approx(g.dual_chance(), 0.0), "ve 4. kole muze prijit dvojzivelny poutnik")
-	g.round = 5
-	_check(g.dual_chance() > 0.0, "od 5. kola nechodi dvojzivelni")
-	# a losovani opravdu ty druhy dava (ne ze je jen v tabulce)
-	g.round = 8
-	var seen := {}
-	var duals: int = 0
-	for i in range(400):
-		seen[g._next_tier()] = true
-		if g._next_dual():
-			duals += 1
-	_check(seen.has(Enemy.TIER_LIGHT), "losovani nikdy nevybralo lehkeho poutnika")
-	_check(seen.has(Enemy.TIER_HEAVY), "losovani nikdy nevybralo tezkeho poutnika")
-	_check(duals > 0, "losovani nikdy nevybralo dvojzivelneho poutnika")
+		var w: Dictionary = g.wave_counts(r)
+		_check(int(w["light"]) == 0 and int(w["heavy"]) == 0 and int(w["dual"]) == 0,
+			"ve vlne %d chodi i jine druhy nez zakladni" % r)
+	# NOVE DRUHY PRIBYVAJI POSTUPNE: lehky ve 3. vlne, tezky v 5., dvojzivelny
+	# v 7. - a od te doby uz v kazde dalsi zustavaji.
+	var w3: Dictionary = g.wave_counts(3)
+	var w5: Dictionary = g.wave_counts(5)
+	var w7: Dictionary = g.wave_counts(7)
+	_check(int(w3["light"]) > 0, "ve treti vlne nechodi lehci")
+	_check(int(w3["heavy"]) == 0 and int(w3["dual"]) == 0,
+		"ve treti vlne chodi druhy, ktere prijit nemaji")
+	_check(int(w5["heavy"]) > 0, "v pate vlne nechodi tezci")
+	_check(int(w5["dual"]) == 0, "v pate vlne chodi dvojzivelni")
+	_check(int(w7["dual"]) > 0, "v sedme vlne nechodi dvojzivelni")
+	for n in [8, 12, 20]:
+		var w: Dictionary = g.wave_counts(n)
+		_check(int(w["light"]) > 0 and int(w["heavy"]) > 0 and int(w["dual"]) > 0,
+			"ve vlne %d chybi drive ohlaseny druh" % n)
+	# A PLAN VLNY OPRAVDU TY DRUHY POSLE (ne ze jsou jen v tabulce).
+	var kinds := {}
+	for item in g.wave_plan(8):
+		var row: Dictionary = item
+		kinds[str(row["tier"]) + ("d" if bool(row["dual"]) else "")] = true
+	_check(kinds.size() >= 4, "plan vlny 8 neposila vsechny ctyri druhy: %s" % str(kinds.keys()))
 
 
 # DVOJZIVELNY POUTNIK (ohen + voda). Jan (Oct 2026): "Nepřátelé dvou elementů
@@ -269,7 +271,7 @@ func _test_dual_enemy() -> void:
 	# JMENO: v hlasce musi byt videt oba zivly
 	_check(e.title() == "Oheň+Voda", "dvojzivelny poutnik se jmenuje '%s'" % e.title())
 	# DVOJICE SE BERE JEN Z ZIVLU, KTERE MAPA POSILA
-	g.round = 6
+	g.wave = 6
 	var ok: bool = true
 	for i in range(50):
 		var pair: Array = g._next_dual_pair()
@@ -821,23 +823,17 @@ func _test_reaches_exit() -> void:
 	_check(g.lives == lives0, "test si sam neco rozbil")
 
 
-# ---------------------------------------------------------------- obtiznost
+# ---------------------------------------------------------------- vlny
 
-# ---------------------------------------------------------------- kolo
-
-# KOLO JE CASOVE OKNO, NE POCET POUTNIKU. Jan: "Během této doby budou v
-# náhodném pořadí a intervalech (min 1s, max 5s) chodit nepřátelé z
-# náhodných vstupů. Po uplynutí časového limitu hra čeká na zabití všech
-# nepřátel nebo porážku hráče."
+# VLNA MA POCET, NE CAS. Jan (Oct 2026): "Musíme tedy vrátit princip vln místo
+# kol. Že každá vlna bude mít pevně daný počet nepřátel určitého typu, kteří
+# budou přicházet v náhodném pořadí."
 #
-# Test meri SKUTECNE casy vstupu (krokuje hru po 1/60 s a chyta, kdy
-# `spawned` stoupne), ne konstanty - jinak by proslo i kolo s pevnou
-# periodou, coz je presne to, co Jan nechtel.
-func _test_round_spawns() -> void:
+# Test meri SKUTECNE casy a POCET vstupu (krokuje hru po 1/60 s a chyta, kdy
+# `spawned` stoupne), ne konstanty - kolo s casovym oknem by tim neproslo.
+func _test_wave_spawns() -> void:
 	var lv := Level.base()
-	# Cas levelu, ne konstanta hry: kolo musi jet podle levelu.
-	lv.round_time = 40.0
-	# ZIVOTY: bez bonusu poutnici dojdou a hra by skoncila driv, nez by se
+	# ZIVOTY: bez obrany poutnici dojdou a hra by skoncila driv, nez by se
 	# stihlo neco zmerit. Nas zajimaji VSTUPY, ne obrana.
 	lv.lives = 100000
 	var g := _new_game(lv)
@@ -845,42 +841,72 @@ func _test_round_spawns() -> void:
 	# nedalo poznat. Pujcime si dva indexy useku - test tim meri pravidlo
 	# "vstup se losuje", ne geometrii (tu hlida test_grid).
 	g.net.entry_lanes = [2, 3]
-	g.start_round()
-	_check(g.phase == "round", "kolo nezacalo (faze %s)" % g.phase)
-	_check(absf(g.round_left - 40.0) < 0.001,
-		"kolo si nevzalo cas levelu (%.1f vs 40.0)" % g.round_left)
-	# PRVNI POUTNIK VSTUPUJE HNED - hrac nesmi koukat do prazdne mapy.
-	g.step(1.0 / 60.0)
-	_check(g.spawned == 1, "na zacatku kola nevstoupil poutnik (%d)" % g.spawned)
+	# SEDMA VLNA ma vsechny ctyri druhy - jedine na ni se da overit i to, ze
+	# se poradi druhu losuje.
+	g.wave = 6
+	g.start_wave()
+	_check(g.wave == 7, "vlna se nepocitala (%d)" % g.wave)
+	_check(g.phase == "wave", "vlna nezacala (faze %s)" % g.phase)
+	var want: int = g.wave_size(7)
+	_check(g.plan.size() == want,
+		"plan vlny ma %d poutniku, tabulka rika %d" % [g.plan.size(), want])
+	# SLOZENI SEDI NA TABULKU: pocet kazdeho druhu v planu je dany, nahodne je
+	# jen poradi.
+	var c: Dictionary = g.wave_counts(7)
+	var got: Dictionary = {"basic": 0, "light": 0, "heavy": 0, "dual": 0}
+	for item in g.plan:
+		var row: Dictionary = item
+		var tier: int = int(row["tier"])
+		if bool(row["dual"]) and tier == Enemy.TIER_BASIC:
+			got["dual"] = int(got["dual"]) + 1
+		elif tier == Enemy.TIER_BASIC:
+			got["basic"] = int(got["basic"]) + 1
+		elif tier == Enemy.TIER_LIGHT:
+			got["light"] = int(got["light"]) + 1
+		else:
+			got["heavy"] = int(got["heavy"]) + 1
+	for key in ["basic", "light", "heavy", "dual"]:
+		_check(int(got[key]) == int(c[key]),
+			"v planu je %d %s, tabulka rika %d" % [int(got[key]), key, int(c[key])])
 
+	# PRVNI POUTNIK VSTUPUJE HNED - hrac nesmi koukat do prazdne mapy.
 	var dt: float = 1.0 / 60.0
+	g.step(dt)
+	_check(g.spawned == 1, "na zacatku vlny nevstoupil poutnik (%d)" % g.spawned)
+
 	var t: float = dt
 	var times: Array = [0.0]
+	var order: Array = [_kind_key(g)]
 	var entries: Array = [0 if g.enemies.is_empty() else g.net.entry_lanes.find(
 		g.enemies[g.enemies.size() - 1].lane)]
 	var prev: int = g.spawned
-	while t < 40.0 - dt * 0.5:
+	while g.spawning() and t < 600.0:
 		g.step(dt)
 		t += dt
 		if g.spawned > prev:
 			# Novy poutnik je na konci seznamu: _spawn() ho tam prida a
 			# _move_enemies() poradi zachovava (v jednom kroku neumre).
 			times.append(t)
+			order.append(_kind_key(g))
 			entries.append(g.net.entry_lanes.find(g.enemies[g.enemies.size() - 1].lane))
 			prev = g.spawned
 
-	_check(g.spawned >= 6, "v kole vstoupilo jen %d poutniku" % g.spawned)
+	# POCET JE PEVNY. Tohle je jadro cele zmeny: vlna posle presne to, co ma
+	# v tabulce - ne "kolik se jich vejde do casoveho okna".
+	_check(g.spawned == want, "vstoupilo %d poutniku, tabulka rika %d" % [g.spawned, want])
+	_check(times.size() == want, "casu vstupu je %d, poutniku %d" % [times.size(), want])
+
+	# ROZPETI MEZER 1-5 s. Toleruje se jeden krok: cas vstupu se meri po
+	# krocich, ne presne.
 	var sum: float = 0.0
 	var seen: Dictionary = {}
 	for i in range(1, times.size()):
 		var gap: float = float(times[i]) - float(times[i - 1])
 		sum += gap
 		seen[int(roundf(gap * 20.0))] = true
-		# ROZPETI 1-5 s. Toleruje se jeden krok: cas vstupu se meri po
-		# krocich, ne presne.
-		_check(gap >= Game.ROUND_GAP_MIN - dt and gap <= Game.ROUND_GAP_MAX + dt,
+		_check(gap >= Game.WAVE_GAP_MIN - dt and gap <= Game.WAVE_GAP_MAX + dt,
 			"mezera %.2f s je mimo rozpeti %.0f-%.0f s" % [
-				gap, Game.ROUND_GAP_MIN, Game.ROUND_GAP_MAX])
+				gap, Game.WAVE_GAP_MIN, Game.WAVE_GAP_MAX])
 	# NEPRAVIDELNE: kdyby vsechny mezery vysly stejne, je to perioda.
 	_check(seen.size() >= 3, "mezery mezi poutniky jsou porad stejne (%d hodnot)" % seen.size())
 	if times.size() >= 3:
@@ -898,26 +924,117 @@ func _test_round_spawns() -> void:
 	_check(both.size() == 2, "poutnici nechodili z obou vstupu: %s" % str(entries))
 	_check(not alternating, "vstupy se stridaji po porade: %s" % str(entries))
 
-	# PO LIMITU UZ NIKDO NEVSTOUPI - kolo ceka, nez se deska vycisti.
-	var guard: int = 0
-	while g.phase == "round" and guard < 120:
-		g.step(dt)
-		guard += 1
-	_check(g.phase == "clear", "po limitu kola faze neni docisteni (je %s)" % g.phase)
+	# PORADI DRUHU JE NAHODNE: kdyby se druhy lepily do bloku (vsechny
+	# zakladni, pak lehci...), hrac by vlnu precetl predem.
+	var sorted_order: Array = order.duplicate()
+	sorted_order.sort()
+	_check(order != sorted_order, "druhy vstupuji v poradi tabulky: %s" % str(order))
+
+	# PO KONCI PLANU UZ NIKDO NEVSTOUPI - vlna ceka, nez se deska vycisti.
+	_check(g.phase == "clear", "po poslednim vstupu faze neni docisteni (je %s)" % g.phase)
 	var frozen: int = g.spawned
-	if not g.enemies.is_empty():
-		var gold_before: int = g.gold
-		g.step(dt)
-		_check(g.phase == "clear" and g.gold == gold_before,
-			"kolo se uzavrelo, i kdyz jsou na desce poutnici")
-	guard = 0
+	var gold_before: int = g.gold
+	var guard: int = 0
 	while g.phase == "clear" and guard < 60 * 60:
 		g.step(dt)
 		guard += 1
-	_check(g.phase == "build", "kolo se neuzavrelo prazdnou deskou (faze %s, %d poutniku)"
+	_check(g.phase == "build", "vlna se neuzavrela prazdnou deskou (faze %s, %d poutniku)"
 		% [g.phase, g.enemies.size()])
-	_check(g.spawned == frozen and g.round == 1,
+	_check(g.spawned == frozen and g.wave == 7,
 		"po konci vstupu jeste nekdo vstoupil (%d -> %d)" % [frozen, g.spawned])
+	# ODRAZENA VLNA PLATI ZLATO: i hrac, ktery vsechno nezastavil, dostane na
+	# dalsi obranu (jinak je z jednoho spatneho rozhodnuti odsouzeny).
+	_check(g.gold > gold_before, "odrazena vlna nedala zadne zlato (%d -> %d)"
+		% [gold_before, g.gold])
+
+
+# DRUH POUTNIKA JAKO KLIC PRO POROVNANI PORADI ("basic", "light", "heavy",
+# "dual"). Zakladni a dvojzivelny maji stejny tier, takze se rozlisuji
+# priznakem - jinak by test tvrdil, ze poradi je nahodne, i kdyby nebylo.
+func _kind_key(g: Game) -> String:
+	if g.enemies.is_empty():
+		return "?"
+	var e: Enemy = g.enemies[g.enemies.size() - 1]
+	if e.dual():
+		return "dual"
+	if e.tier == Enemy.TIER_LIGHT:
+		return "light"
+	if e.tier == Enemy.TIER_HEAVY:
+		return "heavy"
+	return "basic"
+
+
+# KAZDA VLNA JE O TROCHU TEZSI NEZ TA PREDCHOZI. Jan: "Každá vlna bude buď
+# více nepřátel, nebo přibude nový typ. zkrátka každá vlna musí být o trochu
+# těžší než ta předchozí."
+#
+# "Tezsi" se meri SOUCTEM ZIVOTU, ne poctem: tezky poutnik ma 2,2x zivoty
+# zakladniho, takze vlna o stejnem poctu poutniku muze byt tezsi. Pocita se
+# z DAT tabulky (slozeni + rust zivotu), ne hrou - do hry by se michala obrana.
+func _test_waves_get_harder() -> void:
+	var g := _new_game()
+	var prev_hp: float = -1.0
+	var prev_cnt: int = 0
+	var prev_kinds: int = 0
+	for n in range(1, 13):
+		var c: Dictionary = g.wave_counts(n)
+		var hp: float = float(c["basic"])
+		hp += float(c["light"]) * Enemy.tier_hp(Enemy.TIER_LIGHT)
+		hp += float(c["heavy"]) * Enemy.tier_hp(Enemy.TIER_HEAVY)
+		# DVOJZIVELNY ma zivoty zakladniho (dva zivly jsou vyhoda v obrane,
+		# ne vic zivotu).
+		hp += float(c["dual"])
+		hp *= Game.BASE_HP * pow(1.0 + Game.HP_GROWTH, float(n - 1))
+		_check(hp > prev_hp, "vlna %d neni tezsi nez vlna %d (%.0f vs %.0f zivotu)"
+			% [n, n - 1, hp, prev_hp])
+		prev_hp = hp
+		var cnt: int = g.wave_size(n)
+		var kinds: int = _kinds_in(g, n)
+		_check(cnt >= prev_cnt, "vlna %d ma mene poutniku nez %d (%d vs %d)"
+			% [n, n - 1, cnt, prev_cnt])
+		_check(cnt > prev_cnt or kinds > prev_kinds,
+			"vlna %d nepridala ani poutnika, ani druh (%d poutniku, %d druhu)"
+			% [n, cnt, kinds])
+		prev_cnt = cnt
+		prev_kinds = kinds
+	# NOVE DRUHY SE OHLAZUJI POSTUPNE: prvni dve vlny zakladni, ve treti
+	# pribude lehky, v pate tezky a v sedme dvojzivelny.
+	_check(_kinds_in(g, 1) == 1, "prvni vlna nema jediny druh (%d)" % _kinds_in(g, 1))
+	_check(_kinds_in(g, 3) == 2, "ve treti vlne nepribyl lehky (%d druhu)" % _kinds_in(g, 3))
+	_check(_kinds_in(g, 5) == 3, "v pate vlne nepribyl tezky (%d druhu)" % _kinds_in(g, 5))
+	_check(_kinds_in(g, 7) == 4, "v sedme vlne nepribyl dvojzivelny (%d druhu)" % _kinds_in(g, 7))
+
+
+# Kolik DRUHU vlna posila (0 poutniku se nepocita).
+func _kinds_in(g: Game, n: int) -> int:
+	var c: Dictionary = g.wave_counts(n)
+	var k: int = 0
+	for key in ["basic", "light", "heavy", "dual"]:
+		if int(c[key]) > 0:
+			k += 1
+	return k
+
+
+# POCET POUTNIKU JE VLASTNOST LEVELU. `Level.wave_count` je pocet v prvni
+# vlne a nasobi cely tvar rustu, takze se level da udelat tezsi i lehci.
+func _test_wave_count_is_level_data() -> void:
+	var lv := Level.base()
+	lv.wave_count = 12
+	var g := _new_game(lv)
+	_check(g.wave_size(1) == 12, "dvojnasobny level neposila dvojnasobek (%d)" % g.wave_size(1))
+	lv.wave_count = 3
+	var g2 := _new_game(lv)
+	_check(g2.wave_size(1) == 3, "polovicni level neposila polovinu (%d)" % g2.wave_size(1))
+	# DO KODU LEVELU SE POCET PISE JEN KDYBY SE LISI - stara ulozena mapa musi
+	# mit kod PRESNE stejny jako predtim (a nacte se z nej vychozi hodnota).
+	var base := Level.base()
+	_check(not base.to_code().contains("\"wc\""),
+		"zakladni level pise pocet poutniku, i kdyz je vychozi")
+	base.wave_count = 9
+	var back := Level.from_code(base.to_code())
+	_check(back != null, "level s poctem poutniku se neda nacist z kodu")
+	if back != null:
+		_check(back.wave_count == 9, "pocet poutniku se v kodu ztratil (%d)" % back.wave_count)
 
 
 # VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU: hrac
@@ -964,10 +1081,10 @@ func _test_entry_type() -> void:
 func _test_determinism() -> void:
 	var a := _new_game()
 	var b := _new_game()
-	a.auto_round = false
-	b.auto_round = false
-	a.start_round()
-	b.start_round()
+	a.auto_wave = false
+	b.auto_wave = false
+	a.start_wave()
+	b.start_wave()
 	a.run_for(12.0)
 	b.run_for(12.0)
 	_check(a.enemies.size() == b.enemies.size(),
@@ -980,7 +1097,7 @@ func _test_pile_up_loses() -> void:
 	# Bez jedineho bonusu musi vlny poutniku nakonec projit - hra se da
 	# prohrat a tlak je v tom, ze jich nesmi byt vic, nez hrac stiha.
 	var g := _new_game()
-	g.auto_round = true
+	g.auto_wave = true
 	g.run_for(30.0 * 60.0)
 	_check(g.lives < Level.BASE_LIVES, "bez bonusu hrac nikdy neztratil zivot")
 
@@ -996,7 +1113,7 @@ func _test_pile_up_loses() -> void:
 func _test_neutral_lane_kills_all() -> void:
 	for el in range(Element.COUNT):
 		var g := _new_game(_neutral_level())
-		g.auto_round = false
+		g.auto_wave = false
 		var lane: int = _lane_with(g, Level.NEUTRAL)
 		_check(lane >= 0, "v mape neni neutralni usek")
 		if lane < 0:

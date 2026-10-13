@@ -90,15 +90,15 @@ func _test_spawn_needs_opposite() -> void:
 
 	# A HRA TO REKNE V HLASCE - ticha zmena by nechala hrace hledat chybu v siti.
 	var g := Game.new()
-	g.auto_round = false
+	g.auto_wave = false
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
-	g.start_round()
+	g.start_wave()
 	var last: String = str(g.log[g.log.size() - 1])
 	_check(last.contains("protiklad"), "hlaska o chybejicim protikladu neni: " + last)
 	_check(g.spawn_pool.is_empty(), "sit si bere zivly, ktere se neposilaji")
 
 	# DRUHE DVE PRICINY, PROC NIKDO NECHODI, VYPAADAJI NA OBRAZOVCE STEJNE
-	# (kolo bezi, deska prazdna). Jan: "Po spuštění levelu v editoru teď
+	# (vlna bezi, deska prazdna). Jan: "Po spuštění levelu v editoru teď
 	# nepřátelé vůbec nechodí. Nebo je to nějakým nastavením?" - presne proto
 	# to hra musi rict slovy.
 	var km := Level.new()
@@ -106,9 +106,9 @@ func _test_spawn_needs_opposite() -> void:
 	km.add_node(13, 5, Level.CIL)
 	km.add_lane(0, 1, "R".repeat(12), Level.KMEN)
 	var g2 := Game.new()
-	g2.auto_round = false
+	g2.auto_wave = false
 	g2.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, km)
-	g2.start_round()
+	g2.start_wave()
 	var last2: String = str(g2.log[g2.log.size() - 1])
 	_check(last2.contains("živl"), "mapa bez jedineho zivlu to nerekne: " + last2)
 
@@ -121,11 +121,11 @@ func _test_spawn_needs_opposite() -> void:
 	ns.add_lane(0, 1, "L L U U U U", Element.FIRE)
 	ns.add_lane(0, 2, "L L D D D D", Element.WATER)
 	var g3 := Game.new()
-	g3.auto_round = false
+	g3.auto_wave = false
 	g3.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, ns)
 	_check(g3.net.entry_lanes.is_empty(), "mape bez startu se nasel vstup")
 	_check(not g3.spawn_pool.is_empty(), "z teto mapy neni co posilat (test meri neco jineho)")
-	g3.start_round()
+	g3.start_wave()
 	var last3: String = str(g3.log[g3.log.size() - 1])
 	_check(last3.contains("start"), "mapa bez startu to nerekne: " + last3)
 
@@ -141,7 +141,7 @@ func _check(cond: bool, msg: String) -> void:
 # pravidlo, že při přítomnosti neutrální cesty se spawnují všechny druhy
 # nepřátel. Budou se zkrátka spawnovat jen ty, co mají protiklad."
 #
-# Kontroluje se i to, co je na obrazovce stejne (kolo bezi, deska prazdna):
+# Kontroluje se i to, co je na obrazovce stejne (vlna bezi, deska prazdna):
 # hra musi rict SLOVY, proc nikdo nechodi - neutralni usek neni element,
 # takze plati veta "v mape neni ani jeden usek s zivlem".
 func _test_neutral_lane_sends_nobody() -> void:
@@ -163,10 +163,10 @@ func _test_neutral_lane_sends_nobody() -> void:
 	# HRA SI SEZNAM VEZME Z LEVELU - kdyby ho pocitala sama, meli bychom dve
 	# pravdy o tom, kdo muze chodit.
 	var g := Game.new()
-	g.auto_round = false
+	g.auto_wave = false
 	g.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
 	_check(g.spawn_pool.is_empty(), "sit posila %s" % str(g.spawn_pool))
-	g.start_round()
+	g.start_wave()
 	var last: String = str(g.log[g.log.size() - 1])
 	_check(last.contains("živl"), "mapa z neutralnich cest to nerekne: " + last)
 
@@ -182,9 +182,9 @@ func _test_neutral_lane_sends_nobody() -> void:
 	_check(lv.unkillable_elements() == [Element.FIRE],
 		"ohen bez vody neni hlasen jako nezabitelny: " + str(lv.unkillable_elements()))
 	var g2 := Game.new()
-	g2.auto_round = false
+	g2.auto_wave = false
 	g2.setup(Rect2(0, 0, 960, 600), 1.0, 1.0e9, lv)
-	g2.start_round()
+	g2.start_wave()
 	var last2: String = str(g2.log[g2.log.size() - 1])
 	_check(last2.contains("protiklad"), "ohen bez vody se nerekne: " + last2)
 

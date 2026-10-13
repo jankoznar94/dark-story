@@ -53,7 +53,7 @@ const PANEL_HINTS := [
 	"",
 	"Nástroje: klepni na nástroj, kterým se kreslí nebo klade prvek.",
 	"Výběr: klepni na úsek nebo na prvek, pak tady měň, co k němu patří.",
-	"Level: kolo = čas vstupů · rychlost poutníků · životy · zlato · síla úseku = poskození za projetí.",
+	"Level: nepřátel = kolik jich posílá 1. vlna · rychlost · životy · zlato · mřížka.",
 ]
 
 # Tlacitka za nastroji. Poradi je dane; cisla se nesmi prekryvat s nastroji.
@@ -83,7 +83,8 @@ const BTN_PARAM_DOWN := BTN_MENU + 1
 # tady - jinak by popisek za chovani zaostal.
 # "f" = desetinne cislo, "i" = cele cislo (do levelu se zapisuje jako int).
 const PARAMS := [
-	{"key": "round_time", "label": "kolo", "kind": "f", "step": 15.0, "lo": 15.0, "hi": 600.0},
+	{"key": "wave_count", "label": "nepřátel",
+		"kind": "i", "step": 1.0, "lo": 2.0, "hi": 40.0},
 	{"key": "speed", "label": "rychlost", "kind": "f", "step": 4.0, "lo": 12.0, "hi": 200.0},
 	{"key": "lives", "label": "životy", "kind": "i", "step": 2.0, "lo": 1.0, "hi": 99.0},
 	{"key": "gold", "label": "zlato", "kind": "i", "step": 20.0, "lo": 0.0, "hi": 2000.0},
@@ -646,15 +647,14 @@ func _param_cell(p: int) -> Array:
 
 
 # HODNOTA PARAMETRU jako text (popisek mezi − a +). Cela cisla se kresli bez
-# desetinne tecky, cas kola s jednotkou - jinak by "120.00" nikdo neprecetl.
+# desetinne tecky - jinak by "12.00" nikdo neprecetl.
 # POZOR: Godot v `%` formatu NEMA `%g` (spadne to na "unsupported format
 # character" a funkce se ukonci - popisek pak zustane syrovy s "%g" v sobe).
 func _param_text(key: String) -> String:
 	var v: float = float(level.get(key))
 	for p in PARAMS:
 		if str(p["key"]) == key:
-			var txt: String = str(int(round(v))) if str(p["kind"]) == "i" else _fmt_num(v)
-			return txt + (" s" if key == "round_time" else "")
+			return str(int(round(v))) if str(p["kind"]) == "i" else _fmt_num(v)
 	return _fmt_num(v)
 
 
@@ -2157,8 +2157,8 @@ func _param_step(act: int) -> void:
 # VSE, CO SE V PANELU "LEVEL" DA NASTAVIT - jedna hlaska, aby hrac videl
 # souvislosti (a aby se hodnoty nemusely cist z peti tlacitek).
 func _level_text() -> String:
-	return "kolo %s · rychlost %s · životy %s · zlato %s · mřížka %s×%s" % [
-		_param_text("round_time"), _param_text("speed"), _param_text("lives"),
+	return "nepřátel %s · rychlost %s · životy %s · zlato %s · mřížka %s×%s" % [
+		_param_text("wave_count"), _param_text("speed"), _param_text("lives"),
 		_param_text("gold"), _param_text("cols"), _param_text("rows")]
 
 

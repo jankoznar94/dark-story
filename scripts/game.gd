@@ -22,31 +22,59 @@ extends RefCounted
 const START_GOLD := 260
 const START_LIVES := 12
 const BASE_HP := 70.0
-const HP_GROWTH := 0.10
+# RUST ZIVOTU ZA VLNU. Zmereno simulator obstiznosti
+# (`tools/balance_sim.gd`, zakladni deska, hrac s PLNOU deskou vezi
+# v jednom koridoru a dokonalym prepinanim vyhybek):
+#   0,06 -> 25. vlna bez prusmyku, 0,12 -> taky, 0,15 -> prulom ve 24. vlne,
+#   0,20 -> prulom ve 14. vlne a konec v 16., 0,22 -> prulom v 5. (zlato uz
+#   nestaci na obranu a hra se zamkne jeste nez se stihne rozjet).
+# 0,20 je zvolene: drzi hrace v tahu asi do 15. vlny, ale prvni vlny
+# nechava klidne (do 10. vlny se stavi, pak uz jen drzi, co muze).
+const HP_GROWTH := 0.20
 const ENEMY_SPEED := 52.0
 # ODMENA ZA ZAKLADNIHO POUTNIKA. Dalsi druhy maji vlastni odmenu v `Enemy.TIERS`
 # (lehky 8, tezky 25); tohle cislo plati pro zakladni druh a drzi se kvuli
 # starym mistum, kde sel o jediny druh poutnika.
 const REWARD := 12
-# KOLO NENI VLNA Z TD. Jan: "Asi nebudeme dělat jednotlivé vlny jako u TD
-# žánru. ... Kolo bude mít časový limit. Třeba 2 minuty. Během této doby
-# budou v náhodném pořadí a intervalech (min 1s, max 5s) chodit nepřátelé
-# z náhodných vstupů. Po uplynutí časového limitu hra čeká na zabití všech
-# nepřátel nebo porážku hráče."
+# VLNA = POCET POUTNIKU, NE CASOVE OKNO. Jan (Oct 2026): "Musíme tedy vrátit
+# princip vln místo kol. Že každá vlna bude mít pevně daný počet nepřátel
+# určitého typu, kteří budou přicházet v náhodném pořadí. Každá vlna bude buď
+# více nepřátel, nebo přibude nový typ."
 #
-# Takze kolo = CASOVE OKNO, ve kterem vstupy jen TECOU: nahodny zivel,
-# nahodny vstup, nahodna mezera 1-5 s. Pocet poutniku v kole NENI dane
-# cislo (driv `3 + vlna`) - je to dusledek okna a prumerne mezery, na
-# zakladni desce ~40 za 2 minuty. Kolo konci teprve tehdy, kdyz je deska
-# PRAZDNA, takze hrac nikdy neprijde o cas na dobiti zbytku.
-const ROUND_TIME := 120.0
+# Tabulka je SLOZENI VLNY: kolik poutniku ktereho druhu vlna posle. Poradi
+# druhu v ramci vlny se losuje (viz `wave_plan`), pocet kazdeho je dany -
+# hrac tedy vi, KOLIK jich prijde, ale ne v jakem poradi.
+#   * lehky (rychly, malo zivotu) se objevi ve 3. vlne,
+#   * tezky (pomaly, hodne zivotu) v 5. vlne,
+#   * dvojzivelny (bere nevyhody obou zivlu) v 7. vlne.
+# Kazda dalsi vlna ma BUD vic poutniku, NEBO novy druh - nikdy mene. Hlida to
+# test `_test_waves_get_harder` (součet zivotu vlny musi rust).
+const WAVES := [
+	{"basic": 6, "light": 0, "heavy": 0, "dual": 0},    # 1
+	{"basic": 8, "light": 0, "heavy": 0, "dual": 0},    # 2
+	{"basic": 8, "light": 2, "heavy": 0, "dual": 0},    # 3 - novy druh: lehky
+	{"basic": 10, "light": 2, "heavy": 0, "dual": 0},   # 4
+	{"basic": 10, "light": 3, "heavy": 1, "dual": 0},   # 5 - novy druh: tezky
+	{"basic": 11, "light": 4, "heavy": 1, "dual": 0},   # 6
+	{"basic": 12, "light": 4, "heavy": 2, "dual": 1},   # 7 - novy druh: dvojzivelny
+	{"basic": 12, "light": 5, "heavy": 2, "dual": 1},   # 8
+	{"basic": 13, "light": 5, "heavy": 3, "dual": 2},   # 9
+	{"basic": 14, "light": 6, "heavy": 3, "dual": 2},   # 10
+]
 # NEJKRATSI A NEJDELSI MEZERA MEZI DVA POUTNIKY. Hrac musi stihnout
 # prepnout vyhybku pro kazdeho zvlast, takze i ta nejkratsi mezera je
 # hratelnostni vec: 1 s = 52 px na zakladni rychlosti.
-const ROUND_GAP_MIN := 1.0
-const ROUND_GAP_MAX := 5.0
+const WAVE_GAP_MIN := 1.0
+const WAVE_GAP_MAX := 5.0
+# POCET POUTNIKU V PRVNI VLNE ZAKLADNIHO LEVELU. Odtud se nasobi cely
+# `WAVES` radek, takze level muze byt tezsi i lehci (`Level.wave_count`).
+const BASE_WAVE_ENEMIES := 6
 const BUILD_TIME := 6.0
-const ROUND_BONUS := 40
+# ODMENA ZA ODRAZENOU VLNU. Vlna se pocita jako investice, ne jen jako
+# vydelek z mrtvol: i hrac, ktery v predchozi vlne nezvladl vsechno, dostane
+# na dalsi obranu - jinak je z jednoho spatneho rozhodnuti odsouzeny.
+const WAVE_BONUS := 30
+const WAVE_BONUS_PER_WAVE := 15
 # "ELEMENT NEVOLIM" pro `try_build`. Je to cislo mimo vsechny hodnoty useku
 # (0..3, Level.NEUTRAL = -1, Level.KMEN = -2), takze se nikdy nemuze plest
 # s opravdovym elementem veze.
@@ -84,20 +112,29 @@ var shots: Array = []
 var cell_enemies: Dictionary = {}
 var gold: int = START_GOLD
 var lives: int = START_LIVES
-var round: int = 0
+# KOLIKATA VLNA PRAVE BEZI (1, 2, 3 ...). Je to zaroven skore hrace: hra je
+# nekonecna, prohra je konec a "vydrzels N vln" je vysledek.
+var wave: int = 0
 var phase: String = "build"
 var build_timer: float = BUILD_TIME
-# KOLIK SEKUND ZBYVA DO KONCE VSTUPU V TOMHLE KOLE. Nula znamena "vstupy
-# skoncity" - hra pak jeste ceka, nez desku dobehnou zabit nebo dojit.
-var round_left: float = 0.0
+# SLOZENI BEZICI VLNY: jeden radek na kazdeho poutnika ({tier, dual}), v
+# poradi, ktere vylosoval `wave_plan`. Pocet je dany tabulkou, poradi nahodne.
+var plan: Array = []
+# KOLIKATY POUTNIK Z `plan` JE NA RADE. Vlna skonci, kdyz se rovna velikosti
+# planu - od te doby uz nikdo nevstoupi a hra jen cisti desku.
+var spawn_index: int = 0
 # DO KDY VSTOUPI DALSÍ POUTNIK (v sekundach). Neni to perioda: po kazdem
-# vstupu se losuje nova mezera 1-5 s, takze hrac vi, ze jich prijde hodne,
+# vstupu se losuje nova mezera 1-5 s, takze hrac vi, KOLIK jich prijde,
 # ale ne kdy presne.
 var spawn_wait: float = 0.0
-# Kolik poutniku uz do TOHOTO kola vstoupilo. Kolo nema naplanovany pocet;
-# tenhle pocitac je jedina odpoved na "kolik jich bylo" (HUD, souhrn kola).
+# Kolik poutniku uz do TOHOTO VLNY vstoupilo (HUD, souhrn vlny).
 var spawned: int = 0
 var rng: int = 20261009
+# RYCHLOST RUSTU ZIVOTU ZA BEH. Vychozi hodnota je `HP_GROWTH`, takze hra se
+# chova presne podle konstanty; nastroj na ladeni obtiznosti
+# (`tools/balance_sim.gd`) si ji muze prepnout a projit nekolik hodnot
+# v jednom behu, aniz by se sahalo do konstant.
+var hp_growth: float = HP_GROWTH
 var log: Array = []
 # ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Neni to vzdycky vsechny ctyri:
 # mapa, ktera ma jen vodu a ohen, posila jen vodni a ohnive poutniky - na
@@ -109,7 +146,7 @@ var spawn_pool: Array = []
 # `Level.lives` si level muze prepsat, konstanta by v HUDu lhala.
 var lives_max: int = START_LIVES
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
-var auto_round: bool = true
+var auto_wave: bool = true
 # VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
 # ROZEHRANE PARTIE, ne level: proto to neni v Levelu a proto se to pri zmene
 # velikosti okna neztrati (sit se prelozi, volba hrace zustava).
@@ -132,10 +169,11 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	gold = level.gold
 	lives = level.lives
 	lives_max = level.lives
-	round = 0
+	wave = 0
 	phase = "build"
 	build_timer = BUILD_TIME
-	round_left = 0.0
+	plan = []
+	spawn_index = 0
 	spawn_wait = 0.0
 	spawned = 0
 	log = []
@@ -540,21 +578,21 @@ func lane_selected(lane: int) -> bool:
 	return selected_lane(net.lane_junction(lane)) == lane
 
 
-# ---------------------------------------------------------------- kola
+# ---------------------------------------------------------------- vlny
 
-func start_round() -> void:
-	round += 1
-	phase = "round"
-	round_left = ROUND_TIME
-	if level != null:
-		round_left = level.round_time
-	round_left = maxf(round_left, 1.0)
-	# PRVNI POUTNIK VSTUPUJE HNED: kdyby se losovalo i prvni cekani, hrac by
-	# na zacatku kola koukal do prazdne mapy a nevedel, ze kolo bezi.
+# START VLNY. Slozeni se vezme z tabulky (`wave_plan`): pocet kazdeho druhu je
+# dany, poradi se losuje. Prvni poutnik vstupuje HNED - kdyby se losovalo i
+# prvni cekani, hrac by na zacatku vlny koukal do prazdne mapy a nevedel, ze
+# vlna bezi.
+func start_wave() -> void:
+	wave += 1
+	phase = "wave"
+	plan = wave_plan(wave)
+	spawn_index = 0
 	spawn_wait = 0.0
 	spawned = 0
-	var msg: String = "Kolo %d začíná (%.0f s)." % [round, round_left]
-	# PRAZDNY SEZNAM JE TA NEJHORSI ODPOVED. Hrac vidi, ze kolo bezi, deska
+	var msg: String = "Vlna %d: %s." % [wave, wave_summary(wave)]
+	# PRAZDNY SEZNAM JE TA NEJHORSI ODPOVED. Hrac vidi, ze vlna bezi, deska
 	# zustava prazdna - a nema jak zjistit, ze chyba neni v siti, ale v mape.
 	# Jan (Oct 2026): "Po spuštění levelu v editoru teď nepřátelé vůbec
 	# nechodí. Nebo je to nějakým nastavením?" Proto se kazdy duvod rekne
@@ -573,7 +611,89 @@ func start_round() -> void:
 	_note(msg)
 
 
-# PROC NIKDO NECHODI. Tri ruzne priciny vypadaji na obrazovce stejne (kolo
+# SLOZENI VLNY. Radek tabulky pro vlny 1..10; dal se pocita vzorcem - kazda
+# dalsi vlna prida zakladniho poutnika a ob vlnu i jednoho z kazdeho dalsiho
+# druhu. Hra tim nema strop a obtiznost roste porad (viz `WAVES`).
+func wave_mix(n: int) -> Dictionary:
+	var idx: int = clampi(n, 1, WAVES.size()) - 1
+	var row: Dictionary = WAVES[idx]
+	var extra: int = maxi(n - WAVES.size(), 0)
+	return {
+		"basic": int(row["basic"]) + extra,
+		"light": int(row["light"]) + (extra + 1) / 2,
+		"heavy": int(row["heavy"]) + (extra + 1) / 2,
+		"dual": int(row["dual"]) + extra / 2,
+	}
+
+
+# POCET POUTNIKU KAZDEHO DRUHU PRO TENHLE LEVEL. Nasobi se pomerem
+# `Level.wave_count` k zakladnimu poctu (6), takze level s dvanacti posila na
+# kazdou vlnu dvojnasobek a level se tremi polovinu. Nula zustava nulou (druh
+# se v te vlne jeste neobjevil); co vyjde aspon na jednoho, je aspon jeden.
+func wave_counts(n: int) -> Dictionary:
+	var mix: Dictionary = wave_mix(n)
+	var base: int = BASE_WAVE_ENEMIES
+	if level != null:
+		base = maxi(level.wave_count, 1)
+	var k: float = float(base) / float(BASE_WAVE_ENEMIES)
+	var out: Dictionary = {}
+	for key in mix.keys():
+		var c: int = int(mix[key])
+		out[key] = 0 if c <= 0 else maxi(1, int(round(float(c) * k)))
+	return out
+
+
+func _plan_push(out: Array, tier: int, count: int, dual: bool) -> void:
+	for i in range(count):
+		out.append({"tier": tier, "dual": dual})
+
+
+# PLAN VLNY: jeden radek na kazdeho poutnika, v NAHODNEM poradi. Poradi se
+# losuje tady, ne az pri vstupech - vsechny nahody vlny tak jdou jednim rng
+# na jednom miste a hra zustava deterministicka (test na to ma kontrolu).
+func wave_plan(n: int) -> Array:
+	var c: Dictionary = wave_counts(n)
+	var out: Array = []
+	_plan_push(out, Enemy.TIER_BASIC, int(c["basic"]), false)
+	_plan_push(out, Enemy.TIER_LIGHT, int(c["light"]), false)
+	_plan_push(out, Enemy.TIER_HEAVY, int(c["heavy"]), false)
+	_plan_push(out, Enemy.TIER_BASIC, int(c["dual"]), true)
+	for i in range(out.size() - 1, 0, -1):
+		var j: int = _next_int(i + 1)
+		var tmp = out[i]
+		out[i] = out[j]
+		out[j] = tmp
+	return out
+
+
+# JMENA DRUHU VE SLOZENI VLNY. Hrac se z buildu musi dozvedet, na co se
+# chysta - "vic poutniku" bez druhu je jen cislo.
+const WAVE_WORD := {
+	"basic": "základních", "light": "lehkých", "heavy": "těžkých",
+	"dual": "dvojživelných",
+}
+
+
+# KOLIK POUTNIKU TAHLE VLNA POSLE (soucet vsech druhu).
+func wave_size(n: int) -> int:
+	var c: Dictionary = wave_counts(n)
+	return int(c["basic"]) + int(c["light"]) + int(c["heavy"]) + int(c["dual"])
+
+
+# SLOZENI VLNY SLOVY, treba "12 základních · 5 lehkých · 2 těžkých".
+func wave_summary(n: int) -> String:
+	var c: Dictionary = wave_counts(n)
+	var parts: Array = []
+	for key in ["basic", "light", "heavy", "dual"]:
+		var cnt: int = int(c[key])
+		if cnt > 0:
+			parts.append("%d %s" % [cnt, WAVE_WORD[key]])
+	if parts.is_empty():
+		return "—"
+	return " · ".join(parts)
+
+
+# PROC NIKDO NECHODI. Tri ruzne priciny vypadaji na obrazovce stejne (vlna
 # bezi, deska je prazdna), takze se musi rozeznat SLOVY. Jedno misto pro
 # vsechny tri - kdyby si kazda vetev vymyslela vlastni vetu, rozejdou se.
 func _empty_pool_reason() -> String:
@@ -588,31 +708,17 @@ func _empty_pool_reason() -> String:
 
 # MEZERA DO DALSÍHO VSTUPU. Losuje se pro kazdou mezeru zvlast z rozpeti
 # 1-5 s, takze vstupy nejsou perioda (hrac nesmi videt "kazde 3 s"). Nahodne
-# cislo je z TEHOZ rng jako zivly poutniku, takze hra zustava
-# deterministicka - test na to ma kontrolu.
+# cislo je z TEHOZ rng jako slozeni vlny, takze hra zustava deterministicka -
+# test na to ma kontrolu.
 func _next_gap() -> float:
 	var t: float = float(_next_int(1001)) / 1000.0
-	return ROUND_GAP_MIN + (ROUND_GAP_MAX - ROUND_GAP_MIN) * t
+	return WAVE_GAP_MIN + (WAVE_GAP_MAX - WAVE_GAP_MIN) * t
 
 
 # Bezi jeste vstupy? Jedine misto, kde se to rozhoduje - HUD, step i testy
-# se musi ptat tady, jinak by se "kolo skoncilo" pocitalo na trech mistech.
+# se musi ptat tady, jinak by se "vlna skoncila" pocitalo na trech mistech.
 func spawning() -> bool:
-	return phase == "round" and round_left > 0.0
-
-
-# Jak dlouho poutnik mapou jde: vstupni usek + nejdelsi usek, v sekundach.
-# Je to HORNÍ odhad trasy (hrac muze poslat poutnika i kratkou vetvi),
-# takze kolo z nej vychazi o chlup delsi, nez jak doopravdy skonci.
-func walk_time() -> float:
-	var sp: float = _speed()
-	var entry: float = 0.0
-	if net.entry_lane >= 0 and net.entry_lane < net.lane_len.size():
-		entry = float(net.lane_len[net.entry_lane])
-	var longest: float = 0.0
-	for i in range(net.lane_count()):
-		longest = maxf(longest, float(net.lane_len[i]))
-	return maxf((entry + longest) / sp, 0.5)
+	return phase == "wave" and spawn_index < plan.size()
 
 
 func _speed() -> float:
@@ -628,7 +734,7 @@ func _spawn(kind_el: int, tier: int = Enemy.TIER_BASIC, pair: Array = []) -> voi
 	if pair.size() == 2:
 		e.element2 = int(pair[1]) if int(pair[0]) == kind_el else int(pair[0])
 	e.tier = tier
-	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(round - 1)) * Enemy.tier_hp(tier)
+	e.max_hp = BASE_HP * pow(1.0 + hp_growth, float(wave - 1)) * Enemy.tier_hp(tier)
 	e.hp = e.max_hp
 	e.speed = (level.speed if level != null else ENEMY_SPEED) * Enemy.tier_speed(tier)
 	# POUTNIK VSTUPUJE NA VSTUPNI USEK. Vstup do mapy je v mrizce normalni
@@ -643,6 +749,19 @@ func _spawn(kind_el: int, tier: int = Enemy.TIER_BASIC, pair: Array = []) -> voi
 	e.pos = net.point_at(e.lane, 0.0)
 	spawned += 1
 	enemies.append(e)
+
+
+# VSTUP JEDNOHO POUTNIKA Z PLANU VLNY. Zivel se losuje (jen z toho, co mapa
+# posila), dvojzivelny si k tomu losuje dvojici protikladu. Kdyz mapa zadnou
+# dvojici nema, prijde jednozivelny - vlna se kvuli tomu nesmi zaseknout.
+func _spawn_from_plan(row: Dictionary) -> void:
+	var el: int = _next_element()
+	if el < 0:
+		return
+	var pair: Array = []
+	if bool(row.get("dual", false)):
+		pair = _next_dual_pair()
+	_spawn(el, int(row.get("tier", Enemy.TIER_BASIC)), pair)
 
 
 # Verejny vstup pro nastroje (nahled, diagnostika). Hra sama spawnuje
@@ -684,51 +803,6 @@ func _next_element() -> int:
 	return int(spawn_pool[_next_int(spawn_pool.size())])
 
 
-# VÁHY DRUHŮ POUTNÍKŮ PODLE KOLA. Prvni dve kola chodi jen zakladni druh -
-# hrac se musi rozkoukat a pochopit vyhybku driv, nez zacne resit, co vlastne
-# jde po ceste. Od tretiho kola pribyvaji tezci, od pateho i dvojzivelni.
-# Poradi je [zakladni, lehky, tezky]; cisla jsou vahy pro losovani, ne pocet.
-func tier_weights() -> Array:
-	if round <= 2:
-		return [10, 0, 0]
-	if round <= 4:
-		return [8, 4, 3]
-	if round <= 7:
-		return [6, 4, 4]
-	return [5, 4, 5]
-
-
-# S JAKOU PRAVDEPODOBNOSTI BUDE POUTNIK DVOJZIVELNY. Nula do ctvrteho kola:
-# dvojzivelny bere nevýhody obou zivlu, takze je to nejsilnejsi protivnik
-# v hre a nesmi prijit driv, nez hrac ma veze na obou stranach.
-func dual_chance() -> float:
-	if round < 5:
-		return 0.0
-	return minf(0.15 + 0.04 * float(round - 5), 0.45)
-
-
-func _next_tier() -> int:
-	var w: Array = tier_weights()
-	var total: int = 0
-	for x in w:
-		total += int(x)
-	if total <= 0:
-		return Enemy.TIER_BASIC
-	var pick: int = _next_int(total)
-	for i in range(w.size()):
-		pick -= int(w[i])
-		if pick < 0:
-			return i
-	return Enemy.TIER_BASIC
-
-
-func _next_dual() -> bool:
-	var ch: float = dual_chance()
-	if ch <= 0.0:
-		return false
-	return float(_next_int(1000)) / 1000.0 < ch
-
-
 # DVOJICE PROTIKLADNYCH ZIVLU pro dvojzivelneho poutnika. Vyberaji se JEN
 # zivly, ktere mapa posila, a druhy z dvojice musi byt taky v mape - jinak by
 # hrac na jednu pul poutnika nemel protiklad a nemel by ho cim zabit.
@@ -755,31 +829,24 @@ func step(delta: float) -> void:
 		build_timer -= delta
 		if build_timer <= 0.0:
 			build_timer = 0.0
-			if auto_round:
-				start_round()
-	elif phase == "round":
-		# VSTUPY TECOU PO CELOU DOBU KOLA. Po kazdem poutnikovi se losuje
-		# nova mezera 1-5 s (viz _next_gap), takze nikdo nevi, kolik jich
-		# prijde - vi jen, dokdy. `while` tu je kvuli velkemu kroku (testy
-		# umi skocit o par sekund), ale mezera >= 1 s ho necha bezet jednou.
-		round_left -= delta
+			if auto_wave:
+				start_wave()
+	elif phase == "wave":
+		# POUTNICI VCHAZEJI V PORADI, KTERE VYLOSOVAL PLAN VLNY, s nahodnou
+		# mezerou 1-5 s. Pocet je dany tabulkou, takze hrac vi, KOLIK jich
+		# prijde - nevi jen, kdy presne a v jakem poradi druhu. `while` tu je
+		# kvuli velkemu kroku (testy umi skocit o par sekund), ale mezera
+		# >= 1 s ho necha bezet jednou.
 		spawn_wait -= delta
 		var guard: int = 0
-		while round_left > 0.0 and spawn_wait <= 0.0 and guard < 60:
+		while spawn_index < plan.size() and spawn_wait <= 0.0 and guard < 60:
 			guard += 1
-			var el: int = _next_element()
-			if el >= 0:
-				# DRUH A DVOJZIVELNOST SE LOSUJI ZE STEJNEHO rng jako zivel,
-				# takze hra zustava deterministicka pro dane kolo.
-				var pair: Array = []
-				if _next_dual():
-					pair = _next_dual_pair()
-				_spawn(el, _next_tier(), pair)
+			_spawn_from_plan(plan[spawn_index])
+			spawn_index += 1
 			spawn_wait += _next_gap()
-		if round_left <= 0.0:
-			round_left = 0.0
+		if spawn_index >= plan.size():
 			phase = "clear"
-			_note("Kolo %d: vstupy skončily, dočisti desku." % round)
+			_note("Vlna %d: všichni vešli, dočisti desku." % wave)
 
 	_move_enemies(delta)
 	_fire(delta)
@@ -791,19 +858,23 @@ func step(delta: float) -> void:
 		phase = "lost"
 		_note("PROHRA.")
 
-	# KOLO KONCI AZ PRAZDNOU DESKOU. Kdyz vstupy skoncily a na desce uz nic
-	# neni, kolo je odrazene. Dokud se poutnici dobíjejí, hra ceka - hrac
-	# tak nikdy neprijde o kolo s poutniky na ceste.
+	# VLNA KONCI AZ PRAZDNOU DESKOU. Kdyz vstupy skoncily a na desce uz nic
+	# neni, vlna je odrazena. Dokud se poutnici dobíjejí, hra ceka - hrac
+	# tak nikdy neprijde o vlnu s poutniky na ceste.
 	if phase == "clear" and enemies.is_empty():
-		round_done()
+		wave_done()
 
 
-func round_done() -> void:
-	var bonus: int = ROUND_BONUS + 10 * round
+# ODRAZENA VLNA. Odmena roste s vlnou: cim tezsi vlna, tim vic zlata na
+# dalsi obranu - jinak by se hrac dostal do stavu, kdy uz nema z ceho stavet
+# a jen ceka na konec (Jan: "nemáš peníze na další věže a jsi odsouzen k
+# záhubě"). Bonus dostava i hrac, ktery vsechno nezvladl.
+func wave_done() -> void:
+	var bonus: int = WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave
 	gold += bonus
 	phase = "build"
 	build_timer = BUILD_TIME
-	_note("Kolo %d odraženo (+%d zlata)." % [round, bonus])
+	_note("Vlna %d odražena (+%d zlata)." % [wave, bonus])
 
 
 func _move_enemies(delta: float) -> void:

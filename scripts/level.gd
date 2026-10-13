@@ -68,13 +68,25 @@ const KMEN := -2
 # --------------------------------------------------------------- zakladni cisla
 const BASE_SPEED := 52.0
 # LEGACY: prumerna mezera mezi poutniky z modelu VLAK (0.6-1.4 nasobek).
-# Dnesni kolo si mezery losuje samo z rozpeti Game.ROUND_GAP_MIN..MAX, takze
-# hra tuhle hodnotu nikde necte. Zustava jen proto, aby se stary kod levelu
-# (klic "p") dal precti a zapsat - nic se podle ni nedeje.
+# Hra tuhle hodnotu nikde necte - vlna si mezery losuje sama z rozpeti
+# Game.WAVE_GAP_MIN..MAX. Zustava jen proto, aby se stary kod levelu (klic
+# "p") dal precist a zapsat presne tak, jak byl.
 const BASE_SPAWN := 1.9
-# CASOVY LIMIT KOLA ve vterinach. Kolo neni pocet poutniku, ale okno, po
-# ktere vstupy tecou (Jan: "Kolo bude mít časový limit. Třeba 2 minuty.").
+# LEGACY: casovy limit KOLA (model z Oct 2026). Vlny cas nemaji, maji POCET
+# poutniku (`wave_count`), takze hra tuhle hodnotu nikde necte. Zustava kvuli
+# starym kodem levelu (klic "rt") - novy kod ji uz nepise.
 const BASE_ROUND := 120.0
+# POCET POUTNIKU V PRVNI VLNE. Vlna 1 posle presne tolik zakladnich poutniku
+# a kazda dalsi vic; `Game.WAVES` je tvar rustu a tohle cislo ho nasobi, takze
+# level s vetsim poctem je tezsi a s mensim lehci. Jan (Oct 2026): "Každá
+# vlna bude mít pevně daný počet nepřátel určitého typu, kteří budou přicházet
+# v náhodném pořadí. Každá vlna bude buď více nepřátel, nebo přibude nový typ."
+const BASE_WAVE_COUNT := 6
+# Meze, ve kterych se da pocet poutniku v prvni vlne nastavit. Dole je to
+# hratelnostni podlaha (vlna o jednom poutnikovi neni vlna), nahore by se
+# prvni vlna nedala odrazit.
+const MIN_WAVE_COUNT := 2
+const MAX_WAVE_COUNT := 40
 const BASE_LIVES := 12
 const BASE_GOLD := 260
 # KOLIK MIST NA BONUS SE VEJDE NA JEDEN USEK. LEGACY: hodnota se jeste
@@ -107,6 +119,9 @@ var lanes: Array = []
 var speed: float = BASE_SPEED
 var spawn: float = BASE_SPAWN
 var round_time: float = BASE_ROUND
+# POCET POUTNIKU V PRVNI VLNE tohohle levelu. Odtud se nasobi tvar rustu
+# (`Game.WAVES`), takze je to jediny "terc obtiznosti" levelu.
+var wave_count: int = BASE_WAVE_COUNT
 var lives: int = BASE_LIVES
 var gold: int = BASE_GOLD
 
@@ -1050,6 +1065,7 @@ func clone() -> Level:
 	lv.speed = speed
 	lv.spawn = spawn
 	lv.round_time = round_time
+	lv.wave_count = wave_count
 	lv.lives = lives
 	lv.gold = gold
 	lv.last_error = last_error
@@ -1274,7 +1290,7 @@ func to_dict() -> Dictionary:
 		if sl != SLOTS:
 			row.append(sl)
 		ls.append(row)
-	return {
+	var out: Dictionary = {
 		"v": 2,
 		"n": name,
 		"w": cols,
@@ -1282,11 +1298,17 @@ func to_dict() -> Dictionary:
 		"s": speed,
 		"p": spawn,
 		"rt": round_time,
-		"l": lives,
-		"g": gold,
-		"u": ns,
-		"e": ls,
 	}
+	# POCET POUTNIKU V PRVNI VLNE SE PISE JEN KDYBY SE LISI od vychoziho.
+	# Zakladni deska i vsechny drive ulozene levely tak maji kod PRESNE stejny
+	# jako predtim a stara ulozena mapa se nacte (klic chybi -> vychozi).
+	if wave_count != BASE_WAVE_COUNT:
+		out["wc"] = wave_count
+	out["l"] = lives
+	out["g"] = gold
+	out["u"] = ns
+	out["e"] = ls
+	return out
 
 
 static func from_dict(d: Dictionary) -> Level:
@@ -1297,6 +1319,7 @@ static func from_dict(d: Dictionary) -> Level:
 	lv.speed = float(d.get("s", BASE_SPEED))
 	lv.spawn = float(d.get("p", BASE_SPAWN))
 	lv.round_time = float(d.get("rt", BASE_ROUND))
+	lv.wave_count = clampi(int(d.get("wc", BASE_WAVE_COUNT)), MIN_WAVE_COUNT, MAX_WAVE_COUNT)
 	lv.lives = int(d.get("l", BASE_LIVES))
 	lv.gold = int(d.get("g", BASE_GOLD))
 	for raw in d.get("u", []):

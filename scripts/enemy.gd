@@ -104,5 +104,14 @@ func title() -> String:
 
 
 # Kolik zlata hrac dostane za zabiti. Jedno misto, kde o odmene vi vsechno.
+# DVOJZIVELNY POUTNIK SE VYPLATI VIC: ma zivoty zakladniho, ale nema imunitu
+# a hrac na nej potrebuje veze na oba zivly, takze je nejdrazsi na obranu -
+# bez priplatku by se za nej dostalo stejne jako za zakladniho.
+const DUAL_BONUS := 1.5
+
+
 func reward() -> int:
-	return int(tier_row(tier)["gold"])
+	var g: int = int(tier_row(tier)["gold"])
+	if dual():
+		return int(round(float(g) * DUAL_BONUS))
+	return g

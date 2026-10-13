@@ -148,7 +148,7 @@ func _one(w: int, h: int) -> void:
 	_check(layout.arena.size.x > 0.0 and layout.arena.size.y > 0.0,
 		"%s: arena je prazdna" % tag)
 	var g := Game.new()
-	g.auto_round = false
+	g.auto_wave = false
 	g.setup(layout.arena, layout.s, layout.board_bottom, Level.base())
 
 	# --- mrizka a cesty zustanou v arene. POLE VYPLNUJE ARENU CELOU:
@@ -239,7 +239,7 @@ func _one(w: int, h: int) -> void:
 	# uzel, pak bunku pasu, takze stred kazde bunky pasu musi opravdu byt
 	# ta bunka (a ne treba cesta vedle).
 	var g2 := Game.new()
-	g2.auto_round = false
+	g2.auto_wave = false
 	g2.setup(layout.arena, layout.s, layout.board_bottom, Level.base())
 	g2.gold = 100000
 	for cellv in g2.net.strip_cells:
