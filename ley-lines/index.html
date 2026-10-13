@@ -216,6 +216,54 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 }());
 		</script>
+	
+	<!-- ZILY_NA_SIRKU: šířka se vynucuje tady, ne jen v manifestu. -->
+	<style>
+	  #zily_sirka { display: none; position: fixed; left: 0; top: 0; right: 0;
+	    bottom: 0; z-index: 2147483647; background: #1a1816; color: #f2e6c8;
+	    font: 16px/1.6 sans-serif; align-items: center; justify-content: center;
+	    text-align: center; padding: 24px; }
+	  body.zily_portrait #zily_sirka { display: flex; }
+	</style>
+	<div id="zily_sirka">Hra se hraje na šířku.<br>
+	  Otoč telefon — nebo klepni sem a vezmu ji přes celou obrazovku.</div>
+	<script>
+	(function () {
+	  function portrait() { return window.innerHeight > window.innerWidth; }
+	  function lock() {
+	    try {
+	      if (screen.orientation && screen.orientation.lock) {
+	        var p = screen.orientation.lock('landscape');
+	        if (p && p.catch) { p.catch(function () {}); }
+	      }
+	    } catch (e) {}
+	  }
+	  function goFullscreen() {
+	    var el = document.documentElement;
+	    try {
+	      if (document.fullscreenElement || !el.requestFullscreen) { lock(); return; }
+	      var p = el.requestFullscreen({ navigationUI: 'hide' });
+	      if (p && p.then) { p.then(lock, function () { lock(); }); } else { lock(); }
+	    } catch (e) { lock(); }
+	  }
+	  function refresh() {
+	    var p = portrait();
+	    if (document.body) {
+	      document.body.classList.toggle('zily_portrait', p && !document.fullscreenElement);
+	    }
+	    if (!p) { lock(); }
+	  }
+	  document.addEventListener('fullscreenchange', function () { lock(); refresh(); });
+	  document.addEventListener('visibilitychange', function () { lock(); refresh(); });
+	  window.addEventListener('resize', refresh);
+	  window.addEventListener('orientationchange', refresh);
+	  document.addEventListener('pointerdown', function () {
+	    if (portrait() && !document.fullscreenElement) { goFullscreen(); }
+	    refresh();
+	  }, { passive: true });
+	  refresh();
+	}());
+	</script>
 	</body>
 </html>
 
