@@ -35,11 +35,6 @@ const ENEMY_HP_R := 25.0
 # BARVA ZNACKY CILE. KOST je jedina barva na desce, ktera neznamena zivel -
 # cil se proto neda splest s cestou ani s poutnikem.
 const CIL_RING := Color(0.90, 0.87, 0.80)
-# DELKA OCASKU STRELY. Strela je kratky tlusty tah s hlavou na svem miste
-# a ocáskem zpet - delka je proto v pixelech a v meritku desky, ne zlomek
-# drahy (driv se ocásek pocital z cele drahy strely, takze byl jednou
-# kratky a jednou pres pul desky).
-const SHOT_TAIL := 30.0
 
 var layout := ScreenLayout.new()
 var game: Game = null
@@ -1363,44 +1358,34 @@ func _lane_highlighted(lane: int) -> bool:
 
 
 func _draw_lanes() -> void:
-	# CESTY JSOU 2x TLUSTSI (Jan: "Udelame cesty o neco tlustsi. Třeba 2x
-	# tlustší než teď."). Sirka je nasobek `layout.s`, takze plati na
-	# vsech rozliseni; "core" (jasnejsi stred) i "rim" drzi stejny pomer,
-	# aby usek porad cetl jako pruh s jasnejsim stredem, ne jako jedna
-	# plocha. Cesta je sirsi nez jedna bunka pasu, proto je porad videt,
-	# kde jsou veze a kam se klepe.
+	# CESTA JE JEDEN KUS (Jan, Oct 2026): "Je to silný pruh ve středu a kolem
+	# něj jsou jak kdyby ještě dvě světlejší vrstvy. Chtěl bych, aby ta cesta
+	# byl zkrátka jednolitý kus."
 	#
-	# ANTI-ALIASING A ZAOBLENE SPOJE (Jan: "Grafika cest se mi nelíbí. Je
-	# příliš pixelová. Udělejme něco modernějšího."): Godot kresli tlustou
-	# caru jako obdelnik bez vyhlazeni, takze v rozich vznikl ostry zlom
-	# a hrany byly zubate - na velkem displeji to bylo videt nejvic.
-	# `_lane_stroke` proto kresli kazdou usecku s antialiasingem a do
-	# kazdeho bodu cesty pridava krouzek, ktery zlom zaobli (a udela
-	# kulatou spicku na konci cesty). Plocha barva, zadny glow.
-	var lw: float = maxf(4.0, 18.0 * layout.s)
+	# Cesta se driv kreslila TRIKRAT pres sebe: siroky prusvitny podklad,
+	# stredni pruh a jasne jadro. Kazda hranice vrstvy mela jeste svuj
+	# antialiasing lem, takze cesta nebyla jeden pruh, ale tri pruhy s mekkymi
+	# okraji - a mekky lem je porad stejne tlusty v pixelech, kdezto cesta s
+	# rozlisenim roste. Presne proto vypadala na velkem displeji "low rez",
+	# i kdyz se sirka pocitala z meritka.
+	#
+	# Ted je to JEDEN tah jednou barvou a neprusvitny - zadny jasnejsi stred,
+	# zadny podklad. Sirka je nasobek `layout.s`, takze plati na vsech
+	# rozliseni; cesta je porad sirsi nez jedna bunka pasu, proto je videt,
+	# kde jsou veze a kam se klepe.
+	var lw: float = maxf(6.0, 20.0 * layout.s)
 	for lane in range(game.net.lane_count()):
 		var col: Color = _lane_color(lane)
 		var path: PackedVector2Array = game.net.lane_path[lane]
-		# VYBRANY USEK JE SVETLEJSI, ALE PORAD SVOJI BARVY. Hrac tak vidi,
-		# kam poutniky posle, aniz by musel hadat, ktery element to je -
-		# barva ani runa se ne meni, meni se jen jas. Kazda vyhybka ma svuj
-		# vybrany usek, takze se svetlych useku kresli tolik, kolik je vyhybek.
-		var sel: bool = _lane_highlighted(lane)
-		var faint := col
-		faint.a = 0.28 if not sel else 0.42
-		var bright := col
-		bright.a = 0.60 if not sel else 0.95
-		var core: float = maxf(2.0, 6.0 * layout.s) if not sel else maxf(2.0, 9.0 * layout.s)
-		if sel:
-			var halo := col
-			halo.a = 0.16
-			_lane_stroke(lane, path, halo, lw * 1.9)
-		_lane_stroke(lane, path, faint, lw)
-		_lane_stroke(lane, path, bright, core)
-		if sel:
-			var rim := col
-			rim.a = 0.85
-			_lane_stroke(lane, path, rim, maxf(1.0, 3.2 * layout.s))
+		# VYBRANY USEK DOSTANE OBRYS KOLEM SEBE, ne dalsi vrstvu v tele: plocha
+		# zustava jednolita barva sveho zivlu, takze hrac porad vi, ktery usek
+		# to je (kdyby se menil jas plochy, menila by se i barva a hrac by
+		# musel hadat, ktery element to je). Kazda vyhybka ma svuj vybrany
+		# usek, takze se obrysu kresli tolik, kolik je vyhybek.
+		if _lane_highlighted(lane):
+			_lane_stroke(lane, path, Color(0.95, 0.88, 0.60, 0.95),
+				lw + maxf(4.0, 6.0 * layout.s))
+		_lane_stroke(lane, path, col, lw)
 
 
 # JEDEN TAH CESTY: cela cesta jednim tahem (polyline) + KROUZEK v bodech,
@@ -1468,34 +1453,36 @@ func _draw_towers() -> void:
 
 
 # STRELY, KTERE PRÁVĚ LETÍ. Strela je predmet s vlastni pozici, takze se
-# kresli z toho, kde OPRAVDU je - ne z casovace veze. Driv to byla jen
-# znacka u veze, ktera zmizela za 0,18 s; poskozeni pritom prislo hned.
+# kresli z toho, kde OPRAVDU je - ne z casovace veze.
+#
+# JE TO PAPRSEK (LASER), NE PUNTIK. Jan (Oct 2026): "Buď je nechme jako
+# obyčejné puntíky, nebo jako laser jak to bylo předtím. Ten laser se mi
+# líbil. Byl jen problém v časování, kdy nepřítel obdrží poškození."
+# Casovani je vyresene jinde a jinak: poskozeni neubira vystrel, ale DOPAD
+# (`Game._impact`), takze paprsek se kresli od veze az po svou spicku a
+# rana prijde presne ve chvili, kdy se spicka dotkne poutnika. Kresleni do
+# toho nema co mluvit - jen ukazuje, kde strela prave je.
 func _draw_shots() -> void:
 	for item in game.shots:
 		var s: Shot = item
-		var dir: Vector2 = s.pos - s.from
-		if dir.length_squared() < 0.000001:
-			dir = Vector2(1.0, 0.0)
-		dir = dir.normalized()
-		var tail: Vector2 = s.pos - dir * maxf(8.0, SHOT_TAIL * layout.s)
-		_draw_missile(tail, s.pos, Level.value_color(s.element))
+		_draw_laser(s.from, s.pos, Level.value_color(s.element))
 
 
-# STRELA. Neni to tenka linka: je to tlusta cara s tmavym podkladem, barevnym
-# telem a svetlym jadrem. Hlava je presne tam, kde strela prave je, ocásek
-# ukazuje, ODKUD leti.
-# Jan (Oct 2026): "Missile věže by měl být daleko výraznější. Teď je to tak
-# tenká linka, že skoro není vidět."
+# PAPRSEK. Tmavy podklad, barevne telo a svetle jadro - tři tahy pres sebe,
+# ale vsechny po CELE delce paprsku, takze netvori vrstvy napric (to byl
+# problem cest). Hlava je presne tam, kde strela prave je; ocas saha az do
+# veze, protoze paprsek z veze opravdu vychazi.
 #
-# Tmavy podklad je tam proto, ze pas je svetly: bez nej by strela na svetlem
-# pasu zmizela. Svetle jadro neni efekt (zadny glow) - je to plocha barva.
-func _draw_missile(tail: Vector2, head: Vector2, col: Color) -> void:
-	draw_line(tail, head, Color(0.09, 0.085, 0.08), maxf(3.0, 7.4 * layout.s))
-	draw_line(tail, head, col, maxf(2.2, 4.8 * layout.s))
-	draw_line(tail, head, col.lightened(0.45), maxf(1.0, 2.0 * layout.s))
-	# HLAVA strely: plny krouzek, aby byl videt i na jednom pixelu.
-	draw_circle(head, maxf(2.2, 5.0 * layout.s), col.lightened(0.55))
-	draw_arc(head, maxf(2.2, 5.0 * layout.s), 0.0, TAU, 16, Color(0.09, 0.085, 0.08),
+# Tmavy podklad je tam proto, ze pas je svetly: bez nej by paprsek na svetlem
+# pasu zmizel. Svetle jadro neni efekt (zadny glow) - je to plocha barva.
+func _draw_laser(from: Vector2, head: Vector2, col: Color) -> void:
+	draw_line(from, head, Color(0.09, 0.085, 0.08), maxf(3.0, 7.4 * layout.s))
+	draw_line(from, head, col, maxf(2.2, 4.8 * layout.s))
+	draw_line(from, head, col.lightened(0.45), maxf(1.0, 2.0 * layout.s))
+	# SPICKA paprsku: plny krouzek, aby byl videt i na jednom pixelu.
+	var r: float = maxf(2.2, 5.0 * layout.s)
+	draw_circle(head, r, col.lightened(0.55))
+	draw_arc(head, r, 0.0, TAU, 16, Color(0.09, 0.085, 0.08),
 		maxf(1.0, 1.6 * layout.s))
 
 
