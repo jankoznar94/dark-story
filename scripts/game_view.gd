@@ -1394,29 +1394,28 @@ func _draw_settings() -> void:
 	var values: Array = ["ZAPNUTO" if settings.music else "VYPNUTO",
 		"ZAPNUTO" if settings.sfx else "VYPNUTO", settings.lowres_text()]
 	var ons: Array = [settings.music, settings.sfx, settings.lowres]
-	var sgap: float = layout.row_gap()
 	for i in range(ScreenLayout.SETTINGS_ROWS):
-		var row := Rect2(r.position.x, r.position.y + float(i) * (r.size.y + sgap),
-			r.size.x, r.size.y)
+		var row: Rect2 = layout.settings_row(i)
 		draw_rect(row, Color(0.135, 0.125, 0.11))
 		var on: bool = bool(ons[i])
 		var col: Color = Color(0.65, 0.78, 0.60) if on else Color(0.42, 0.39, 0.35)
 		draw_rect(row, Color(col.r, col.g, col.b, 0.55), false, 2.0)
-		_label(Vector2(row.position.x + 18.0 * layout.ui,
-			row.position.y + row.size.y * 0.62), labels[i], 18, Color(0.88, 0.85, 0.78))
-		# Stav prepinace k pravemu okraji radku - zarovnany DOPRAVA, aby
-		# nepretekl mimo obrazovku (viz _label_right).
-		_label_right(str(values[i]),
-			row.position.y + row.size.y * 0.62, 15, col, row.end.x - 18.0 * layout.ui)
-		# Zaskrtavatko je druha znacka krome barvy - ne jen barva. U rozliseni
-		# je to ctverecek, ktery je "plny", kdyz je zapnuty usporny rezim.
-		var bx: float = row.end.x - 108.0 * layout.ui
-		var by: float = row.get_center().y
-		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), Color(0.09, 0.085, 0.08))
-		draw_rect(Rect2(bx - 1.0, by - 11.0, 22.0, 22.0), col, false, layout.ul(2.0))
+		# ZASKRTRAVATKO a oba textove obdelniky dava ROZVRZENI
+		# (ScreenLayout.settings_check/value_box/label_box) - kresleni ani
+		# test si je nepocitaji samy, aby se nemohly rozejit.
+		var cbr: Rect2 = layout.settings_check(i)
+		draw_rect(cbr, Color(0.09, 0.085, 0.08))
+		draw_rect(cbr, col, false, layout.ul(2.0))
 		if on:
-			draw_line(Vector2(bx + 3.0, by), Vector2(bx + 8.0, by + 6.0), col, 3.0)
-			draw_line(Vector2(bx + 8.0, by + 6.0), Vector2(bx + 18.0, by - 7.0), col, 3.0)
+			var fw: float = maxf(2.0, 3.0 * layout.ui)
+			var b2: Vector2 = cbr.position
+			var bs: float = cbr.size.x
+			draw_line(b2 + Vector2(bs * 0.22, bs * 0.50), b2 + Vector2(bs * 0.42, bs * 0.74), col, fw)
+			draw_line(b2 + Vector2(bs * 0.42, bs * 0.74), b2 + Vector2(bs * 0.80, bs * 0.24), col, fw)
+		var vb: Rect2 = layout.settings_value_box(i)
+		_draw_right(str(values[i]), vb, row.position.y + row.size.y * 0.62, 15, col)
+		var lb: Rect2 = layout.settings_label_box(i)
+		_draw_left(labels[i], lb, row.position.y + row.size.y * 0.62, 18, Color(0.88, 0.85, 0.78))
 
 	var br: Rect2 = layout.settings_back
 	draw_rect(br, Color(0.20, 0.19, 0.17))
@@ -2022,6 +2021,15 @@ func _label_right(text: String, y: float, size: int, col: Color, right_x: float)
 	var fs: int = layout.font(float(size))
 	var w: float = maxf(right_x, 40.0)
 	draw_string(_font, Vector2(right_x - w, y), text, HORIZONTAL_ALIGNMENT_RIGHT, w, fs, col)
+
+
+# TEXT ZAROVNANY VLEVO S ORIZNUTIM NA SVUJ OBDELNIK. `_label()` kresli bez
+# sirky, takze dlouhy popisek UTEČE z tlacitka - presne to se delo v nastaveni
+# u "Rozlišení", kde popisek sahal mimo radek. Tady se text orizne a z radku
+# nikdy nevyleze, at je popisek jakkoli dlouhy.
+func _draw_left(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:
+	draw_string(_font, Vector2(r.position.x, baseline_y), text, HORIZONTAL_ALIGNMENT_LEFT,
+		maxf(r.size.x, 1.0), layout.font(float(size)), col)
 
 
 # Sirka textu tak, jak ho opravdu nakresli _label()/_label_right().

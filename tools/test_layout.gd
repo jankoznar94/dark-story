@@ -340,3 +340,23 @@ func _one(w: int, h: int) -> void:
 			var sr2: Rect2 = sbtns[sj]
 			_check(not sr.intersects(sr2),
 				"%s: cile nastaveni %d a %d se prekryvaji" % [tag, si, sj])
+
+	# --- OBSAH RADKU NASTAVENI: popisek, hodnota a zaskrtravatko musi byt
+	# UVNITR radku a hodnota se NESMI dotykat zaskrtravatka. Presne tady se
+	# to rozbilo: hodnota se zarovnavala k pravemu okraji radku a text se
+	# lepil na ramecek zaskrtavatka. Test se pta rozvrzeni, ne kresleni.
+	for si in range(ScreenLayout.SETTINGS_ROWS):
+		var rowr: Rect2 = layout.settings_row(si)
+		var chk: Rect2 = layout.settings_check(si)
+		var valb: Rect2 = layout.settings_value_box(si)
+		var labb: Rect2 = layout.settings_label_box(si)
+		_check(rowr.encloses(chk), "%s: zaskrtravatko radku %d leze z radku" % [tag, si])
+		_check(rowr.encloses(labb), "%s: popisek radku %d leze z radku" % [tag, si])
+		_check(valb.position.x >= labb.end.x - 0.6,
+			"%s: hodnota radku %d zacina pred koncem popisku" % [tag, si])
+		var gap_px: float = chk.position.x - valb.end.x
+		_check(gap_px >= ScreenLayout.SET_GAP * layout.ui - 0.6,
+			"%s: hodnota radku %d se dotyka zaskrtravatka (mezera %.1f px, ma byt %.1f)" % [
+				tag, si, gap_px, ScreenLayout.SET_GAP * layout.ui])
+		_check(chk.end.x <= rowr.end.x - ScreenLayout.SET_PAD * layout.ui + 0.6,
+			"%s: zaskrtravatko radku %d je nalepene na okraji radku" % [tag, si])

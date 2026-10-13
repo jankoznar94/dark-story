@@ -563,6 +563,53 @@ func row_gap() -> float:
 		- settings_toggle.size.y * float(SETTINGS_ROWS)) / float(SETTINGS_ROWS)
 
 
+# --- OBSAH RADKU NASTAVENI ---
+# Jedno misto, odkud si kresleni I TEST berou obdelniky radku: popisek vlevo,
+# hodnota pred zaskrtravatkem a zaskrtravatko u praveho okraje. Mezi hodnotou
+# a zaskrtravatkem je VZDY mezera - presne to se rozbilo, kdyz se hodnota
+# zarovnavala k pravemu okraji radku a zaskrtravatko stalo 108*ui od nej:
+# u "ZAPNUTO" zbylo 69 px, text se ramecku dotýkal a popisek "Rozlišení"
+# navic utece z tlacitka. Kdo meni rozvrzeni, meni TADY.
+const SET_PAD := 18.0
+const SET_CHECK := 22.0
+const SET_GAP := 16.0
+# Kde zacina hodnota: vlevo od ni je popisek, vpravo zaskrtravatko.
+const SET_VAL_FRAC := 0.46
+
+
+func settings_row(i: int) -> Rect2:
+	var gap: float = row_gap()
+	return Rect2(settings_toggle.position.x,
+		settings_toggle.position.y + float(i) * (settings_toggle.size.y + gap),
+		settings_toggle.size.x, settings_toggle.size.y)
+
+
+# ZASKRTRAVATKO u praveho okraje radku, velikost z meritka (jinak by na
+# velkem displeji z ramecku vylezla fajfka kreslena pevnymi pixely).
+func settings_check(i: int) -> Rect2:
+	var row: Rect2 = settings_row(i)
+	var box: float = SET_CHECK * ui
+	return Rect2(row.end.x - SET_PAD * ui - box, row.get_center().y - box * 0.5, box, box)
+
+
+# HODNOTA: konci PRED zaskrtravatkem, s mezerou SET_GAP.
+func settings_value_box(i: int) -> Rect2:
+	var row: Rect2 = settings_row(i)
+	var chk: Rect2 = settings_check(i)
+	var x: float = row.position.x + row.size.x * SET_VAL_FRAC
+	return Rect2(x, row.position.y,
+		maxf(chk.position.x - SET_GAP * ui - x, 24.0), row.size.y)
+
+
+# POPISEK: vlevo, oriznuty na misto pred hodnotou.
+func settings_label_box(i: int) -> Rect2:
+	var row: Rect2 = settings_row(i)
+	var val: Rect2 = settings_value_box(i)
+	var x: float = row.position.x + SET_PAD * ui
+	return Rect2(x, row.position.y,
+		maxf(val.position.x - SET_GAP * ui - x, 24.0), row.size.y)
+
+
 func overlaps_with(rect: Rect2, margin: float = 0.0) -> bool:
 	for b in all_buttons():
 		var r: Rect2 = b
