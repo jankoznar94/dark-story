@@ -1009,9 +1009,14 @@ func _draw_battle() -> void:
 	_draw_strip()
 	_draw_lanes()
 	_draw_nodes()
+	# PAPRSEK JE POD VEZEMI (i pod poutniky). Kresli se od STREDU veze, takze
+	# nad vezi by z nej byla cara pres celou vez - a presne to z nej delalo
+	# "sopel": tlusty tah s kouli na spicce, ktery jako by z veze vytekal.
+	# Pod vezi paprsek vychazi zpoza ni a spicka se schova v poutnikovi,
+	# do ktereho se opira - coz je presne to, co ma hrac videt.
+	_draw_shots()
 	_draw_towers()
 	_draw_enemies()
-	_draw_shots()
 	# VYBRANA VEZ: oznaceni na desce a panel s vylepsenim/prodejem. Kresli se
 	# jako POSLEDNI nad deskou, aby tlacitka nikdy neprekryla nic, co hrac
 	# potrebuje videt (panel si sam hlida, na ktere strane lezi).
@@ -1468,22 +1473,17 @@ func _draw_shots() -> void:
 		_draw_laser(s.from, s.pos, Level.value_color(s.element))
 
 
-# PAPRSEK. Tmavy podklad, barevne telo a svetle jadro - tři tahy pres sebe,
-# ale vsechny po CELE delce paprsku, takze netvori vrstvy napric (to byl
-# problem cest). Hlava je presne tam, kde strela prave je; ocas saha az do
-# veze, protoze paprsek z veze opravdu vychazi.
+# PAPRSEK. Tenky jasny tah s tmavym podkladem - a NIC na spicce. Prave ta
+# koule a tlusty obal z toho delaly "sopel" (Jan: "Laser je ale stále jako
+# sopel" = z tlustého tahu s velkou hlavou je kapka, ktera z veze vyteká).
+# Tři tahy jdou po CELE delce paprsku, takze netvori vrstvy napric.
 #
 # Tmavy podklad je tam proto, ze pas je svetly: bez nej by paprsek na svetlem
 # pasu zmizel. Svetle jadro neni efekt (zadny glow) - je to plocha barva.
 func _draw_laser(from: Vector2, head: Vector2, col: Color) -> void:
-	draw_line(from, head, Color(0.09, 0.085, 0.08), maxf(3.0, 7.4 * layout.s))
-	draw_line(from, head, col, maxf(2.2, 4.8 * layout.s))
-	draw_line(from, head, col.lightened(0.45), maxf(1.0, 2.0 * layout.s))
-	# SPICKA paprsku: plny krouzek, aby byl videt i na jednom pixelu.
-	var r: float = maxf(2.2, 5.0 * layout.s)
-	draw_circle(head, r, col.lightened(0.55))
-	draw_arc(head, r, 0.0, TAU, 16, Color(0.09, 0.085, 0.08),
-		maxf(1.0, 1.6 * layout.s))
+	draw_line(from, head, Color(0.09, 0.085, 0.08), maxf(2.4, 4.4 * layout.s))
+	draw_line(from, head, col, maxf(1.4, 2.6 * layout.s))
+	draw_line(from, head, col.lightened(0.60), maxf(0.8, 1.2 * layout.s))
 
 
 # Osmihran jako PackedVector2Array - jedna funkce pro telo i pro strechu.
