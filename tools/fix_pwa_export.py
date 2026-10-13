@@ -41,6 +41,77 @@ ICON_192_DST = "index.192x192.png"
 # Znacka, podle ktere poznáme, ze navigace uz je network-first.
 NAV_MARK = "NAVIGACE JE VZDY ZE SITE"
 
+# ---------------------------------------------------------------------------
+# VYNUCENI SIRKY. Hra se hraje na šířku a driv to bylo jen v manifestu
+# ("orientation": "landscape"). Prohlizec ho ale pouzije jen ve chvili
+# spusteni nainstalovane aplikace - behem nacitani Godot enginu se orientace
+# vratila k senzoru, takze hrac musel telefon otacet rucne ("Teď se vždy při
+# spuštění otočí, ale při načítání Godot enginu se otočí zpět").
+#
+# Stranka proto šířku zamkne SAMA, hned pri startu (tj. jeste pred nacitanim
+# enginu) a znovu pri kazde zmene velikosti/orientace:
+#   * `screen.orientation.lock('landscape')` - v nainstalovane aplikaci a ve
+#     fullscreenu funguje, v bezne zalozce prohlizece zamek odmitne;
+#   * kdyz zamek neprojde, vezme se pri PRVNIM KLEPNUTI cela obrazovka
+#     (requestFullscreen je vazan na gesto hrace) a zamek se zkusi znovu.
+#     To je to, co šířku na Androidu opravdu vynuti;
+#   * dokud je displej na vysku a zamek neprosel, je pres hru tmava
+#     podlozka s jednou vetou - klepnuti na ni udela to same (fullscreen +
+#     zamek). Ticha nefunkcnost by hrace nechala otacet telefon rucne.
+# Vse je v try/catch: kde zamek neni (desktop, Firefox), se stranka chova
+# jako driv a hra funguje dal.
+LAND_MARK = "ZILY_NA_SIRKU"
+
+LANDSCAPE_JS = """
+\t<!-- ZILY_NA_SIRKU: šířka se vynucuje tady, ne jen v manifestu. -->
+\t<style>
+\t  #zily_sirka { display: none; position: fixed; left: 0; top: 0; right: 0;
+\t    bottom: 0; z-index: 2147483647; background: #1a1816; color: #f2e6c8;
+\t    font: 16px/1.6 sans-serif; align-items: center; justify-content: center;
+\t    text-align: center; padding: 24px; }
+\t  body.zily_portrait #zily_sirka { display: flex; }
+\t</style>
+\t<div id="zily_sirka">Hra se hraje na šířku.<br>
+\t  Otoč telefon — nebo klepni sem a vezmu ji přes celou obrazovku.</div>
+\t<script>
+\t(function () {
+\t  function portrait() { return window.innerHeight > window.innerWidth; }
+\t  function lock() {
+\t    try {
+\t      if (screen.orientation && screen.orientation.lock) {
+\t        var p = screen.orientation.lock('landscape');
+\t        if (p && p.catch) { p.catch(function () {}); }
+\t      }
+\t    } catch (e) {}
+\t  }
+\t  function goFullscreen() {
+\t    var el = document.documentElement;
+\t    try {
+\t      if (document.fullscreenElement || !el.requestFullscreen) { lock(); return; }
+\t      var p = el.requestFullscreen({ navigationUI: 'hide' });
+\t      if (p && p.then) { p.then(lock, function () { lock(); }); } else { lock(); }
+\t    } catch (e) { lock(); }
+\t  }
+\t  function refresh() {
+\t    var p = portrait();
+\t    if (document.body) {
+\t      document.body.classList.toggle('zily_portrait', p && !document.fullscreenElement);
+\t    }
+\t    if (!p) { lock(); }
+\t  }
+\t  document.addEventListener('fullscreenchange', function () { lock(); refresh(); });
+\t  document.addEventListener('visibilitychange', function () { lock(); refresh(); });
+\t  window.addEventListener('resize', refresh);
+\t  window.addEventListener('orientationchange', refresh);
+\t  document.addEventListener('pointerdown', function () {
+\t    if (portrait() && !document.fullscreenElement) { goFullscreen(); }
+\t    refresh();
+\t  }, { passive: true });
+\t  refresh();
+\t}());
+\t</script>
+"""
+
 # Cely listener 'fetch' se nahrazuje jako celek. Kdysi se tu patchoval po
 # castech a vznikla z toho neplatna syntaxe - u generovaneho souboru se
 # vyplati vymenit celý blok, ne v nem hledat radky.
@@ -214,12 +285,43 @@ def fix_service_worker(out: str, version: str = "") -> bool:
 	return True
 
 
+def fix_index_html(out: str) -> bool:
+	"""Vlozi do index.html vynuceni šířky (viz LANDSCAPE_JS).
+
+	Idempotentni: podle znacky LAND_MARK se pozná, ze uz je hotovo.
+	"""
+	html = os.path.join(out, "index.html")
+	if not os.path.isfile(html):
+		print("PWA_HTML=fail (chybi %s)" % html)
+		return False
+	with open(html, "r", encoding="utf-8") as f:
+		src = f.read()
+	if LAND_MARK not in src:
+		if "</body>" not in src:
+			print("PWA_HTML=fail (v index.html neni </body>)")
+			return False
+		src = src.replace("</body>", LANDSCAPE_JS + "	</body>", 1)
+		with open(html, "w", encoding="utf-8") as f:
+			f.write(src)
+	# Kontrola je na to, co se opravdu pise do souboru: znacka, podlozka
+	# a volani zamku. Kdyby se blok vlozil spatne (napr. za </html>), hrac
+	# by musel telefon otacet rucne a nikdo by si toho nevsiml.
+	missing = [m for m in [LAND_MARK, 'id="zily_sirka"',
+		"screen.orientation.lock('landscape')"] if m not in src]
+	if missing:
+		print("PWA_HTML=fail missing=%s" % missing)
+		return False
+	print("PWA_HTML=ok (sirka se vynucuje na strance)")
+	return True
+
+
 def main() -> int:
 	out = sys.argv[1] if len(sys.argv) > 1 else "build/web"
 	version = sys.argv[2] if len(sys.argv) > 2 else ""
 	ok_m = fix_manifest(out)
 	ok_s = fix_service_worker(out, version)
-	if not (ok_m and ok_s):
+	ok_h = fix_index_html(out)
+	if not (ok_m and ok_s and ok_h):
 		print("FIX_PWA_EXPORT=false")
 		return 1
 	print("FIX_PWA_EXPORT=true")
