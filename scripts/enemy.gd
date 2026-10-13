@@ -79,13 +79,27 @@ static func tier_size(index: int) -> float:
 
 
 # NASOBEK POSKOZENI OD VEZE TOHOTO ZIVLU. Jednozivelny poutnik ma jeden
-# nasobek. DVOJZIVELNY BERE NEJVYSSI Z OBOU - nikdy tedy nema imunitu a je
-# zranitelny obema protikladnymi vezemi (Jan, Oct 2026: "Nevýhody z obou
-# elementů"), zatimco od ostatnich dostava malo (0.5).
+# nasobek. DVOJZIVELNY MA VYHODY OBOU ZIVLU - je IMUNNI na oba sve zivly,
+# proto se bere MINIMUM z obou nasobku:
+#
+#   ohen+voda proti ohnive vezi   min(0 %, 200 %) =   0 %  -> imunni
+#   ohen+voda proti vodni vezi    min(200 %, 0 %) =   0 %  -> imunni
+#   ohen+voda proti zemni vezi    min(50 %, 50 %) =  50 %
+#   ohen+voda proti neutralni vezi min(100 %,100%)= 100 %
+#
+# Jan (Oct 2026) to zmenil z maxima: "Nepřátelé s dual elementem budou odteď
+# mít naopak výhody obou elementů. Budou imuní na oba elementy. Hráč bude
+# nucen použít neutrální věže na jejich zničení." S maximem byl dvojzivelny
+# naopak NEJZRANITELNEJSI (dostaval 200 % od obou), takze se z nej stal
+# nejsnazsi protivnik - presne obraceny zamer.
+#
+# POZOR: `mult_against` je JEDNO misto, kde to je rozhodnute. `can_hurt`
+# i mireni veze se ptaji jeho, takze vez, ktera dava nulu, na poutnika
+# nevystreli vubec (a neplýtvá ranou, ktera by mohla jit na jineho).
 func mult_against(tower_el: int) -> float:
 	var m: float = Element.tower_multiplier(element, tower_el)
 	if element2 >= 0:
-		m = maxf(m, Element.tower_multiplier(element2, tower_el))
+		m = minf(m, Element.tower_multiplier(element2, tower_el))
 	return m
 
 

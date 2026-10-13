@@ -91,6 +91,12 @@ func _ready() -> void:
 		# Snimek editoru: hra se postavi z levelu, ktery je prave v editoru.
 		_open_editor()
 		_shot = true
+	elif args.has("--flash-shot"):
+		# SNIMEK EFEKTU PO PRUCHODU VYHYBKOU: jediny zpusob, jak zmerit, ze
+		# krouzek opravdu sviti nad vyhybkou (a v barve zvolene koleje).
+		# Sni se v okamziku, kdy poutnik projde - efekt zhasina za 0,55 s.
+		_setup_flash_shot()
+		_shot = true
 	elif args.has("--junction-shot"):
 		# Snimek editoru s POLOZENOU VYHYBKOU - jediny zpusob, jak okem
 		# zkontrolovat, ze se uzly kresli spravne a ze klepnuti na bunku funguje.
@@ -322,6 +328,34 @@ func _setup_shot() -> void:
 				sc.pos = sc.from.lerp(aim, 0.55)
 			break
 	_shot = true
+
+
+# ROZESTAVENI SNIMKU EFEKTU VYHYBKY: jeden poutnik, ktery prave prosel
+# vyhybkou. Vypisuje se uzel, sila efektu a jeho polomer - z tech cisel se
+# da kresba zmerit v PNG (barvu krouzku nese zvolena kolej).
+func _setup_flash_shot() -> void:
+	_start_battle()
+	game.auto_wave = false
+	var entry: int = game.net.entry_lane
+	if entry < 0:
+		return
+	var node: int = game.net.lane_end_node(entry)
+	var j: int = game.net.junction_index_of_node(node)
+	if j < 0:
+		return
+	# VYHYBKA POSILA POUTNIKY NA PRVNI VETEV - krouzek ma mit barvu te koleje.
+	var lane: int = game.net.junction_lane(j, 0)
+	game.set_switch(lane)
+	game.debug_spawn(Element.FIRE)
+	var guard: int = 0
+	while game.junction_flash_at(node).is_empty() and guard < 900:
+		game.step(1.0 / 60.0)
+		guard += 1
+	var f: Dictionary = game.junction_flash_at(node)
+	var k: float = float(f.get("k", 0.0))
+	print("FLASH_NODE=%d,%d k=%.2f lane=%d r=%.1f" % [
+		int(game.net.node_pos[node].x), int(game.net.node_pos[node].y),
+		k, int(f.get("lane", -1)), Game.flash_radius(k, game.net.switch_r)])
 
 
 # ROZESTAVENI SNIMKU TECEK: ctyri veze u ohnive cesty v jedne radě, daleko
@@ -1146,6 +1180,9 @@ func _draw_battle() -> void:
 	_draw_strip()
 	_draw_lanes()
 	_draw_nodes()
+	# EFEKT PRUCHODU VYHYBKOU jde NAD znackami uzlu (krouzek uzlu by ho jinak
+	# prekryl), ale POD vezemi a poutniky.
+	_draw_junction_flash()
 	# PAPRSEK JE POD VEZEMI (i pod poutniky). Kresli se od STREDU veze, takze
 	# nad vezi by z nej byla cara pres celou vez - a presne to z nej delalo
 	# "sopel": tlusty tah s kouli na spicce, ktery jako by z veze vytekal.
@@ -1894,6 +1931,31 @@ func _draw_exit_mark(p: Vector2) -> void:
 	draw_circle(p, r, Color(0.105, 0.10, 0.095))
 	draw_arc(p, r, 0.0, TAU, 28, CIL_RING, maxf(2.0, 3.4 * layout.s))
 	draw_arc(p, r * 0.52, 0.0, TAU, 20, CIL_RING, maxf(1.2, 2.0 * layout.s))
+
+
+# KROUZEK, KTERY ZHASINA PO PRUCHODU VYHYBKOU. Jan (Oct 2026): "Když projde
+# nepřítel výhybkou a dojde k 'rozřazení' na kolej, tak to mělo udělat nějaký
+# drobný vizuální efekt. Aby hráč věděl, že už výhybkou prošel. Někdy jsou
+# totiž nepřátelé velmi blízko sebe a hráč potřebuje bleskově přepnout
+# výhybku. Teď si ale není 100% jistý jestli už nepřítel prošel bodem zlomu
+# nebo ne."
+#
+# Kresli se KROUZEK KOLEM UZLU VYHYBKY, ktery se rozpina a zhasina, v BARVE
+# ZVOLENE KOLEJE: hrac z nej vi nejen "uz prosel", ale i KAM ho poslal.
+# Krouzek (ne vypln) je zamer - deska ma zustat znackova, ne svetelna show.
+# Cas efektu vede hra (`Game.junction_flash_at`), tady se jen kresli.
+func _draw_junction_flash() -> void:
+	for j in range(game.net.junction_count()):
+		var n: int = game.net.junction_nodes[j]
+		var f: Dictionary = game.junction_flash_at(n)
+		if f.is_empty():
+			continue
+		var k: float = float(f["k"])
+		var p: Vector2 = game.net.node_pos[n]
+		var rr: float = Game.flash_radius(k, game.net.switch_r)
+		var col: Color = _lane_color(int(f["lane"]))
+		col.a = k * 0.95
+		draw_arc(p, rr, 0.0, TAU, 28, col, maxf(2.0, 3.6 * layout.s))
 
 
 func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:

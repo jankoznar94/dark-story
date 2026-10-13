@@ -136,6 +136,18 @@ var rng: int = 20261009
 # v jednom behu, aniz by se sahalo do konstant.
 var hp_growth: float = HP_GROWTH
 var log: Array = []
+# VZPLANUTI VYHYBKY PRI PRUCHODU. Kazdy pruchod poutnika vyhybkou se na chvili
+# oznaci a obrazovka z toho kresli krouzek, ktery zhasina. Jan (Oct 2026):
+# "Když projde nepřítel výhybkou a dojde k 'rozřazení' na kolej, tak to mělo
+# udělat nějaký drobný vizuální efekt. Aby hráč věděl, že už výhybkou prošel.
+# Někdy jsou totiž nepřátelé velmi blízko sebe a hráč potřebuje bleskově
+# přepnout výhybku. Teď si ale není 100% jistý jestli už nepřítel prošel
+# bodem zlomu nebo ne."
+#
+# Je to stav HRY (ne obrazovky): cas efektu odcita `step`, takze se v testu da
+# zmerit, kdy efekt vznikne a kdy zmizi.
+var junction_flash: Array = []
+const FLASH_TIME := 0.55
 # ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Neni to vzdycky vsechny ctyri:
 # mapa, ktera ma jen vodu a ohen, posila jen vodni a ohnive poutniky - na
 # ostatni by v mape nebyl protiklad a hrac by je nemel jak zabit.
@@ -176,6 +188,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	spawn_index = 0
 	spawn_wait = 0.0
 	spawned = 0
+	junction_flash = []
 	log = []
 
 
@@ -592,6 +605,13 @@ func start_wave() -> void:
 	spawn_wait = 0.0
 	spawned = 0
 	var msg: String = "Vlna %d: %s." % [wave, wave_summary(wave)]
+	# DVOJZIVELNY JE IMUNNI NA OBA SVOJE ZIVLY (viz `Enemy.mult_against`),
+	# takze na nej plati jen neutralni vez. Pravidlo se rekne JEDNOU, v prvni
+	# vlne, kde se dvojzivelni objevi - hrac jinak vidi, jak rany nic nedelaji,
+	# a nema se to jak dozvedet.
+	if level != null and int(wave_counts(wave)["dual"]) > 0 \
+			and int(wave_counts(maxi(wave - 1, 1))["dual"]) == 0:
+		msg += " Dvojzivelný je imunní na oba své živly — platí na něj neutrální věž."
 	# PRAZDNY SEZNAM JE TA NEJHORSI ODPOVED. Hrac vidi, ze vlna bezi, deska
 	# zustava prazdna - a nema jak zjistit, ze chyba neni v siti, ale v mape.
 	# Jan (Oct 2026): "Po spuštění levelu v editoru teď nepřátelé vůbec
@@ -854,6 +874,7 @@ func step(delta: float) -> void:
 	# Uklid na jednom miste: kdo umrel (dopadem strely) nebo dosel do cile,
 	# je z desky pryc jeste pred vyhodnocenim kola.
 	_prune()
+	_fade_flash(delta)
 	if lives <= 0:
 		phase = "lost"
 		_note("PROHRA.")
@@ -901,8 +922,11 @@ func _move_enemies(delta: float) -> void:
 		#   cil                - konec cesty, stoji zivot.
 		var nd: int = net.lane_end_node(e.lane)
 		var nxt: int = -1
+		# INDEX VYHYBKY se musi drzet i po prechodu (efekt prusmyku se kresli
+		# nad ni), takze se nedeklaruje uvnitr vetve.
+		var j: int = -1
 		if nd >= 0:
-			var j: int = net.junction_index_of_node(nd)
+			j = net.junction_index_of_node(nd)
 			var sel: int = 0
 			if j >= 0:
 				if switch_sel.size() != net.junction_count():
@@ -918,9 +942,60 @@ func _move_enemies(delta: float) -> void:
 			else:
 				_note("Poutnik %s zabloudil (-1 život)." % Element.name_of(e.element))
 			continue
+		# ROZRAZENI JE HOTOVE - a hrac to musi videt. Teprve ted totiz plati,
+		# ze dalsi prepnuti vyhybky posle uz NASLEDUJICIHO poutnika; u dvou
+		# poutniku tesne za sebou je to jedina jistota, kterou hrac ma.
+		if j >= 0:
+			_flash_junction(nd, nxt)
 		e.lane = nxt
 		e.s = 0.0
 		e.pos = net.point_at(nxt, 0.0)
+
+
+# ZAZNAMENEJ PRUCHOD VYHYBKOU. Efekt se prida k te, ktera ho opravdu pustila
+# (kazda vyhybka ma svuj krouzek), a nese BARVU zvolene koleje - hrac z nej
+# pozna, kam poutnik odesel, ne jen ze nekam odesel.
+func _flash_junction(node: int, lane: int) -> void:
+	junction_flash.append({"node": node, "lane": lane, "t": FLASH_TIME})
+
+
+# KROUZEK PO PRUCHODU ZHASINA. Jedno misto, kde se cas efektu odcita - kdyby
+# si ho obrazovka vedla sama, efekt by se s hrou rozešel.
+func _fade_flash(delta: float) -> void:
+	if junction_flash.is_empty():
+		return
+	var keep: Array = []
+	for item in junction_flash:
+		var f: Dictionary = item
+		f["t"] = float(f["t"]) - delta
+		if float(f["t"]) > 0.0:
+			keep.append(f)
+	junction_flash = keep
+
+
+# POLOMER KROUZKU EFEKTU pro silu `k` (0..1). Jedno misto, kde se geometrie
+# efektu pocita - kresleni i snimek pro kontrolu se musi ptat tady.
+#
+# Krouzek zacina VEDLE znacky uzlu (ta ma polomer 0,34 r), ne na ni: kdyby
+# efekt lezl po znacce, hrac by v nem videl jen "neco jako drive" a nic by mu
+# to nereklo. Rozpina se ven, takze ho od znacky pozna na prvni pohled.
+static func flash_radius(k: float, r0: float) -> float:
+	return r0 * (0.95 + 0.75 * (1.0 - clampf(k, 0.0, 1.0)))
+
+
+# JAK SILNY EFEKT NA TOMHLE UZLU PRAVE JE. Vraci {} nebo {"k": 0..1,
+# "lane": int}. Obrazovka, klepnuti i testy se ptaji tady, takze se kresba
+# nemuze rozejit s casem hry.
+func junction_flash_at(node: int) -> Dictionary:
+	var best: Dictionary = {}
+	for item in junction_flash:
+		var f: Dictionary = item
+		if int(f["node"]) != node:
+			continue
+		var k: float = float(f["t"]) / FLASH_TIME
+		if best.is_empty() or k > float(best["k"]):
+			best = {"k": k, "lane": int(f["lane"])}
+	return best
 
 
 # ---------------------------------------------------------------- strelba

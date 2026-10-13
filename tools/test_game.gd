@@ -28,6 +28,7 @@ func _init() -> void:
 	_run("pas kolem cest", _test_strip_rules)
 	_run("stavba podle typu cesty (zivel, nebo neutralni vez)", _test_build_elements)
 	_run("tecky urovne uvnitr veze", _test_tower_dots)
+	_run("efekt pruchodu vyhybkou", _test_junction_flash)
 	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
@@ -238,10 +239,13 @@ func _test_enemy_tiers() -> void:
 	_check(kinds.size() >= 4, "plan vlny 8 neposila vsechny ctyri druhy: %s" % str(kinds.keys()))
 
 
-# DVOJZIVELNY POUTNIK (ohen + voda). Jan (Oct 2026): "Nepřátelé dvou elementů
-# (oheň + voda, půl kolečka červená, půl modrá, nevýhody z obou elementů)."
-# Test hlida PRAVIDLO: bere nejvyssi nasobek z obou zivlu, takze ho obe
-# protikladne veze berou dvojnasobkem a nikdy nema imunitu.
+# DVOJZIVELNY POUTNIK (ohen + voda). Jan (Oct 2026): "Nepřátelé s dual
+# elementem budou odteď mít naopak výhody obou elementů. Budou imuní na oba
+# elementy. Hráč bude nucen použít neutrální věže na jejich zničení."
+#
+# Test hlida PRAVIDLO: bere MINIMUM z obou nasobku, takze je imunni na oba
+# sve zivly a zbyle dva mu daji jen polovinu. (Drive to bylo maximum -
+# dvojzivelny byl naopak nejzranitelnejsi.)
 func _test_dual_enemy() -> void:
 	var g := _new_game()
 	var e: Enemy = g.debug_spawn(Element.FIRE, Enemy.TIER_BASIC, [Element.FIRE, Element.WATER])
@@ -250,18 +254,27 @@ func _test_dual_enemy() -> void:
 		return
 	_check(e.dual(), "poutnik nema druhy zivel")
 	_check(e.element2 == Element.WATER, "druhy zivel neni voda (%d)" % e.element2)
-	# OBE protikladne veze berou dvojnasobkem
-	_check(is_equal_approx(e.mult_against(Element.FIRE), 2.0),
-		"ohniva vez nebere dvojzivelnemu dvojnasobek (%.2f)" % e.mult_against(Element.FIRE))
-	_check(is_equal_approx(e.mult_against(Element.WATER), 2.0),
-		"vodni vez nebere dvojzivelnemu dvojnasobek (%.2f)" % e.mult_against(Element.WATER))
-	# a zbyle dva zivly berou jen polovinou - zadna imunita
+	# IMUNITA NA OBA SVOJE ZIVLY: ani jedna z protikladnych vezi mu neublizi
+	for el in [Element.FIRE, Element.WATER]:
+		_check(is_equal_approx(e.mult_against(el), 0.0),
+			"zivel %d bere dvojzivelnemu %.2f, ma brat 0" % [el, e.mult_against(el)])
+		_check(not e.can_hurt(el), "vez zivlu %d si mysli, ze ublizi dvojzivelnemu" % el)
+	# ZBYLE DVA ZIVLY berou jen polovinou
 	_check(is_equal_approx(e.mult_against(Element.EARTH), 0.5),
 		"země bere dvojzivelnemu jine nez 0.5 (%.2f)" % e.mult_against(Element.EARTH))
 	_check(is_equal_approx(e.mult_against(Element.AIR), 0.5),
 		"vzduch bere dvojzivelnemu jine nez 0.5 (%.2f)" % e.mult_against(Element.AIR))
-	for el in [Element.FIRE, Element.WATER, Element.EARTH, Element.AIR]:
-		_check(e.can_hurt(el), "dvojzivelny poutnik je imunni na zivel %d" % el)
+	# NEUTRALNI VEZ JE JEDINA, KTERA HO ZNIČI PLNOU SILOU - Jan: "Hráč bude
+	# nucen použít neutrální věže na jejich zničení."
+	_check(is_equal_approx(e.mult_against(Tower.NEUTRAL), 1.0),
+		"neutralni vez nebere dvojzivelnemu plnou silu (%.2f)" % e.mult_against(Tower.NEUTRAL))
+	_check(e.can_hurt(Tower.NEUTRAL), "neutralni vez na dvojzivelneho nevystreli")
+	# A VEZ to vi taky - mireni se ptá poutnika, ne sveho elementu.
+	var t := Tower.new()
+	t.element = Element.FIRE
+	_check(not t.can_hurt(e.element), "ohniva vez si na dvojzivelneho dovoli vystrelit")
+	t.element = Tower.NEUTRAL
+	_check(t.can_hurt(e.element), "neutralni vez na dvojzivelneho nevystreli")
 	# Jednozivelny poutnik se chova jako driv (zadna zmena pravidel)
 	var one: Enemy = g.debug_spawn(Element.FIRE)
 	_check(not one.dual(), "jednozivelny poutnik ma druhy zivel")
@@ -1035,6 +1048,66 @@ func _test_wave_count_is_level_data() -> void:
 	_check(back != null, "level s poctem poutniku se neda nacist z kodu")
 	if back != null:
 		_check(back.wave_count == 9, "pocet poutniku se v kodu ztratil (%d)" % back.wave_count)
+
+
+# EFEKT PO PRUCHODU VYHYBKOU. Jan (Oct 2026): "Když projde nepřítel
+# výhybkou a dojde k 'rozřazení' na kolej, tak to mělo udělat nějaký drobný
+# vizuální efekt. Aby hráč věděl, že už výhybkou prošel."
+#
+# Meri se STAV HRY (kdy efekt vznikne, kam ukazuje a kdy zmizi), ne pixely:
+# obrazovka z toho jen kresli krouzek, takze se neda rozejit s hrou.
+func _test_junction_flash() -> void:
+	var g := _new_game()
+	var entry: int = g.net.entry_lane
+	_check(entry >= 0, "sit nema vstupni usek")
+	if entry < 0:
+		return
+	var node: int = g.net.lane_end_node(entry)
+	var j: int = g.net.junction_index_of_node(node)
+	_check(j >= 0, "vstupni usek nekonci ve vyhybce")
+	if j < 0:
+		return
+	# DRUHA VYHYBKA: efekt se na ni nesmi objevit, kdyz poutnik prosel prvni.
+	var other: int = -1
+	for k in range(g.net.junction_nodes.size()):
+		if k != j:
+			other = int(g.net.junction_nodes[k])
+	_check(other >= 0, "zakladni deska nema dve vyhybky")
+	# Volba prvni vyhybky: ohniva kolej (na tu se da poslat kazdy poutnik).
+	var want: int = -1
+	for lane in range(g.net.lane_count()):
+		if g.net.lane_junction(lane) == j and g.level.lane_element(lane) == Element.FIRE:
+			want = lane
+	_check(want >= 0, "vyhybka nema ohnivou kolej")
+	if want < 0:
+		return
+	g.set_switch(want)
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	_check(e != null, "poutnik se neobjevil")
+	if e == null:
+		return
+	_check(g.junction_flash_at(node).is_empty(), "efekt sviti jeste pred pruchodem")
+	var dt: float = 1.0 / 60.0
+	var guard: int = 0
+	while e.on_lane() and e.lane == entry and guard < 600:
+		g.step(dt)
+		guard += 1
+	_check(e.lane == want, "poutnik odesel z vyhybky na usek %d, cekal se %d" % [e.lane, want])
+	# EFEKT JE TU A UKAZUJE, KAM POUTNIK ODESEL.
+	var f: Dictionary = g.junction_flash_at(node)
+	_check(not f.is_empty(), "po pruchodu vyhybkou se nerozsvitil zadny efekt")
+	if not f.is_empty():
+		_check(int(f["lane"]) == want, "efekt ukazuje usek %d, poutnik sel na %d"
+			% [int(f["lane"]), want])
+		_check(float(f["k"]) > 0.5, "efekt je hned po pruchodu slaby (%.2f)" % float(f["k"]))
+	_check(g.junction_flash_at(other).is_empty(),
+		"efekt se rozsvitil na vyhybce, kterou poutnik neprosel")
+	# A ZHASINA: po FLASH_TIME (a chvilku navic) uz nesviti.
+	guard = 0
+	while guard < int((Game.FLASH_TIME + 0.2) / dt):
+		g.step(dt)
+		guard += 1
+	_check(g.junction_flash_at(node).is_empty(), "efekt po case nezmizel")
 
 
 # VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU: hrac
