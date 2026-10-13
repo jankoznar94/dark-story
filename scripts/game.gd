@@ -24,6 +24,9 @@ const START_LIVES := 12
 const BASE_HP := 70.0
 const HP_GROWTH := 0.10
 const ENEMY_SPEED := 52.0
+# ODMENA ZA ZAKLADNIHO POUTNIKA. Dalsi druhy maji vlastni odmenu v `Enemy.TIERS`
+# (lehky 8, tezky 25); tohle cislo plati pro zakladni druh a drzi se kvuli
+# starym mistum, kde sel o jediny druh poutnika.
 const REWARD := 12
 # KOLO NENI VLNA Z TD. Jan: "Asi nebudeme dělat jednotlivé vlny jako u TD
 # žánru. ... Kolo bude mít časový limit. Třeba 2 minuty. Během této doby
@@ -52,6 +55,13 @@ var towers: Array = []
 # pro ni, takze "co je vybrane" je stav HRY, ne obrazovky - testy se na to
 # ptaji tady a obrazovka si to jen cte.
 var sel_tower: Vector2i = Vector2i(-1, -1)
+# OZNACENE STAVEBNI MISTO (bunka), nebo -1. Je to stav PRED stavbou: dokud
+# tu neco je, obrazovka kresli obchod s vezemi a deska je jen oznacena.
+# Teprve "Postavit" z toho udela vez (viz `confirm_build`).
+var build_cell: Vector2i = Vector2i(-1, -1)
+# VYBRANY DRUH VEZI v obchode (index do Tower.KINDS). Voli se klepnutim na
+# druh, ne klepnutim na desku.
+var build_kind: int = Tower.DEFAULT_KIND
 var enemies: Array = []
 # STRELY, KTERE PRÁVĚ LETÍ. Rana neni hotova ve chvili vystrelu - je to
 # predmet na ceste k poutnikovi a poskozeni ubira teprve pri DOPADU
@@ -103,6 +113,8 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	rebuild_network(r, scale_hint, bar_top)
 	towers = []
 	sel_tower = Vector2i(-1, -1)
+	build_cell = Vector2i(-1, -1)
+	build_kind = Tower.DEFAULT_KIND
 	enemies = []
 	shots = []
 	cell_enemies = {}
@@ -194,40 +206,115 @@ func towers_of_lane(lane: int) -> int:
 	return c
 
 
-# POSTAVENI VEZE. Klepnutim na bunku pasu se stavi vez S ELEMENTEM TÉ CESTY -
-# hrac element nevoli, protoze nema co volit: pas ma barvu cesty, kolem ktere
-# lezi. Mimo pas se stavet neda vubec.
-func try_build(cell: Vector2i) -> bool:
-	if not net.strip_has(cell):
-		# Dve ruzne veci se musi rict ruzne, jinak hrac hleda chybu v siti:
-		# bud je to cesta sama/uzel (tam se proste nestavi), nebo je to
-		# zakazane misto u vyhybky.
-		if net.level.node_at_cell(cell) >= 0:
-			_note("Na uzlu se nestaví.")
-		elif _is_lane_cell(cell):
-			_note("Na cestě se nestaví — věže patří do pásu vedle ní.")
-		elif _near_junction(cell):
-			_note("U výhybky a spojky musí být jedno políčko volné.")
-		else:
-			_note("Tady pás není — věže stojí jen u cesty.")
+# POSTAVENI VEZE. Vez dostava ELEMENT TÉ CESTY, kolem ktere pas lezi - hrac
+# element nevoli, protoze nema co volit: barvu ma misto, ne vez. Vybira se
+# jen DRUH (viz Tower.KINDS). Mimo pas se stavet neda vubec.
+#
+# TAHLE FUNKCE UZ SE Z DESKY NEVOLA. Deska umi jen OZNACIT misto
+# (`select_build_cell`) a stavba je az `confirm_build` - vez se nesmi postavit
+# omylem pri prvnim klepnuti (Jan, Oct 2026).
+func try_build(cell: Vector2i, kind: int = Tower.DEFAULT_KIND) -> bool:
+	var why: String = _build_block_reason(cell)
+	if not why.is_empty():
+		_note(why)
 		return false
-	if tower_at(cell) != null:
-		_note("Tady už věž stojí.")
-		return false
-	var cost: int = Tower.level_cost(1)
+	var cost: int = Tower.kind_cost(kind, 1)
 	if gold < cost:
 		_note("Málo zlata na věž (%d)." % cost)
 		return false
 	gold -= cost
 	var t := Tower.new()
 	t.cell = cell
+	t.kind = kind
 	t.element = net.strip_element(cell)
 	# Kolik do ni hrac dal - z toho se pocita cena pri prodeji.
 	t.spent = cost
 	towers.append(t)
 	sel_tower = cell
+	# Obchod se zavira: misto je zadane. Nechat ho oznacene by hrace mátlo
+	# ("a staví se jeste neco?").
+	build_cell = Vector2i(-1, -1)
 	_note("Věž %s postavena." % Level.value_name(t.element))
 	return true
+
+
+# PROC SE NA TUHLE BUNKU NEDA STAVET. Prazdny retezec = stavebni misto je
+# v poradku. Dve ruzne veci se musi rict ruzne, jinak hrac hleda chybu v siti:
+# bud je to cesta sama/uzel (tam se proste nestavi), nebo je to zakazane misto
+# u vyhybky. Pouziva ji oznaceni mista i stavba - jedna pravda pro obe.
+func _build_block_reason(cell: Vector2i) -> String:
+	if not net.strip_has(cell):
+		if net.level.node_at_cell(cell) >= 0:
+			return "Na uzlu se nestaví."
+		if _is_lane_cell(cell):
+			return "Na cestě se nestaví — věže patří do pásu vedle ní."
+		if _near_junction(cell):
+			return "U výhybky a spojky musí být jedno políčko volné."
+		return "Tady pás není — věže stojí jen u cesty."
+	if tower_at(cell) != null:
+		return "Tady už věž stojí."
+	return ""
+
+
+# ------------------------------------------------- stavba ve dvou krocích
+
+# OZNACENI STAVEBNIHO MISTA. Klepnuti na prazdnou bunku pasu uz vez NESTAVI:
+# jen misto oznaci a otevre obchod s vezemi. Jan (Oct 2026): "Věž by se
+# neměla postavit hned při prvním kliknutí na stavební půdu. Zaprvé bude na
+# výběr více druhů věží a za druhé se takhle snadno postaví věž omylem.
+# Musíme označit půdu, dostat na výběr věže, vybrat věž a kliknout na
+# 'postavit'."
+func select_build_cell(cell: Vector2i) -> bool:
+	var why: String = _build_block_reason(cell)
+	if not why.is_empty():
+		_note(why)
+		return false
+	if build_cell == cell:
+		# Druhe klepnuti na to same misto obchod ZAVRE - presne jako druhe
+		# klepnuti na vybranou vez zrusi vyber. Klepnuti na uz oznacene
+		# misto musi neco znamenat, ne jen zopakovat to prvni.
+		build_cell = Vector2i(-1, -1)
+		_note("Stavba zrušena.")
+		return false
+	build_cell = cell
+	build_kind = Tower.DEFAULT_KIND
+	# Vybrana vez a oznacene misto se vzajemne vylucuji: na obrazovce je pro
+	# ne jen jeden pruh a hrac by nevedel, ktera tlacitka plati.
+	sel_tower = Vector2i(-1, -1)
+	_note("Stavební místo vybráno — zvol věž a klepni na Postavit.")
+	return true
+
+
+# VOLBA DRUHU V OBCHODE. Jen vybira, nestavi - stavba je az `confirm_build`.
+func pick_kind(kind: int) -> bool:
+	if build_cell.x < 0:
+		return false
+	if kind < 0 or kind >= Tower.KIND_COUNT:
+		return false
+	build_kind = kind
+	_note("Vybraná věž: %s (%d)." % [Tower.kind_name_of(kind), Tower.kind_cost(kind, 1)])
+	return true
+
+
+func cancel_build() -> void:
+	if build_cell.x >= 0:
+		_note("Stavba zrušena.")
+	build_cell = Vector2i(-1, -1)
+
+
+# Je otevreny obchod s vezemi? Obrazovka se na to ptá, aby vedela, co kreslit.
+func build_selected() -> bool:
+	return build_cell.x >= 0
+
+
+# POSTAVIT. Jedina cesta, jak dostat vez na desku z ruky hrace - klepnuti na
+# desku umi jen oznacit misto. Hraje se tedy na dve klepnuti a omylem
+# postavena vez prestava existovat.
+func confirm_build() -> bool:
+	if build_cell.x < 0:
+		_note("Nejdřív vyber stavební místo.")
+		return false
+	return try_build(build_cell, build_kind)
 
 
 # VYLEPSENI VEZE. Kazdy dalsi level je drazsi a o neco rychlejsi a silnejsi.
@@ -282,6 +369,9 @@ func select_tower(cell: Vector2i) -> bool:
 	if tower_at(cell) == null:
 		sel_tower = Vector2i(-1, -1)
 		return false
+	# Obchod s vezemi se zavre: hrac si prave rekl o INFORMACE o vezi, ktera
+	# uz stoji, ne o stavbu nove.
+	build_cell = Vector2i(-1, -1)
 	if sel_tower == cell:
 		sel_tower = Vector2i(-1, -1)
 		_note("Výběr zrušen.")
@@ -296,14 +386,23 @@ func select_tower(cell: Vector2i) -> bool:
 	return true
 
 
-# Klepnuti na bunku pasu: prazdna = postav vez, obsazena = vyber ji.
-# Jedno misto pro tohle rozhodnuti - obrazovka se ho jen ptá. Vylepseni
-# a prodej uz nejsou "druhe klepnuti na vez", ale tlacitka u vybrane veze:
-# prodavat ve dve klepnuti omylem by hrac prisel o vez, kterou chtel vylepsit.
+# Klepnuti na bunku pasu: prazdna = OZNAC misto (obchod s vezemi), obsazena =
+# vyber ji. Jedno misto pro tohle rozhodnuti - obrazovka se ho jen ptá.
+# Vylepseni a prodej uz nejsou "druhe klepnuti na vez", ale tlacitka u vybrane
+# veze: prodavat ve dve klepnuti omylem by hrac prisel o vez, kterou chtel
+# vylepsit. Stavba je ze STEJNEHO duvodu na dve klepnuti (misto, pak Postavit).
 func tap_build_cell(cell: Vector2i) -> bool:
 	if tower_at(cell) != null:
 		return select_tower(cell)
-	return try_build(cell)
+	return select_build_cell(cell)
+
+
+# ZRUSENI VSECH VYBERU. Klepnuti mimo desku (nebo mimo pruh s tlacitky)
+# nesmi nechat viset ani panel vybrane veze, ani obchod s vezemi - jinak by
+# panel prekryval desku a hrac by nevedel, proc.
+func clear_selection() -> void:
+	sel_tower = Vector2i(-1, -1)
+	build_cell = Vector2i(-1, -1)
 
 
 func _is_lane_cell(cell: Vector2i) -> bool:
@@ -457,12 +556,17 @@ func _speed() -> float:
 	return maxf(sp, 1.0)
 
 
-func _spawn(enemy_el: int) -> void:
+func _spawn(kind_el: int, tier: int = Enemy.TIER_BASIC, pair: Array = []) -> void:
 	var e := Enemy.new()
-	e.element = enemy_el
-	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(round - 1))
+	e.element = kind_el
+	# DRUHY ZIVEL: kdyz hra vylosovala dvojici (ohen+voda), dostane poutnik
+	# ten druhy z dvojice - nezalezi na tom, ktery z nich prisel jako prvni.
+	if pair.size() == 2:
+		e.element2 = int(pair[1]) if int(pair[0]) == kind_el else int(pair[0])
+	e.tier = tier
+	e.max_hp = BASE_HP * pow(1.0 + HP_GROWTH, float(round - 1)) * Enemy.tier_hp(tier)
 	e.hp = e.max_hp
-	e.speed = level.speed if level != null else ENEMY_SPEED
+	e.speed = (level.speed if level != null else ENEMY_SPEED) * Enemy.tier_speed(tier)
 	# POUTNIK VSTUPUJE NA VSTUPNI USEK. Vstup do mapy je v mrizce normalni
 	# usek ze startu (od vychoziho stavu kmen, takze neposkozuje). Vstupu
 	# muze byt vic a VSTUP SE LOSUJE - driv se kmeny stridaly po poradi
@@ -478,9 +582,10 @@ func _spawn(enemy_el: int) -> void:
 
 
 # Verejny vstup pro nastroje (nahled, diagnostika). Hra sama spawnuje
-# jen pres vlny, takze se tohle v hernim kode nikde nevola.
-func debug_spawn(enemy_el: int) -> Enemy:
-	_spawn(enemy_el)
+# jen pres vlny, takze se tohle v hernim kode nikde nevola. Druh a dvojici
+# zivlu si muze zavolany rict - jinak prijde zakladni jednozivelny.
+func debug_spawn(enemy_el: int, tier: int = Enemy.TIER_BASIC, pair: Array = []) -> Enemy:
+	_spawn(enemy_el, tier, pair)
 	if enemies.is_empty():
 		return null
 	var e: Enemy = enemies[enemies.size() - 1]
@@ -515,6 +620,67 @@ func _next_element() -> int:
 	return int(spawn_pool[_next_int(spawn_pool.size())])
 
 
+# VÁHY DRUHŮ POUTNÍKŮ PODLE KOLA. Prvni dve kola chodi jen zakladni druh -
+# hrac se musi rozkoukat a pochopit vyhybku driv, nez zacne resit, co vlastne
+# jde po ceste. Od tretiho kola pribyvaji tezci, od pateho i dvojzivelni.
+# Poradi je [zakladni, lehky, tezky]; cisla jsou vahy pro losovani, ne pocet.
+func tier_weights() -> Array:
+	if round <= 2:
+		return [10, 0, 0]
+	if round <= 4:
+		return [8, 4, 3]
+	if round <= 7:
+		return [6, 4, 4]
+	return [5, 4, 5]
+
+
+# S JAKOU PRAVDEPODOBNOSTI BUDE POUTNIK DVOJZIVELNY. Nula do ctvrteho kola:
+# dvojzivelny bere nevýhody obou zivlu, takze je to nejsilnejsi protivnik
+# v hre a nesmi prijit driv, nez hrac ma veze na obou stranach.
+func dual_chance() -> float:
+	if round < 5:
+		return 0.0
+	return minf(0.15 + 0.04 * float(round - 5), 0.45)
+
+
+func _next_tier() -> int:
+	var w: Array = tier_weights()
+	var total: int = 0
+	for x in w:
+		total += int(x)
+	if total <= 0:
+		return Enemy.TIER_BASIC
+	var pick: int = _next_int(total)
+	for i in range(w.size()):
+		pick -= int(w[i])
+		if pick < 0:
+			return i
+	return Enemy.TIER_BASIC
+
+
+func _next_dual() -> bool:
+	var ch: float = dual_chance()
+	if ch <= 0.0:
+		return false
+	return float(_next_int(1000)) / 1000.0 < ch
+
+
+# DVOJICE PROTIKLADNYCH ZIVLU pro dvojzivelneho poutnika. Vyberaji se JEN
+# zivly, ktere mapa posila, a druhy z dvojice musi byt taky v mape - jinak by
+# hrac na jednu pul poutnika nemel protiklad a nemel by ho cim zabit.
+# Dvojice se bere jednou (`el < op`), aby ohen+voda nebyla i voda+ohen.
+func _next_dual_pair() -> Array:
+	var pairs: Array = []
+	for x in spawn_pool:
+		var el: int = x
+		var op: int = Element.opposite_of(el)
+		if el < op and spawn_pool.has(op):
+			pairs.append([el, op])
+	if pairs.is_empty():
+		return []
+	return pairs[_next_int(pairs.size())]
+
+
 # ---------------------------------------------------------------- krok
 
 func step(delta: float) -> void:
@@ -539,7 +705,12 @@ func step(delta: float) -> void:
 			guard += 1
 			var el: int = _next_element()
 			if el >= 0:
-				_spawn(el)
+				# DRUH A DVOJZIVELNOST SE LOSUJI ZE STEJNEHO rng jako zivel,
+				# takze hra zustava deterministicka pro dane kolo.
+				var pair: Array = []
+				if _next_dual():
+					pair = _next_dual_pair()
+				_spawn(el, _next_tier(), pair)
 			spawn_wait += _next_gap()
 		if round_left <= 0.0:
 			round_left = 0.0
@@ -608,7 +779,7 @@ func _move_enemies(delta: float) -> void:
 			e.alive = false
 			lives -= 1
 			if nd >= 0 and int(net.node_kind[nd]) == Level.CIL:
-				_note("Poutnik %s došel do cíle (-1 život)." % Element.name_of(e.element))
+				_note("Poutnik %s došel do cíle (-1 život)." % e.title())
 			else:
 				_note("Poutnik %s zabloudil (-1 život)." % Element.name_of(e.element))
 			continue
@@ -670,7 +841,7 @@ func _index_enemies() -> void:
 func _target_for(t: Tower) -> Enemy:
 	var best: Enemy = null
 	var best_left: float = 1.0e12
-	var r: int = Tower.RANGE
+	var r: int = t.reach()
 	for dx in range(-r, r + 1):
 		for dy in range(-r, r + 1):
 			var c := Vector2i(t.cell.x + dx, t.cell.y + dy)
@@ -682,7 +853,7 @@ func _target_for(t: Tower) -> Enemy:
 				# NA SVEHO SE NEUTOCI. Vez, ktera by poutnikovi stejneho
 				# elementu neublizila, na nej nesmi ani vystrelit - prisla
 				# by o ranu pro nekoho, komu opravdu ublizi (Jan, Oct 2026).
-				if not t.can_hurt(e.element):
+				if not e.can_hurt(t.element):
 					continue
 				var left: float = float(net.lane_len[e.lane]) - e.s
 				if left < best_left:
@@ -696,7 +867,7 @@ func _target_for(t: Tower) -> Enemy:
 func _shot(t: Tower, e: Enemy) -> void:
 	t.cd = t.cooldown()
 	shots.append(Shot.launch(t, e, net.cell_center(t.cell), e.pos,
-		t.damage() * Element.tower_multiplier(e.element, t.element)))
+		t.damage() * e.mult_against(t.element)))
 
 
 # LET STREL. Strela leti za svym poutnikem (je to strela, ne past polozena
@@ -738,8 +909,12 @@ func _damage(e: Enemy, dmg: float) -> void:
 	e.hp -= dmg
 	if e.hp <= 0.0:
 		e.alive = false
-		gold += REWARD
-		_note("Poutník %s zničen (+%d)." % [Element.name_of(e.element), REWARD])
+		# ODMENA JE PODLE DRUHU: lehky poutnik je jen na odskok, tezky se
+		# vyplati (Jan: "Rychlejší s menšími životy. Pomalejší s vyššími").
+		var r: int = e.reward()
+		gold += r
+		_note("Poutník %s %s zničen (+%d)." % [
+			Enemy.tier_name(e.tier).to_lower(), e.title(), r])
 
 
 # MRTVÍ POUTNÍCI SE VYHAZUJÍ NA JEDNOM MISTE. Driv si kazda faze (pohyb,

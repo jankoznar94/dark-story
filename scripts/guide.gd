@@ -35,7 +35,7 @@ const BLOCKS := [
 	{
 		"art": "_guide_tower",
 		"title": "Věže",
-		"text": "Klepni na pás u cesty: věž se postaví. Klepni na věž: vybereš ji a vylepšíš nebo prodáš. Zuby nad věží jsou její úroveň.",
+		"text": "Klepni na pás: označíš místo a vybereš druh věže. Postavit ji musíš tlačítkem. Hotovou věž klepnutím vybereš, vylepšíš nebo prodáš.",
 	},
 	{
 		"art": "_guide_damage",

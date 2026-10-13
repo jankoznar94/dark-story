@@ -157,6 +157,17 @@ func _ready() -> void:
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
+	elif args.has("--shop-shot"):
+		# Snimek OBCHODU S VEZEMI: oznacene stavebni misto a pruh s druhy.
+		# Jediny zpusob, jak zmerit, ze se popisky druhu vejdou do tlacitek
+		# a ze obchod nezaleze desku.
+		_setup_shot()
+		game.select_tower(Vector2i(-1, -1))
+		for cellv in game.net.strip_cells:
+			var c: Vector2i = cellv
+			if game.tower_at(c) == null and game.select_build_cell(c):
+				print("SHOP_CELL=%s" % str(c))
+				break
 
 # Most z JavaScriptu zpet do hry. JavaScriptBridge.eval vrati u Promise
 # null, ne vysledek, takze vysledky (otisk buildu, stav aktualizace) musi
@@ -233,9 +244,21 @@ func _setup_shot() -> void:
 	game.round_left = 60.0
 	game.spawn_wait = 40.0
 	game.set_switch(1)
-	for el in [Element.FIRE, Element.EARTH, Element.WATER, Element.AIR, Element.FIRE]:
+	# UKAZKOVE DRUHY: oba nove druhy poutniku chodi s ostatnimi.
+	for el in [Element.EARTH, Element.WATER, Element.AIR]:
 		game.debug_spawn(el)
+	game.debug_spawn(Element.WATER, Enemy.TIER_LIGHT)
+	game.debug_spawn(Element.AIR, Enemy.TIER_HEAVY)
 	game.run_for(11.0)
+	# DVOJZIVELNY POUTNIK SE UKAZUJE AZ TED: kdyby sel s ostatnimi, veze by
+	# ho do snimku zabily (bere dvojnasobek od obou protikladnych zivlu),
+	# vypadl by ze seznamu a na snimku by nebyl. Postavi se doprostred useku.
+	var dual: Enemy = game.debug_spawn(Element.FIRE, Enemy.TIER_BASIC, [Element.FIRE, Element.WATER])
+	if dual != null:
+		dual.s = float(game.net.lane_len[dual.lane]) * 0.5
+		dual.pos = game.net.point_at(dual.lane, dual.s)
+		print("DUAL_AT=%d,%d %d %d" % [int(dual.pos.x), int(dual.pos.y),
+			dual.element, dual.element2])
 	# UKAZKOVE NALEZITOSTI PRO KONTROLU VZHLEDU: vybrana vez (aby byl na
 	# snimku videt i panel s vylepsenim/prodejem) a ROZJETA STRELA. Strela se
 	# jinak neda vyfotit - leti 0,25 s a snimek se dela po trech snimcich.
@@ -455,6 +478,24 @@ func _handle_tap(pos: Vector2) -> void:
 			_click()
 			game.try_sell(st.cell)
 			return
+	# OBCHOD S VEZEMI. Klepnuti na druh JEN VYBIRA - proto se testuje pred
+	# deskou: jinak by klepnuti na tlacitko druhu propadlo na bunku pod nim
+	# a hrac by si oznacil jinou pudu, nez na kterou se diva.
+	if game.build_selected():
+		for i in range(layout.build_kinds.size()):
+			var kr: Rect2 = layout.build_kinds[i]
+			if kr.has_point(pos):
+				_click()
+				game.pick_kind(i)
+				return
+		if layout.build_ok.has_point(pos):
+			_click()
+			game.confirm_build()
+			return
+		if layout.build_cancel.has_point(pos):
+			_click()
+			game.cancel_build()
+			return
 	# PAK UZEL VYHYBKY. Kruh je to, co hrac vidi jako tlacitko. V uzlu se
 	# vstupni usek potkava s vystupnimi a vsechny jsou od stredu stejne
 	# daleko, takze hledani nejblizsiho useku by mohlo vybrat ten, ktery do
@@ -464,9 +505,10 @@ func _handle_tap(pos: Vector2) -> void:
 		_click()
 		game.cycle_switch(j)
 		return
-	# PAK BUNKA PASU. Klepnuti na prazdnou bunku stavi vez s elementem te
-	# cesty, klepnuti na hotovou vez ji VYBRE (vylepseni a prodej jsou pak
-	# tlacitka v panelu). Mimo pas se nestavi.
+	# PAK BUNKA PASU. Klepnuti na prazdnou bunku OZNACI stavebni misto a
+	# otevre obchod s vezemi (vez se stavi az tlacitkem Postavit), klepnuti
+	# na hotovou vez ji VYBRE (vylepseni a prodej jsou pak tlacitka v panelu).
+	# Mimo pas se nestavi.
 	var cell: Vector2i = game.net.cell_at(pos)
 	if game.net.strip_has(cell):
 		_click()
@@ -477,10 +519,10 @@ func _handle_tap(pos: Vector2) -> void:
 		_click()
 		game.set_switch(lane)
 		return
-	# KLEPNUTI MIMO DESKU zrusi vyber. Panel s tlacitky nesmi zustat viset na
-	# obrazovce, kdyz hrac dela neco jineho - jinak by prekryval desku a hrac
-	# by nevedel, proc.
-	game.select_tower(Vector2i(-1, -1))
+	# KLEPNUTI MIMO DESKU zrusi vyber (vez i rozdelanou stavbu). Panel s
+	# tlacitky nesmi zustat viset na obrazovce, kdyz hrac dela neco jineho -
+	# jinak by prekryval desku a hrac by nevedel, proc.
+	game.clear_selection()
 
 
 # MENU: ctyři tlacitka. Battle spusti kolo, Navod vysvetli pravidla,
@@ -1025,9 +1067,19 @@ func _draw_battle() -> void:
 		var sc: Vector2 = game.net.cell_center(st.cell)
 		layout.tower_panel(sc)
 		_draw_tower_sel(sc)
+	# OBCHOD S VEZEMI: misto je oznacene, ale vez stoji zatim jen v nabidce.
+	# Je to stav PRED stavbou, takze se kresli na stejnem miste jako panel
+	# vybrane veze - oba se vzajemne vylucuji (viz Game.select_build_cell).
+	var bc: bool = game.build_selected()
+	if bc:
+		var bcenter: Vector2 = game.net.cell_center(game.build_cell)
+		layout.build_panel(bcenter, Tower.KIND_COUNT)
+		_draw_build_sel(bcenter)
 	_draw_hud()
 	if st != null:
 		_draw_tower_panel(st)
+	if bc:
+		_draw_build_panel()
 
 
 # ---------------------------------------------------------------- menu
@@ -1530,7 +1582,7 @@ func _draw_tower_panel(t: Tower) -> void:
 	_label(Vector2(layout.text_x, bar.position.y + bar.size.y * 0.42),
 		"Věž %s · úroveň %d" % [Level.value_name(t.element), t.level], 18, col)
 	_label(Vector2(layout.text_x, bar.position.y + bar.size.y * 0.78),
-		"%.0f poškození · %.2f s · dostřel %d" % [t.damage(), t.cooldown(), Tower.RANGE],
+		"%.0f poškození · %.2f s · dostřel %d" % [t.damage(), t.cooldown(), t.reach()],
 		13, Color(0.58, 0.55, 0.49))
 	# VYLEPSIT: cena je na tlacitku, aby hrac nemusel nikam koukat.
 	# NA MAXIMU se misto slova "Maximalni" pise POCET ZUBU: uroven veze se
@@ -1543,7 +1595,65 @@ func _draw_tower_panel(t: Tower) -> void:
 	_draw_bar_btn(layout.tower_sell, "Prodat +%d" % t.sell_back(), Color(0.85, 0.42, 0.36), true)
 
 
-# ZUBY. Uroven veze se na desce cte jako zuby nad ni, takze se poctem zubu
+# OZNACENI STAVEBNIHO MISTA: ramecek bunky, krizek a ctverec dostrehu
+# vybraneho druhu. Hrac vidi KAM by vez stala a na co by dosahla - a ze je to
+# teprve nabidka, ne postavena vez. Krizek je tam proto, ze ramecek sam by se
+# dal splest s oznacenim vybrane veze; krizek znamena "sem se stavi".
+func _draw_build_sel(center: Vector2) -> void:
+	var cw: float = game.net.cell_w
+	var ch: float = game.net.cell_h
+	var o: Vector2 = game.net.origin
+	var cell: Vector2i = game.build_cell
+	var col: Color = Level.value_color(game.net.strip_element(cell))
+	var cr := Rect2(o.x + cw * float(cell.x), o.y + ch * float(cell.y), cw, ch)
+	draw_rect(cr, Color(0.95, 0.88, 0.60, 0.14))
+	draw_rect(cr, col.lightened(0.45), false, maxf(2.0, 3.0 * layout.s))
+	var arm: float = minf(cw, ch) * 0.16
+	var tick: float = maxf(1.4, 2.6 * layout.s)
+	draw_line(center - Vector2(arm, 0.0), center + Vector2(arm, 0.0),
+		Color(0.95, 0.88, 0.60), tick)
+	draw_line(center - Vector2(0.0, arm), center + Vector2(0.0, arm),
+		Color(0.95, 0.88, 0.60), tick)
+	# DOSTREL VYBRANEHO DRUHU - stejna kresba jako u vybrane veze, aby hrac
+	# videl rozdil mezi druhy jeste pred stavbou.
+	var d: int = Tower.kind_reach(game.build_kind)
+	var a: Vector2 = o + Vector2(cw * float(cell.x - d), ch * float(cell.y - d))
+	var b: Vector2 = o + Vector2(cw * float(cell.x + d + 1), ch * float(cell.y + d + 1))
+	draw_rect(Rect2(a, b - a), Color(0.95, 0.88, 0.60, 0.22), false, maxf(1.0, 1.8 * layout.s))
+
+
+# OBCHOD S VEZEMI. Vlevo druhy vezi (klepnuti jen VYBERI, nepostavi), vpravo
+# Postavit a Zrusit. Cislo na tlacitku druhu je cena za postaveni - hrac tak
+# vi, kolik ho to bude stat, jeste nez se rozhodne.
+func _draw_build_panel() -> void:
+	var bar: Rect2 = layout.build_bar
+	draw_rect(bar, PANEL_BG)
+	draw_line(Vector2(bar.position.x, bar.position.y),
+		Vector2(bar.end.x, bar.position.y), Color(0.46, 0.42, 0.35), layout.ul(2.0))
+	var col: Color = Level.value_color(game.net.strip_element(game.build_cell))
+	for i in range(layout.build_kinds.size()):
+		var r: Rect2 = layout.build_kinds[i]
+		_draw_kind_btn(r, Tower.kind_label(i), col, i == game.build_kind)
+	_draw_bar_btn(layout.build_ok, "Postavit %d" % Tower.kind_cost(game.build_kind, 1),
+		col, game.gold >= Tower.kind_cost(game.build_kind, 1))
+	_draw_bar_btn(layout.build_cancel, "Zrušit", Color(0.85, 0.42, 0.36), true)
+
+
+# TLACITKO DRUHU VEZI. Vybrany druh ma silny ramecek v barve pasu a svetly
+# text; ostatni jen tenky ramecek - aby bylo na prvni pohled videt, co se
+# postavi, kdyz hrac klepne na Postavit.
+func _draw_kind_btn(r: Rect2, text: String, accent: Color, selected: bool) -> void:
+	draw_rect(r, PANEL_BTN)
+	if selected:
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.85), false, layout.ul(3.0))
+	else:
+		draw_rect(r, Color(0.38, 0.35, 0.30), false, layout.ul(1.5))
+	_label(Vector2(r.get_center().x, r.position.y + r.size.y * 0.64), text, 15,
+		Color(0.95, 0.92, 0.84) if selected else Color(0.66, 0.63, 0.57),
+		true, r.size.x)
+
+
+# ZUBY. Uroven veze se na desce cte jako zuby nad vezi, takze se poctem zubu
 # pise i uroven v panelu na maximu (Jan, Oct 2026: "Počet zubů"). Ceske
 # sklonovani: 1 zub, 2-4 zuby, 5+ zubu.
 func _teeth_text(n: int) -> String:
@@ -1688,13 +1798,43 @@ func _draw_enemies() -> void:
 		if not e.on_lane():
 			continue
 		var p: Vector2 = _enemy_pos(e)
-		var col: Color = Element.color_of(e.element)
-		draw_circle(p, ENEMY_R_OUT * layout.s, Color(0.09, 0.085, 0.08))
-		draw_circle(p, ENEMY_R_IN * layout.s, col)
-		_glyph(e.element, p, ENEMY_GLYPH * layout.s, Color(0.07, 0.06, 0.06))
+		# DRUH JE VIDET NA VELIKOSTI: tezky poutnik je vetsi, lehky mensi.
+		# Hrac tak vi, do ceho investuje rany, jeste nez ho zasahne.
+		var sz: float = Enemy.tier_size(e.tier)
+		var r_in: float = ENEMY_R_IN * layout.s * sz
+		var r_out: float = ENEMY_R_OUT * layout.s * sz
+		draw_circle(p, r_out, Color(0.09, 0.085, 0.08))
+		if e.dual():
+			# DVOJZIVELNY: PUL KOLECKA KAZDYM ZIVLEM (Jan: "půl kolečka
+			# červená, půl modrá"). Delici cara je SVISLA - vodorovna by se
+			# pletla s obloukem zivotu, ktery je taky vodorovne nahore.
+			draw_colored_polygon(_half_disc(p, r_in, -PI * 0.5, PI * 0.5),
+				Element.color_of(e.element))
+			draw_colored_polygon(_half_disc(p, r_in, PI * 0.5, PI * 1.5),
+				Element.color_of(e.element2))
+			draw_line(p - Vector2(0.0, r_in), p + Vector2(0.0, r_in),
+				Color(0.09, 0.085, 0.08), maxf(1.0, 1.6 * layout.s))
+			var g: float = ENEMY_GLYPH * layout.s * 0.55
+			_glyph(e.element, p - Vector2(r_in * 0.42, 0.0), g, Color(0.07, 0.06, 0.06))
+			_glyph(e.element2, p + Vector2(r_in * 0.42, 0.0), g, Color(0.07, 0.06, 0.06))
+		else:
+			draw_circle(p, r_in, Element.color_of(e.element))
+			_glyph(e.element, p, ENEMY_GLYPH * layout.s * sz, Color(0.07, 0.06, 0.06))
 		if e.hp_frac() < 1.0:
-			draw_arc(p, ENEMY_HP_R * layout.s, -PI * 0.5, -PI * 0.5 + TAU * e.hp_frac(), 24,
+			draw_arc(p, ENEMY_HP_R * layout.s * sz, -PI * 0.5, -PI * 0.5 + TAU * e.hp_frac(), 24,
 				Color(0.90, 0.85, 0.55), 3.0)
+
+
+# PUL KRUHU jako polygon. Pouziva se pro dvojzivelneho poutnika: dve pulky
+# vedle sebe, kazda ve sve barve, dohromady daji cely kruh.
+func _half_disc(p: Vector2, r: float, a0: float, a1: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var steps: int = 16
+	pts.append(p)
+	for i in range(steps + 1):
+		var a: float = a0 + (a1 - a0) * float(i) / float(steps)
+		pts.append(p + Vector2(cos(a), sin(a)) * r)
+	return pts
 
 
 func _enemy_pos(e: Enemy) -> Vector2:

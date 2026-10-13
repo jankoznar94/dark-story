@@ -103,6 +103,51 @@ func tower_panel(center: Vector2) -> void:
 	var bx: float = view.x - PAD * ui * 0.5 - bw
 	tower_sell = Rect2(bx, bar_y + pad, bw, bh)
 	tower_up = Rect2(bx - bw - pad, bar_y + pad, bw, bh)
+
+
+# --- OBCHOD S VEZEMI (stavba ve dvou krocich) ---
+# Vyskoci, kdyz hrac oznaci stavebni misto - tedy JESTE PRED stavbou. Je to
+# stejny pruh jako u vybrane veze a ze stejneho duvodu na PROTILEHLOU stranu:
+# hrac musi porad videt misto, ktere si vybral.
+const BUILD_BAR_H := 58.0
+# Nejsirsi tlacitko druhu veze. Sirsi uz je jen prazdna plocha: obchod ma byt
+# prehledny a tlacitka maji byt u sebe, ne rozhozena pres displej.
+const KIND_BTN_W := 240.0
+var build_bar := Rect2()
+# TLACITKA DRUHU VEZI, vlevo, v poradi jako v `Tower.KINDS`. Pocet dava
+# obrazovka (`build_panel`), takze pridani druhu je zmena v Tower - tady se
+# nic nepredelava.
+var build_kinds: Array = []
+var build_ok := Rect2()
+var build_cancel := Rect2()
+
+
+func build_panel(center: Vector2, kinds: int) -> void:
+	var n: int = maxi(kinds, 1)
+	var h: float = maxf(MIN_TOUCH + 10.0 * ui, BUILD_BAR_H * ui)
+	var bar_y: float = (view.y - h) if center.y <= view.y * 0.5 else hud_h + 1.0 * s
+	build_bar = Rect2(0.0, bar_y, view.x, h)
+	var pad: float = 6.0 * ui
+	var bh: float = h - pad * 2.0
+	# Postavit a Zrusit jsou STEJNE velka jako u panelu vybrane veze (a na
+	# stejnem miste, jen na opacne strane podle toho, kde je oznacene misto):
+	# obe tlacitka se mackaji prstem a hrac se mezi taby nema co ucit.
+	var bw: float = minf(maxf(MIN_TOUCH * 2.2, 190.0 * ui), (view.x - 4.0 * PAD * ui) * 0.5)
+	var bx: float = view.x - PAD * ui * 0.5 - bw
+	build_ok = Rect2(bx, bar_y + pad, bw, bh)
+	build_cancel = Rect2(bx - bw - pad, bar_y + pad, bw, bh)
+	# DRUHY VEZI dostanou vsechno, co zbyde vlevo. Sirka se deli poctem druhu,
+	# aby se cely obchod vesel na displej i na malem telefonu - nikdy ale
+	# neklesne pod dotykove minimum, aby se druh dal vubec trefit, a nikdy
+	# nevyroste pres KIND_BTN_W (u jednoho druhu by z nej bylo prazdne
+	# pole pres pul displeje).
+	var left: float = PAD * ui * 0.5
+	var room: float = maxf(build_cancel.position.x - pad - left, MIN_TOUCH)
+	var kw: float = clampf((room - pad * float(n - 1)) / float(n),
+		MIN_TOUCH, KIND_BTN_W * ui)
+	build_kinds = []
+	for i in range(n):
+		build_kinds.append(Rect2(left + float(i) * (kw + pad), bar_y + pad, kw, bh))
 # Editor: pruh tabu dole, panel otevrene kategorie a plocha, kterou zabira.
 var ed_buttons: Array = []
 # OTEVRENY PANEL: seznam radku (dole -> nahoru), kazdy radek seznam polozek

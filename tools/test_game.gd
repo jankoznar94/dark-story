@@ -21,6 +21,9 @@ func _init() -> void:
 	_run("vlastni zivel je imunni", _test_own_element_is_free)
 	_run("vez nestrili na sveho", _test_tower_skips_own_element)
 	_run("stavba a vylepseni veze", _test_tower_build_and_levels)
+	_run("stavba ve dvou krocich (oznacit, vybrat, Postavit)", _test_build_two_steps)
+	_run("druhy poutniku (lehky, tezky)", _test_enemy_tiers)
+	_run("dvojzivelny poutnik bere nevyhody obou", _test_dual_enemy)
 	_run("vyber, vylepseni a prodej veze", _test_tower_select_sell)
 	_run("pas kolem cest", _test_strip_rules)
 	_run("typ vstupniho useku", _test_entry_type)
@@ -100,6 +103,175 @@ func _walk_lane(g: Game, lane: int, element: int) -> Enemy:
 
 
 # ---------------------------------------------------------------- zaklad
+
+# STAVBA VE DVOU KROCICH. Jan (Oct 2026): "Věž by se neměla postavit hned při
+# prvním kliknutí na stavební půdu. Zaprvé bude na výběr více druhů věží a za
+# druhé se takhle snadno postaví věž omylem. Musíme označit půdu, dostat na
+# výběr věže, vybrat věž a kliknout na 'postavit'."
+func _test_build_two_steps() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	var fire: int = _lane_with(g, Element.FIRE)
+	if fire < 0:
+		return
+	var cell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	_check(g.net.strip_has(cell), "zakladni deska nema pod ohnivou cestou stavebni pudu")
+	if not g.net.strip_has(cell):
+		return
+	# 1) KLEPNUTI NA PUDU NIC NEPOSTAVI - jen ji oznaci a otevre obchod.
+	_check(g.tap_build_cell(cell), "klepnuti na stavebni pudu misto neoznacilo")
+	_check(g.tower_count() == 0, "vez se postavila hned pri prvnim klepnuti")
+	_check(g.gold == 5000, "klepnuti na pudu si vzalo zlato")
+	_check(g.build_cell == cell, "oznacene stavebni misto nesedi")
+	_check(g.build_selected(), "obchod s vezemi se neotevrel")
+	_check(g.selected_tower() == null, "oznaceni mista nechalo vybranou vez")
+	# 2) DRUH SE VYBERI ZVLAST A JEN Z NABIDKY
+	_check(g.pick_kind(Tower.DEFAULT_KIND), "druh veze nejde vybrat")
+	_check(not g.pick_kind(-1), "obchod vzal druh mimo nabidku (-1)")
+	_check(not g.pick_kind(Tower.KIND_COUNT), "obchod vzal druh za rozsahem nabidky")
+	# Cislo KIND_COUNT a tabulka KINDS se musi shodovat - je to jedine misto,
+	# kde se pocet druhu opakuje (const v GDScriptu neumi KINDS.size()).
+	_check(Tower.KIND_COUNT == Tower.KINDS.size(),
+		"KIND_COUNT (%d) nesedi s poctem druhu (%d)" % [Tower.KIND_COUNT, Tower.KINDS.size()])
+	# 3) DRUHE KLEPNUTI NA OZNACENE MISTO OBCHOD ZAVRE (jinak by klepnuti
+	# na uz oznacene misto nedelalo nic)
+	_check(not g.tap_build_cell(cell), "druhe klepnuti na oznacene misto nic neznamenalo")
+	_check(not g.build_selected(), "druhe klepnuti nechalo obchod otevreny")
+	_check(g.tower_count() == 0, "zrusena stavba neco postavila")
+	_check(not g.confirm_build(), "Postavit bez oznaceneho mista proslo")
+	# 4) POSTAVIT AZ NA POKYN HRACE
+	g.tap_build_cell(cell)
+	var before: int = g.gold
+	_check(g.confirm_build(), "Postavit nepostavilo vez")
+	var t: Tower = g.tower_at(cell)
+	_check(t != null, "po Postavit vez nikde")
+	_check(g.gold == before - Tower.kind_cost(Tower.DEFAULT_KIND, 1),
+		"stavba nestala cenu druhu (%d)" % (before - g.gold))
+	_check(t != null and t.kind == Tower.DEFAULT_KIND, "vez nema zvoleny druh")
+	_check(not g.build_selected(), "po postaveni zustal obchod otevreny")
+	_check(g.selected_tower() == t, "po postaveni neni vez vybrana")
+	# 5) OZNACENI JINE PUDY OBCHOD PRENESE, NIC NEPOSTAVI
+	var cell2 := Vector2i(-1, -1)
+	for cellv in g.net.strip_cells:
+		var c: Vector2i = cellv
+		if c != cell and g.tower_at(c) == null:
+			cell2 = c
+			break
+	if cell2.x >= 0:
+		g.tap_build_cell(cell2)
+		_check(g.build_cell == cell2, "obchod se nepresunul na jinou pudu")
+		_check(g.tower_count() == 1, "klepnuti na druhou pudu neco postavilo")
+	# 6) VYBER VEZE A OBCHOD SE VZAJEMNE VYLUCUJI: na obrazovce je pro ne jen
+	# jeden pruh, takze nesmi platit oba zaroven.
+	g.tap_build_cell(cell)
+	_check(g.selected_tower() == t, "klepnuti na postavenou vez ji nevybralo")
+	_check(not g.build_selected(), "vyber veze nechal otevreny obchod s vezemi")
+	# 7) MALO ZLATA: misto se oznaci (hrac vidi ceny), ale Postavit to rekne
+	g.tap_build_cell(cell2)
+	_check(g.build_selected(), "druhe oznaceni mista se neprovedlo")
+	g.gold = 0
+	_check(not g.confirm_build(), "vez se postavila bez zlata")
+	_check(g.tower_count() == 1, "stavba bez zlata neco postavila")
+	g.cancel_build()
+	_check(g.tower_count() == 1, "zruseni stavby neco postavilo")
+
+
+# DRUHY POUTNÍKŮ. Jan (Oct 2026): "Rovnou vymyslíme i další úrovně nepřátel.
+# Rychlejší s menšími životy. Pomalejší s vyššími životy." Test hlida, ze
+# cisla opravdu delaji to, co maji: lehky je RYCHLEJSI a ma MENE zivotu,
+# tezky je POMALEJSI a ma VIC zivotu, a odmena odpovida druhu.
+func _test_enemy_tiers() -> void:
+	var g := _new_game()
+	var basic: Enemy = g.debug_spawn(Element.FIRE, Enemy.TIER_BASIC)
+	var light: Enemy = g.debug_spawn(Element.FIRE, Enemy.TIER_LIGHT)
+	var heavy: Enemy = g.debug_spawn(Element.FIRE, Enemy.TIER_HEAVY)
+	_check(basic != null and light != null and heavy != null, "druhy poutniku se nepodarilo spawnout")
+	if basic == null or light == null or heavy == null:
+		return
+	_check(light.speed > basic.speed, "lehky poutnik neni rychlejsi (%.1f vs %.1f)" % [
+		light.speed, basic.speed])
+	_check(heavy.speed < basic.speed, "tezky poutnik neni pomalejsi (%.1f vs %.1f)" % [
+		heavy.speed, basic.speed])
+	_check(light.max_hp < basic.max_hp, "lehky poutnik nema mene zivotu (%.1f vs %.1f)" % [
+		light.max_hp, basic.max_hp])
+	_check(heavy.max_hp > basic.max_hp, "tezky poutnik nema vic zivotu (%.1f vs %.1f)" % [
+		heavy.max_hp, basic.max_hp])
+	_check(basic.reward() == Game.REWARD, "zakladni druh nema odmenu %d (%d)" % [
+		Game.REWARD, basic.reward()])
+	_check(light.reward() < basic.reward(), "lehky poutnik se vyplati vic nez zakladni")
+	_check(heavy.reward() > basic.reward(), "tezky poutnik se nevyplati vic nez zakladni")
+	# KOLA 1-2: CHODI JEN ZAKLADNI DRUH. Hrac se musi nejdriv rozkoukat.
+	for r in [1, 2]:
+		g.round = r
+		var w: Array = g.tier_weights()
+		_check(int(w[Enemy.TIER_LIGHT]) == 0 and int(w[Enemy.TIER_HEAVY]) == 0,
+			"v kole %d chodi i jine druhy nez zakladni" % r)
+		_check(is_equal_approx(g.dual_chance(), 0.0),
+			"v kole %d muze prijit dvojzivelny poutnik" % r)
+	# OD TRETIHO KOLA TEZCI, OD PATEHO DVOJZIVELNI
+	g.round = 3
+	_check(int(g.tier_weights()[Enemy.TIER_HEAVY]) > 0, "od 3. kola nechodi tezci")
+	_check(is_equal_approx(g.dual_chance(), 0.0), "ve 3. kole muze prijit dvojzivelny poutnik")
+	g.round = 4
+	_check(is_equal_approx(g.dual_chance(), 0.0), "ve 4. kole muze prijit dvojzivelny poutnik")
+	g.round = 5
+	_check(g.dual_chance() > 0.0, "od 5. kola nechodi dvojzivelni")
+	# a losovani opravdu ty druhy dava (ne ze je jen v tabulce)
+	g.round = 8
+	var seen := {}
+	var duals: int = 0
+	for i in range(400):
+		seen[g._next_tier()] = true
+		if g._next_dual():
+			duals += 1
+	_check(seen.has(Enemy.TIER_LIGHT), "losovani nikdy nevybralo lehkeho poutnika")
+	_check(seen.has(Enemy.TIER_HEAVY), "losovani nikdy nevybralo tezkeho poutnika")
+	_check(duals > 0, "losovani nikdy nevybralo dvojzivelneho poutnika")
+
+
+# DVOJZIVELNY POUTNIK (ohen + voda). Jan (Oct 2026): "Nepřátelé dvou elementů
+# (oheň + voda, půl kolečka červená, půl modrá, nevýhody z obou elementů)."
+# Test hlida PRAVIDLO: bere nejvyssi nasobek z obou zivlu, takze ho obe
+# protikladne veze berou dvojnasobkem a nikdy nema imunitu.
+func _test_dual_enemy() -> void:
+	var g := _new_game()
+	var e: Enemy = g.debug_spawn(Element.FIRE, Enemy.TIER_BASIC, [Element.FIRE, Element.WATER])
+	_check(e != null, "dvojzivelny poutnik se nepodarilo spawnout")
+	if e == null:
+		return
+	_check(e.dual(), "poutnik nema druhy zivel")
+	_check(e.element2 == Element.WATER, "druhy zivel neni voda (%d)" % e.element2)
+	# OBE protikladne veze berou dvojnasobkem
+	_check(is_equal_approx(e.mult_against(Element.FIRE), 2.0),
+		"ohniva vez nebere dvojzivelnemu dvojnasobek (%.2f)" % e.mult_against(Element.FIRE))
+	_check(is_equal_approx(e.mult_against(Element.WATER), 2.0),
+		"vodni vez nebere dvojzivelnemu dvojnasobek (%.2f)" % e.mult_against(Element.WATER))
+	# a zbyle dva zivly berou jen polovinou - zadna imunita
+	_check(is_equal_approx(e.mult_against(Element.EARTH), 0.5),
+		"země bere dvojzivelnemu jine nez 0.5 (%.2f)" % e.mult_against(Element.EARTH))
+	_check(is_equal_approx(e.mult_against(Element.AIR), 0.5),
+		"vzduch bere dvojzivelnemu jine nez 0.5 (%.2f)" % e.mult_against(Element.AIR))
+	for el in [Element.FIRE, Element.WATER, Element.EARTH, Element.AIR]:
+		_check(e.can_hurt(el), "dvojzivelny poutnik je imunni na zivel %d" % el)
+	# Jednozivelny poutnik se chova jako driv (zadna zmena pravidel)
+	var one: Enemy = g.debug_spawn(Element.FIRE)
+	_check(not one.dual(), "jednozivelny poutnik ma druhy zivel")
+	_check(is_equal_approx(one.mult_against(Element.FIRE), 0.0),
+		"ohniva vez bere ohnivemu poutnikovi neco jineho nez nulu")
+	_check(not one.can_hurt(Element.FIRE), "ohniva vez si mysli, ze ublizi ohnivemu poutnikovi")
+	# JMENO: v hlasce musi byt videt oba zivly
+	_check(e.title() == "Oheň+Voda", "dvojzivelny poutnik se jmenuje '%s'" % e.title())
+	# DVOJICE SE BERE JEN Z ZIVLU, KTERE MAPA POSILA
+	g.round = 6
+	var ok: bool = true
+	for i in range(50):
+		var pair: Array = g._next_dual_pair()
+		if pair.size() != 2:
+			continue
+		if not g.spawn_pool.has(int(pair[0])) or not g.spawn_pool.has(int(pair[1])):
+			ok = false
+	_check(ok, "dvojice zivlu obsahuje zivel, ktery mapa neposila")
+
 
 func _test_setup() -> void:
 	var g := _new_game()

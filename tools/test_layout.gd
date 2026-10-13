@@ -274,3 +274,49 @@ func _one(w: int, h: int) -> void:
 		_check(panel_below == want_top,
 			"%s: panel je na stejne strane jako vez (nahore=%s, vez nahore=%s)" % [
 				tag, not panel_below, want_top])
+
+	# --- OBCHOD S VEZEMI: dokud stoji jen v nabidce, musi byt kazde tlacitko
+	# na displeji, nad dotykovym minimem a nesmi se prekryvat s "Postavit".
+	# Zkousi se prvni DRUH, ktery se do obchodu vejde, protoze sirka tlacitek
+	# druhu se deli jejich poctem - s vice druhy je to horsi pripad.
+	for want_top2 in [true, false]:
+		var bcell := Vector2i(-1, -1)
+		for cellv in g2.net.strip_cells:
+			var bc: Vector2i = cellv
+			if (bc.y < g2.net.level.rows / 2) == want_top2:
+				bcell = bc
+				break
+		if bcell.x < 0:
+			continue
+		var bctr: Vector2 = g2.net.cell_center(bcell)
+		layout.build_panel(bctr, Tower.KIND_COUNT)
+		var touch2: float = ScreenLayout.MIN_TOUCH * layout.ui
+		_check(layout.build_kinds.size() == Tower.KIND_COUNT,
+			"%s: obchod rozvrhl %d tlacitek druhu, ma mit %d" % [
+				tag, layout.build_kinds.size(), Tower.KIND_COUNT])
+		for r2 in [layout.build_bar, layout.build_ok, layout.build_cancel]:
+			_check(r2.position.x >= -0.6 and r2.end.x <= float(w) + 0.6,
+				"%s: obchod utika vodorovne (%.1f..%.1f)" % [tag, r2.position.x, r2.end.x])
+			_check(r2.position.y >= -0.6 and r2.end.y <= float(h) + 0.6,
+				"%s: obchod utika svisle (%.1f..%.1f)" % [tag, r2.position.y, r2.end.y])
+		_check(layout.build_ok.size.y >= touch2 - 0.6,
+			"%s: tlacitko Postavit je nizke %.1f px (min %.1f)" % [
+				tag, layout.build_ok.size.y, touch2])
+		_check(not layout.build_ok.intersects(layout.build_cancel),
+			"%s: tlacitka Postavit a Zrusit se prekryvaji" % tag)
+		for kr in layout.build_kinds:
+			var krr: Rect2 = kr
+			_check(krr.size.y >= touch2 - 0.6 and krr.size.x >= touch2 - 0.6,
+				"%s: tlacitko druhu veze je male (%.1f x %.1f, min %.1f)" % [
+					tag, krr.size.x, krr.size.y, touch2])
+			_check(krr.end.x <= layout.build_cancel.position.x + 0.6,
+				"%s: tlacitka druhu lezou do tlacitek Postavit/Zrusit" % tag)
+		# OBCHOD NESMI ZAKRYT OZNACENE MISTO - hrac musi videt, kam stavi
+		var brect := Rect2(bctr - Vector2(g2.net.cell_w, g2.net.cell_h) * 0.5,
+			Vector2(g2.net.cell_w, g2.net.cell_h))
+		_check(not layout.build_bar.intersects(brect),
+			"%s: obchod zakryva oznacene stavebni misto na %s" % [tag, str(bcell)])
+		var bar_below: bool = layout.build_bar.position.y > float(h) * 0.5
+		_check(bar_below == want_top2,
+			"%s: obchod je na stejne strane jako misto (nahore=%s, misto nahore=%s)" % [
+				tag, not bar_below, want_top2])
