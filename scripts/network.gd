@@ -26,12 +26,6 @@ extends RefCounted
 
 const BASE_EXIT_R := 30.0
 const BASE_SWITCH_R := 46.0
-# BUNKA PASU, KTERA JE U VYHYBKY NEBO SPOJKY, SE NESTAVA. Jan: "U vyhybek
-# a spojek nemuze byt zadna v rozsahu 1 policka." Duvod je hratelnostni:
-# uzel je to, co hrac macka (prepnout vyhybku), a vez postavena na nem by
-# mu klepnuti kradla. Pas se tam proto ani nekresli - kreslit misto, kde se
-# neda stavet, je lez (stejne pravidlo jako driv u kmene).
-const STRIP_JUNCTION_CLEAR := 1
 
 var level: Level = null
 var area: Rect2 = Rect2()
@@ -239,12 +233,17 @@ func _build_joints() -> void:
 # a z toho se stane stavebni plocha. Co do pasu NEPATRI:
 #
 #   * bunky samotnych cest (po ceste se chodi, nestavi),
-#   * bunky uzlu (start, cil, vyhybka, spojka, uzel),
-#   * bunky do 1 bunky od VYHYBKY a SPOJKY (Jan: "U vyhybek a spojek nemuze
-#     byt zadna v rozsahu 1 policka") - uzel je tlacitko hrace,
+#   * bunky uzlu (start, cil, vyhybka, spojka, uzel) - TAM SE KLEPE na uzel,
+#     takze uzel sam zustava volny; plocha je kolem nej,
 #   * cely KMEN a VSECHNY VSTUPNI USEKY (Jan: "U kmene, vstupu, vyhybky
 #     a spojky se nestavi.") - sedivy pruh kolem nich se proto ani nekresli,
 #   * vsechno mimo mrizku.
+#
+# U VYHYBEK A SPOJEK SE STAVI TAKY (Jan, Oct 2026): "Kolem spojek a výhybek
+# nakonec uděláme stavební plochu také." Driv tu bylo "jedno policko volne",
+# ale to hracovi bralo prave nejlepsi mista - krizovatka je to, co hlida
+# vsechny vetve. Klepnuti na uzel uzel prepne (bunka uzlu v pasu NENI,
+# `junction_tap_at` se ptá prvni), plocha je jen kolem nej.
 #
 # Kdyz bunku podbarvuji dve cesty, vyhrava ta s VIC SOUSEDNIMI bunkami; pri
 # rovnosti nizsi index. Je to jedine misto, kde se to rozhoduje.
@@ -258,16 +257,6 @@ func _build_strip() -> void:
 			blocked[cellv] = true
 	for n in range(level.node_count()):
 		blocked[level.node_cell(n)] = true
-	var near_junction: Dictionary = {}
-	var clear: int = STRIP_JUNCTION_CLEAR
-	for n in range(level.node_count()):
-		var k: int = level.node_kind(n)
-		if k != Level.VYHYBKA and k != Level.SPOJKA:
-			continue
-		var nc: Vector2i = level.node_cell(n)
-		for dx in range(-clear, clear + 1):
-			for dy in range(-clear, clear + 1):
-				near_junction[Vector2i(nc.x + dx, nc.y + dy)] = true
 
 	# Kolik sousedu teto bunky patri konkretni ceste. Tim se rozhoduje
 	# o spornych bunkach mezi dvema cestami.
@@ -288,7 +277,7 @@ func _build_strip() -> void:
 					var t := Vector2i(c.x + dx, c.y + dy)
 					if not level.in_bounds(t.x, t.y):
 						continue
-					if blocked.has(t) or near_junction.has(t):
+					if blocked.has(t):
 						continue
 					var n: int = int(best_count.get(t, -1))
 					var cnt: int = 0

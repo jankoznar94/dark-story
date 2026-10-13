@@ -512,15 +512,16 @@ func _handle_tap(pos: Vector2) -> void:
 			_click()
 			game.try_sell(st.cell)
 			return
-	# OBCHOD S VEZEMI. Klepnuti na druh JEN VYBIRA - proto se testuje pred
-	# deskou: jinak by klepnuti na tlacitko druhu propadlo na bunku pod nim
+	# OBCHOD S VEZEMI. Klepnuti na volbu JEN VYBIRA - proto se testuje pred
+	# deskou: jinak by klepnuti na tlacitko volby propadlo na bunku pod nim
 	# a hrac by si oznacil jinou pudu, nez na kterou se diva.
 	if game.build_selected():
-		for i in range(layout.build_kinds.size()):
-			var kr: Rect2 = layout.build_kinds[i]
+		var choices: Array = game.build_choices()
+		for i in range(layout.build_choices.size()):
+			var kr: Rect2 = layout.build_choices[i]
 			if kr.has_point(pos):
 				_click()
-				game.pick_kind(i)
+				game.pick_choice(i if i < choices.size() else -1)
 				return
 		if layout.build_ok.has_point(pos):
 			_click()
@@ -1111,7 +1112,9 @@ func _draw_battle() -> void:
 	var bc: bool = game.build_selected()
 	if bc:
 		var bcenter: Vector2 = game.net.cell_center(game.build_cell)
-		layout.build_panel(bcenter, Tower.KIND_COUNT)
+		# POCET TLACITEK JE POCET VOLEB NA TOM MISTE: u neutralni cesty jedno
+		# (neutralni vez), u elementarni dve (zivel cesty + neutralni).
+		layout.build_panel(bcenter, game.build_choices().size())
 		_draw_build_sel(bcenter)
 	_draw_hud()
 	if st != null:
@@ -1528,7 +1531,7 @@ func _draw_strip() -> void:
 
 
 # VEZE. Vez je STAVBA, ne poutnik: osmihran s tmavym obrysem, svetlejsi
-# "strechou" a poctem zubu nad sebou podle urovne. Element nese BARVA (vez
+# "strechou" a TECKAMI UVNITR podle urovne. Element nese BARVA (vez
 # runu nekresli - runa je znacka poutniku, a prave v tom se obe pletly).
 # Jan (Oct 2026): "Věže by měly být větší a měly by mít jiný design. Teď jsou
 # příliš podobné nepříteli."
@@ -1544,11 +1547,19 @@ func _draw_towers() -> void:
 		var cap: PackedVector2Array = _octagon(p, r * 0.55)
 		draw_colored_polygon(cap, col.lightened(0.32))
 		_draw_poly_outline(cap, Color(0.09, 0.085, 0.08, 0.75), maxf(1.0, 1.8 * layout.s))
-		# UROVEN: pocet zubu nad vezi (cislo by se do bunky neveslo).
-		var pw: float = maxf(2.0, 3.6 * layout.s)
-		for l in range(t.level):
-			draw_rect(Rect2(p.x - (pw * 1.5 + 1.0) + float(l) * (pw + 1.0),
-				p.y - r - 5.0 * layout.s - pw, pw, pw), Color(0.95, 0.88, 0.60))
+		# UROVEN = POCET TECEK UVNITR VEZE. Cislo by se do bunky neveslo a znacky
+		# nad vezi vypadaly neuhledne (viz Tower.dot_offsets).
+		_draw_level_dots(p, r, t.level)
+
+
+# TECKY UVNITR VEZE. Jeden - uprostred, dva - vedle sebe (stred mezi nimi je
+# stred veze), tri - do trojuhelniku. KDE presne stoji, rozhoduje
+# `Tower.dot_offsets` - tady se jen kresli, aby se geometrie nemusela pocitat
+# na dvou mistech (a aby se test neptal na neco jineho, nez hrac vidi).
+func _draw_level_dots(p: Vector2, r: float, level: int) -> void:
+	var rd: float = Tower.dot_radius(r)
+	for off in Tower.dot_offsets(level, r):
+		draw_circle(p + off, rd, Tower.DOT_COLOR)
 
 
 # STRELY, KTERE PRÁVĚ LETÍ. Strela je predmet s vlastni pozici, takze se
@@ -1627,13 +1638,13 @@ func _draw_tower_panel(t: Tower) -> void:
 		"%.0f poškození · %.2f s · dostřel %d" % [t.damage(), t.cooldown(), t.reach()],
 		13, Color(0.58, 0.55, 0.49))
 	# VYLEPSIT: cena je na tlacitku, aby hrac nemusel nikam koukat.
-	# NA MAXIMU se misto slova "Maximalni" pise POCET ZUBU: uroven veze se
-	# na desce cte jako zuby nad ni (Jan, Oct 2026: "Počet zubů"), takze
-	# hrac vidi na vezi i v panelu to same cislo.
+	# NA MAXIMU se misto slova "Maximalni" pise POCET TECEK: uroven veze se
+	# na desce cte jako tecky na vezi, takze hrac vidi na vezi i v panelu to
+	# same cislo.
 	if t.can_upgrade():
 		_draw_bar_btn(layout.tower_up, "Vylepšit %d" % t.upgrade_cost(), col, true)
 	else:
-		_draw_bar_btn(layout.tower_up, _teeth_text(t.level), col, false)
+		_draw_bar_btn(layout.tower_up, _dots_text(t.level), col, false)
 	_draw_bar_btn(layout.tower_sell, "Prodat +%d" % t.sell_back(), Color(0.85, 0.42, 0.36), true)
 
 
@@ -1646,7 +1657,7 @@ func _draw_build_sel(center: Vector2) -> void:
 	var ch: float = game.net.cell_h
 	var o: Vector2 = game.net.origin
 	var cell: Vector2i = game.build_cell
-	var col: Color = Level.value_color(game.net.strip_element(cell))
+	var col: Color = Level.value_color(game.build_element)
 	var cr := Rect2(o.x + cw * float(cell.x), o.y + ch * float(cell.y), cw, ch)
 	draw_rect(cr, Color(0.95, 0.88, 0.60, 0.14))
 	draw_rect(cr, col.lightened(0.45), false, maxf(2.0, 3.0 * layout.s))
@@ -1664,18 +1675,26 @@ func _draw_build_sel(center: Vector2) -> void:
 	draw_rect(Rect2(a, b - a), Color(0.95, 0.88, 0.60, 0.22), false, maxf(1.0, 1.8 * layout.s))
 
 
-# OBCHOD S VEZEMI. Vlevo druhy vezi (klepnuti jen VYBERI, nepostavi), vpravo
-# Postavit a Zrusit. Cislo na tlacitku druhu je cena za postaveni - hrac tak
-# vi, kolik ho to bude stat, jeste nez se rozhodne.
+# OBCHOD S VEZEMI. Vlevo VOLBY, ktere hrac na oznacenem miste ma (klepnuti jen
+# VYBERI, nepostavi), vpravo Postavit a Zrusit. Cislo na tlacitku je cena za
+# postaveni - hrac tak vi, kolik ho to bude stat, jeste nez se rozhodne.
+# Kazda volba ma ramecek v barve sveho elementu: neutralni vez je sediva, vez
+# sveho elementu ma barvu cesty - hrac vidi, co si vybira, i podle barvy.
 func _draw_build_panel() -> void:
 	var bar: Rect2 = layout.build_bar
 	draw_rect(bar, PANEL_BG)
 	draw_line(Vector2(bar.position.x, bar.position.y),
 		Vector2(bar.end.x, bar.position.y), Color(0.46, 0.42, 0.35), layout.ul(2.0))
-	var col: Color = Level.value_color(game.net.strip_element(game.build_cell))
-	for i in range(layout.build_kinds.size()):
-		var r: Rect2 = layout.build_kinds[i]
-		_draw_kind_btn(r, Tower.kind_label(i), col, i == game.build_kind)
+	var choices: Array = game.build_choices()
+	var sel: int = game.build_choice_index()
+	for i in range(layout.build_choices.size()):
+		var r: Rect2 = layout.build_choices[i]
+		if i >= choices.size():
+			continue
+		var row: Dictionary = choices[i]
+		_draw_kind_btn(r, String(row["label"]), Level.value_color(int(row["element"])),
+			i == sel)
+	var col: Color = Level.value_color(game.build_element)
 	_draw_bar_btn(layout.build_ok, "Postavit %d" % Tower.kind_cost(game.build_kind, 1),
 		col, game.gold >= Tower.kind_cost(game.build_kind, 1))
 	_draw_bar_btn(layout.build_cancel, "Zrušit", Color(0.85, 0.42, 0.36), true)
@@ -1695,15 +1714,15 @@ func _draw_kind_btn(r: Rect2, text: String, accent: Color, selected: bool) -> vo
 		true, r.size.x)
 
 
-# ZUBY. Uroven veze se na desce cte jako zuby nad vezi, takze se poctem zubu
-# pise i uroven v panelu na maximu (Jan, Oct 2026: "Počet zubů"). Ceske
-# sklonovani: 1 zub, 2-4 zuby, 5+ zubu.
-func _teeth_text(n: int) -> String:
+# POCET TECEK SLOVY. Uroven veze se na desce cte jako tecky na vezi, takze se
+# poctem tecek pise i uroven v panelu na maximu. Ceske sklonovani:
+# 1 tecka, 2-4 tecky, 5+ tecek.
+func _dots_text(n: int) -> String:
 	if n == 1:
-		return "1 zub"
+		return "1 tečka"
 	if n >= 2 and n <= 4:
-		return "%d zuby" % n
-	return "%d zubů" % n
+		return "%d tečky" % n
+	return "%d teček" % n
 
 
 func _draw_bar_btn(r: Rect2, text: String, accent: Color, live: bool) -> void:

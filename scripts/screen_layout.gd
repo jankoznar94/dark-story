@@ -118,16 +118,17 @@ const BUILD_BAR_H := 58.0
 # prehledny a tlacitka maji byt u sebe, ne rozhozena pres displej.
 const KIND_BTN_W := 240.0
 var build_bar := Rect2()
-# TLACITKA DRUHU VEZI, vlevo, v poradi jako v `Tower.KINDS`. Pocet dava
-# obrazovka (`build_panel`), takze pridani druhu je zmena v Tower - tady se
-# nic nepredelava.
-var build_kinds: Array = []
+# TLACITKA VOLBY VEZE v obchode, vlevo, v poradi jako v nabidce mista
+# (`Game.build_choices`). Pocet dava obrazovka (`build_panel`) - je to pocet
+# povolenych voleb na oznacenem miste, takze u neutralni cesty je jedno
+# a u elementarni dve (zivel cesty + neutralni vez).
+var build_choices: Array = []
 var build_ok := Rect2()
 var build_cancel := Rect2()
 
 
-func build_panel(center: Vector2, kinds: int) -> void:
-	var n: int = maxi(kinds, 1)
+func build_panel(center: Vector2, choices: int) -> void:
+	var n: int = maxi(choices, 1)
 	var h: float = maxf(MIN_TOUCH + 10.0 * ui, BUILD_BAR_H * ui)
 	var bar_y: float = (view.y - h) if center.y <= view.y * 0.5 else hud_h + 1.0 * s
 	build_bar = Rect2(0.0, bar_y, view.x, h)
@@ -149,9 +150,9 @@ func build_panel(center: Vector2, kinds: int) -> void:
 	var room: float = maxf(build_cancel.position.x - pad - left, MIN_TOUCH)
 	var kw: float = clampf((room - pad * float(n - 1)) / float(n),
 		MIN_TOUCH, KIND_BTN_W * ui)
-	build_kinds = []
+	build_choices = []
 	for i in range(n):
-		build_kinds.append(Rect2(left + float(i) * (kw + pad), bar_y + pad, kw, bh))
+		build_choices.append(Rect2(left + float(i) * (kw + pad), bar_y + pad, kw, bh))
 # Editor: pruh tabu dole, panel otevrene kategorie a plocha, kterou zabira.
 var ed_buttons: Array = []
 # OTEVRENY PANEL: seznam radku (dole -> nahoru), kazdy radek seznam polozek

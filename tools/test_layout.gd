@@ -110,6 +110,20 @@ func _strokes_scale() -> void:
 			"v kresleni zustala pevna tloušťka tahu (%s)" % bad)
 	_check(src.contains("layout.bl(2.0) if major else layout.bl(1.5)"),
 		"mrizka nekresli tahy pres meritko")
+	# UROVEN VEZE = TECKY UVNITR VEZE. Hlida se MISTO VOLANI, ne existence
+	# funkce: kdyby `_draw_towers` tecky nevolal, vez by uroven nemela vubec
+	# a test na existenci funkce by pritom prosel.
+	_check(src.contains("_draw_level_dots(p, r, t.level)"),
+		"kresleni vezi nevola tecky urovne")
+	_check(not src.contains("_teeth_text") and not src.contains("zub"),
+		"uroven veze se porad kresli zuby nad vezi")
+	# OBCHOD KRESLI TO, CO HRA OPRAVDU POSTAVI: nabidka se bere z mista
+	# (`Game.build_choices`), ne z druhu veze. Kdyby si obrazovka skladala
+	# popisky sama, mohl by svitit jiny element, nez ktery se postavi.
+	_check(src.contains("var choices: Array = game.build_choices()"),
+		"obchod si nabidku nebere ze hry")
+	_check(not src.contains("Tower.kind_label"),
+		"obchod kresli popisky druhu, ne voleb mista")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
@@ -289,11 +303,12 @@ func _one(w: int, h: int) -> void:
 		if bcell.x < 0:
 			continue
 		var bctr: Vector2 = g2.net.cell_center(bcell)
-		layout.build_panel(bctr, Tower.KIND_COUNT)
+		# NEJHORSI PRIPAD: elementarni cesta nabizi dve volby (zivel cesty
+		# a neutralni vez), takze se deli sirka mezi dve tlacitka.
+		layout.build_panel(bctr, 2)
 		var touch2: float = ScreenLayout.MIN_TOUCH * layout.ui
-		_check(layout.build_kinds.size() == Tower.KIND_COUNT,
-			"%s: obchod rozvrhl %d tlacitek druhu, ma mit %d" % [
-				tag, layout.build_kinds.size(), Tower.KIND_COUNT])
+		_check(layout.build_choices.size() == 2,
+			"%s: obchod rozvrhl %d tlacitek volby, ma mit 2" % [tag, layout.build_choices.size()])
 		for r2 in [layout.build_bar, layout.build_ok, layout.build_cancel]:
 			_check(r2.position.x >= -0.6 and r2.end.x <= float(w) + 0.6,
 				"%s: obchod utika vodorovne (%.1f..%.1f)" % [tag, r2.position.x, r2.end.x])
@@ -304,13 +319,13 @@ func _one(w: int, h: int) -> void:
 				tag, layout.build_ok.size.y, touch2])
 		_check(not layout.build_ok.intersects(layout.build_cancel),
 			"%s: tlacitka Postavit a Zrusit se prekryvaji" % tag)
-		for kr in layout.build_kinds:
+		for kr in layout.build_choices:
 			var krr: Rect2 = kr
 			_check(krr.size.y >= touch2 - 0.6 and krr.size.x >= touch2 - 0.6,
-				"%s: tlacitko druhu veze je male (%.1f x %.1f, min %.1f)" % [
+				"%s: tlacitko volby veze je male (%.1f x %.1f, min %.1f)" % [
 					tag, krr.size.x, krr.size.y, touch2])
 			_check(krr.end.x <= layout.build_cancel.position.x + 0.6,
-				"%s: tlacitka druhu lezou do tlacitek Postavit/Zrusit" % tag)
+				"%s: tlacitka volby lezou do tlacitek Postavit/Zrusit" % tag)
 		# OBCHOD NESMI ZAKRYT OZNACENE MISTO - hrac musi videt, kam stavi
 		var brect := Rect2(bctr - Vector2(g2.net.cell_w, g2.net.cell_h) * 0.5,
 			Vector2(g2.net.cell_w, g2.net.cell_h))

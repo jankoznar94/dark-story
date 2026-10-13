@@ -26,6 +26,8 @@ func _init() -> void:
 	_run("dvojzivelny poutnik bere nevyhody obou", _test_dual_enemy)
 	_run("vyber, vylepseni a prodej veze", _test_tower_select_sell)
 	_run("pas kolem cest", _test_strip_rules)
+	_run("stavba podle typu cesty (zivel, nebo neutralni vez)", _test_build_elements)
+	_run("tecky urovne uvnitr veze", _test_tower_dots)
 	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
@@ -125,10 +127,13 @@ func _test_build_two_steps() -> void:
 	_check(g.build_cell == cell, "oznacene stavebni misto nesedi")
 	_check(g.build_selected(), "obchod s vezemi se neotevrel")
 	_check(g.selected_tower() == null, "oznaceni mista nechalo vybranou vez")
-	# 2) DRUH SE VYBERI ZVLAST A JEN Z NABIDKY
-	_check(g.pick_kind(Tower.DEFAULT_KIND), "druh veze nejde vybrat")
-	_check(not g.pick_kind(-1), "obchod vzal druh mimo nabidku (-1)")
-	_check(not g.pick_kind(Tower.KIND_COUNT), "obchod vzal druh za rozsahem nabidky")
+	# 2) VOLBA VEZE SE VYBERI ZVLAST A JEN Z NABIDKY. Nabidka je to, co
+	# obrazovka kresli jako tlacitka - jedno misto pravdy pro obe.
+	var ch: Array = g.build_choices()
+	_check(ch.size() > 0, "oznacene misto nema zadnou volbu veze")
+	_check(g.pick_choice(0), "volba veze nejde vybrat")
+	_check(not g.pick_choice(-1), "obchod vzal volbu mimo nabidku (-1)")
+	_check(not g.pick_choice(ch.size()), "obchod vzal volbu za rozsahem nabidky")
 	# Cislo KIND_COUNT a tabulka KINDS se musi shodovat - je to jedine misto,
 	# kde se pocet druhu opakuje (const v GDScriptu neumi KINDS.size()).
 	_check(Tower.KIND_COUNT == Tower.KINDS.size(),
@@ -148,6 +153,8 @@ func _test_build_two_steps() -> void:
 	_check(g.gold == before - Tower.kind_cost(Tower.DEFAULT_KIND, 1),
 		"stavba nestala cenu druhu (%d)" % (before - g.gold))
 	_check(t != null and t.kind == Tower.DEFAULT_KIND, "vez nema zvoleny druh")
+	_check(t != null and t.element == g.net.strip_element(cell),
+		"vez nema element sveho pasu (%d vs %d)" % [t.element, g.net.strip_element(cell)])
 	_check(not g.build_selected(), "po postaveni zustal obchod otevreny")
 	_check(g.selected_tower() == t, "po postaveni neni vez vybrana")
 	# 5) OZNACENI JINE PUDY OBCHOD PRENESE, NIC NEPOSTAVI
@@ -483,12 +490,14 @@ func _test_tower_build_and_levels() -> void:
 	_check(not g.try_build(Vector2i(cell.x, cell.y - 1)), "vez se postavila na cestu")
 	# mimo pas se nestavi
 	_check(not g.try_build(Vector2i(2, 2)), "vez se postavila mimo pas")
-	# U VYHYBKY A SPOJKY JE JEDNO POLICKO VOLNE (Jan). Uzel j1 je na (6,7).
+	# U VYHYBKY A SPOJKY SE STAVI TAKY (Jan, Oct 2026: "Kolem spojek a výhybek
+	# nakonec uděláme stavební plochu také."). Uzel j1 je na (6,7) a zustava
+	# volny jen on sam - na nej hrac klepe, aby prepnul vyhybku.
+	_check(not g.net.strip_has(Vector2i(6, 7)), "bunka uzlu vyhybky je stavebni plocha")
 	for d in [Vector2i(-1, -1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(1, 1)]:
 		var n := Vector2i(6 + d.x, 7 + d.y)
-		_check(not g.net.strip_has(n),
-			"bunka %s u vyhybky je v pasu (musi byt volna)" % str(n))
-		_check(not g.try_build(n), "u vyhybky se postavila vez")
+		_check(g.net.strip_has(n), "bunka %s u vyhybky neni stavebni plocha" % str(n))
+		_check(g.try_build(Vector2i(n.x, n.y)), "u vyhybky se vez postavit neda")
 
 	var t: Tower = g.tower_at(cell)
 	var dmg1: float = t.damage()
@@ -624,12 +633,13 @@ func _test_tower_select_sell() -> void:
 	_check(g.tower_at(cell) != null, "nova vez po prodeji nikde")
 
 
-# PAS. Nikdy nelezi na ceste ani na uzlu, nikdy neni bliz nez jedno policko
-# k vyhybce nebo spojce a vzdy je v mrizce. Kdyby se tohle rozbilo, hrac
-# postavi vez tam, kde ji nema mit, a nikdo si toho nevsimne.
+# PAS. Nikdy nelezi na ceste ani na uzlu a vzdy je v mrizce. U VYHYBEK
+# A SPOJEK SE STAVI TAKY (Jan, Oct 2026: "Kolem spojek a výhybek nakonec
+# uděláme stavební plochu také.") - uzel sam ale zustava volny, protoze na nej
+# hrac klepe (prepne vyhybku). Kdyby se tohle rozbilo, hrac postavi vez tam,
+# kde ji nema mit, a nikdo si toho nevsimne.
 func _test_strip_rules() -> void:
 	var g := _new_game()
-	var clear: int = Network.STRIP_JUNCTION_CLEAR
 	_check(g.net.strip_cells.size() > 0, "sit nema zadny pas")
 	for cellv in g.net.strip_cells:
 		var c: Vector2i = cellv
@@ -639,13 +649,139 @@ func _test_strip_rules() -> void:
 		_check(lane >= 0, "bunka pasu %s nepatri zadne ceste" % str(c))
 		for lc in g.level.lane_cells(lane):
 			_check(lc != c, "bunka pasu %s lezi na ceste %d" % [str(c), lane])
-		for n in range(g.level.node_count()):
-			var k: int = g.level.node_kind(n)
-			if k != Level.VYHYBKA and k != Level.SPOJKA:
-				continue
-			var nc: Vector2i = g.level.node_cell(n)
-			var far: bool = absi(nc.x - c.x) > clear or absi(nc.y - c.y) > clear
-			_check(far, "bunka pasu %s je u uzlu %d (ma byt jedno policko volno)" % [str(c), n])
+	# KOLEM VYHYBKY JE STAVEBNI PLOCHA. Uzel sam zustava volny, ale bunky
+	# kolem nej (na ktere se driv nestavělo) jsou soucasti pasu.
+	var around: int = 0
+	for n in range(g.level.node_count()):
+		if g.level.node_kind(n) != Level.VYHYBKA:
+			continue
+		var nc: Vector2i = g.level.node_cell(n)
+		_check(not g.net.strip_has(nc), "bunka uzlu vyhybky %s je stavebni plocha" % str(nc))
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				if g.net.strip_has(Vector2i(nc.x + dx, nc.y + dy)):
+					around += 1
+	_check(around > 0, "kolem vyhybky neni ani jedna stavebni bunka")
+	# a klepnuti na uzel vyhybky porad prepne vyhybku (ne stavi)
+	var jn: int = int(g.net.junction_nodes[0])
+	var j: int = g.net.junction_tap_at(g.net.node_world(jn), 20.0)
+	_check(j == 0, "klepnuti na uzel vyhybky nevybralo vyhybku (%d)" % j)
+
+
+# STAVBA PODLE TYPU CESTY. Jan (Oct 2026): "Na neutrální cestě může být pouze
+# neutrální věž. Na elementární cestě může být jak věž daného elementu, tak
+# i neutrální věž." Nabidka mista (`build_choices`) je zdroj pravdy pro
+# obrazovku, klepnuti i stavbu: kdyby se rozesla, hrac by mackal tlacitko,
+# ktere hra odmitne.
+func _test_build_elements() -> void:
+	var g := _new_game()
+	g.gold = 5000
+	# --- ELEMENTARNI CESTA: na vyber zivel cesty I neutralni vez
+	var fire: int = _lane_with(g, Element.FIRE)
+	_check(fire >= 0, "zakladni deska nema ohnivou cestu")
+	var fcell: Vector2i = _strip_cell_on(g, fire, 0, 1)
+	_check(g.net.strip_element(fcell) == Element.FIRE,
+		"bunka u ohnive cesty nema ohnivy element (%d)" % g.net.strip_element(fcell))
+	var fel: Array = g.build_elements(fcell)
+	_check(fel.size() == 2 and fel[0] == Element.FIRE and fel[1] == Level.NEUTRAL,
+		"nabidka na ohnive ceste neni [ohen, neutral] (%s)" % str(fel))
+	# a) vez sveho elementu
+	_check(g.try_build(fcell, Tower.DEFAULT_KIND, Element.FIRE),
+		"ohniva vez na ohnive ceste nejde postavit")
+	var t: Tower = g.tower_at(fcell)
+	_check(t != null and t.element == Element.FIRE, "postavena vez nema element cesty")
+	_check(g.try_sell(fcell), "postavenou vez nejde prodat")
+	# b) NEUTRALNI VEZ NA ELEMENTARNI CESTE SMI
+	_check(g.try_build(fcell, Tower.DEFAULT_KIND, Level.NEUTRAL),
+		"neutralni vez na ohnive ceste nejde postavit")
+	t = g.tower_at(fcell)
+	_check(t != null and t.element == Level.NEUTRAL,
+		"neutralni vez dostala cizi element (%s)" % (str(t.element) if t != null else "zadna vez"))
+	if t == null:
+		return
+	_check(is_equal_approx(Element.tower_multiplier(Element.WATER, t.element), 1.0),
+		"neutralni vez nebere vsem 100 %%")
+	_check(g.try_sell(fcell), "neutralni vez nejde prodat")
+	# c) CIZI ZIVEL SEM NESMI - a hra rekne, co tu muze stat
+	_check(not g.try_build(fcell, Tower.DEFAULT_KIND, Element.WATER),
+		"vodni vez na ohnive ceste prosla")
+	_check(g.tower_at(fcell) == null, "odmitnuta stavba neco postavila")
+	var msg: String = String(g.log[g.log.size() - 1])
+	_check(msg.contains("Oheň") and msg.contains("neutrální"),
+		"hlaska nerika, co tu muze stat (%s)" % msg)
+	# --- NEUTRALNI CESTA: jen neutralni vez
+	var neu: int = _lane_with(g, Level.NEUTRAL)
+	_check(neu >= 0, "zakladni deska nema neutralni cestu")
+	var ncell: Vector2i = _strip_cell_on(g, neu, 0, 1)
+	_check(g.net.strip_element(ncell) == Level.NEUTRAL,
+		"bunka u neutralni cesty nema neutralni element (%d)" % g.net.strip_element(ncell))
+	var nel: Array = g.build_elements(ncell)
+	_check(nel.size() == 1 and nel[0] == Level.NEUTRAL,
+		"nabidka na neutralni ceste neni jen [neutral] (%s)" % str(nel))
+	_check(not g.try_build(ncell, Tower.DEFAULT_KIND, Element.FIRE),
+		"ohniva vez na neutralni ceste prosla")
+	_check(String(g.log[g.log.size() - 1]).contains("neutrální věž"),
+		"hlaska u neutralni cesty nerika, ze tu muze stat jen neutralni vez")
+	_check(g.try_build(ncell, Tower.DEFAULT_KIND, Level.NEUTRAL),
+		"neutralni vez na neutralni ceste nejde postavit")
+	# --- OBCHOD: co hrac vidi, to se postavi
+	var cell2: Vector2i = _strip_cell_on(g, fire, 0, -1)
+	_check(g.tap_build_cell(cell2), "klepnuti na pudu neoznacilo misto")
+	var ch: Array = g.build_choices()
+	_check(ch.size() == 2, "obchod na elementarni ceste nabizi %d voleb, ma 2" % ch.size())
+	_check(g.build_choice_index() == 0, "vychozi volba neni zvyraznena (index %d)" % g.build_choice_index())
+	_check(g.pick_choice(1), "volba neutralni veze nejde vybrat")
+	_check(g.build_choice_index() == 1, "po volbe nesviti druha volba")
+	_check(g.confirm_build(), "Postavit nepostavilo zvolenou vez")
+	var t2: Tower = g.tower_at(cell2)
+	_check(t2 != null and t2.element == Level.NEUTRAL,
+		"postavila se jina vez, nez hrac videl (%s)" % (str(t2.element) if t2 != null else "zadna"))
+
+
+# TECKY UVNITR VEZE (uroven). Jan (Oct 2026): "Jeden - uprostřed, dva - vedle
+# sebe ale stále na středu, tři - tři puntíky do trojúhelníku." Test meri
+# GEOMETRII, ne barvu: pocet tecek, jejich teziste (stred veze) a to, ze
+# vsechny zustanou uvnitr "strechy" - jinak by tekla barva obrysu a vez by
+# vypadala jako skvrna.
+func _test_tower_dots() -> void:
+	var r: float = 16.0
+	var rd: float = Tower.dot_radius(r)
+	_check(rd > 0.0, "tecka veze nema polomer")
+	for lv in range(1, Tower.MAX_LEVEL + 1):
+		var offs: Array = Tower.dot_offsets(lv, r)
+		_check(offs.size() == lv, "uroven %d ma %d tecek, ma mit %d" % [lv, offs.size(), lv])
+		var sum := Vector2.ZERO
+		for o in offs:
+			var v: Vector2 = o
+			sum += v
+			_check(v.length() + rd <= r * 0.55,
+				"tecka urovne %d utika ze strechy veze (%.2f z %.2f)" % [lv, v.length() + rd, r * 0.55])
+		_check(sum.length() < 0.01, "tecky urovne %d nejsou na stredu veze (%s)" % [lv, str(sum)])
+	# JEDNA = presne stred
+	var one: Array = Tower.dot_offsets(1, r)
+	_check(one[0] == Vector2.ZERO, "jedina tecka neni ve stredu veze (%s)" % str(one[0]))
+	# DVE = vedle sebe, stejna vyska, symetricke
+	var two: Array = Tower.dot_offsets(2, r)
+	_check(is_equal_approx(two[0].y, two[1].y), "dve tecky nejsou ve stejne vysce")
+	_check(is_equal_approx(two[0].x, -two[1].x), "dve tecky nejsou symetricke kolem stredu")
+	# TRI = trojuhelnik: jedna nahore, dve dole
+	var three: Array = Tower.dot_offsets(3, r)
+	_check(three[0].y < three[1].y and three[0].y < three[2].y,
+		"u trojuhelniku neni prvni tecka nahore")
+	_check(is_equal_approx(three[1].x, -three[2].x),
+		"spodni dve tecky trojuhelniku nejsou symetricke")
+	# PRAVIDLA ELEMENTU PRO VEZE
+	_check(Tower.NEUTRAL == Level.NEUTRAL,
+		"neutralni element veze (%d) nesedi s typem neutralniho useku (%d)" % [
+			Tower.NEUTRAL, Level.NEUTRAL])
+	_check(Tower.allowed_elements(Level.NEUTRAL) == [Tower.NEUTRAL],
+		"neutralni pas nepripousti jen neutralni vez")
+	_check(Tower.allowed_elements(Element.FIRE) == [Element.FIRE, Tower.NEUTRAL],
+		"elementarni pas nepripousti svuj zivel a neutralni vez")
+	_check(Tower.choice_label(Tower.DEFAULT_KIND, Element.FIRE).contains("Oheň"),
+		"popisek volby nema jmeno elementu")
+	_check(Tower.choice_label(Tower.DEFAULT_KIND, Tower.NEUTRAL).contains("neutrální"),
+		"popisek neutralni volby nema jmeno")
 
 
 # ---------------------------------------------------------------- hrac

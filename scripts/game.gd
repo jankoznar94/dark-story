@@ -47,6 +47,10 @@ const ROUND_GAP_MIN := 1.0
 const ROUND_GAP_MAX := 5.0
 const BUILD_TIME := 6.0
 const ROUND_BONUS := 40
+# "ELEMENT NEVOLIM" pro `try_build`. Je to cislo mimo vsechny hodnoty useku
+# (0..3, Level.NEUTRAL = -1, Level.KMEN = -2), takze se nikdy nemuze plest
+# s opravdovym elementem veze.
+const ELEMENT_AUTO := -99
 
 var level: Level = null
 var net: Network = Network.new()
@@ -62,6 +66,12 @@ var build_cell: Vector2i = Vector2i(-1, -1)
 # VYBRANY DRUH VEZI v obchode (index do Tower.KINDS). Voli se klepnutim na
 # druh, ne klepnutim na desku.
 var build_kind: int = Tower.DEFAULT_KIND
+# VYBRANY ZIVEL VEZE pro oznacene misto. Je to volba HRACE, ne vlastnost
+# mista: na elementarnim pasu si hrac vybira mezi vezi sveho elementu
+# a neutralni (Jan, Oct 2026: "Na neutrální cestě může být pouze neutrální
+# věž. Na elementární cestě může být jak věž daného elementu, tak i neutrální
+# věž."). Na neutralnim pasu je nabidka jednoclenná, takze se nic nevoli.
+var build_element: int = Tower.NEUTRAL
 var enemies: Array = []
 # STRELY, KTERE PRÁVĚ LETÍ. Rana neni hotova ve chvili vystrelu - je to
 # predmet na ceste k poutnikovi a poskozeni ubira teprve pri DOPADU
@@ -115,6 +125,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	sel_tower = Vector2i(-1, -1)
 	build_cell = Vector2i(-1, -1)
 	build_kind = Tower.DEFAULT_KIND
+	build_element = Tower.NEUTRAL
 	enemies = []
 	shots = []
 	cell_enemies = {}
@@ -206,17 +217,26 @@ func towers_of_lane(lane: int) -> int:
 	return c
 
 
-# POSTAVENI VEZE. Vez dostava ELEMENT TÉ CESTY, kolem ktere pas lezi - hrac
-# element nevoli, protoze nema co volit: barvu ma misto, ne vez. Vybira se
-# jen DRUH (viz Tower.KINDS). Mimo pas se stavet neda vubec.
+# POSTAVENI VEZE. Mimo pas se stavet neda vubec a element veze musi byt
+# z nabidky toho mista (`build_elements`): u neutralni cesty je to jedina
+# neutralni vez, u elementarni cesty vez sveho elementu nebo neutralni.
 #
 # TAHLE FUNKCE UZ SE Z DESKY NEVOLA. Deska umi jen OZNACIT misto
 # (`select_build_cell`) a stavba je az `confirm_build` - vez se nesmi postavit
 # omylem pri prvnim klepnuti (Jan, Oct 2026).
-func try_build(cell: Vector2i, kind: int = Tower.DEFAULT_KIND) -> bool:
+func try_build(cell: Vector2i, kind: int = Tower.DEFAULT_KIND,
+		element: int = ELEMENT_AUTO) -> bool:
 	var why: String = _build_block_reason(cell)
 	if not why.is_empty():
 		_note(why)
+		return false
+	# Kdo element nevoli (stare mapy, testy), dostane element pasu - presne to,
+	# co umela hra driv. Nabidka mista ho vzdycky obsahuje.
+	if element == ELEMENT_AUTO:
+		element = net.strip_element(cell)
+	var ewhy: String = _build_element_reason(cell, element)
+	if not ewhy.is_empty():
+		_note(ewhy)
 		return false
 	var cost: int = Tower.kind_cost(kind, 1)
 	if gold < cost:
@@ -226,7 +246,7 @@ func try_build(cell: Vector2i, kind: int = Tower.DEFAULT_KIND) -> bool:
 	var t := Tower.new()
 	t.cell = cell
 	t.kind = kind
-	t.element = net.strip_element(cell)
+	t.element = element
 	# Kolik do ni hrac dal - z toho se pocita cena pri prodeji.
 	t.spent = cost
 	towers.append(t)
@@ -240,23 +260,74 @@ func try_build(cell: Vector2i, kind: int = Tower.DEFAULT_KIND) -> bool:
 
 # PROC SE NA TUHLE BUNKU NEDA STAVET. Prazdny retezec = stavebni misto je
 # v poradku. Dve ruzne veci se musi rict ruzne, jinak hrac hleda chybu v siti:
-# bud je to cesta sama/uzel (tam se proste nestavi), nebo je to zakazane misto
-# u vyhybky. Pouziva ji oznaceni mista i stavba - jedna pravda pro obe.
+# bud je to cesta sama/uzel (tam se proste nestavi), nebo je to misto mimo pas.
+# Pouziva ji oznaceni mista i stavba - jedna pravda pro obe.
 func _build_block_reason(cell: Vector2i) -> String:
 	if not net.strip_has(cell):
 		if net.level.node_at_cell(cell) >= 0:
 			return "Na uzlu se nestaví."
 		if _is_lane_cell(cell):
 			return "Na cestě se nestaví — věže patří do pásu vedle ní."
-		if _near_junction(cell):
-			return "U výhybky a spojky musí být jedno políčko volné."
 		return "Tady pás není — věže stojí jen u cesty."
 	if tower_at(cell) != null:
 		return "Tady už věž stojí."
 	return ""
 
 
-# ------------------------------------------------- stavba ve dvou krocích
+# MUZE NA TOM MISTE STAT VEZE TOHOHLE ELEMENTU? Pravidlo je Janovo (Oct
+# 2026): na neutralni ceste jen neutralni vez, na elementarni ceste vez sveho
+# elementu nebo neutralni. Hlaska musi rict, co je tu vubec mozne - tiche
+# odmitnuti by hrace nechalo hadat, proc tlacitko neudelalo nic.
+func _build_element_reason(cell: Vector2i, element: int) -> String:
+	var allowed: Array = build_elements(cell)
+	if allowed.has(element):
+		return ""
+	var lane_el: int = net.strip_element(cell)
+	if lane_el == Level.NEUTRAL:
+		return "U neutrální cesty může stát jen neutrální věž."
+	var names: Array = []
+	for e in allowed:
+		names.append(Level.value_name(int(e)))
+	return "Tady může stát jen věž %s." % " nebo ".join(names)
+
+
+# ZIVLY, KTERE NA TOM MISTE SMI VEZ MÍT. Zdrojem pravdy je typ pasu - viz
+# `Tower.allowed_elements`.
+func build_elements(cell: Vector2i) -> Array:
+	if not net.strip_has(cell):
+		return []
+	return Tower.allowed_elements(net.strip_element(cell))
+
+
+# NABIDKA PRO OZNACENE MISTO. Neni to seznam druhu, ale seznam VOLEB, ktere
+# hrac na tom miste ma: kazdy povoleny zivel (a casem i kazdy druh). Obrazovka,
+# klepnuti i testy se ptaji tohohle jednoho seznamu, takze tlacitko nemuze
+# nabizet neco jineho, nez co `try_build` prijme.
+func build_choices() -> Array:
+	var out: Array = []
+	if not build_selected():
+		return out
+	for e in build_elements(build_cell):
+		for k in range(Tower.KIND_COUNT):
+			out.append({"kind": k, "element": int(e),
+				"label": Tower.choice_label(k, int(e)),
+				"cost": Tower.kind_cost(k, 1)})
+	return out
+
+
+# KTERA VOLBA JE PRAVE VYBRANA (-1 = zadna). Obrazovka z toho dela zvyrazneny
+# ramecek, takze se nikdy nemuze stat, ze by svitilo neco jineho, nez co se
+# opravdu postavi.
+func build_choice_index() -> int:
+	var ch: Array = build_choices()
+	for i in range(ch.size()):
+		var row: Dictionary = ch[i]
+		if int(row["kind"]) == build_kind and int(row["element"]) == build_element:
+			return i
+	return -1
+
+
+# ------------------------------------------------- stavba ve dvou krocich
 
 # OZNACENI STAVEBNIHO MISTA. Klepnuti na prazdnou bunku pasu uz vez NESTAVI:
 # jen misto oznaci a otevre obchod s vezemi. Jan (Oct 2026): "Věž by se
@@ -278,6 +349,9 @@ func select_build_cell(cell: Vector2i) -> bool:
 		return false
 	build_cell = cell
 	build_kind = Tower.DEFAULT_KIND
+	# Vychozi volba je vez sveho elementu: kdo nic nevybere, dostane to, co
+	# misto nabizi jako prvni (`build_choices`).
+	build_element = net.strip_element(cell)
 	# Vybrana vez a oznacene misto se vzajemne vylucuji: na obrazovce je pro
 	# ne jen jeden pruh a hrac by nevedel, ktera tlacitka plati.
 	sel_tower = Vector2i(-1, -1)
@@ -285,14 +359,16 @@ func select_build_cell(cell: Vector2i) -> bool:
 	return true
 
 
-# VOLBA DRUHU V OBCHODE. Jen vybira, nestavi - stavba je az `confirm_build`.
-func pick_kind(kind: int) -> bool:
-	if build_cell.x < 0:
+# VOLBA V OBCHODE. Jen vybira, nestavi - stavba je az `confirm_build`.
+func pick_choice(index: int) -> bool:
+	var ch: Array = build_choices()
+	if index < 0 or index >= ch.size():
 		return false
-	if kind < 0 or kind >= Tower.KIND_COUNT:
-		return false
-	build_kind = kind
-	_note("Vybraná věž: %s (%d)." % [Tower.kind_name_of(kind), Tower.kind_cost(kind, 1)])
+	var row: Dictionary = ch[index]
+	build_kind = int(row["kind"])
+	build_element = int(row["element"])
+	_note("Vybraná věž: %s (%d)." % [Tower.choice_label(build_kind, build_element),
+		Tower.kind_cost(build_kind, 1)])
 	return true
 
 
@@ -314,7 +390,7 @@ func confirm_build() -> bool:
 	if build_cell.x < 0:
 		_note("Nejdřív vyber stavební místo.")
 		return false
-	return try_build(build_cell, build_kind)
+	return try_build(build_cell, build_kind, build_element)
 
 
 # VYLEPSENI VEZE. Kazdy dalsi level je drazsi a o neco rychlejsi a silnejsi.
@@ -410,18 +486,6 @@ func _is_lane_cell(cell: Vector2i) -> bool:
 		for cellv in net.level.lane_cells(i):
 			if cellv == cell:
 				return true
-	return false
-
-
-func _near_junction(cell: Vector2i) -> bool:
-	var clear: int = Network.STRIP_JUNCTION_CLEAR
-	for n in range(net.level.node_count()):
-		var k: int = net.level.node_kind(n)
-		if k != Level.VYHYBKA and k != Level.SPOJKA:
-			continue
-		var nc: Vector2i = net.level.node_cell(n)
-		if absi(nc.x - cell.x) <= clear and absi(nc.y - cell.y) <= clear:
-			return true
 	return false
 
 

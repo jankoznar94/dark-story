@@ -33,6 +33,67 @@ const KINDS := [
 const KIND_COUNT := 1
 const DEFAULT_KIND := 0
 
+# ZIVEL VEZE MIMO ELEMENTY. Hodnota je stejna jako `Level.NEUTRAL` (typ
+# neutralniho useku) - vez na neutralnim pasu ji dostava pres
+# `Network.strip_element` a `Element.tower_multiplier` na ni vraci 100 % vsem.
+# Je to jedina hodnota mimo 0..3, kterou vez v hre muze mit.
+const NEUTRAL := -1
+
+# TECKY UVNITR VEZE = UROVEN. Driv se uroven kreslila jako zuby NAD vezi a
+# Janovi to prislo neuhledne: "Tečky se ale zobrazují nad věžmi a vypadá to
+# dost neuhledne. Udělal bych puntíky uprostřed věže. Jeden - uprostřed, dva
+# - vedle sebe ale stále na středu, tři - tři puntíky do trojúhelníku."
+# Barva je STEJNA jako obrys veze (0.09): vez ma svetlejsi "strechu" a tmava
+# tecka na ni je videt u vsech peti typu pasu (i u svetleho vzduchu).
+const DOT_COLOR := Color(0.09, 0.085, 0.08)
+
+# POLOMER JEDNE TECKY. Zavisi na polomeru veze (ta je v px podle meritka),
+# takze na malem telefonu zustava aspon 1,4 px - mensi by zmizela.
+static func dot_radius(r: float) -> float:
+	return maxf(1.4, r * 0.13)
+
+
+# KDE TECKY STOJI, vzhledem ke stredu veze. Je to JEDINE misto, kde se
+# rozhoduje, kolik tecek uroven ma a kam padnou - kresleni i test se ptaji
+# tady, takze se geometrie nemuze rozejit s tim, co hrac vidi.
+# Vsechny posuny jsou uvnitr "strechy" (0.55 r), takze tecky nikdy nevytečou
+# na obrys.
+static func dot_offsets(level: int, r: float) -> Array:
+	match clampi(level, 1, MAX_LEVEL):
+		2:
+			# DVE VEDLE SEBE - a porad na stred: stred mezi nimi je stred veze.
+			return [Vector2(-0.20 * r, 0.0), Vector2(0.20 * r, 0.0)]
+		3:
+			# TRI DO TROJUHELNIKU - jeden nahore, dva dole. Posuny jsou
+			# zvolene tak, aby TEZISTE trojuhelniku vyslo presne do stredu
+			# veze ((-0.24 + 0.12 + 0.12) / 3 = 0): kdyby staly tecky
+			# "v kruznici", sedel by trojuhelnik niz a vez by vypadala
+			# posunuta.
+			return [Vector2(0.0, -0.24 * r), Vector2(-0.20 * r, 0.12 * r),
+				Vector2(0.20 * r, 0.12 * r)]
+	return [Vector2.ZERO]
+
+
+# POVOLENE ZIVLY VEZE PRO PAS S HODNOTOU `strip_el`. Jan (Oct 2026): "Na
+# neutrální cestě může být pouze neutrální věž. Na elementární cestě může být
+# jak věž daného elementu, tak i neutrální věž."
+# Vraci seznam hodnot elementu, ne druhu: druh veze (KINDS) je funkce, element
+# je to, co rozhoduje o nasobcich poskozeni.
+static func allowed_elements(strip_el: int) -> Array:
+	if strip_el < 0 or strip_el >= Element.COUNT:
+		return [NEUTRAL]
+	return [strip_el, NEUTRAL]
+
+
+# POPISEK VOLBY V OBCHODE: jmeno a cena za postaveni. Cena je na tlacitku,
+# aby hrac nemusel nikam koukat. U vice druhu vezi stoji v popisku i jmeno
+# druhu - dokud je jen jeden, je zbytecne (druh je videt z cisel v panelu).
+static func choice_label(kind: int, element: int) -> String:
+	var el: String = Level.value_name(element)
+	if KIND_COUNT > 1:
+		return "%s %s %d" % [kind_name_of(kind), el, kind_cost(kind, 1)]
+	return "%s %d" % [el, kind_cost(kind, 1)]
+
 const MAX_LEVEL := 3
 # DOSTREL VYCHOZIHO DRUHU. Vez sama odpovida pres `reach()` (kazdy druh ma
 # svuj); tahle konstanta je pro HUD, nahledy a testy, ktere se na "zakladni
@@ -68,12 +129,6 @@ static func kind_row(index: int) -> Dictionary:
 
 static func kind_name_of(index: int) -> String:
 	return String(kind_row(index)["name"])
-
-
-# Popisek do obchodu: jmeno druhu a cena za postaveni. Cena je na tlacitku,
-# aby hrac nemusel nikam koukat.
-static func kind_label(index: int) -> String:
-	return "%s %d" % [String(kind_row(index)["name"]), kind_cost(index, 1)]
 
 
 # Cena za postaveni veze daneho druhu a urovne. Jedno misto, kde o cenach vi
