@@ -233,12 +233,32 @@ func _strokes_scale() -> void:
 	# PREJMENOVANI A SMAZANI v seznamu editoru: tlacitka musi neco delat.
 	_check(src.contains("editor.begin_rename(key)"), "tlacitko nazvu nic nedela")
 	_check(src.contains("editor.ask_delete(key)"), "tlacitko smazani nic nedela")
-	_check(src.contains("editor.name_grid()"),
-		"klavesnice se nebere z editoru - rozvrzeni by se rozejlo")
+	_check(src.contains("editor.commit_name()") and src.contains("editor.close_name()"),
+		"obrazovka prejmenovani nema cim ulozit nebo zrusit nazev")
+	# KLAVESNICI DAVA SYSTEM, NE HRA (Jan: "Chci používat úplně klasickou
+	# mobilní klávesnici. A klasický input."). Hlida se MISTO POUZITI:
+	# existence funkce by prosla i s vstupem, ktery nikdo nezobrazi.
+	_check(src.contains("LineEdit.new()"), "vstup pro nazev neni opravdovy LineEdit")
+	_check(src.contains("_sync_name_input()"), "vstup pro nazev se nikde neaktualizuje")
+	_check(src.contains("virtual_keyboard_show"), "hra si nerekne o klavesnici systemu")
+	_check(src.contains("_name_input.has_focus()"),
+		"text z nativni klavesnice se nikam neprebira (web neemituje text_changed)")
+	_check(not src.contains("editor.name_grid()"), "hra stale kresli vlastni klavesnici")
 	var edsrc: String = FileAccess.get_file_as_string("res://scripts/editor.gd")
-	_check(edsrc.contains("func name_grid()"), "editor nema klavesnici pro nazev")
+	_check(not edsrc.contains("func name_grid()"), "editor stale nabizi nakreslenou klavesnici")
+	_check(edsrc.contains("func set_name_text("), "editor nema cim prijmout text z pole")
+	# VIRTUALNI KLAVESNICE NA WEBU JE VOLBA EXPORTU. Bez ni `DisplayServer`
+	# zadnou klavesnici nema a na mobilu by se neukazala - ticha chyba, ktera
+	# se projevi jen na telefonu.
+	var preset: String = FileAccess.get_file_as_string("res://export_presets.cfg")
+	_check(preset.contains("html/experimental_virtual_keyboard=true"),
+		"export nezapina virtualni klavesnici na webu")
 	_check(edsrc.contains("Level.delete_key("), "editor neumi level smazat")
 	_check(edsrc.contains("Level.rename_key("), "editor neumi level prejmenovat")
+	# PO SMAZANI SE ZUSTAVA V SEZNAMU. `reset` prepina rezim do kresleni, takze
+	# bez navratu vyhodi potvrzujici klepnuti hrace na desku ("po smazání se
+	# otevře následující level", Jan).
+	_check(edsrc.contains("mode = MODE_LIST"), "smazani levelu necha hrace v kresleni")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
@@ -561,28 +581,27 @@ func _one(w: int, h: int) -> void:
 			_check(not lr.intersects(lr2),
 				"%s: cile vyberu levelu %d a %d se prekryvaji" % [tag, li, lj])
 
-	# --- KLAVESNICE PRO PREJMENOVANI: rozvrzeni musi mit PRESNE tolik klaves,
-	# kolik jich editor nabizi, vsechny na displeji a dotykove.
-	var ed := Editor.new()
-	var grid: Array = ed.name_grid()
-	layout.name_keys(ed.name_row_counts())
-	_check(layout.ed_name_rows.size() == grid.size(),
-		"%s: klavesnice ma %d radku, editor %d" % [tag, layout.ed_name_rows.size(),
-			grid.size()])
-	var keys: Array = layout.all_name_keys()
-	var nkeys: int = 0
-	for row in grid:
-		nkeys += (row as Array).size()
-	_check(keys.size() == nkeys, "%s: rozvrzeno %d klaves, editor jich ma %d" % [
-		tag, keys.size(), nkeys])
-	for ki in range(keys.size()):
-		var kr: Rect2 = keys[ki]
-		_check(kr.position.x >= -0.6 and kr.end.x <= float(w) + 0.6,
-			"%s: klavesa %d utika vodorovne" % [tag, ki])
-		_check(kr.position.y >= -0.6 and kr.end.y <= float(h) + 0.6,
-			"%s: klavesa %d utika svisle" % [tag, ki])
-		_check(kr.size.y >= ScreenLayout.MIN_TOUCH - 0.6,
-			"%s: klavesa %d je nizka %.1f px" % [tag, ki, kr.size.y])
-		for kj in range(ki + 1, keys.size()):
-			var kr2: Rect2 = keys[kj]
-			_check(not kr.intersects(kr2), "%s: klavesy %d a %d se prekryvaji" % [tag, ki, kj])
+	# --- PREJMENOVANI LEVELU: pole a dve tlacitka. Vsechno musi byt na
+	# displeji, dotykove velke a NEPREKRYVAT se - a hlavne CELÉ NAD PRVNÍM
+	# RADKEM: klavesnici system vysune ZDOLA a prekryla by, co by stalo niz.
+	var targets: Array = layout.all_name_targets()
+	_check(targets.size() == 3, "%s: obrazovka prejmenovani ma %d cilu" % [tag, targets.size()])
+	for ti in range(targets.size()):
+		var tr: Rect2 = targets[ti]
+		_check(tr.position.x >= -0.6 and tr.end.x <= float(w) + 0.6,
+			"%s: cil prejmenovani %d utika vodorovne" % [tag, ti])
+		_check(tr.position.y >= -0.6 and tr.end.y <= float(h) + 0.6,
+			"%s: cil prejmenovani %d utika svisle" % [tag, ti])
+		_check(tr.size.y >= ScreenLayout.MIN_TOUCH - 0.6,
+			"%s: cil prejmenovani %d je nizky %.1f px" % [tag, ti, tr.size.y])
+		for tj in range(ti + 1, targets.size()):
+			var tr2: Rect2 = targets[tj]
+			_check(not tr.intersects(tr2),
+				"%s: cile prejmenovani %d a %d se prekryvaji" % [tag, ti, tj])
+	# POLE I TLACITKA MUSI BYT V HORNIM PASU. Klavesnice zabira spodni
+	# polovinu displeje - cokoli pod ni by hrac nevidel, kdyz pise.
+	var name_bottom: float = maxf(layout.name_field.end.y,
+		maxf(layout.name_ok.end.y, layout.name_cancel.end.y))
+	_check(name_bottom <= float(h) * 0.45,
+		"%s: vstup pro nazev konci na %.1f px z %d - klavesnice by ho prekryla" % [
+			tag, name_bottom, h])

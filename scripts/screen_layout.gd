@@ -319,7 +319,10 @@ func compute(v: Vector2) -> void:
 	ed_panel_top = v.y
 	levels_rows = []
 	levels_back = Rect2()
-	ed_name_rows = []
+	# Obrazovka prejmenovani (pole + dve tlacitka). Stare recty se uklidi taky:
+	# rozvrzeni se pocita z velikosti okna, takze po zmene velikosti by stary
+	# rect zustal na miste, kde uz nic neni.
+	name_panel()
 	var ex0: float = PAD * ui
 	var ey: float = v.y - eh - 6.0 * ui
 	for i in range(ED_COUNT):
@@ -710,49 +713,52 @@ func all_leave_buttons() -> Array:
 
 
 # =========================================================================
-# KLAVESNICE PRO PREJMENOVANI LEVELU
+# PREJMENOVANI LEVELU: KLASICKY VSTUP A KLAVESNICE OD SYSTEMU
 #
-# Jan (Oct 2026): "Přidáme možnost názvy levelů v seznamu editoru měnit."
-# Na telefonu neni jak napsat text, kdyz hra zadny textovy vstup nema - a
-# mit ho jen na webu by znamenalo, ze na pulce zarizeni prejmenovat nelze.
-# Klavesnice je proto NAKRESLENA hrou: stejny princip jako vsechno ostatni
-# (zadne Button nody, zadne tema) a funguje vsude stejne.
+# Jan (Oct 2026): "Změna jména levelu je hrozná. Chci používat úplně klasickou
+# mobilní klávesnici. A klasický input." Klavesnici proto uz NEDODAVA HRA:
+# nakreslena mrizka znaku byla slepa ulicka (bez diakritiky, bez predikce,
+# bez posunu kurzoru). Klavesnici dodava SYSTEM a hra si jen rekne o fokus -
+# vstup je opravdovy `LineEdit`, ktery kresli engine (viz
+# `game_view._name_input` a `_sync_name_input`).
 #
-# Radky jdou SHORA DOLU jako na klavesnici; kazdy radek se deli ROVNYM
-# dilem, takze posledni radek s akcemi ("hotovo") je siroky a dobře se
-# macka. Vyska radku se zmensi, jen kdyz by se jinak nevesly.
+# VSE JE NAD PRVNIM RADKEM DISPLEJE: klavesnice se na mobilu vysune ZDOLA a
+# prekryla by vsechno, co by stalo pod polem (presne to je znamy problem
+# weboveho virtualniho keyboardu). Proto je tady jen pole + dve tlacitka a
+# zbytek obrazovky zustava prazdny.
 # =========================================================================
-var ed_name_rows: Array = []
+const NAME_FIELD_H := 46.0
+const NAME_BTN_W := 132.0
+var name_field := Rect2()
+var name_ok := Rect2()
+var name_cancel := Rect2()
 
 
-func name_keys(counts: Array) -> void:
-	ed_name_rows = []
-	if counts.is_empty():
+func name_panel() -> void:
+	name_field = Rect2()
+	name_ok = Rect2()
+	name_cancel = Rect2()
+	# Nezname okno (web pred prvni zmenou velikosti): prazdne obdelniky.
+	# Pocitani se zapornou sirkou by vyrabelo chyby v logu a tlacitka, na
+	# ktera se neda klepnout.
+	if view.x < 1.0 or view.y < 1.0:
 		return
-	var n: int = counts.size()
+	var h: float = maxf(MIN_TOUCH, NAME_FIELD_H * ui)
+	var bw: float = maxf(MIN_TOUCH * 1.8, NAME_BTN_W * ui)
 	var gap: float = ED_GAP * ui
-	var top: float = hud_h + 6.0 * ui
-	var bottom: float = view.y - 6.0 * ui
-	var rh: float = (bottom - top - gap * float(n - 1)) / float(n)
-	if float(n) * rh + gap * float(n - 1) > bottom - top:
-		rh = maxf(24.0, (bottom - top - gap * float(n - 1)) / float(n))
-	var y: float = top
-	for row in counts:
-		var cnt: int = maxi(int(row), 1)
-		var w: float = (view.x - 2.0 * PAD * ui - gap * float(cnt - 1)) / float(cnt)
-		var line: Array = []
-		for i in range(cnt):
-			line.append(Rect2(PAD * ui + float(i) * (w + gap), y, w, rh))
-		ed_name_rows.append(line)
-		y += rh + gap
+	var y: float = hud_h + 8.0 * ui
+	var right: float = view.x - PAD * ui
+	name_cancel = Rect2(right - bw, y, bw, h)
+	name_ok = Rect2(name_cancel.position.x - gap - bw, y, bw, h)
+	name_field = Rect2(PAD * ui, y, maxf(80.0, name_ok.position.x - gap - PAD * ui), h)
 
 
-# Vsechny dotykove cile klavesnice. Jedno misto pro kontrolu, ze se klavesy
-# neprekryvaji a ze jsou na displeji.
-func all_name_keys() -> Array:
+# Vsechny dotykove cile obrazovky prejmenovani: pole (to ale dostava fokus,
+# ne klepnuti hry) a dve tlacitka.
+func all_name_targets() -> Array:
 	var out: Array = []
-	for row in ed_name_rows:
-		for r in row:
+	for r in [name_field, name_ok, name_cancel]:
+		if r.size.x > 0.0:
 			out.append(r)
 	return out
 

@@ -75,6 +75,17 @@ const WIN_HOLD := 3.0
 # Dokud je dotaz otevreny, hra stoji (`paused`) a klepnuti mimo dve odpovedi
 # nic nedela - jinak by hrac prisel o rozehranou partii omylem.
 var leave_ask: bool = false
+# POLE PRO PREJMENOVANI LEVELU. Jan (Oct 2026): "Změna jména levelu je hrozná.
+# Chci používat úplně klasickou mobilní klávesnici. A klasický input." Vstup je
+# proto opravdovy `LineEdit` (kresli ho engine, ne hra) a klavesnici dava
+# SYSTEM - na webu ji zapina exportni volba `html/experimental_virtual_keyboard`
+# (viz `export_presets.cfg`), jinak by se na mobilu neukazala vubec.
+# Neni to `Button` ani tema hry: je to jediny pripad, kdy hra potrebuje text,
+# ktery umi systemova klavesnice (diakritika, predikce, posun kurzoru).
+var _name_input: LineEdit = null
+# Stav, ktery byl naposledy predan do `LineEdit` - podle nej se pozna, ze ma
+# hra prepsat svuj text (na webu nativni klavesnice NEEmituje `text_changed`).
+var _name_shown: bool = false
 
 var _music: AudioStreamPlayer = null
 var _sfx: AudioStreamPlayer = null
@@ -266,10 +277,9 @@ func _reflow() -> void:
 		# Font se predava kvuli mereni kompaktnich tlacitek.
 		layout.set_editor_font(_font)
 		layout.editor_panel(editor.panel_rows())
-		# KLAVESNICE PRO PREJMENOVANI se rozvrhne z toho, co editor opravdu
-		# nabizi (`name_grid`) - takze klavesa nemuze byt nakreslena jinde,
-		# nez kde se macka.
-		layout.name_keys(editor.name_row_counts())
+		# POLE PRO PREJMENOVANI se rozvrhne s ostatnim rozvrzenim (viz
+		# `ScreenLayout.name_panel`). Klavesnici uz hra nekresli - vstup je
+		# opravdovy `LineEdit` (viz `_sync_name_input`).
 		game.rebuild_network(layout.editor_arena, layout.s, layout.editor_bar_top())
 		return
 	# VYBER LEVELU: pocet radku vi az obrazovka (kolik je levelu), takze se
@@ -434,6 +444,7 @@ func _setup_towers_shot() -> void:
 
 
 func _process(delta: float) -> void:
+	_sync_name_input()
 	if _shot:
 		_shot_frames += 1
 		if _shot_frames == 3:
@@ -584,6 +595,119 @@ func _click() -> void:
 		_sfx.play()
 
 
+# =========================================================================
+# VSTUP PRO PREJMENOVANI LEVELU (klasicky input + klavesnice systemu)
+#
+# Jan (Oct 2026): "Změna jména levelu je hrozná. Chci používat úplně klasickou
+# mobilní klávesnici. A klasický input." Hra proto prestala kreslit vlastni
+# mrizku znaku a pouziva opravdovy `LineEdit`:
+#   * text umi systemova klavesnice (diakritika, predikce, posun kurzoru),
+#   * na webu ji zapina exportni volba `html/experimental_virtual_keyboard`,
+#     bez ni `DisplayServer` VK vubec nema a klavesnice by se neukazala,
+#   * na desktopu funguje fyzicka klavesnice a Enter ("text_submitted").
+#
+# POZOR, ZMERENO V GODOTU 4.7: na webu nativni klavesnice NEEmituje
+# `text_changed` (Godot posila text do `LineEdit` pres `set_text`) - kdo by se
+# spolehal na signal, nedostal by ani jednu znaku. Text se proto cte kazdy
+# snimek a autoritou je to, co ma zrovna fokus.
+# =========================================================================
+
+# POLE SE VYTVARI AZ VE CHVILI, KDY JE POTREBA. Kdyby viselo ve scene porad,
+# bralo by fokus i ve hre (a na mobilu by vyskakovala klavesnice pri kazdem
+# klepnuti do desky).
+func _make_name_input() -> void:
+	_name_input = LineEdit.new()
+	_name_input.visible = false
+	_name_input.virtual_keyboard_enabled = true
+	_name_input.max_length = Editor.NAME_MAX
+	_name_input.placeholder_text = "název levelu"
+	# Kontextova nabidka (kopirovat/vlozit) je na mobilu okno, ktere si hra
+	# nema jak overit - vypnuta je bezpecnejsi volba nez nabidka, ktera
+	# nikdy neprijde.
+	_name_input.context_menu_enabled = false
+	# ENTER NA KLAVESNICI SYSTEMU = HOTOVO. Na webu muze prijit i tak - bere
+	# se jako potvrzeni, protoze nic jineho znamenat nemuze.
+	_name_input.text_submitted.connect(_on_name_submitted)
+	_style_name_input()
+	add_child(_name_input)
+
+
+# PLOCHY VZHLED POLE. Hra kresli vsechno ploche a bez efektu na hover; pole
+# musi vypadat stejne. "normal" i "focus" maji STEJNY stylebox - stav se
+# meni jen tim, co je v poli, ne podsvicenim (Jan: zadne hover/focus efekty).
+func _style_name_input() -> void:
+	if _name_input == null:
+		return
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.135, 0.125, 0.11)
+	box.border_color = Color(0.46, 0.42, 0.35)
+	box.set_border_width_all(int(maxf(1.0, round(layout.ul(2.0)))))
+	box.content_margin_left = 8.0
+	box.content_margin_right = 8.0
+	box.content_margin_top = 4.0
+	box.content_margin_bottom = 4.0
+	for name in ["normal", "focus", "read_only"]:
+		_name_input.add_theme_stylebox_override(name, box)
+	_name_input.add_theme_color_override("font_color", Color(0.90, 0.87, 0.80))
+	_name_input.add_theme_color_override("font_placeholder_color", Color(0.50, 0.47, 0.42))
+	_name_input.add_theme_color_override("caret_color", Color(0.90, 0.85, 0.55))
+	_name_input.add_theme_color_override("selection_color", Color(0.35, 0.33, 0.28))
+
+
+# ROZHODNUTI O POLI, KAZDY SNIMEK. Obrazovka se meni klepnutim, ale i autosave
+# a navrat ze seznamu - cekat na "signal zmeny rezimu" by znamenalo hledat,
+# kde vsude se rezim meni, a nekde by to uteklo.
+func _sync_name_input() -> void:
+	var want: bool = menu.is_editor() and editor.is_name()
+	if not want:
+		if _name_input != null and _name_input.visible:
+			_name_input.visible = false
+			_name_input.release_focus()
+			if DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+				DisplayServer.virtual_keyboard_hide()
+		_name_shown = false
+		return
+	if _name_input == null:
+		_make_name_input()
+	if _name_input == null:
+		return
+	# ROZVRZENI A PISMO: pole stoji presne tam, kde ho nakreslilo rozvrzeni.
+	# Pismo jde s meritkem - jinak by bylo na velkem displeji drobne.
+	if _name_input.size != layout.name_field.size:
+		_style_name_input()
+	_name_input.position = layout.name_field.position
+	_name_input.size = layout.name_field.size
+	_name_input.add_theme_font_size_override("font_size", layout.font(20))
+	if not _name_input.visible:
+		_name_input.visible = true
+		_name_shown = false
+	# TEXT JDE OBOUSMERNE: kdo ma fokus, je autorita. Pole pise do editoru a
+	# editor (zruseni preklepu, omezeni delky) pise do pole.
+	if _name_input.has_focus():
+		if editor.name_text != _name_input.text:
+			editor.set_name_text(_name_input.text)
+			if _name_input.text != editor.name_text:
+				_name_input.text = editor.name_text
+				_name_input.caret_column = _name_input.text.length()
+	else:
+		if _name_input.text != editor.name_text:
+			_name_input.text = editor.name_text
+			_name_input.caret_column = _name_input.text.length()
+		# KLAVESNICE: fokus poli ji ukaze (na webu ji zapina exportni volba)
+		_name_input.grab_focus()
+		if not _name_shown and DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+			DisplayServer.virtual_keyboard_show(editor.name_text, layout.name_field,
+				DisplayServer.KEYBOARD_TYPE_DEFAULT, Editor.NAME_MAX)
+	_name_shown = true
+
+
+# HORKA KLAVESA NA KLAVESNICI SYSTEMU. Na webu muze prijit i "text_submitted"
+# (Enter) - bere se jako "hotovo", protoze nic jineho znamenat nemuze.
+func _on_name_submitted(_t: String) -> void:
+	if menu.is_editor() and editor.is_name():
+		editor.commit_name()
+
+
 # Kolo z menu. Hraje se ZAKLADNI deska - ta je na balanc vyladena. Levely
 # z editoru se hraji z editoru (a zakotvene si hrac vybere v menu).
 func _start_battle() -> void:
@@ -656,6 +780,11 @@ func _input(event: InputEvent) -> void:
 			press = mb.pressed
 			release = not mb.pressed
 	else:
+		return
+	# POLE PRO PREJMENOVANI DOSTAVA KLEPNUTI SAMO. Hra je nesmi oznacit za
+	# vyrizene (a nic na ne delat) - jinak by se do pole nedalo klepnout a po
+	# zavreni klavesnice by nebylo jak ji znovu otevrit.
+	if press and menu.is_editor() and editor.is_name() and layout.name_field.has_point(pos):
 		return
 	if press:
 		if _tap_live:
@@ -883,19 +1012,19 @@ func _handle_guide_tap(pos: Vector2) -> void:
 # nezabralo.
 func _handle_editor_tap(pos: Vector2) -> void:
 	# KLAVESNICE PRO PREJMENOVANI. Je to samostatny rezim obrazovky (jako
-	# seznam), takze se testuje prvni - jinak by klepnuti na klavesu
-	# propadlo na desku pod ni.
+	# seznam), takze se testuje prvni - jinak by klepnuti na tlacitko
+	# propadlo na desku pod nim. POLE TEXTU se tady NERESI: to dostava fokus
+	# od enginu (viz `_input`, ktery klepnuti do pole nechava projit).
 	if editor.is_name():
-		var grid: Array = editor.name_grid()
-		for i in range(mini(grid.size(), layout.ed_name_rows.size())):
-			var line: Array = grid[i]
-			var rects: Array = layout.ed_name_rows[i]
-			for j in range(mini(line.size(), rects.size())):
-				var kr: Rect2 = rects[j]
-				if kr.has_point(pos):
-					_click()
-					editor.name_press(line[j])
-					return
+		if layout.name_ok.has_point(pos):
+			_click()
+			editor.commit_name()
+			return
+		if layout.name_cancel.has_point(pos):
+			_click()
+			editor.close_name()
+			editor.status = "Přejmenování zrušeno."
+			return
 		return
 	# SEZNAM: kazdy radek je level k nacteni (prvni je novy, posledni navrat).
 	if editor.is_list():
@@ -1170,6 +1299,12 @@ func _draw_editor_list() -> void:
 			_draw_list_btn(layout.editor_list_button(i, 0), "název", Color(0.72, 0.70, 0.62), false)
 			_draw_list_btn(layout.editor_list_button(i, 1), "smazat",
 				Color(0.85, 0.42, 0.36), waiting)
+	# HLASKA SEZNAMU. Dvouklepnutove smazani bez viditelne odpovedi je hra, ve
+	# ktere hrac nevi, jestli uz klepnul jednou nebo dvakrat - a presne proto
+	# vypadalo potvrzeni jako "rovnou se otevřel další level". Hlaska stoji
+	# v hornim pruhu, kde je v seznamu volne misto.
+	_label_right(editor.status, layout.hud_h * 0.78, 13, Color(0.72, 0.70, 0.62),
+		layout.view.x - _pad_left())
 
 
 # TLACITKO NA RADKU SEZNAMU. Kresli se stejnym stylem jako vsechno ostatni
@@ -1184,38 +1319,38 @@ func _draw_list_btn(r: Rect2, text: String, accent: Color, strong: bool) -> void
 		Color(0.92, 0.89, 0.82) if strong else Color(0.76, 0.73, 0.66))
 
 
-# KLAVESNICE PRO PREJMENOVANI. Nahore je videt, co hrac pise (a ze se pise do
-# jmena levelu), dole klavesy. Klepnuti na klavesu se hleda PRESNE podle
-# rozvrzeni (`layout.ed_name_rows`) - jedna pravda pro kresleni i klepnuti.
+# OBRAZOVKA PREJMENOVANI. Hra kresli jen pozadi, nadpis, hlášku a dve
+# tlacitka - POLE TEXTU kresli engine (`LineEdit`, viz `_sync_name_input`),
+# proto tady zadna mrizka znaku neni. Klepnuti na "hotovo"/"zrusit" se hleda
+# v rozvrzeni (`layout.name_ok` / `layout.name_cancel`), takze tlacitko
+# nemuze byt nakreslene jinde, nez kde se macka.
 func _draw_editor_name() -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
 	var pad: float = _pad_left()
 	_label(Vector2(pad, layout.hud_h * 0.62), "NÁZEV LEVELU", 15, Color(0.58, 0.55, 0.49))
-	# NAPSANY TEXT: kdyz je prazdny, ukaze se, ze se ceka na znak - prazdny
-	# radek by vypadal, jako ze se nic nedeje.
-	var shown: String = editor.name_text if not editor.name_text.is_empty() else "…"
-	_label(Vector2(pad, layout.hud_h * 1.30), "%s|" % shown, 20, Color(0.90, 0.87, 0.80))
 	_label_right(editor.status, layout.hud_h * 0.62, 13, Color(0.72, 0.70, 0.62),
 		layout.view.x - pad)
-	var grid: Array = editor.name_grid()
-	for i in range(mini(grid.size(), layout.ed_name_rows.size())):
-		var line: Array = grid[i]
-		var rects: Array = layout.ed_name_rows[i]
-		for j in range(mini(line.size(), rects.size())):
-			var r: Rect2 = rects[j]
-			var it: Dictionary = line[j]
-			var act: int = int(it["act"])
-			var accent: Color = Color(0.44, 0.41, 0.36)
-			if act == Editor.NAME_OK:
-				accent = Color(0.65, 0.78, 0.60)
-			elif act == Editor.NAME_CANCEL:
-				accent = Color(0.72, 0.70, 0.62)
-			elif act < 0:
-				accent = Color(0.66, 0.34, 0.30)
-			draw_rect(r, PANEL_BTN)
-			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.6), false, layout.ul(2.0))
-			_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.64,
-				15 if act >= 0 else 14, Color(0.90, 0.87, 0.80))
+	# NAD POLEM: rekne se, co se stane - jinak by hrac nevedel, ze se nazev
+	# uklada az tlacitkem (a ze se da vzit zpet).
+	_label(Vector2(pad, layout.name_field.position.y - 8.0 * layout.ui),
+		"Přepiš název a zmáčkni „hotovo“ (klávesnici dá systém).", 13,
+		Color(0.58, 0.55, 0.49))
+	_draw_name_btn(layout.name_ok, "hotovo", Color(0.65, 0.78, 0.60))
+	_draw_name_btn(layout.name_cancel, "zrušit", Color(0.72, 0.70, 0.62))
+	# SROVNANI SE SEZNAMEM: hrac se z prejmenovani vraci do seznamu, takze
+	# musi videt, ze se vratil (a ne ze se obrazovka zasekla).
+	_label(Vector2(pad, layout.name_field.position.y + layout.name_field.size.y + 26.0 * layout.ui),
+		"Po „hotovo“ nebo „zrušit“ jsi zpátky v seznamu levelů.", 13,
+		Color(0.50, 0.47, 0.42))
+
+
+# TLACITKO OBRAZOVKY PREJMENOVANI. Stejny plochy styl jako vsechno ostatni.
+func _draw_name_btn(r: Rect2, text: String, accent: Color) -> void:
+	if r.size.x <= 0.0:
+		return
+	draw_rect(r, PANEL_BTN)
+	draw_rect(r, Color(accent.r, accent.g, accent.b, 0.7), false, layout.ul(2.0))
+	_draw_centered(text, r, r.position.y + r.size.y * 0.64, 15, Color(0.90, 0.87, 0.80))
 
 
 # CO Hrac PRAVE KRESLI. Do levelu se to dostane, az kdyz prst zvedne - do
@@ -1353,16 +1488,19 @@ func _draw_editor_panel() -> void:
 				continue
 			if kind == "value":
 				# HODNOTA NENI TLACITKO. Kresli se jako text: ramecek by
-				# slibil klepnuti, ktere nic nedela. Je-li oznacena jako
-				# `align: right`, tiskne se k PRAVEMU okraji sve bunky -
-				# tlacitka "−"/"+" stoji hned za ni, takze je hrac vidi
-				# "nalepena na hodnotu" (Jan). `align: left` je sloupec
-				# popisku v tabulce levelu: vsechny popisky zacinaji na
-				# stejnem x, aby hodnoty vedle nich staly pod sebou.
+				# slibil klepnuti, ktere nic nedela. `align: value` je
+				# SLOUPEC HODNOT v tabulce levelu - tiskne se k LEVEMU okraji
+				# sve bunky, takze hodnota stoji hned vedle popisku a tlacitka
+				# "−"/"+" jsou nalepena za ni (Jan: "pak obří mezeru, pak
+				# hodnotu a hned vedle ní tlačítka"). `align: left` je
+				# sloupec popisku - stejne zarovnani, jen potlacene.
 				var al: String = str(it.get("align", "center"))
 				var base_y: float = r.position.y + r.size.y * 0.62
 				if al == "right":
 					_draw_right(str(it["label"]), r, base_y, lpx, Color(0.96, 0.93, 0.84))
+				elif al == "value":
+					_label(Vector2(r.position.x + 2.0 * layout.ui, base_y),
+						str(it["label"]), lpx, Color(0.96, 0.93, 0.84))
 				elif al == "left":
 					_label(Vector2(r.position.x + 6.0 * layout.ui, base_y),
 						str(it["label"]), lpx, Color(0.80, 0.77, 0.70))

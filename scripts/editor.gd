@@ -113,6 +113,14 @@ const BTN_PARAM_COUNT := PARAM_COUNT * 2
 # dotykove minimum, jen musi mit vsechny popisky stejne misto, aby hodnoty
 # vedle nich zacinay na jednom x.
 const CELL_LABEL_W := 84.0
+# SIRKA SLOUPCE HODNOTY (px, nasobi `ui`). Jan (Oct 2026): "Máme název hodnoty,
+# pak obří mezeru, pak hodnotu a hned vedle ní tlačítka. Nemusí být vše nutně
+# roztažené přes celou šířku displeje. Důležitější je, aby to vypadalo
+# přehledně." Hodnota proto UZ NENI roztažená vahou: ma pevnou, uzkaou sirku
+# hned vedle popisku a "−"/"+" stoji primo za ni. Cisla jsou vlevo, takze
+# sloupce hodnot i sloupce tlacitek drzi pod sebou.
+# Sirka je na nejdelsi hodnotu ("2000" pri zlate), ne na nejkratsi.
+const CELL_VALUE_W := 68.0
 # SIRKA TLACITEK U USEKU ("typ cesty" a "smazat úsek"). Popisek typu se meni
 # ("Oheň" je kratke, "neutrální" dlouhe), a kdyz se sirka meri podle popisku,
 # tlacitko pri kazdem prepnuti poskoci - a s nim i tlacitko vedle. Jan
@@ -170,11 +178,6 @@ const NAME_CLEAR := -2       # smazat cely nazev
 const NAME_OK := -3          # ulozit
 const NAME_CANCEL := -4      # zrusit
 const NAME_MAX := 18
-# Znaky, ktere jdou v nazvu pouzit. Mala pismena, cislice a pomlcka - nazev
-# levelu neni veta, je to jmenovka (a velka pismena by na dotykovem displeji
-# znamenala druhou rovinu klavesnice).
-const NAME_CHARS := "abcdefghijklmnopqrstuvwxyz0123456789-"
-const NAME_PER_ROW := 10
 
 var level: Level = null
 var tool: int = TOOL_ROAD
@@ -466,38 +469,14 @@ func is_name() -> bool:
 	return mode == MODE_NAME
 
 
-# KLAVESNICE PRO PREJMENOVANI. Radky jdou shora dolu, kazda polozka je
-# {"label", "act"}: `act` >= 0 je znak (jeho kod), zaporna cisla jsou akce.
-# Jeden zdroj pro kresleni, klepnuti i rozvrzeni - pocet klaves v radku se
-# z toho pocita (`ScreenLayout.name_keys`), takze se klavesnice nemuze
-# rozvrstvit jinak, nez vypada.
-func name_grid() -> Array:
-	var rows: Array = []
-	var row: Array = []
-	for i in range(NAME_CHARS.length()):
-		row.append({"label": NAME_CHARS[i], "act": NAME_CHARS.unicode_at(i)})
-		if row.size() >= NAME_PER_ROW:
-			rows.append(row)
-			row = []
-	if not row.is_empty():
-		rows.append(row)
-	rows.append([
-		{"label": "smazat znak", "act": NAME_BACK},
-		{"label": "smazat vše", "act": NAME_CLEAR},
-		{"label": "hotovo", "act": NAME_OK},
-		{"label": "zrušit", "act": NAME_CANCEL},
-	])
-	return rows
-
-
-# POCTY KLAVES V RADcICH pro rozvrzeni. Bere se z `name_grid`, aby se obe
-# strany nemohly rozejit (klavesa nakreslena jinde, nez kde se macka, je ta
-# nejhorsi chyba UI).
-func name_row_counts() -> Array:
-	var out: Array = []
-	for row in name_grid():
-		out.append(row.size())
-	return out
+# VSTUP TEXTU. Klavesnici dodava SYSTEM (viz `screen_layout.name_panel` a
+# `game_view._sync_name_input`), takze editor uz zadnou mrizku znaku nema -
+# jen prijme text, ktery do nej obrazovka posle, a ohlida delku.
+# Pozor: na webu nativni klavesnice NEEmituje `text_changed` (Godot posila
+# text do `LineEdit` pres `set_text`), takze se text necte ze signalu, ale
+# kazdy snimek (`game_view._process`).
+func set_name_text(t: String) -> void:
+	name_text = t.substr(0, NAME_MAX)
 
 
 func begin_rename(key: String) -> void:
@@ -507,27 +486,7 @@ func begin_rename(key: String) -> void:
 	name_text = key
 	mode = MODE_NAME
 	pending_delete = ""
-	status = "Název levelu — piš na klávesnici, pak „hotovo“."
-
-
-# STISK KLAVESY. Zapisuje se JEN do textu; soubor se prejmenuje az "hotovo".
-func name_press(item: Dictionary) -> void:
-	var act: int = int(item.get("act", -1))
-	if act >= 0:
-		if name_text.length() < NAME_MAX:
-			name_text += String.chr(act)
-		return
-	match act:
-		NAME_BACK:
-			if name_text.length() > 0:
-				name_text = name_text.substr(0, name_text.length() - 1)
-		NAME_CLEAR:
-			name_text = ""
-		NAME_OK:
-			commit_name()
-		NAME_CANCEL:
-			close_name()
-			status = "Přejmenování zrušeno."
+	status = "Přepiš název a zmáčkni „hotovo“."
 
 
 # ULOZENI NOVEHO NAZVU. Je to PRESUN SOUBORU (viz `Level.rename_key`): kdyby
@@ -557,8 +516,11 @@ func commit_name() -> void:
 	status = "Přejmenováno: %s → %s." % [rename_key, want]
 
 
+# NAVRAT DO SEZNAMU. Prejmenovani se spousti Z RADKU SEZNAMU, takze se hrac
+# musi vratit TAM, kde byl - driv se vracel do kresleni a seznam musel znovu
+# otevirat tlacitkem (a klepnuti na "zrusit" ho vyhodilo z prace se seznamem).
 func close_name() -> void:
-	mode = MODE_EDIT
+	mode = MODE_LIST
 	rename_key = ""
 	name_text = ""
 
@@ -582,7 +544,14 @@ func ask_delete(key: String) -> void:
 	# z pameti uklidi taky (a "zpet" ho umi vratit, dokud je v historii).
 	if was_open:
 		reset()
-		status = "Level %s smazán (a v editoru je prázdná mřížka)." % key
+		# ZUSTAVAME V SEZNAMU. `reset` prepne rezim do kresleni (je to novy
+		# level) - jenze hrac prave pracuje se SEZNAMEM a potvrzujici klepnuti
+		# ho vyhodilo na desku s prazdnou mrizkou. Presne na to Jan upozornil:
+		# "po smazání se otevře následující level, protože hra bere potvrzující
+		# kliknutí zároveň jako otevření dalšího levelu". Seznam se proto vrati
+		# zpet a hrac v nem pokracuje.
+		mode = MODE_LIST
+		status = "Level %s smazán (v editoru je prázdná mřížka)." % key
 	else:
 		status = "Level %s smazán." % key
 
@@ -792,8 +761,10 @@ func _param_row(ids: Array) -> Array:
 	return row
 
 
-# BUNKA TABULKY: popisek (text, pevna sirka) | hodnota (text, doplni zbytek,
-# tiskne se k pravemu okraji) | "−" "+" (pevna mala sirka, nalepena na hodnotu).
+# BUNKA TABULKY: popisek (text, pevna sirka) | hodnota (text, pevna UZKA
+# sirka, tiskne se k LEVEMU okraji sve bunky) | "−" "+" (pevna mala sirka,
+# nalepena na hodnotu). Zbytek radku zustava prazdny - tabulka se NEROZTAHUJE
+# pres celou sirku displeje, protoze prehlednost je dulezitejsi nez vyplneni.
 func _param_cell(p: int) -> Array:
 	var g: String = "p%d" % p
 	var label: String = ""
@@ -805,9 +776,9 @@ func _param_cell(p: int) -> Array:
 		kind = "value"
 	var out: Array = [
 		{"act": -1, "label": label, "w": 1.0, "on": false, "kind": kind,
-			"align": "left", "abs_w": CELL_LABEL_W, "cell": g},
+			"align": "left", "abs_w": CELL_LABEL_W, "group": g, "cell": g},
 		{"act": -1, "label": value, "w": 1.0, "on": false, "kind": kind,
-			"align": "right", "group": g, "cell": g},
+			"align": "value", "abs_w": CELL_VALUE_W, "group": g, "cell": g},
 	]
 	if p < 0:
 		for k in range(2):

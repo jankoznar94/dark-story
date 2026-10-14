@@ -1183,7 +1183,7 @@ func _test_panels() -> void:
 	for row in e.panel_rows():
 		for it in row:
 			if str(it["kind"]) == "value" and int(it["act"]) < 0:
-				if str(it.get("align", "")) == "right":
+				if str(it.get("align", "")) == "value":
 					values += 1
 				elif str(it.get("align", "")) == "left":
 					names += 1
@@ -1254,7 +1254,7 @@ func _test_level_params() -> void:
 		# (sloupec vpravo, hned u tlacitek "−"/"+"). Hrac vidi "nepřátel | 6 |
 		# − +" a hodnoty stoji ve sloupcich pod sebou.
 		var cell_name: String = _param_text_in_panel(e, p, "left")
-		var cell_value: String = _param_text_in_panel(e, p, "right")
+		var cell_value: String = _param_text_in_panel(e, p, "value")
 		_check(cell_name == str(par["label"]),
 			"%s: popisek v panelu je \"%s\"" % [key, cell_name])
 		_check(cell_value == e._param_text(key),
@@ -2189,9 +2189,25 @@ func _test_steppers_and_grid() -> void:
 					"%s panel %d: - neni nalepene na hodnotu" % [str(size), p])
 				_check(absf(float(plus["rect"].position.x) - float(minus["rect"].end.x)) < 0.6,
 					"%s panel %d: + neni nalepene na -" % [str(size), p])
+				# HODNOTA JE SLOUPEC, NE ROZTAZENA PLOCHA. Jan (Oct 2026):
+				# "Máme název hodnoty, pak obří mezeru, pak hodnotu a hned
+				# vedle ní tlačítka." Hodnota proto stoji u LEVEHO okraje
+				# sve uzke bunky - cisla i tlacitka pak drzi pod sebou.
 				_check(str(val["item"].get("kind", "")) == "value"
-					and str(val["item"].get("align", "")) == "right",
-					"%s panel %d: hodnota pred - neni text u praveho okraje" % [str(size), p])
+					and str(val["item"].get("align", "")) == "value",
+					"%s panel %d: hodnota pred - neni sloupec hodnoty" % [str(size), p])
+				_check(absf(float(val["item"].get("abs_w", 0.0)) - Editor.CELL_VALUE_W) < 0.6,
+					"%s panel %d: hodnota nema pevnou sirku sloupce (%.1f)" % [
+						str(size), p, float(val["item"].get("abs_w", 0.0))])
+				# PRVNI BUNKA: hodnota musi byt HNED za popiskem. Kdyby se
+				# sirka pocitala vahou (jak to bylo driv), vznikla by mezi
+				# popiskem a hodnotou prazdna plocha pres zbytek displeje.
+				var lbl: Dictionary = items[i - 2]
+				if str(lbl["item"].get("kind", "")) == "value" \
+						and str(lbl["item"].get("align", "")) == "left":
+					_check(absf(float(val["rect"].position.x) - float(lbl["rect"].end.x)) < 0.6,
+						"%s panel %d: mezi popiskem a hodnotou je mezera %.1f px" % [
+							str(size), p, float(val["rect"].position.x) - float(lbl["rect"].end.x)])
 				_check(str(plus["item"].get("label", "")) == "+",
 					"%s panel %d: za - neni +" % [str(size), p])
 			# Panel "level" ma dvojici u kazdeho parametru; ostatni zadnou.
@@ -2250,8 +2266,11 @@ func _test_level_table() -> void:
 					seen[g] = {}
 				if str(it.get("align", "")) == "left":
 					seen[g]["label_x"] = r.position.x
-				elif str(it.get("align", "")) == "right":
-					seen[g]["value_end"] = r.end.x
+				elif str(it.get("align", "")) == "value":
+					# SLOUPEC HODNOTY SE MERI LEVYM OKRAJEM: hodnota stoji
+					# hned u popisku a k pravemu okraji se nedorazí - jinak by
+					# mezi popiskem a cislem vznikla prazdna plocha.
+					seen[g]["value_x"] = r.position.x
 				elif str(it.get("label", "")) == "−":
 					seen[g]["minus_x"] = r.position.x
 		_check(seen.size() == Editor.PARAM_COUNT,
@@ -2266,7 +2285,7 @@ func _test_level_table() -> void:
 		for g in seen.keys():
 			var c: Dictionary = seen[g]
 			var col: int = int(str(g).substr(1)) % Editor.PARAM_COLS
-			for key in ["label_x", "value_end", "minus_x"]:
+			for key in ["label_x", "value_x", "minus_x"]:
 				_check(c.has(key), "%s: bunka %s nema %s" % [str(size), g, key])
 				if not c.has(key):
 					continue
@@ -2490,20 +2509,30 @@ func _test_rename_and_delete() -> void:
 	_check(first != "", "level nema jmeno")
 	_check(Level.saved_keys().has(first), "level se neulozil")
 
-	# KLAVESNICE. Text se meni jen v pameti - soubor se prejmenuje az
-	# "hotovo", takze se da preklep vzit zpet.
+	# POLE TEXTU (klasicky input). Text se meni JEN v pameti - soubor se
+	# prejmenuje az "hotovo", takze se da preklep vzit zpet. Na webu nativni
+	# klavesnice neemituje `text_changed`, takze obrazovka cte text z pole
+	# kazdy snimek - editor proto dostava text pres `set_name_text`.
 	a.begin_rename(first)
-	_check(a.is_name(), "klavesnice pro prejmenovani se neotevrela")
-	_check(a.name_text == first, "v klavesnici neni soucasny nazev (%s)" % a.name_text)
-	_name_key(a, "x")
-	_name_key(a, "y")
-	_check(a.name_text == first + "xy", "znaky se neprisly (%s)" % a.name_text)
-	a.name_press({"act": Editor.NAME_BACK})
-	_check(a.name_text == first + "x", "smazani znaku nefunguje (%s)" % a.name_text)
+	_check(a.is_name(), "vstup pro prejmenovani se neotevrel")
+	_check(a.name_text == first, "v poli neni soucasny nazev (%s)" % a.name_text)
+	a.set_name_text(first + "xy")
+	_check(a.name_text == first + "xy", "znaky z pole se neprisly (%s)" % a.name_text)
+	a.set_name_text(first + "x")
+	_check(a.name_text == first + "x", "prepis textu nefunguje (%s)" % a.name_text)
+	# DELKA JE OMEZENA: pole i editor musi drzet stejny strop, jinak by se
+	# nazev zkratil az pri ukladani (a hrac by nevidel, co se ulozi).
+	a.set_name_text("x".repeat(200))
+	_check(a.name_text.length() == Editor.NAME_MAX,
+		"nazev se nezkratil na %d znaku (%d)" % [Editor.NAME_MAX, a.name_text.length()])
+	a.set_name_text(first + "x")
 	_check(Level.saved_keys().has(first), "soubor se prejmenoval uz pri psani")
 	_check(Level.saved_keys().size() == 1, "behem psani vznikl dalsi soubor")
-	a.name_press({"act": Editor.NAME_OK})
-	_check(not a.is_name(), "klavesnice se po hotovo nezavrela")
+	a.commit_name()
+	_check(not a.is_name(), "vstup se po hotovo nezavrel")
+	# PO PREJMENOVANI SE Hrac VRACI DO SEZNAMU: prejmenovani se spousti z radku
+	# seznamu, takze vracet se do kresleni znamena znovu hledat seznam.
+	_check(a.is_list(), "po hotovo se hrac nevratil do seznamu")
 	var want: String = first + "x"
 	_check(Level.saved_keys().has(want), "level se neprejmenoval (%s)" % str(Level.saved_keys()))
 	_check(not Level.saved_keys().has(first), "stary soubor po prejmenovani zustal")
@@ -2547,15 +2576,24 @@ func _test_rename_and_delete() -> void:
 	_check(c.local_name != second or c.level.lane_count() == 0,
 		"smazany level zustal otevreny - autosave by ho vratil")
 	_check(Level.saved_keys().has(want), "smazani vzalo i jiny level")
+
+	# SMAZANI OTEVRENEHO LEVELU NESMI VYHODIT Hrace ZE SEZNAMU. Jan (Oct 2026):
+	# "po smazání se otevře následující level, protože hra bere potvrzující
+	# kliknutí zároveň jako otevření dalšího levelu." Presne to delal `reset`,
+	# ktery po smazani otevreneho levelu prepl rezim do kresleni - hrac skoncil
+	# na desce s prazdnou mrizkou a myslel si, ze se otevrel dalsi level.
+	var d := Editor.new()
+	d.reset()
+	d.tool = Editor.TOOL_START
+	d.tap_cell(Vector2i(1, 1))
+	d.tool = Editor.TOOL_CIL
+	d.tap_cell(Vector2i(5, 1))
+	_stroke(d, [Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1), Vector2i(5, 1)])
+	var open_key: String = d.local_name
+	d.open_list()
+	d.ask_delete(open_key)
+	d.ask_delete(open_key)
+	_check(not Level.saved_keys().has(open_key), "otevreny level se nesmazal")
+	_check(d.is_list(), "po smazani otevreneho levelu hrac zustal na desce")
+	_check(d.status.contains("smazán"), "smazani otevreneho levelu nerekne, co se stalo")
 	_wipe_levels()
-
-
-# STISK KLAVESY PODLE POPISKU. Hleda se v `name_grid` - stejne, jako to dela
-# obrazovka, takze test nemuze zmacknout klavesu, ktera na displeji neni.
-func _name_key(e: Editor, label: String) -> void:
-	for row in e.name_grid():
-		for it in row:
-			if str(it["label"]) == label:
-				e.name_press(it)
-				return
-	_check(false, "klavesa '%s' v klavesnici neni" % label)
