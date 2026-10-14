@@ -21,10 +21,12 @@ extends RefCounted
 
 # CESTA OD OKRAJE K VEZI. Je to CAS, ne rychlost v pixelech: na kazdem displeji
 # ma poutnik na cestu stejne dlouho, takze "jde pomalu" je vlastnost hry, ne
-# rozliseni. Jan (Oct 2026): "Rychlost všech nepřátel se musí snížit, aby to
-# vzbudilo dojem ještě větší vzdálenosti" - 8 s -> 12 s. S pomalejsim poutnikem
-# se dostrel muze vratit na mensi usek a okno na reakci zustava (~4,5 s).
-const TRAVEL_S := 12.0
+# rozliseni. Jan (Oct 2026): "Rychlost všech nepřátel se musí snížit" - 8 s ->
+# 12 s, a druhykrat "Celkově ještě zpomalíme pohyb nepřátel" - 12 s -> 15 s.
+# Pozor: pomalejsi poutnik pri ZMENSENEM dostrelu drzi okno na reakci stejne
+# (zaklad 0,34 * 15 = 5,1 s proti drivejsim 0,42 * 12 = 5,0 s), takze se tim
+# nemeni obtiznost - meni se jen to, jak hra vypada.
+const TRAVEL_S := 15.0
 const BASE_HP := 34.0
 const HP_GROWTH := 0.13
 const START_GOLD := 100
@@ -43,12 +45,12 @@ const SPAWN_GAP_MIN := 1.2
 const SPAWN_GAP_PER_WAVE := 0.13
 
 # STRELA JE TECKA, KTERA MA BYT VIDET. Rychlost je podil POLOMERU PLOCHY, ne
-# pevne pixely za sekundu: pres ZAKLADNI DOSTREL (Tower.RANGE_FRACS[0] = 0,42
-# polomeru) leti tecka vzdy ~0,33 s, na telefonu i na velkem displeji. Jan
-# (Oct 2026): "Rychlost projektilu musíme snížit" - bylo to 0,15 s a byl to
-# jen blik; 0,33 s uz je videt jako letici tecka a pri kadenci 3 ran/s je
-# v paprsku videt skoro porad.
-const SHOT_SPEED_FRAC := 1.36
+# pevne pixely za sekundu: pres ZAKLADNI DOSTREL (Tower.RANGE_FRACS[0] = 0,34
+# polomeru) leti tecka vzdy ~0,43 s, na telefonu i na velkem displeji. Jan
+# (Oct 2026): "Rychlost projektilu musíme snížit" - 1,36 -> 1,00 a druhykrat
+# "zpomalíme pohyb ... i projektilu věže" - 1,00 -> 0,80. Pri kadenci 3 ran/s
+# je v paprsku videt porad nekolik tecek, ale let je pomalejsi a citelnejsi.
+const SHOT_SPEED_FRAC := 0.80
 # POLOMER TECKY. Mala - je to tecka, ne koule; v paprsku jich ma byt videt vic.
 const SHOT_R_FRAC := 0.022
 

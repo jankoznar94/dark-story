@@ -27,6 +27,7 @@ func _init() -> void:
 	_run("neznama velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	_run("strela je tecka, paprsek je zamerovani", _test_shots_are_dots)
+	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -80,6 +81,26 @@ func _test_shots_are_dots() -> void:
 		"paprsek (zamerovani) zmizel - hrac nevidi, kam vez miri")
 
 
+# PALETA JE PUNTIK, NE TVAR (Jan, Oct 2026): "bude to zkrátka jen barevný plný
+# puntík s borderem. Žádné tvary." Hlida se MISTO VOLANI ve zdroji obrazovky:
+# kdyby se do palety vratila runa (`_shape`), hrac by videl sest tvaru a Jan
+# chce jen barvu; a bez `draw_circle` by z tlacitka zbyl jen ramecek.
+func _test_palette_is_dot() -> void:
+	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
+	_check(f != null, "nectu game_view.gd")
+	if f == null:
+		return
+	var src: String = f.get_as_text()
+	var start: int = src.find("func _draw_palette")
+	_check(start >= 0, "kresleni palety vubec neexistuje")
+	if start < 0:
+		return
+	var end: int = src.find("\nfunc ", start + 1)
+	var body: String = src.substr(start, (end - start) if end > start else src.length() - start)
+	_check(body.contains("draw_circle("), "paleta neni plny puntik (chybi draw_circle)")
+	_check(not body.contains("_shape("), "paleta kresli tvary, i kdyz ma byt jen puntik s borderem")
+
+
 func _test_zero_size() -> void:
 	var l := ScreenLayout.new()
 	l.update(Vector2.ZERO)
@@ -124,14 +145,16 @@ func _test_resolution(v: Vector2) -> void:
 		"%s: poutnik ma polomer %.1f px, barva a tvar nejdou precist" % [tag, l.pilgrim_r])
 	_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
 
-	# 2b) ZOOM SE NEMENI. Vez i poutnik jsou z MERITKA (vepsany kruh do kratsi
-	# strany herniho pruhu), NIKDY z polomeru plochy - jinak se spawnovacim
-	# kruhem "priblizi" cela hra, protoze plocha je ted vetsi nez displej.
+	# 2b) KRESLENI JE Z MERITKA, NE Z PLOCHY. Vez i poutnik jsou z MERITKA
+	# (vepsany kruh do kratsi strany herniho pruhu, zmenseno o UNIT_SHRINK),
+	# NIKDY z polomeru plochy - jinak by se spawnovacim kruhem "priblizila" cela
+	# hra, protoze plocha je vetsi nez displej.
 	# (Jan: "Jediné, cos udělala je to, žes celou hru zoomnula.")
 	var short_side: float = minf(l.arena.size.x, l.arena.size.y)
-	var want_unit: float = short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC
+	var want_unit: float = (short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC) \
+		* ScreenLayout.UNIT_SHRINK
 	_check(absf(l.unit_r - want_unit) < 0.5,
-		"%s: meritko kresleni neni vepsany kruh do kratsi strany (%.1f, ma byt %.1f)"
+		"%s: meritko kresleni neni zmensený vepsany kruh do kratsi strany (%.1f, ma byt %.1f)"
 		% [tag, l.unit_r, want_unit])
 	_check(is_equal_approx(l.tower_r, l.unit_r * Game.TOWER_R_FRAC),
 		"%s: vez se pocita z polomeru plochy, ne z meritka (zoom se zmenil)" % tag)
@@ -145,12 +168,14 @@ func _test_resolution(v: Vector2) -> void:
 		"%s: hra ma jiny polomer veze nez rozvrzeni (%.2f vs %.2f)"
 		% [tag, gz.tower_r, l.tower_r])
 	if tag == "390x844":
-		# CISLA Z DISPLEJE, NA KTEREM JAN HRAJE: vez 22 px a poutnik 9,2 px -
-		# presne jako pred zmensenim plochy. Kdyby se zoom pohnul, spadne to.
-		_check(absf(l.tower_r - 22.0) < 0.3,
-			"na 390x844 ma vez %.1f px (ma byt 22)" % l.tower_r)
-		_check(absf(l.pilgrim_r - 9.17) < 0.3,
-			"na 390x844 ma poutnik %.2f px (ma byt 9,2)" % l.pilgrim_r)
+		# CISLA Z DISPLEJE, NA KTEREM JAN HRAJE. Po druhem zmenseni (UNIT_SHRINK
+		# 0,85) je vez 18,7 px a poutnik 7,8 px (driv 22 a 9,2). Kdyby se
+		# zmenseni pohnulo, spadne to - a kdyby se pocitalo z plochy, spadne
+		# jeste vic.
+		_check(absf(l.tower_r - 18.7) < 0.3,
+			"na 390x844 ma vez %.1f px (ma byt 18,7)" % l.tower_r)
+		_check(absf(l.pilgrim_r - 7.79) < 0.3,
+			"na 390x844 ma poutnik %.2f px (ma byt 7,8)" % l.pilgrim_r)
 
 	# 2c) DOSTREL PRVNIHO STUPNE SE MUSI VEJIT MEZI BOKY DISPLEJE. Jan:
 	# "Rozsah zjišťování nepřátel nesmí mít hned na začátku poloměr jak celá
@@ -192,6 +217,10 @@ func _test_resolution(v: Vector2) -> void:
 				"%s: tlacitko barvy (%d) preleza displej" % [tag, count])
 			_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
 				"%s: tlacitko barvy (%d) je male %.0fx%.0f px"
+				% [tag, count, rr.size.x, rr.size.y])
+			# KRUH SE KRESLI DO CTVERCE - v obdelniku by z puntiku byl oval.
+			_check(absf(rr.size.x - rr.size.y) < 0.5,
+				"%s: tlacitko barvy (%d) neni ctverec (%.0fx%.0f) - z puntiku by byl oval"
 				% [tag, count, rr.size.x, rr.size.y])
 		# tlacitka se nesmi prekryvat, jinak hrac zmackne jinou barvu
 		for i in range(rects.size()):

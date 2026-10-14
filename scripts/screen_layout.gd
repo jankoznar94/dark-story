@@ -45,10 +45,20 @@ const PAL_MIN := 64.0
 # delalo polomer plochy - proto zustava zoom hry stejny, i kdyz je spawnovaci
 # kruh ted vetsi nez displej.
 const MARGIN_FRAC := 0.03
+# ZMENSENI KRESLENI (Jan, Oct 2026): "A vše uděláme o něco menší. Nepřátele, věž,
+# rádiový zjišťování nepřátel atd. Musíme opticky zvětšit celou tuhle plochu,
+# když už je telefon tak malý." Vse, co se kresli (vez, poutnik, tecka), je
+# z MERITKA - takze staci zmensit meritko a plocha vypada vetsi. NENI to
+# zmena rozvrzeni: spawnovaci kruh i dostrel zustavaji podily plochy.
+const UNIT_SHRINK := 0.85
 # DOTYKOVA MEZ. Tlacitko barvy je to jedine, na co hrac klika - pod 44 px
 # se na telefonu neda spolehlive trefit.
 const BTN_MIN := 44.0
-const BTN_MAX := 96.0
+# STROP PUNTIKU PALETY. "Budou větší" (Jan, Oct 2026) - driv mel podlaha
+# palety 96 px, dnes je strop 132 a tlacitko je CTVEREC (kruh v nem nesmi byt
+# oval). Skutecnou velikost stejne urcuje vyska palety - strop je jen pro
+# siroke displeje, kde by jinak puntik utekl pres celou obrazovku.
+const PAL_BTN_MAX := 132.0
 # MENU: vyska tlacitka se nikdy nezmensi pod dotykovou mez, zmensuje se jen
 # mezera mezi nimi. MENU JE VELKE (Jan, Oct 2026: "A menu uděláme o dost větší"):
 # na 390x844 ma tlacitko 304 x 108 px (driv 195 x 72) - hrac na nej nemusi
@@ -139,10 +149,12 @@ func update(v: Vector2) -> void:
 	bar_h = maxf(BAR_MIN, v.y * BAR_FRAC)
 	pal_h = maxf(PAL_MIN, v.y * PAL_FRAC)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, v.y - bar_h - pal_h))
-	# MERITKO KRESLENI: vepsany kruh do kratsi strany (jako driv) - z nej se
-	# pocita vez i poutnik, takze se zoom hry nemeni.
+	# MERITKO KRESLENI: vepsany kruh do kratsi strany (jako driv), zmenseno
+	# o UNIT_SHRINK - z nej se pocita vez i poutnik, takze cely obraz je o neco
+	# mensi a plocha tim OPTICKY vetsi (Jan: "Musíme opticky zvětšit celou
+	# tuhle plochu").
 	var short_side: float = minf(arena.size.x, arena.size.y)
-	unit_r = maxf(20.0, short_side * 0.5 - short_side * MARGIN_FRAC)
+	unit_r = maxf(20.0, (short_side * 0.5 - short_side * MARGIN_FRAC) * UNIT_SHRINK)
 	# SPAWNOVACI KRUH: dotyka se horniho i spodniho okraje herniho pruhu a je
 	# vetsi nez displej. Pod meritko nikdy nejde (na sirku zustane vepsany).
 	field_r = maxf(unit_r, arena.size.y * 0.5)
@@ -192,21 +204,30 @@ func fit_px(s: String, max_w: float, max_px: int, min_px: int = 10) -> int:
 
 # TLACITKA PALETY. Pocet barev se v prubehu hry meni (barvy pribyvaji), takze
 # se rozvrzeni pocita z poctu, ktery dostane - ne z konstanty.
+#
+# TLACITKO JE KRUH, NE OBDELNIK (Jan, Oct 2026): "tlačítka na přepínání barev
+# věže budou mít kulatý formát, budou větší a bude to zkrátka jen barevný plný
+# puntík s borderem. Žádné tvary." Kresli se kruh vepsany do CTVERCE, proto se
+# rozvrzeni snazi o ctvercove obdelniky - v siroke bunce by z kruhu byl oval.
+# Obdelnik zustava jen jako dotykova plocha (klepnuti mimo kruh ale v bunce
+# nicemu nevadi, bunky se neprekryvaji).
 func layout_palette(count: int) -> Array:
 	if count <= 0 or view.x < 1.0:
 		pal_rects = []
 		return pal_rects
-	var pad: float = maxf(6.0, view.x * 0.02)
-	var gap: float = maxf(4.0, view.x * 0.014)
-	var room: float = view.x - 2.0 * pad - gap * float(count - 1)
-	var w: float = clampf(room / float(count), BTN_MIN, BTN_MAX)
-	var h: float = maxf(BTN_MIN, pal_h - 2.0 * maxf(6.0, pal_h * 0.12))
-	var total: float = w * float(count) + gap * float(count - 1)
+	var pad: float = maxf(8.0, view.x * 0.025)
+	# MEZERA JE VETSI NEZ DRIV: puntiky se nesmi dotknout, jinak by hrac videl
+	# jeden barevny pruh a ne pet tlacitek.
+	var gap: float = maxf(10.0, view.x * 0.028)
+	var room_w: float = (view.x - 2.0 * pad - gap * float(count - 1)) / float(count)
+	var room_h: float = pal_h - 2.0 * maxf(6.0, pal_h * 0.10)
+	var side: float = minf(clampf(room_w, BTN_MIN, PAL_BTN_MAX), maxf(BTN_MIN, room_h))
+	var total: float = side * float(count) + gap * float(count - 1)
 	var x: float = (view.x - total) * 0.5
-	var y: float = view.y - pal_h + (pal_h - h) * 0.5
+	var y: float = view.y - pal_h + (pal_h - side) * 0.5
 	pal_rects = []
 	for i in range(count):
-		pal_rects.append(Rect2(x + (w + gap) * float(i), y, w, h))
+		pal_rects.append(Rect2(x + (side + gap) * float(i), y, side, side))
 	return pal_rects
 
 

@@ -85,7 +85,10 @@ func _place(g: Game, h: int, frac: float, angle: float = 0.0) -> Pilgrim:
 
 # HRA NA ROZVRZENI TELEFONU (390x844). Cisla z jednotkoveho rozvrzeni testu
 # (unit = field) by o realne hre nerikala nic - a hlavne: zakladni dostrel je
-# ted 0,42 polomeru, takze poutnik na 0,5 polomeru je MIMO dostrel.
+# podil plochy (dnes 0,34), takze kdo miri na poutnika u okraje, miri MIMO
+# dostrel. Testy, ktere potrebuji poutnika V DOSTRELU, proto pocitaji pozici
+# z `tower.range_frac()`, ne z opsaneho cisla - opsane cislo tady uz jednou
+# zastaralo, kdyz se dostrel zmensil.
 func _phone() -> Game:
 	var l := ScreenLayout.new()
 	l.update(Vector2(390.0, 844.0))
@@ -213,7 +216,9 @@ func _test_shots_hit_on_impact() -> void:
 	var g: Game = _phone()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var p: Pilgrim = _place(g, Hue.RED, 0.40)
+	# POZICE JE PODIL DOSTRELU, NE PLOCHY: zaklad je dnes 0,34 polomeru plochy,
+	# takze pevna 0,40 by byla mimo a vez by vubec nevystrelila.
+	var p: Pilgrim = _place(g, Hue.RED, g.tower.range_frac() * 0.85)
 	p.hp = 1000.0
 	p.max_hp = 1000.0
 	var hp0: float = p.hp
@@ -267,8 +272,10 @@ func _test_dead_target_shot_fizzles() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var near: Pilgrim = _place(g, Hue.RED, 0.25)
-	var far: Pilgrim = _place(g, Hue.RED, 0.38, PI)
+	# OBE POZICE MUSI BYT V DOSTRELU (zaklad 0,34 polomeru plochy) - jinak by
+	# "prepnuti svazku" nikdy nemohlo nastat.
+	var near: Pilgrim = _place(g, Hue.RED, g.tower.range_frac() * 0.55)
+	var far: Pilgrim = _place(g, Hue.RED, g.tower.range_frac() * 0.92, PI)
 	near.hp = 5.0
 	near.max_hp = 5.0
 	far.hp = 400.0
@@ -287,9 +294,9 @@ func _test_dead_target_shot_fizzles() -> void:
 # CAS NA REAKCI. Jan: "kruh, který určuje vzdálenost zjišťování nepřátel je tak
 # malý, že hráč nemá moc času reagovat. Zjišťování by mělo být někde mezi těmito
 # dvěma kruhy." Meri se cas, ktery poutnik stravi V KRUHU DOSTRELU - presne to je
-# okno, ve kterem musi hrac stihnout prepnout barvu. Zaklad (0,40 polomeru
-# plochy) daval ~2,5 s, coz bylo malo; dnes je zaklad 0,62 a cas roste s
-# vylepsenim. Mimo dostrel se nedeje nic, takze okno je i to, co hra umi.
+# okno, ve kterem musi hrac stihnout prepnout barvu. Zaklad je dnes 0,34
+# polomeru plochy pri TRAVEL_S = 15 s, tedy ~5 s na prvnim stupni. Mimo dostrel
+# se nedeje nic, takze okno je i to, co hra umi.
 func _test_reaction_window() -> void:
 	# MERI SE NA ROZVRZENI TELEFONU, na kterem Jan hraje (390x844) - cisla
 	# z jednotkoveho rozvrzeni testu by o realne hre nerikala nic.

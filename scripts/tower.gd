@@ -29,13 +29,18 @@ const MAX_LEVEL := 3
 # zjišťování nepřátel nesmí mít hned na začátku poloměr jak celá šířka displeje.
 # Musí začínat na menším úseku, aby ho bylo kam upgradovat." Na 390x844 je
 # polovina šířky displeje 0,57 polomeru plochy, takze 0,62 sahalo presne na boky
-# a prvni stupen vypadal jako "cele vidim" - zaklad je proto 0,42 (143 px,
-# 51 px od kazdeho boku) a upgrade prida na 0,55 a 0,70.
+# a prvni stupen vypadal jako "cele vidim".
 #
-# CAS V OHNI pri TRAVEL_S = 12 s: 4,6 / 6,2 / 8,1 s (driv 2,5 s, coz bylo malo).
-# Meri to `test_core._test_reaction_window` a tvar prvniho kruhu hlida
+# DRUHY PRUCHOD (Jan, Oct 2026): "A vše uděláme o něco menší. Nepřátele, věž,
+# rádius zjišťování nepřátel atd." - kruhy se zmensily na 0,34 / 0,46 / 0,60
+# (zaklad 0,42 -> 0,34 = 116 px na 390x844, tedy 79 px od kazdeho boku) a
+# TRAVEL_S sel na 15 s, takze okno na reakci zustava stejne: 0,34 * 15 = 5,1 s
+# proti drivejsim 0,42 * 12 = 5,0 s.
+#
+# CAS V OHNI pri TRAVEL_S = 15 s: 5,1 / 6,9 / 9,0 s. Meri to
+# `test_core._test_reaction_window` a tvar prvniho kruhu hlida
 # `test_layout` (nesmi dosahnout na bok displeje).
-const RANGE_FRACS := [0.42, 0.55, 0.70]
+const RANGE_FRACS := [0.34, 0.46, 0.60]
 
 # RYCHLOST STRELBY JE UPGRADE, KTERY JE VIDET (Jan, Oct 2026): "mám tu možnost
 # pracovat s rychlostí střelby, což je velmi uspokojivý upgrade." Poskozeni

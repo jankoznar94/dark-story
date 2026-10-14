@@ -21,10 +21,12 @@ const GLYPH := Color(0.09, 0.085, 0.09)
 const MENU_BG := Color(0.135, 0.125, 0.11)
 const MENU_EDGE := Color(0.72, 0.70, 0.62)
 const MENU_EDGE_FIRST := Color(0.78, 0.62, 0.30)
-# ZTLUMENI NEAKTIVNÍCH TALCÍČEK PALETY. Driv to bylo 42 % a zeme se vzduchem
-# v tom ztlumeni skoro zmizely (zmereno proti pozadi) - hrac pak nevidi, na co
-# ma klepnout. Tvar je proto VZDY v plne barve, ztlumuje se jen podklad.
-const PAL_IDLE := 0.55
+# ZTLUMENI NEAKTIVNÍCH PUNTÍKŮ PALETY. Od Oct 2026 je tlacitko PLNÝ KRUH
+# v barve, takze ztlumeni uz nemusi zachranovat tvar (driv se tvar kreslil
+# v plne barve a podklad se ztlumoval). 0,72 drzi barvu citelnou (zelena
+# a zluta se v 0,55 slily s podkladem) a zvolena barva se pozna podle bileho
+# ramecku a plne sytosti.
+const PAL_IDLE := 0.72
 
 # USPORNE VYKRESLOVANI (nastaveni hrace). Hra se jinak kresli v NATIVNIM
 # rozliseni displeje, coz na telefonu (DPR 2-3) znamena nekolikanasobne vic
@@ -437,25 +439,30 @@ func _draw_bar() -> void:
 
 
 # PALETA BAREV DOLE. Je to jedine misto, kam hrac klika - proto nema vyznam
-# klepat do pole. Zvolena barva je znacena SVETLYM RAMECKEM a plnym podkladem;
-# neaktivni jsou ztlumene, ale jejich TVAR je porad v plne barve.
+# klepat do pole.
+#
+# PUNTIK, NE TVAR (Jan, Oct 2026): "tlačítka na přepínání barev věže budou mít
+# kulatý formát, budou větší a bude to zkrátka jen barevný plný puntík
+# s borderem. Žádné tvary." Kresli se tedy PLNÝ KRUH v barve a kolem nej
+# ramecek: zvolena barva ma svetly (bilý) border a plnou barvu, nezvolena ma
+# border ve sve barve a ztlumeny podklad. Tvar (runa) z palety zmizel - je
+# videt na poutnikovi i ve vezi.
 func _draw_palette() -> void:
 	for i in range(layout.pal_rects.size()):
 		if i >= game.palette.size():
 			break
 		var h: int = int(game.palette[i])
 		var r: Rect2 = layout.pal_rects[i]
-		var active: bool = (h == game.tower.hue)
 		var col: Color = Hue.color_of(h)
+		var active: bool = (h == game.tower.hue)
+		var c: Vector2 = r.position + r.size * 0.5
+		var rad: float = minf(r.size.x, r.size.y) * 0.5
 		if active:
-			draw_rect(r, Color(col.r, col.g, col.b, 0.30), true)
-			draw_rect(r, Color(0.92, 0.90, 0.86), false, 3.0)
+			draw_circle(c, rad * 0.86, col)
+			draw_arc(c, rad * 0.86, 0.0, TAU, 64, Color(0.93, 0.91, 0.86), maxf(3.0, rad * 0.14))
 		else:
-			draw_rect(r, Color(col.r, col.g, col.b, PAL_IDLE * 0.35), true)
-			draw_rect(r, Color(col.r, col.g, col.b, PAL_IDLE), false, 2.0)
-		# TVAR JE VZDY V PLNE BARVE - je to jediny nositel informace, ktery
-		# funguje i pri poruse barvocitu.
-		_shape(h, r.position + r.size * 0.5, minf(r.size.x, r.size.y) * 0.30, col)
+			draw_circle(c, rad * 0.86, Color(col.r, col.g, col.b, PAL_IDLE))
+			draw_arc(c, rad * 0.86, 0.0, TAU, 64, Color(col.r, col.g, col.b, 0.9), maxf(2.0, rad * 0.10))
 
 
 # =========================================================================
