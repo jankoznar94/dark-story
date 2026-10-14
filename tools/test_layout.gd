@@ -245,6 +245,22 @@ func _test_menu_layout(v: Vector2, l: ScreenLayout, tag: String) -> void:
 		and l.menu_note_y + float(l.menu_sub_px) <= v.y + 0.5,
 		"%s: hlaska pod tlacitky menu neni pod nimi (nebo preleza displej)" % tag)
 
+	# MENU JE VELKE. Jan: "A menu uděláme o dost větší" - kdyby se vratilo
+	# k polovine sirky displeje, hrac by zase mířil na maly ctverecek. Meze
+	# jsou podily displeje (a strop sirky), aby to platilo i na 932x430.
+	var first: Rect2 = rects[0]
+	_check(first.size.x >= minf(v.x * 0.7, 520.0),
+		"%s: tlacitko menu je jen %.0f px siroke (displej %0.0f)" % [tag, first.size.x, v.x])
+	_check(first.size.y >= minf(72.0, v.y * 0.13),
+		"%s: tlacitko menu je jen %.0f px vysoke" % [tag, first.size.y])
+	_check(l.menu_title_px >= 30, "%s: titul menu je jen %d px" % [tag, l.menu_title_px])
+	# PODTITULEK SE NESMI DOTKNOUT PRVNIHO TLACITKA - kresli se stejnou barvou,
+	# takze by si hrac precetl dve veci pres sebe.
+	var sub_bottom: float = l.menu_title_y + float(l.menu_title_px) * 0.5 + float(l.menu_sub_px)
+	_check(sub_bottom <= first.position.y + 0.5,
+		"%s: podtitulek menu preleza do prvniho tlacitka (%.0f > %.0f)"
+		% [tag, sub_bottom, first.position.y])
+
 	# NASTAVENI: dve tlacitka pod sebou, dotykova mez, po jednom sloupci.
 	for r in [l.settings_row, l.settings_back]:
 		var rr: Rect2 = r

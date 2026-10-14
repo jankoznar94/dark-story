@@ -50,9 +50,11 @@ const MARGIN_FRAC := 0.03
 const BTN_MIN := 44.0
 const BTN_MAX := 96.0
 # MENU: vyska tlacitka se nikdy nezmensi pod dotykovou mez, zmensuje se jen
-# mezera mezi nimi.
-const MENU_BTN_MIN := 48.0
-const MENU_BTN_MAX := 76.0
+# mezera mezi nimi. MENU JE VELKE (Jan, Oct 2026: "A menu uděláme o dost větší"):
+# na 390x844 ma tlacitko 304 x 108 px (driv 195 x 72) - hrac na nej nemusi
+# mířit prstem.
+const MENU_BTN_MIN := 56.0
+const MENU_BTN_MAX := 120.0
 
 # TLACITKA V HORNIM PRUHU SE MERI, NE ODHADUJI. Driv melo vylepseni pevny
 # podil sirky (32 %) - jenze pruh ma TRI prvky: stavovy text, MENU a
@@ -189,13 +191,15 @@ func layout_palette(count: int) -> Array:
 
 
 # TLACITKA MENU. Pocet vi jen ten, kdo je kresli (Menu) - stejne jako paleta.
+# VELKA A SIRSKA: hrac klepe prstem na telefonu, takze se nemá strefovat do
+# maleho ctverecku. Sirka i vyska jsou podily displeje, ne pevne pixely.
 func layout_menu(count: int) -> Array:
 	if count <= 0 or view.x < 1.0 or view.y < 1.0:
 		menu_rects = []
 		return menu_rects
-	var w: float = clampf(view.x * 0.5, 180.0, 420.0)
-	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.085))
-	var gap: float = maxf(10.0, view.y * 0.022)
+	var w: float = clampf(view.x * 0.78, 260.0, 560.0)
+	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.13))
+	var gap: float = maxf(14.0, view.y * 0.03)
 	var total: float = h * float(count) + gap * float(count - 1)
 	# Kdyz je displej nizky, zmensi se MEZERA, ne tlacitko.
 	var room: float = view.y - h - 12.0
@@ -207,13 +211,17 @@ func layout_menu(count: int) -> Array:
 	menu_rects = []
 	for i in range(count):
 		menu_rects.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
-	# PISMO MENU. Titul je nejvetsi text ve hre, popisek tlacitka musi zustat
-	# citelny i na 640x360.
-	menu_title_px = clampi(int(float(font_px) * 2.2), 28, 64)
-	menu_item_px = clampi(int(float(font_px) * 1.15), 15, 30)
-	menu_sub_px = clampi(int(float(font_px) * 0.78), 11, 20)
-	menu_title_y = maxf(float(menu_title_px) * 1.6, y0 - float(menu_title_px) * 2.1)
-	menu_note_y = y0 + total + float(font_px) * 2.4
+	# PISMO MENU. Titul je nejvetsi text ve hre a popisek tlacitka musi zustat
+	# citelny i na 640x360. TITUL SE MUSI VEJIT NAD TLACITKA: na nizkem displeji
+	# se zmensi podle mista, ktere mu zbylo - jinak by prelezl do prvniho
+	# tlacitka (a nikdo by to nepoznal, protoze se kresli stejnou barvou).
+	var above: float = maxf(24.0, y0 - 6.0)
+	menu_title_px = clampi(int(minf(float(font_px) * 3.2, above * 0.34)), 22, 110)
+	menu_item_px = clampi(int(minf(float(font_px) * 1.65, float(menu_title_px) * 0.62)), 18, 56)
+	menu_sub_px = clampi(int(minf(float(font_px) * 1.05, float(menu_item_px) * 0.72)), 12, 32)
+	menu_title_y = maxf(float(menu_title_px) * 1.2,
+		y0 - float(menu_title_px) * 1.7 - float(menu_sub_px))
+	menu_note_y = y0 + total + float(menu_sub_px) * 2.0
 	return menu_rects
 
 
@@ -224,8 +232,8 @@ func layout_settings() -> void:
 		settings_row = Rect2()
 		settings_back = Rect2()
 		return
-	var w: float = clampf(view.x * 0.5, 180.0, 420.0)
-	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.085))
+	var w: float = clampf(view.x * 0.78, 260.0, 560.0)
+	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.09))
 	var gap: float = maxf(10.0, view.y * 0.03)
 	var total: float = h * 2.0 + gap
 	var y0: float = (view.y - total) * 0.5
