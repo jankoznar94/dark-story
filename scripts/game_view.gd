@@ -9,7 +9,6 @@ extends Node2D
 # pod menu bezela partie, kterou hrac jeste nezacal.
 
 const BG := Color(0.055, 0.052, 0.062)
-const RANGE_LINE := Color(0.28, 0.27, 0.30)
 const TOWER_BODY := Color(0.11, 0.105, 0.115)
 const TOWER_DOT := Color(0.90, 0.88, 0.84)
 const TEXT := Color(0.86, 0.85, 0.82)
