@@ -9,10 +9,19 @@ extends RefCounted
 # vybira barvu mimo hraci pole, takze se mu pri volbe neprekryva deska a
 # neztrati prehled (Jan, Oct 2026).
 #
-# Kruhova plocha je vepsana do kratsiho rozmeru prostredniho pruhu. Na telefonu
-# na vysku je tim kratsim rozmerem sirka (~390 px), takze plocha ma prumer
-# ~366 px; na sirku by ji omezila vyska a barvy by se na 18px poutnikovi
-# nedaly precist.
+# SPAWNOVACI KRUH JE VETSI NEZ DISPLEJ (Jan, Oct 2026): "Nepřátelé se budou
+# spawnovat v kruhové oblasti, ale tento kruh bude tak velký, že bude jeho horní
+# hrana sahat až k vršku displeje. Boky budou jak kdyby mimo obrazovku, ale
+# budou brány v potaz."
+#
+# Polomer plochy je proto POLOVINA VYSKY herniho pruhu (ne vepsana kratka
+# strana): horni i spodni okraj kruhu se dotkne okraje herniho pruhu a na
+# displeji na vysku (~390x844) vedou boky 147 px MIMO obraz - poutnici odtamtud
+# vchazeji z boku. Kruh se NIKDE nekresli (je pomyslny), hrac vidi jen kruh
+# dostrelu.
+#
+# Na sirku (kde hra rika "otoc telefon") je pruh sirsi nez vyssi a kruh se
+# vejde do sirky - hra se tim nerozbije, jen se z nej stane vepsany kruh.
 #
 # MENU je prvni obrazovka (viz `Menu`) a ma vlastni rozvrzeni: tri tlacitka
 # pod sebou, svisle vycentrovana. Vysky zustavaji na dotykovem minimu a
@@ -24,7 +33,6 @@ const BAR_FRAC := 0.075
 const BAR_MIN := 44.0
 const PAL_FRAC := 0.115
 const PAL_MIN := 64.0
-const MARGIN_FRAC := 0.03
 const TOWER_FRAC := 0.12
 # DOTYKOVA MEZ. Tlacitko barvy je to jedine, na co hrac klika - pod 44 px
 # se na telefonu neda spolehlive trefit.
@@ -109,8 +117,7 @@ func update(v: Vector2) -> void:
 	bar_h = maxf(BAR_MIN, v.y * BAR_FRAC)
 	pal_h = maxf(PAL_MIN, v.y * PAL_FRAC)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, v.y - bar_h - pal_h))
-	var m: float = minf(arena.size.x, arena.size.y) * MARGIN_FRAC
-	field_r = maxf(20.0, minf(arena.size.x, arena.size.y) * 0.5 - m)
+	field_r = maxf(20.0, arena.size.y * 0.5)
 	center = arena.position + arena.size * 0.5
 	tower_r = field_r * TOWER_FRAC
 	pilgrim_r = field_r * Game.PILGRIM_R_FRAC

@@ -9,7 +9,6 @@ extends Node2D
 # pod menu bezela partie, kterou hrac jeste nezacal.
 
 const BG := Color(0.055, 0.052, 0.062)
-const FIELD_LINE := Color(0.17, 0.16, 0.18)
 const RANGE_LINE := Color(0.28, 0.27, 0.30)
 const TOWER_BODY := Color(0.11, 0.105, 0.115)
 const TOWER_DOT := Color(0.90, 0.88, 0.84)
@@ -263,9 +262,10 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	if layout.field_r <= 0.0:
 		return
-	# KRUH PLOCHY a KRUH DOSTRELU. Dostrel je jedina geometrie hry, kterou hrac
-	# potrebuje videt - je to misto, kde se rozhoduje.
-	draw_arc(layout.center, layout.field_r, 0.0, TAU, 128, FIELD_LINE, 2.0)
+	# KRUH DOSTRELU. Je to jedina geometrie, kterou hrac potrebuje videt - misto,
+	# kde se rozhoduje. SPAWNOVACI KRUH se NEKRESLI (Jan: "Vnější kruh nemá být
+	# viditelný a má být pomyslný"): je vetsi nez displej a poutnici z nej
+	# vchazeji z boku a shora, takze by z nej byl jen oblouk pres celou obrazovku.
 	draw_arc(layout.center, game.tower.range_px(layout.field_r), 0.0, TAU, 96, RANGE_LINE, 1.5)
 	for p in game.locks:
 		draw_line(layout.center, p.pos, BEAM, 2.0)

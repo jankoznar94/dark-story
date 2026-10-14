@@ -19,6 +19,7 @@ func _init() -> void:
 	_run("vez vidi jen svou barvu", _test_sees_only_own_colour)
 	_run("svazek drzi jeden cil, dokud neumre", _test_lock_until_death)
 	_run("dosah: za kruhem se nic nedeje", _test_range)
+	_run("v kruhu dostrelu ma hrac cas zareagovat", _test_reaction_window)
 	_run("doraz k vezi stoji zivot", _test_reach_costs_life)
 	_run("paleta roste s obtiznosti a nikdy neobsahne stribrnou", _test_palette)
 	_run("barvu mimo paletu nelze zvolit", _test_select_outside_palette)
@@ -170,6 +171,42 @@ func _test_range() -> void:
 	p.pos = g.center + Vector2(0.30 * g.field_r, 0.0)
 	g._beam(0.2)
 	_check(p.hp < hp0, "poutnik v dostrelu nedostal poskozeni")
+
+
+# CAS NA REAKCI. Jan: "kruh, který určuje vzdálenost zjišťování nepřátel je tak
+# malý, že hráč nemá moc času reagovat. Zjišťování by mělo být někde mezi těmito
+# dvěma kruhy." Meri se cas, ktery poutnik stravi V KRUHU DOSTRELU - presne to je
+# okno, ve kterem musi hrac stihnout prepnout barvu. Zaklad (0,40 polomeru
+# plochy) daval ~2,5 s, coz bylo malo; dnes je zaklad 0,62 a cas roste s
+# vylepsenim. Mimo dostrel se nedeje nic, takze okno je i to, co hra umi.
+func _test_reaction_window() -> void:
+	var prev: float = -1.0
+	for lv in range(1, Tower.MAX_LEVEL + 1):
+		var g: Game = _fresh()
+		_quiet(g)
+		g.tower.level = lv
+		# JINA BARVA: vez na modreho poutnika vubec nestrili, takze se meri
+		# cista cesta kruhem dostrelu (zadne poskozeni do mereni nezasahuje).
+		g.tower.set_hue(Hue.RED)
+		var p: Pilgrim = g.spawn_at_angle(0.7, Hue.BLUE)
+		var r: float = g.tower.range_px(g.field_r)
+		_check(r > g.tower_r * 2.0, "na %d. stupni je dostrel skoro u veze" % lv)
+		_check(r < g.field_r, "na %d. stupni dostrel dosahuje na spawnovaci kruh" % lv)
+		var window: float = 0.0
+		var t: float = 0.0
+		var dt: float = 1.0 / 120.0
+		while p.alive and t < 30.0:
+			if g.in_range(p, r):
+				window += dt
+			g.step(dt)
+			t += dt
+		_check(window >= 4.0,
+			"na %d. stupni ma hrac v dostrelu jen %.2f s (potreba aspon 4 s na reakci)"
+			% [lv, window])
+		_check(window < Game.TRAVEL_S * 0.95,
+			"na %d. stupni pokryva dostrel temer celou cestu (%.2f s)" % [lv, window])
+		_check(window > prev, "vylepseni nepridalo cas na reakci")
+		prev = window
 
 
 func _test_reach_costs_life() -> void:

@@ -1,13 +1,14 @@
 extends SceneTree
 
-# Test ROZVRZENI: kruh plochy se musi vejit mezi horni pruh a paletu dole,
-# tlacitka palety musi jit zmacknout prstem a hra musi zustat hratelna.
-# Vystup: LAYOUT_ALL_PASS=true / false
+# Test ROZVRZENI: spawnovaci kruh ma sahat na vrsek a spodek herniho pruhu
+# (a na vysku vest boky mimo displej), kruh dostrelu musi dat hraci cas
+# zareagovat, tlacitka palety musi jit zmacknout prstem a hra musi zustat
+# hratelna. Vystup: LAYOUT_ALL_PASS=true / false
 #
 # Neresi se jen "nic se neprekryva": u kazdeho rozliseni se overuje, ze se
-# plocha vejde CELA, ze paleta neprekryva plochu a ze poutnik kazde barvy
-# z palety stihne umrit v kruhu dostrelu (jinak je hra nehratelna, i kdyz
-# vypada dobre).
+# kruh dostrelu vejde do plochy, ze paleta neprekryva plochu a ze poutnik
+# kazde barvy z palety stihne umrit v kruhu dostrelu (jinak je hra
+# nehratelna, i kdyz vypada dobre).
 
 const RESOLUTIONS := [
 	Vector2(390, 844),   # iPhone 14 na vysku (cilova obrazovka)
@@ -24,6 +25,7 @@ var checks: int = 0
 
 func _init() -> void:
 	_run("neznama velikost okna nic nerozbije", _test_zero_size)
+	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -43,6 +45,22 @@ func _check(cond: bool, msg: String) -> void:
 	if not cond:
 		fails.append(msg)
 		print("       FAIL: %s" % msg)
+
+
+# SPAWNOVACI KRUH SE NEMALUJE. Jan: "Vnější kruh nemá být viditelný a má být
+# pomyslný." Hlida se MISTO VOLANI ve zdroji obrazovky: kdyby se `draw_arc`
+# s polomerem SPAWNOVACIHO kruhu vratil, hrac by pres displej videl obrovsky
+# oblouk, ktery nic neznamena (kruh je vetsi nez displej).
+func _test_spawn_ring_not_drawn() -> void:
+	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
+	_check(f != null, "nectu game_view.gd")
+	if f == null:
+		return
+	var src: String = f.get_as_text()
+	_check(not src.contains("draw_arc(layout.center, layout.field_r"),
+		"spawnovaci kruh se kresli, i kdyz ma byt pomyslny")
+	_check(src.contains("draw_arc(layout.center, game.tower.range_px(layout.field_r)"),
+		"kruh dostrelu se nekresli (je to jedina geometrie, kterou hrac vidi)")
 
 
 func _test_zero_size() -> void:
@@ -65,13 +83,24 @@ func _test_resolution(v: Vector2) -> void:
 	l.update(v)
 	var tag: String = "%dx%d" % [int(v.x), int(v.y)]
 
-	# 1) KRUH PLOCHY SE VEJDE CELE MEZI PRUHY
-	_check(l.center.y - l.field_r >= l.arena.position.y - 0.5,
-		"%s: plocha preleza do horniho pruhu" % tag)
-	_check(l.center.y + l.field_r <= l.arena.position.y + l.arena.size.y + 0.5,
-		"%s: plocha preleza do palety" % tag)
-	_check(l.center.x - l.field_r >= -0.5 and l.center.x + l.field_r <= v.x + 0.5,
-		"%s: plocha preleza do stran" % tag)
+	# 1) SPAWNOVACI KRUH: horni a spodni okraj se dotkne okraje herniho pruhu
+	# (nikdy nepreleze do horniho pruhu ani do palety) a NA VYSKU je kruh VETSI
+	# nez displej - boky vedou mimo obraz, ale hra je bere v potaz (poutnici
+	# odtamtud vchazeji z boku). Kresli se jen kruh dostrelu.
+	_check(absf((l.center.y - l.field_r) - l.arena.position.y) < 0.5,
+		"%s: spawnovaci kruh nedosahuje na vrsek herniho pruhu (odchylka %.1f px)"
+		% [tag, (l.center.y - l.field_r) - l.arena.position.y])
+	_check(absf((l.center.y + l.field_r) - l.arena.end.y) < 0.5,
+		"%s: spawnovaci kruh nedosahuje na spodek herniho pruhu (odchylka %.1f px)"
+		% [tag, (l.center.y + l.field_r) - l.arena.end.y])
+	if v.y > v.x:
+		_check(l.center.x - l.field_r <= 0.0 and l.center.x + l.field_r >= v.x - 0.5,
+			"%s: spawnovaci kruh neni vetsi nez displej (boky maji vest mimo obraz)" % tag)
+	else:
+		# NA SIRKU hra rika "otoc telefon" - kruh se vejde do sirky, jen se
+		# nesmi rozbit.
+		_check(l.field_r <= l.arena.size.x * 0.5 + 0.5,
+			"%s: na sirku spawnovaci kruh preleza displej" % tag)
 
 	# 2) POUTNIK JE CITELNY (runa je TVAR tela, takze 6 px je spodni mez)
 	_check(l.pilgrim_r >= 6.0,

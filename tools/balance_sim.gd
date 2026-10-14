@@ -29,8 +29,12 @@ func _init() -> void:
 
 func _run() -> void:
 	var g := Game.new()
-	# Rozvrzeni telefonu na vysku (iPhone 14): plocha je to, co omezi sirka.
-	g.set_field(183.3, 22.0, Vector2(195.0, 460.0))
+	# ROZVRZENI SE BERE ZE `ScreenLayout`, ne opsane rucne. Telefon na vysku
+	# (iPhone 14) - polomer plochy dnes urcuje VYSKA herniho pruhu (spawnovaci
+	# kruh je vetsi nez displej), takze opsana cisla by merila jinou hru.
+	var l := ScreenLayout.new()
+	l.update(Vector2(390.0, 844.0))
+	g.set_field(l.field_r, l.tower_r, l.center)
 	var dt: float = 1.0 / 60.0
 	var t: float = 0.0
 	var last_wave: int = 0
