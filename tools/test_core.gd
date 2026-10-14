@@ -1,11 +1,12 @@
 extends SceneTree
 
-# Test HERNI LOGIKY noveho modelu (srdce a vez).
+# Test HERNI LOGIKY (srdce a vez).
 # Vystup: CORE_ALL_PASS=true / false
 #
 # Testuje to, co se neda poznat okem: ze poutnik dojde od okraje k vezi presne
 # za TRAVEL_S, ze vez vidi JEN svou barvu, ze svazek drzi cil do jeho smrti,
-# ze mimo dostrel se nedeje nic a ze klepnuti na vysek prepne barvu.
+# ze paleta nikdy neobsahne stribrnou a ze kazda barva dela to, co ma
+# (rozpad, regenerace, mizeni, zmena barvy).
 
 var fails: Array = []
 var checks: int = 0
@@ -19,10 +20,14 @@ func _init() -> void:
 	_run("svazek drzi jeden cil, dokud neumre", _test_lock_until_death)
 	_run("dosah: za kruhem se nic nedeje", _test_range)
 	_run("doraz k vezi stoji zivot", _test_reach_costs_life)
-	_run("klepnuti na vysek prepne barvu", _test_notch_tap)
-	_run("klepnuti na telo veze otoci barvu dal", _test_center_tap)
+	_run("paleta roste s obtiznosti a nikdy neobsahne stribrnou", _test_palette)
+	_run("barvu mimo paletu nelze zvolit", _test_select_outside_palette)
+	_run("fialova po prvnim zasahu zmizi", _test_violet_vanishes)
+	_run("modra se po zabiti rozpadne na dva kusy", _test_blue_splits)
+	_run("zelená si obnovuje zivoty", _test_green_regenerates)
+	_run("stribrna meni barvu a nevraci se", _test_silver_shifts)
+	_run("vlna micha barvy, ktere uz vstoupily", _test_wave_mix)
 	_run("vylepseni zvetsi dostrel a ubere zlato", _test_upgrade)
-	_run("vlna je mix vsech ctyr barev", _test_wave_mix)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -52,15 +57,17 @@ func _fresh() -> Game:
 
 # PRAZDNA VLNA: hra nic neposila, takze test meri jen to, na co se ptá.
 # Bez toho by do mereni vstoupily vlny hry a kazdy pozdejsi FAIL by patril
-# cizimu stavu (presne ta past, ktera uz jednou stala kolo prace).
-func _quiet(g: Game) -> void:
+# cizimu stavu (presna ta past, ktera uz jednou stala kolo prace).
+func _quiet(g: Game, wave: int = 1) -> void:
 	g.phase = "wave"
 	g.plan = []
 	g.spawned = 0
+	g.wave = wave
+	g.refresh_palette()
 
 
-func _place(g: Game, el: int, frac: float, angle: float = 0.0) -> Pilgrim:
-	var p: Pilgrim = g.spawn_at_angle(angle, el)
+func _place(g: Game, h: int, frac: float, angle: float = 0.0) -> Pilgrim:
+	var p: Pilgrim = g.spawn_at_angle(angle, h)
 	p.pos = g.center + Vector2(cos(angle), sin(angle)) * (frac * g.field_r)
 	return p
 
@@ -74,9 +81,13 @@ func _test_setup() -> void:
 	_check(g.gold == Game.START_GOLD, "spatne startovni zlato")
 	_check(g.wave == 1, "hra nezacina prvni vlnou")
 	_check(g.pilgrims.is_empty(), "na prazdne plose uz neco chodi")
-	_check(g.tower.element == Element.FIRE, "vez nezacina ohniva")
-	_check(Game.NOTCH_OUT > Game.NOTCH_IN and Game.NOTCH_IN > 1.0,
-		"venec barev kolem veze nema smysl")
+	_check(g.palette.size() == 2, "hra nezacina se dvema barvami (ma %d)" % g.palette.size())
+	_check(g.palette.has(Hue.RED) and g.palette.has(Hue.YELLOW),
+		"prvni dve barvy nejsou cervena a zluta")
+	for h in range(Hue.COUNT):
+		_check(Hue.unlock_wave(h) >= 1, "barva %s nema vlnu, od ktere vstoupi" % Hue.name_of(h))
+	_check(Hue.name_of(-1) == "?", "zaporny index barvy vraci jmeno (past na konec pole)")
+	_check(Hue.name_of(Hue.COUNT + 3) == "?", "index mimo rozsah vraci jmeno")
 
 
 func _test_spawn_on_edge() -> void:
@@ -84,27 +95,27 @@ func _test_spawn_on_edge() -> void:
 	_quiet(g)
 	for i in range(8):
 		var a: float = TAU * float(i) / 8.0
-		var p: Pilgrim = g.spawn_at_angle(a, Element.WATER)
+		var p: Pilgrim = g.spawn_at_angle(a, Hue.BLUE)
 		_check(absf(p.pos.distance_to(g.center) - g.field_r) < 0.01,
 			"poutnik nevstoupil na okraj plochy (uhel %.2f)" % a)
-		# smer musi byt presne k vezi a jednotkovy
 		var want: Vector2 = (g.center - p.pos).normalized()
 		_check(p.dir.distance_to(want) < 0.001, "poutnik nejde rovne k vezi")
-		_check(absf(p.speed - (g.field_r - g.tower_r) / Game.TRAVEL_S) < 0.001,
-			"rychlost neni odvozena z rozvrzeni plochy a TRAVEL_S")
+		_check(absf(p.speed - (g.field_r - g.tower_r) / Game.TRAVEL_S * Hue.speed_mult(Hue.BLUE)) < 0.001,
+			"rychlost neni odvozena z rozvrzeni a nasobku barvy")
+		_check(p.behaviour == Hue.behaviour_of(Hue.BLUE),
+			"poutnik si neodnesl chovani sve barvy")
 
 
 func _test_travel_time() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
-	# POZOR NA OBRACENE PRAVIDLO: v novem modelu vez vidi PRESNE svou barvu.
-	# Ohniva vez a ohnivy poutnik znamenaji, ze ho svazek zabije v kruhu
-	# dostrelu - na mereni casu cesty je potreba barva, kterou vez NEVIDI.
-	g.tower.set_element(Element.FIRE)
-	var p: Pilgrim = g.spawn_at_angle(0.0, Element.WATER)
+	# POZOR: vez vidi PRESNE svou barvu, takze modreho poutnika ohniva vez
+	# nezastavi - meri se cista cesta. Modra ma nasobek rychlosti 1,0.
+	g.tower.set_hue(Hue.RED)
+	var p: Pilgrim = g.spawn_at_angle(0.0, Hue.BLUE)
 	var t: float = 0.0
 	var dt: float = 1.0 / 60.0
-	while p.alive and t < 20.0:
+	while p.alive and t < 30.0:
 		g.step(dt)
 		t += dt
 	_check(absf(t - Game.TRAVEL_S) < 0.35,
@@ -114,9 +125,9 @@ func _test_travel_time() -> void:
 func _test_sees_only_own_colour() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
-	g.tower.set_element(Element.FIRE)
-	var own: Pilgrim = _place(g, Element.FIRE, 0.25)
-	var other: Pilgrim = _place(g, Element.WATER, 0.25, PI)
+	g.tower.set_hue(Hue.RED)
+	var own: Pilgrim = _place(g, Hue.RED, 0.25)
+	var other: Pilgrim = _place(g, Hue.YELLOW, 0.25, PI)
 	var own0: float = own.hp
 	var other0: float = other.hp
 	g._beam(1.0)
@@ -128,9 +139,9 @@ func _test_sees_only_own_colour() -> void:
 func _test_lock_until_death() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
-	g.tower.set_element(Element.FIRE)
-	var near: Pilgrim = _place(g, Element.FIRE, 0.20)
-	var far: Pilgrim = _place(g, Element.FIRE, 0.30, PI)
+	g.tower.set_hue(Hue.RED)
+	var near: Pilgrim = _place(g, Hue.RED, 0.20)
+	var far: Pilgrim = _place(g, Hue.RED, 0.30, PI)
 	near.hp = 30.0
 	near.max_hp = 30.0
 	far.hp = 400.0
@@ -139,9 +150,10 @@ func _test_lock_until_death() -> void:
 	_check(is_equal_approx(far.hp, 400.0),
 		"svazek se rozdelil na dva cile (ma drzet jen jeden)")
 	for i in range(4):
-		_check(is_equal_approx(far.hp, 400.0) if near.alive else true,
-			"druhy cil dostal poskozeni, dokud první žil")
 		g._beam(0.2)
+		if near.alive:
+			_check(is_equal_approx(far.hp, 400.0),
+				"druhy cil dostal poskozeni, dokud první žil")
 	_check(not near.alive, "blizky cil po 1,3 s svazku neumrel")
 	g._beam(0.2)
 	_check(far.hp < 400.0, "po smrti prvniho cile svazek nepresel na dalsi")
@@ -150,8 +162,8 @@ func _test_lock_until_death() -> void:
 func _test_range() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
-	g.tower.set_element(Element.EARTH)
-	var p: Pilgrim = _place(g, Element.EARTH, 0.90)
+	g.tower.set_hue(Hue.RED)
+	var p: Pilgrim = _place(g, Hue.RED, 0.90)
 	var hp0: float = p.hp
 	g._beam(1.0)
 	_check(is_equal_approx(p.hp, hp0), "poutnik mimo dostrel dostal poskozeni")
@@ -163,15 +175,12 @@ func _test_range() -> void:
 func _test_reach_costs_life() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
-	# vez je ohniva, poutnik zemsky -> vez ho nevidi a vubec na nej nestrili,
-	# takze dorazi. (Kdyby mel stejnou barvu, svazek by ho v kruhu dostrelu
-	# zabil - coz je taky spravne, ale testuje se tim neco jineho.)
-	g.tower.set_element(Element.FIRE)
-	var p: Pilgrim = g.spawn_at_angle(0.7, Element.EARTH)
+	g.tower.set_hue(Hue.RED)
+	var p: Pilgrim = g.spawn_at_angle(0.7, Hue.BLUE)
 	var lives0: int = g.lives
 	var t: float = 0.0
 	var dt: float = 1.0 / 60.0
-	while p.alive and t < 20.0:
+	while p.alive and t < 30.0:
 		g.step(dt)
 		t += dt
 	_check(g.lives == lives0 - 1, "doraz k vezi neztratil zivot")
@@ -180,28 +189,139 @@ func _test_reach_costs_life() -> void:
 		"doraz prisel v %.2f s (cekano %.1f)" % [t, Game.TRAVEL_S])
 
 
-func _test_notch_tap() -> void:
+# PALETA: barvy pribyvaji s obtiznosti a STRIBRNA V NI NIKDY NENI. Kdyby se
+# tam dostala, hrac by mohl mirrit na poutnika, ktery ma byt nepolapitelny -
+# a to je cely smysl te barvy.
+func _test_palette() -> void:
 	var g: Game = _fresh()
-	var mid: float = g.tower_r * (Game.NOTCH_IN + Game.NOTCH_OUT) * 0.5
-	for i in range(Element.COUNT):
-		var a: float = -PI + TAU * (float(i) + 0.5) / float(Element.COUNT)
-		var pos: Vector2 = g.center + Vector2(cos(a), sin(a)) * mid
-		_check(g.notch_of(pos) == i,
-			"vysek %d se nenasel (vyslo %d)" % [i, g.notch_of(pos)])
-		g.tap_at(pos)
-		_check(g.tower.element == i, "klepnuti na vysek %d nepreplo barvu" % i)
-	# mimo venec se nesmi stat nic
-	var before_el: int = g.tower.element
-	g.tap_at(g.center + Vector2(0.0, g.tower_r * 3.0))
-	_check(g.tower.element == before_el, "klepnuti mimo vez zmenilo barvu")
+	_check(Hue.palette_at(1).size() == 2, "prvni vlna nema dve barvy")
+	_check(Hue.palette_at(3).size() == 3, "treti vlna nepridala treti barvu")
+	_check(Hue.palette_at(5).size() == 4, "pata vlna nepridala ctvrtou barvu")
+	_check(Hue.palette_at(7).size() == 5, "sedma vlna nepridala patou barvu")
+	_check(Hue.palette_at(10).size() == 5, "v palete je na konci hry vic nez pet barev")
+	_check(Hue.active_at(10).size() == Hue.COUNT,
+		"na konci hry nevstupuji vsechny barvy")
+	for w in range(1, 12):
+		_check(not Hue.palette_at(w).has(Hue.SILVER),
+			"stribrna je v palete ve vlne %d" % w)
+	# paleta roste, nikdy se nezmensuje
+	for w in range(2, 11):
+		_check(Hue.palette_at(w).size() >= Hue.palette_at(w - 1).size(),
+			"paleta se ve vlne %d zmensila" % w)
+	# hra prevezme paletu vlnou
+	g.wave = 7
+	g.refresh_palette()
+	_check(g.palette.size() == 5, "hra si v sedme vlne nedrzi pet barev")
+	_check(g.tower.palette.size() == 5, "vez nedostala novou paletu")
 
 
-func _test_center_tap() -> void:
+func _test_select_outside_palette() -> void:
 	var g: Game = _fresh()
-	var el0: int = g.tower.element
-	g.tap_at(g.center)
-	_check(g.tower.element == (el0 + 1) % Element.COUNT,
-		"klepnuti na telo veze neotocilo barvu na dalsi")
+	var before: int = g.tower.hue
+	_check(not g.select_hue(Hue.SILVER), "hrac zvolil stribrnou")
+	_check(g.tower.hue == before, "stribrna se dostala do veze")
+	# barva, ktera do hry jeste nevstoupila (violet = 7. vlna), taky ne
+	_check(g.select_hue(Hue.YELLOW), "hrac nemuze zvolit zlutou, ktera v palete je")
+	_check(not g.select_hue(Hue.VIOLET), "hrac zvolil barvu, ktera jeste nevstoupila")
+	_check(g.tower.hue == Hue.YELLOW, "vez si nedrzi zvolenou barvu")
+
+
+func _test_violet_vanishes() -> void:
+	var g: Game = _fresh()
+	_quiet(g, 7)
+	g.tower.set_hue(Hue.VIOLET)
+	_check(g.palette.has(Hue.VIOLET), "v sedme vlne neni fialova v palete")
+	var p: Pilgrim = _place(g, Hue.VIOLET, 0.25)
+	var hp0: float = p.hp
+	g._beam(0.05)
+	_check(p.hp < hp0, "fialova nedostala prvni zasah")
+	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
+	_check(not p.targetable(), "na fialovou se da mirrit, i kdyz zmizela")
+	_check(not g.tower.sees(p), "vez vidi fialovou, i kdyz zmizela")
+	var hp1: float = p.hp
+	g._beam(1.0)
+	_check(is_equal_approx(p.hp, hp1), "zmizela fialova dostala poskozeni")
+	# po trech vterinach je zase videt
+	g._advance_behaviour(p, Hue.VANISH_S + 0.05)
+	_check(p.targetable(), "fialova se po trech vterinach nevratila")
+	g._beam(0.05)
+	_check(p.hp < hp1, "po navratu fialova nedostava poskozeni")
+
+
+func _test_blue_splits() -> void:
+	var g: Game = _fresh()
+	_quiet(g, 3)
+	g.tower.set_hue(Hue.BLUE)
+	var p: Pilgrim = _place(g, Hue.BLUE, 0.25)
+	p.hp = 8.0
+	p.max_hp = 40.0
+	g._beam(0.5)
+	_check(not p.alive, "modra po raně neumrela")
+	var pieces: Array = []
+	for q in g.pilgrims:
+		if q != p:
+			pieces.append(q)
+	_check(pieces.size() == Hue.SPLIT_PIECES,
+		"modra se nerozpadla na dva kusy (kusu: %d)" % pieces.size())
+	for q in pieces:
+		_check(q.hue == Hue.BLUE, "kus po rozpadu nema barvu rodice")
+		_check(not q.can_split, "kus se muze rozpadnout znovu (z jednoho poutnika by bylo nekonecno)")
+		_check(q.size < p.size, "kus neni mensi nez rodic")
+		_check(absf(q.max_hp - 40.0 * Hue.SPLIT_HP_FRAC) < 0.01, "kus nema spravne zivoty")
+		_check(absf((g.center - q.pos).normalized().dot(q.dir)) > 0.999,
+			"kus nejde rovne k vezi")
+
+
+func _test_green_regenerates() -> void:
+	var g: Game = _fresh()
+	_quiet(g, 5)
+	g.tower.set_hue(Hue.RED)
+	var p: Pilgrim = _place(g, Hue.GREEN, 0.25)
+	p.hp = p.max_hp * 0.5
+	g._advance_behaviour(p, 1.0)
+	_check(is_equal_approx(p.hp, p.max_hp * (0.5 + Hue.REGEN_FRAC)),
+		"zelena si neobnovuje zivoty (%f)" % p.hp)
+	# nikdy nad maximum
+	p.hp = p.max_hp
+	g._advance_behaviour(p, 5.0)
+	_check(p.hp <= p.max_hp + 0.001, "zelena se preleciła nad sve maximum")
+
+
+func _test_silver_shifts() -> void:
+	var g: Game = _fresh()
+	_quiet(g, 9)
+	var p: Pilgrim = g.spawn_at_angle(0.0, Hue.SILVER)
+	_check(p.hue == Hue.SILVER, "stribrna nezacina jako stribrna")
+	_check(not g.palette.has(Hue.SILVER), "stribrna je v palete")
+	_check(not g.select_hue(Hue.SILVER), "na stribrnou se da mirrit")
+	# prvni zmena po trech vterinach
+	g._advance_behaviour(p, Hue.SHIFT_S - 0.5)
+	_check(p.hue == Hue.SILVER, "stribrna zmenila barvu prilis brzy")
+	g._advance_behaviour(p, 0.6)
+	_check(p.hue != Hue.SILVER, "stribrna po trech vterinach nezmenila barvu")
+	# a uz se nikdy nevrati; barvi se jen na barvy, ktere jsou ve hre
+	var seen: Dictionary = {}
+	for i in range(40):
+		g._advance_behaviour(p, Hue.SHIFT_S + 0.01)
+		_check(p.hue != Hue.SILVER, "stribrna se vratila na stribrnou")
+		_check(Hue.active_at(g.wave).has(p.hue),
+			"stribrna si vybrala barvu, ktera ve hre neni (%s)" % Hue.name_of(p.hue))
+		seen[p.hue] = true
+	_check(seen.size() >= 2, "stribrna porad meni barvu na stejnou (barev: %d)" % seen.size())
+
+
+func _test_wave_mix() -> void:
+	var g: Game = _fresh()
+	for n in [1, 4, 7, 10]:
+		var plan: Array = g.wave_plan(n)
+		_check(plan.size() == int(Game.WAVE_SIZES[n - 1]),
+			"vlna %d ma %d poutniku, cekano %d" % [n, plan.size(), Game.WAVE_SIZES[n - 1]])
+		var seen: Dictionary = {}
+		for h in plan:
+			seen[int(h)] = true
+		_check(seen.size() == Hue.active_at(n).size(),
+			"vlna %d nemicha vsechny barvy, ktere uz vstoupily (%d z %d)"
+			% [n, seen.size(), Hue.active_at(n).size()])
 
 
 func _test_upgrade() -> void:
@@ -218,16 +338,3 @@ func _test_upgrade() -> void:
 	_check(g.gold == 1000 - cost, "vylepseni nestalo spravne zlato")
 	# dostrel nikdy nesmi pokryt celou plochu, jinak blizkost prestane hrat roli
 	_check(g.tower.range_frac() < 0.9, "dostrel na maximu pokryva celou plochu")
-
-
-func _test_wave_mix() -> void:
-	var g: Game = _fresh()
-	for n in [1, 4, 7, 10]:
-		var plan: Array = g.wave_plan(n)
-		_check(plan.size() == int(Game.WAVE_SIZES[n - 1]),
-			"vlna %d ma %d poutniku, cekano %d" % [n, plan.size(), Game.WAVE_SIZES[n - 1]])
-		var seen: Dictionary = {}
-		for e in plan:
-			seen[int(e)] = true
-		_check(seen.size() == Element.COUNT,
-			"vlna %d nema vsechny ctyri barvy (jen %d)" % [n, seen.size()])

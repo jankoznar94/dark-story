@@ -1,11 +1,12 @@
 class_name Tower
 extends RefCounted
 
-# VEZ. Jedina zbran hry a jedina vec, na kterou hrac klepe.
+# VEZ. Jedina zbran hry. Neklepe se na ni - barva se vybira z palety dole,
+# aby hrac nemackal do pole a neztratil prehled (Jan, Oct 2026).
 #
 # VEZ VIDI JEN SVOJI BARVU. Jan: "Nula. Jako by je vůbec neviděla." Na ostatni
-# tedy nejen ze dava nulu — ona na ne VUBEC NESTRILI. Kdyby palila do neceho
-# s nulovym poskozenim, plytvala by svazkem a prepnuti by bylo vzdycky horsi.
+# nejen ze dava nulu - ona na ne VUBEC NESTRILI. Kdyby palila do neceho
+# s nulovym poskozenim, plytvala by svazkem a kazda zmena barvy by byla horsi.
 #
 # SVAZEK DRZI JEDEN CIL, DOKUD NEUMRE. Jan: "Věž bude střílet vždy jen na
 # jednoho dokud ho nezabije. Pomocí upgradu časem zvládne třeba vícero targetu
@@ -16,18 +17,21 @@ extends RefCounted
 
 const MAX_LEVEL := 3
 
-# STUPEN VEZE: 1 = vychozi. Cisla drzi "vez vidi maly kousek plochy"
-# (zaklad ~1/3 polomeru), aby se rozhodovalo o kazde rane; upgrade dostrel
-# zvetsi, ale nikdy ne na "vidim celou plochu" — pak by blizkost prestala
-# hrat roli.
-const RANGE_FRACS := [0.33, 0.45, 0.60]
-const DPS := [26.0, 42.0, 66.0]
-const TARGETS := [1, 1, 1]
-const COSTS := [60, 130, 260]
+# STUPEN VEZE. Zaklad drzi "vez vidi maly kousek plochy", aby se rozhodovalo
+# o kazde rane; upgrade dostrel zvetsi, ale nikdy ne na "vidim celou plochu" -
+# pak by blizkost prestala hrat roli.
+const RANGE_FRACS := [0.40, 0.52, 0.66]
+const DPS := [30.0, 48.0, 72.0]
+const TARGETS := [1, 1, 2]
+const COSTS := [70, 150, 300]
 
-var element: int = Element.FIRE
+var hue: int = Hue.RED
 var level: int = 1
 var spent: int = 0
+# BARVY, KTERE HRAc MUZE ZVOLIT. Do veze se nesmi dostat barva mimo paletu -
+# stribrna tedy nikdy (proto na ni nejde mirrit) a barva, ktera do hry jeste
+# nevstoupila, taky ne.
+var palette: Array = [Hue.RED, Hue.YELLOW]
 
 
 func _idx() -> int:
@@ -54,10 +58,11 @@ func can_upgrade() -> bool:
 	return level < MAX_LEVEL
 
 
+# CENA ZA DALSÍ STUPEN. `COSTS[0]` je cena cesty z 1. na 2. stupen.
 func upgrade_cost() -> int:
 	if not can_upgrade():
 		return 0
-	return int(COSTS[level])
+	return int(COSTS[clampi(level, 0, COSTS.size() - 1)])
 
 
 func upgrade() -> void:
@@ -67,11 +72,15 @@ func upgrade() -> void:
 	level += 1
 
 
-# VIDI TOHOHLE POUTNIKA? Jedno misto, kde se rozhoduje o barve.
+# VIDI TOHOHLE POUTNIKA? Jedno misto, kde se rozhoduje o barve. Poutnik
+# v "duchovem" stavu (fialova po prvnim zasahu) tu neni videt, i kdyz ma
+# hrac zvolenou jeho barvu.
 func sees(p: Pilgrim) -> bool:
-	return p.alive and Element.is_valid(element) and p.element == element
+	return p.targetable() and p.hue == hue
 
 
-func set_element(e: int) -> void:
-	if Element.is_valid(e):
-		element = e
+func set_hue(h: int) -> bool:
+	if not palette.has(h):
+		return false
+	hue = h
+	return true

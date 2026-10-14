@@ -1,20 +1,20 @@
 extends SceneTree
 
-# Test ROZVRZENI: plocha musi byt kruh, ktery se vejde do displeje, poutnik
-# musi byt citelny a hra musi zustat hratelna na kazdem rozliseni.
+# Test ROZVRZENI: kruh plochy se musi vejit mezi horni pruh a paletu dole,
+# tlacitka palety musi jit zmacknout prstem a hra musi zustat hratelna.
 # Vystup: LAYOUT_ALL_PASS=true / false
 #
-# Neresi se jen "nic se neprekryva": u kazdeho rozliseni se overuje, ze
-# poutnik vstoupi na okraj, ze stihne umrit v kruhu dostrelu (jinak by hra
-# byla nehratelna, i kdyby vypadala dobre) a ze klepnuti na venec barev
-# skonci na spravnem vyseku.
+# Neresi se jen "nic se neprekryva": u kazdeho rozliseni se overuje, ze se
+# plocha vejde CELA, ze paleta neprekryva plochu a ze poutnik kazde barvy
+# z palety stihne umrit v kruhu dostrelu (jinak je hra nehratelna, i kdyz
+# vypada dobre).
 
 const RESOLUTIONS := [
 	Vector2(390, 844),   # iPhone 14 na vysku (cilova obrazovka)
 	Vector2(360, 800),   # nejmensi bezny Android na vysku
 	Vector2(430, 932),   # iPhone 15 Pro Max na vysku
 	Vector2(800, 1280),  # tablet na vysku
-	Vector2(932, 430),   # telefon na sirku (stary rezim, jen se nesmi rozbit)
+	Vector2(932, 430),   # telefon na sirku (jen se nesmi rozbit)
 	Vector2(1280, 720),  # desktop
 ]
 
@@ -53,6 +53,7 @@ func _test_zero_size() -> void:
 	_check(l.up_rect.size.x >= 0.0 and l.up_rect.size.y >= 0.0,
 		"nulova velikost okna dela zaporne tlacitko")
 	_check(l.field_r == 0.0, "nulova velikost okna dela plochu")
+	_check(l.layout_palette(5).is_empty(), "nulova velikost okna dela tlacitka palety")
 
 
 func _test_resolution(v: Vector2) -> void:
@@ -60,44 +61,56 @@ func _test_resolution(v: Vector2) -> void:
 	l.update(v)
 	var tag: String = "%dx%d" % [int(v.x), int(v.y)]
 
-	# 1) KRUH PLOCHY SE VEJDE DO DISPLEJE
+	# 1) KRUH PLOCHY SE VEJDE CELE MEZI PRUHY
 	_check(l.center.y - l.field_r >= l.arena.position.y - 0.5,
-		"%s: plocha preleza nahoru" % tag)
+		"%s: plocha preleza do horniho pruhu" % tag)
 	_check(l.center.y + l.field_r <= l.arena.position.y + l.arena.size.y + 0.5,
-		"%s: plocha preleza dolu" % tag)
+		"%s: plocha preleza do palety" % tag)
 	_check(l.center.x - l.field_r >= -0.5 and l.center.x + l.field_r <= v.x + 0.5,
 		"%s: plocha preleza do stran" % tag)
 
 	# 2) POUTNIK JE CITELNY (runa je TVAR tela, takze 6 px je spodni mez)
 	_check(l.pilgrim_r >= 6.0,
-		"%s: poutnik ma polomer %.1f px, barva a runa nejdou precist" % [tag, l.pilgrim_r])
+		"%s: poutnik ma polomer %.1f px, barva a tvar nejdou precist" % [tag, l.pilgrim_r])
 	_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
 
-	# 3) VENEC BAREV JE VNE TELA VEZE A CELY V DISPLEJI
-	_check(l.notch_in() > l.tower_r, "%s: venec barev leze do tela veze" % tag)
-	_check(l.center.distance_to(l.center + Vector2(l.notch_out(), 0.0)) <= l.field_r,
-		"%s: venec barev preleza okraj plochy" % tag)
-
-	# 4) TLACITKO VYLEPSENI SE VEJDE DO PRUHU A DA SE ZMACKNOUT
+	# 3) TLACITKO VYLEPSENI SE VEJDE DO PRUHU
 	_check(l.up_rect.position.x >= 0.0 and l.up_rect.end.x <= v.x + 0.5,
 		"%s: tlacitko vylepseni preleza displej" % tag)
 	_check(l.up_rect.end.y <= l.bar_h + 0.5, "%s: tlacitko preleza pruh" % tag)
 	_check(l.up_rect.size.y >= 30.0,
 		"%s: tlacitko je nizke %.1f px" % [tag, l.up_rect.size.y])
 
-	# 5) HRA ZUSTAVA HRATELNA: poutnik musi stihnout umrit v kruhu dostrelu.
-	# Cas v ohne = dostrel jako podil cesty k vezi; cas na zabiti = zivoty / dps.
+	# 4) PALETA: kazdy pocet barev, ktery muze nastat (2..5), musi mit tlacitka
+	# vysoka i siroka pres dotykovou mez a cela uvnitr displeje.
+	for count in range(2, 6):
+		var rects: Array = l.layout_palette(count)
+		_check(rects.size() == count, "%s: paleta pro %d barev nema %d tlacitek" % [tag, count, count])
+		for r in rects:
+			var rr: Rect2 = r
+			_check(rr.position.y >= v.y - l.pal_h - 0.5 and rr.end.y <= v.y + 0.5,
+				"%s: tlacitko barvy (%d) preleza mimo spodni pruh" % [tag, count])
+			_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5,
+				"%s: tlacitko barvy (%d) preleza displej" % [tag, count])
+			_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
+				"%s: tlacitko barvy (%d) je male %.0fx%.0f px"
+				% [tag, count, rr.size.x, rr.size.y])
+		# tlacitka se nesmi prekryvat, jinak hrac zmackne jinou barvu
+		for i in range(rects.size()):
+			for j in range(i + 1, rects.size()):
+				_check(not (rects[i] as Rect2).intersects(rects[j] as Rect2),
+					"%s: tlacitka barvy (%d) se prekryvaji" % [tag, count])
+
+	# 5) HRA ZUSTAVA HRATELNA: poutnik kazde barvy z palety (krome fialove
+	# a stribrne, ktere maji vlastni pravidla) musi stihnout umrit v kruhu
+	# dostrelu zakladni veze.
 	var g := Game.new()
 	g.set_field(l.field_r, l.tower_r, l.center)
-	var wave1: float = g.hp_for(1) / g.tower.dps()
-	var window1: float = g.tower.range_frac() * Game.TRAVEL_S
-	_check(wave1 < window1,
-		"%s: poutnik prvni vlny nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"
-		% [tag, window1, wave1])
-
-	# 6) KLEPNUTI NA VYSKU VENCE SKONCI NA SPRAVNE BARVE
-	var mid: float = l.notch_mid()
-	for i in range(Element.COUNT):
-		var a: float = -PI + TAU * (float(i) + 0.5) / float(Element.COUNT)
-		var pos: Vector2 = l.center + Vector2(cos(a), sin(a)) * mid
-		_check(g.notch_of(pos) == i, "%s: vysek %d se nenasel" % [tag, i])
+	var palette: Array = Hue.palette_at(10)
+	for h in [Hue.RED, Hue.YELLOW, Hue.BLUE, Hue.GREEN]:
+		_check(palette.has(h), "%s: barva %s neni v palete" % [tag, Hue.name_of(h)])
+		var ttk: float = g.hp_for(1, h) / g.tower.dps()
+		var window: float = g.tower.range_frac() * Game.TRAVEL_S / Hue.speed_mult(h)
+		_check(ttk < window,
+			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"
+			% [tag, Hue.name_of(h), window, ttk])

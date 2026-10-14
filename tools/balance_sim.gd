@@ -1,7 +1,7 @@
 extends SceneTree
 
 # ZMERENI OBTIZNOSTI. Hraje partii za skriptovaneho hrace a vypisuje, jak si
-# vodi - kolik poutniku proslo, kolik zilo zivotu a jak se zvetsoval dostrel.
+# vodi - kolik poutniku proslo, kolik zbylo zivotu a jak rostla paleta.
 #
 # PROČ: "nemá to to správné napětí" se neda vyresit dojmem. V predchozi hre se
 # takhle zjistilo, ze zed obtiznosti prisla az po konci levelu (hrac dohral
@@ -13,7 +13,7 @@ extends SceneTree
 #
 # Pouziti:
 #   godot4 --headless --path . --script res://tools/balance_sim.gd
-#   ... --waves 20          (delsi partie, nez level dovoli)
+#   ... -- --waves=6      (kratci partie)
 
 var waves_limit: int = Game.WAVE_MAX
 var _switches: int = 0
@@ -31,14 +31,12 @@ func _run() -> void:
 	var g := Game.new()
 	# Rozvrzeni telefonu na vysku (iPhone 14): plocha je to, co omezi sirka.
 	g.set_field(183.3, 22.0, Vector2(195.0, 460.0))
-	g.wave = 1
 	var dt: float = 1.0 / 60.0
 	var t: float = 0.0
-	var passed: int = 0
 	var last_wave: int = 0
 	var printed: Dictionary = {}
-	print("  vlna  poutniku  zivoty  zlato  dostrel")
-	while not g.is_over() and t < 600.0:
+	print("  vlna  poutniku  barvy   stav")
+	while not g.is_over() and t < 900.0:
 		_play(g)
 		g.step(dt)
 		t += dt
@@ -46,7 +44,9 @@ func _run() -> void:
 			last_wave = g.wave
 			if not printed.has(g.wave) and g.wave <= waves_limit:
 				printed[g.wave] = true
-				print("  %4d  %s" % [g.wave, _row(g)])
+				print("  %4d  %8d  %5d   %s"
+					% [g.wave, Game.WAVE_SIZES[clampi(g.wave - 1, 0, 9)],
+						g.palette.size(), _row(g)])
 		if g.phase == "lost":
 			break
 	print("  konec: faze=%s, vlna=%d, zbyva zivotu=%d, zlato=%d, stupen veze=%d"
@@ -56,33 +56,33 @@ func _run() -> void:
 	# nema na hru vliv, i kdyby cisla vypadala dobre.
 	print("  hrac za partii: %d prepnuti barvy za %.1f s (%.1f za vlnu)"
 		% [_switches, t, float(_switches) / maxf(1.0, float(g.wave))])
-	print("SIM_END phase=%s wave=%d lives=%d switches=%d" % [g.phase, g.wave, g.lives, _switches])
+	print("SIM_END phase=%s wave=%d lives=%d switches=%d"
+		% [g.phase, g.wave, g.lives, _switches])
 
 
 func _row(g: Game) -> String:
-	return "zivoty=%-3d zlato=%-4d dostrel=%d%% cilu=%d" % [
-		g.lives, g.gold, int(round(g.tower.range_frac() * 100.0)), g.tower.targets()]
+	return ("zivoty=%-3d zlato=%-5d dostrel=%d%% cilu=%d"
+		% [g.lives, g.gold, int(round(g.tower.range_frac() * 100.0)), g.tower.targets()])
 
 
-# SKRIPTOVANY HRAC: prepni na barvu, ktera ma v dostrelu nejvic poutniku.
-# Kdyz je nejvic prazdno, zustan na te, ktera ma nejblizsiho.
+# SKRIPTOVANY HRAC: prepne na barvu, ktera ma v dostrelu nejvic poutniku.
 func _play(g: Game) -> void:
-	if not g.tower.can_upgrade() and g.gold < 999999:
-		pass
 	if g.tower.can_upgrade() and g.gold >= g.tower.upgrade_cost() and g.phase == "build":
 		g.buy_upgrade()
 	var r: float = g.tower.range_px(g.field_r)
 	var counts: Dictionary = {}
-	var best_el: int = -1
+	var best_h: int = -1
 	var best_n: int = -1
 	for p in g.pilgrims:
-		if not p.alive or not g.in_range(p, r):
+		if not p.alive or not p.targetable() or not g.in_range(p, r):
 			continue
-		counts[p.element] = int(counts.get(p.element, 0)) + 1
-	for e in counts:
-		if int(counts[e]) > best_n:
-			best_n = int(counts[e])
-			best_el = int(e)
-	if best_el >= 0 and best_el != g.tower.element:
-		g.tower.set_element(best_el)
+		if not g.palette.has(p.hue):
+			continue
+		counts[p.hue] = int(counts.get(p.hue, 0)) + 1
+	for h in counts:
+		if int(counts[h]) > best_n:
+			best_n = int(counts[h])
+			best_h = int(h)
+	if best_h >= 0 and best_h != g.tower.hue:
+		g.select_hue(best_h)
 		_switches += 1
