@@ -152,6 +152,26 @@ func _test_resolution(v: Vector2) -> void:
 		_check(absf(l.pilgrim_r - 9.17) < 0.3,
 			"na 390x844 ma poutnik %.2f px (ma byt 9,2)" % l.pilgrim_r)
 
+	# 2c) DOSTREL PRVNIHO STUPNE SE MUSI VEJIT MEZI BOKY DISPLEJE. Jan:
+	# "Rozsah zjišťování nepřátel nesmí mít hned na začátku poloměr jak celá
+	# šířka displeje. Musí začínat na menším úseku, aby ho bylo kam upgradovat."
+	# Zaklad, ktery dosahne na boky, vypada jako "vidim celou plochu" a upgrade
+	# uz nema kam jit.
+	var g1 := Game.new()
+	g1.set_field(l.field_r, l.unit_r, l.center)
+	var r1: float = g1.tower.range_px(l.field_r)
+	_check(l.center.x - r1 >= 8.0 and l.center.x + r1 <= v.x - 8.0,
+		"%s: zakladni dostrel (%0.0f px) dosahuje na bok displeje - neni kam upgradovat"
+		% [tag, r1])
+	_check(r1 > l.tower_r * 2.0,
+		"%s: zakladni dostrel je skoro u veze (%.0f px)" % [tag, r1])
+	g1.tower.level = Tower.MAX_LEVEL
+	var rmax: float = g1.tower.range_px(l.field_r)
+	_check(rmax >= r1 * 1.5,
+		"%s: upgrade prida jen kousek dostrelu (%.0f -> %.0f px)" % [tag, r1, rmax])
+	_check(rmax < l.field_r * 0.95,
+		"%s: dostrel na maximu pokryva celou plochu (%.0f z %.0f px)" % [tag, rmax, l.field_r])
+
 	# 3) TLACITKO VYLEPSENI SE VEJDE DO PRUHU
 	_check(l.up_rect.position.x >= 0.0 and l.up_rect.end.x <= v.x + 0.5,
 		"%s: tlacitko vylepseni preleza displej" % tag)

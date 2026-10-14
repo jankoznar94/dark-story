@@ -10,7 +10,7 @@ extends RefCounted
 #   * vez vidi jen svoji barvu (na ostatni dava nulu a nestrili na ne),
 #   * svazek drzi jeden cil, dokud neumre,
 #   * poutnici vstupuji na okraji plochy NASLEPO a jdou rovne k vezi,
-#   * cesta od okraje k vezi trva 8 s (u zakladni barvy),
+#   * cesta od okraje k vezi trva TRAVEL_S (12 s, u zakladni barvy),
 #   * PAPRSEK JE JEN ZAMEROVANI (ukazuje, na koho vez miri) - poskozeni
 #     neubira on, ale DOPAD strely: od veze leti velmi rychla tecka a teprve
 #     jeji dopad ubere zivoty,
@@ -19,7 +19,12 @@ extends RefCounted
 #   * kazda barva ma sve chovani (rozpad, regenerace, mizeni, zmena barvy),
 #   * barvy pribyvaji s obtiznosti (odemykaji se vlnami, dokud nejsou levely).
 
-const TRAVEL_S := 8.0
+# CESTA OD OKRAJE K VEZI. Je to CAS, ne rychlost v pixelech: na kazdem displeji
+# ma poutnik na cestu stejne dlouho, takze "jde pomalu" je vlastnost hry, ne
+# rozliseni. Jan (Oct 2026): "Rychlost všech nepřátel se musí snížit, aby to
+# vzbudilo dojem ještě větší vzdálenosti" - 8 s -> 12 s. S pomalejsim poutnikem
+# se dostrel muze vratit na mensi usek a okno na reakci zustava (~4,5 s).
+const TRAVEL_S := 12.0
 const BASE_HP := 34.0
 const HP_GROWTH := 0.13
 const START_GOLD := 100
@@ -37,11 +42,13 @@ const SPAWN_GAP_START := 2.5
 const SPAWN_GAP_MIN := 1.2
 const SPAWN_GAP_PER_WAVE := 0.13
 
-# STRELA JE VELMI RYCHLA TECKA. Rychlost je podil POLOMERU PLOCHY, ne pevne
-# pixely za sekundu - pres zakladni dostrel (0,62 polomeru) ma let trvat stejne
-# dlouho na telefonu i na velkem displeji (0,15 s), takze proud tecek vypada
-# vsude stejne. Stejna logika jako "cesta od okraje k vezi trva 8 s".
-const SHOT_SPEED_FRAC := 4.2
+# STRELA JE TECKA, KTERA MA BYT VIDET. Rychlost je podil POLOMERU PLOCHY, ne
+# pevne pixely za sekundu: pres ZAKLADNI DOSTREL (Tower.RANGE_FRACS[0] = 0,42
+# polomeru) leti tecka vzdy ~0,33 s, na telefonu i na velkem displeji. Jan
+# (Oct 2026): "Rychlost projektilu musíme snížit" - bylo to 0,15 s a byl to
+# jen blik; 0,33 s uz je videt jako letici tecka a pri kadenci 3 ran/s je
+# v paprsku videt skoro porad.
+const SHOT_SPEED_FRAC := 1.36
 # POLOMER TECKY. Mala - je to tecka, ne koule; v paprsku jich ma byt videt vic.
 const SHOT_R_FRAC := 0.022
 

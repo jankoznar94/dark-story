@@ -274,7 +274,10 @@ func _draw() -> void:
 	# a jak je rychla (vic tecek v paprsku = vyssi stupen).
 	for s in game.shots:
 		var sp: Vector2 = s["pos"]
-		draw_circle(sp, game.shot_r(), BEAM)
+		# TECKA MA BARVU VEZE, ktera ji vystrelila (Jan: "dáme mu barvu podle
+		# toho na jakou barvu je [věž] přepnutá") - hrac tak vidi, ktera barva
+		# prave strili, i kdyz v paprsku je vic tecek.
+		draw_circle(sp, game.shot_r(), Hue.color_of(game.tower.hue))
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()

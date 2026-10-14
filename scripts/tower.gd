@@ -21,13 +21,21 @@ const MAX_LEVEL := 3
 # o kazde rane; upgrade dostrel zvetsi, ale nikdy ne na "vidim celou plochu" -
 # pak by blizkost prestala hrat roli.
 #
-# DOSTREL JE MEZI KRUHEM DOSTRELU A SPAWNOVACIM KRUHEM (Jan, Oct 2026): "kruh,
-# který určuje vzdálenost zjišťování nepřátel je tak malý, že hráč nemá moc času
-# reagovat. Zjišťování by mělo být někde mezi těmito dvěma kruhy." Zaklad byl
-# 0,40 polomeru plochy, coz dava jen ~2,5 s v ohne - hrac nestihne zareagovat.
-# 0,62 dava ~4,7 s (meri to `test_core._test_reaction_window`) a upgrade
-# k tomu prida. Strop zustava pod 0,9, aby dostrel nikdy neobsahl celou plochu.
-const RANGE_FRACS := [0.62, 0.74, 0.86]
+# DOSTREL JE MEZI SPAWNOVACIM KRUHEM A VEZI (Jan, Oct 2026): "kruh, který
+# určuje vzdálenost zjišťování nepřátel je tak malý, že hráč nemá moc času
+# reagovat. Zjišťování by mělo být někde mezi těmito dvěma kruhy."
+#
+# ZAKLAD MUSI BYT MALY, ABY BYLO KAM UPGRADOVAT (Jan, Oct 2026): "Rozsah
+# zjišťování nepřátel nesmí mít hned na začátku poloměr jak celá šířka displeje.
+# Musí začínat na menším úseku, aby ho bylo kam upgradovat." Na 390x844 je
+# polovina šířky displeje 0,57 polomeru plochy, takze 0,62 sahalo presne na boky
+# a prvni stupen vypadal jako "cele vidim" - zaklad je proto 0,42 (143 px,
+# 51 px od kazdeho boku) a upgrade prida na 0,55 a 0,70.
+#
+# CAS V OHNI pri TRAVEL_S = 12 s: 4,6 / 6,2 / 8,1 s (driv 2,5 s, coz bylo malo).
+# Meri to `test_core._test_reaction_window` a tvar prvniho kruhu hlida
+# `test_layout` (nesmi dosahnout na bok displeje).
+const RANGE_FRACS := [0.42, 0.55, 0.70]
 
 # RYCHLOST STRELBY JE UPGRADE, KTERY JE VIDET (Jan, Oct 2026): "mám tu možnost
 # pracovat s rychlostí střelby, což je velmi uspokojivý upgrade." Poskozeni

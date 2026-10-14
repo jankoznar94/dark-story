@@ -20,7 +20,7 @@ var checks: int = 0
 func _init() -> void:
 	_run("hra se postavi", _test_setup)
 	_run("poutnik vstoupi na okraji plochy", _test_spawn_on_edge)
-	_run("cesta od okraje k vezi trva 8 s", _test_travel_time)
+	_run("cesta od okraje k vezi trva TRAVEL_S", _test_travel_time)
 	_run("vez vidi jen svou barvu", _test_sees_only_own_colour)
 	_run("svazek drzi jeden cil, dokud neumre", _test_lock_until_death)
 	_run("dosah: za kruhem se nic nedeje", _test_range)
@@ -81,6 +81,17 @@ func _place(g: Game, h: int, frac: float, angle: float = 0.0) -> Pilgrim:
 	var p: Pilgrim = g.spawn_at_angle(angle, h)
 	p.pos = g.center + Vector2(cos(angle), sin(angle)) * (frac * g.field_r)
 	return p
+
+
+# HRA NA ROZVRZENI TELEFONU (390x844). Cisla z jednotkoveho rozvrzeni testu
+# (unit = field) by o realne hre nerikala nic - a hlavne: zakladni dostrel je
+# ted 0,42 polomeru, takze poutnik na 0,5 polomeru je MIMO dostrel.
+func _phone() -> Game:
+	var l := ScreenLayout.new()
+	l.update(Vector2(390.0, 844.0))
+	var g := Game.new()
+	g.set_field(l.field_r, l.unit_r, l.center)
+	return g
 
 
 # KROKOVANI HRY MALYM KROKEM. Poskozeni dava DOPAD strely, takze se neda
@@ -148,8 +159,8 @@ func _test_sees_only_own_colour() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var own: Pilgrim = _place(g, Hue.RED, 0.50)
-	var other: Pilgrim = _place(g, Hue.YELLOW, 0.50, PI)
+	var own: Pilgrim = _place(g, Hue.RED, 0.30)
+	var other: Pilgrim = _place(g, Hue.YELLOW, 0.30, PI)
 	var own0: float = own.hp
 	var other0: float = other.hp
 	_tick(g, 1.0)
@@ -162,8 +173,8 @@ func _test_lock_until_death() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var near: Pilgrim = _place(g, Hue.RED, 0.50)
-	var far: Pilgrim = _place(g, Hue.RED, 0.58, PI)
+	var near: Pilgrim = _place(g, Hue.RED, 0.30)
+	var far: Pilgrim = _place(g, Hue.RED, 0.38, PI)
 	near.hp = 30.0
 	near.max_hp = 30.0
 	far.hp = 400.0
@@ -199,23 +210,28 @@ func _test_range() -> void:
 # ze poskozeni neprijde driv, nez strela doleti, a ze ubere PRAVE poskozeni
 # jedne rany (ne prusvitovy "kazdy snimek" jako driv).
 func _test_shots_hit_on_impact() -> void:
-	var g: Game = _fresh()
+	var g: Game = _phone()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var p: Pilgrim = _place(g, Hue.RED, 0.50)
+	var p: Pilgrim = _place(g, Hue.RED, 0.40)
 	p.hp = 1000.0
 	p.max_hp = 1000.0
 	var hp0: float = p.hp
+	# OCekavany let: vzdalenost od okraje veze delena rychlosti strely. Test se
+	# tak nerozejde s cisly, kdyz se zmeni rozvrzeni nebo rychlost.
+	var want: float = (p.pos.distance_to(g.center) - g.tower_r) / g.shot_speed()
 	g.step(1.0 / 240.0)
 	_check(g.shots.size() >= 1, "vez pri zamereni vubec nevystrelila")
 	_check(is_equal_approx(p.hp, hp0), "poskozeni prislo driv, nez strela doletela")
 	var t: float = 0.0
-	while is_equal_approx(p.hp, hp0) and t < 1.0:
+	while is_equal_approx(p.hp, hp0) and t < 2.0:
 		g.step(1.0 / 240.0)
 		t += 1.0 / 240.0
 	_check(absf((hp0 - p.hp) - g.tower.shot_damage()) < 0.01,
 		"dopad strely neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
-	_check(t >= 0.08, "strela doletela okamzite (let ma byt videt, je %.3f s)" % t)
+	_check(t >= 0.15, "strela doletela okamzite (let ma byt videt, je %.3f s)" % t)
+	_check(absf(t - want) < 0.06,
+		"let strely nesedi s rychlosti (mereno %.3f s, cekano %.3f)" % [t, want])
 	_check(g.shots.size() < g.shots_fired, "strela po dopadu zustala ve hre")
 
 
@@ -225,11 +241,11 @@ func _test_shots_hit_on_impact() -> void:
 func _test_fire_rate() -> void:
 	var prev: float = -1.0
 	for lv in range(1, Tower.MAX_LEVEL + 1):
-		var g: Game = _fresh()
+		var g: Game = _phone()
 		_quiet(g)
 		g.tower.level = lv
 		g.tower.set_hue(Hue.RED)
-		var p: Pilgrim = _place(g, Hue.RED, 0.55)
+		var p: Pilgrim = _place(g, Hue.RED, 0.30)
 		p.hp = 100000.0
 		p.max_hp = 100000.0
 		var before: int = g.shots_fired
@@ -251,8 +267,8 @@ func _test_dead_target_shot_fizzles() -> void:
 	var g: Game = _fresh()
 	_quiet(g)
 	g.tower.set_hue(Hue.RED)
-	var near: Pilgrim = _place(g, Hue.RED, 0.40)
-	var far: Pilgrim = _place(g, Hue.RED, 0.58, PI)
+	var near: Pilgrim = _place(g, Hue.RED, 0.25)
+	var far: Pilgrim = _place(g, Hue.RED, 0.38, PI)
 	near.hp = 5.0
 	near.max_hp = 5.0
 	far.hp = 400.0
@@ -368,7 +384,7 @@ func _test_violet_vanishes() -> void:
 	_quiet(g, 7)
 	g.tower.set_hue(Hue.VIOLET)
 	_check(g.palette.has(Hue.VIOLET), "v sedme vlne neni fialova v palete")
-	var p: Pilgrim = _place(g, Hue.VIOLET, 0.50)
+	var p: Pilgrim = _place(g, Hue.VIOLET, 0.35)
 	var hp0: float = p.hp
 	# PRVNI ZASAH = DOPAD PRVNI STRELY (ne prvni snimek paprsku)
 	var t: float = 0.0
@@ -393,7 +409,7 @@ func _test_blue_splits() -> void:
 	var g: Game = _fresh()
 	_quiet(g, 3)
 	g.tower.set_hue(Hue.BLUE)
-	var p: Pilgrim = _place(g, Hue.BLUE, 0.50)
+	var p: Pilgrim = _place(g, Hue.BLUE, 0.30)
 	p.hp = 8.0
 	p.max_hp = 40.0
 	_tick(g, 0.5)
