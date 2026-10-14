@@ -261,8 +261,8 @@ func _test_fire_rate() -> void:
 			"na %d. stupni vystrelila %d ran za 2 s (cekano %d)" % [lv, fired, want])
 		_check(g.tower.rate() > prev, "vylepseni nezvysilo rychlost strelby")
 		prev = g.tower.rate()
-	_check(is_equal_approx(Tower.RATES[0] * Tower.SHOT_DMG, 30.0),
-		"zakladni vez uz nema 30 poskozeni za sekundu (je to balancni cislo)")
+	_check(is_equal_approx(Tower.RATES[0] * Tower.SHOT_DMG, 15.0),
+		"zakladni vez uz nema 15 poskozeni za sekundu (je to balancni cislo)")
 
 
 # STRELA S MRTVYM CILEM NIKOHO JINEHO NEZASAHNE. Strely leti a nezletile
@@ -287,7 +287,10 @@ func _test_dead_target_shot_fizzles() -> void:
 	_check(not near.alive, "blizky poutnik neumrel")
 	_check(is_equal_approx(far.hp, 400.0),
 		"poskozeni dostal poutnik, na ktereho vez nemirila")
-	_tick(g, 0.6)
+	# OKNO MUSI POJMOUT JEDNU RANU: doba do dalsi rany je 1/rate (zaklad 0,67 s)
+	# plus let strely (~0,3 s na telefonu). Kratky tik by meril jen to, ze vez
+	# jeste nenabili - a to neni chyba hry.
+	_tick(g, 2.0)
 	_check(far.hp < 400.0, "svazek se po smrti cile neprepjal na druhy")
 
 

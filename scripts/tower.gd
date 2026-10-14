@@ -45,9 +45,17 @@ const RANGE_FRACS := [0.34, 0.46, 0.60]
 # RYCHLOST STRELBY JE UPGRADE, KTERY JE VIDET (Jan, Oct 2026): "mám tu možnost
 # pracovat s rychlostí střelby, což je velmi uspokojivý upgrade." Poskozeni
 # JEDNE rany se nemění (SHOT_DMG) - nahoru jde pocet ran za sekundu, takze
-# paprskem rytmicky proudi vic tecek. `dps()` je z toho ODVOZENE (rate * dmg),
-# aby prumerne poskozeni za sekundu zustalo 30 / 48 / 72 jako driv.
-const RATES := [3.0, 4.8, 7.2]
+# paprskem rytmicky proudi vic tecek. `dps()` je z toho ODVOZENE (rate * dmg).
+#
+# ZAKLAD JE SCHVALNE POMALY (Jan, Oct 2026: "Ještě zpomale výchozí fire rate
+# věže. O dost. Ať máme kam upgradovat."): 1,5 rany/s = jedna rana za 0,67 s.
+# Driv 3,0/4,8/7,2 (30/48/72 poskozeni za sekundu), dnes 1,5/3,0/4,5
+# (15/30/45) - strop zustava na polovine, kde byl, ale zaklad je o polovinu
+# niz. Cena za stupen (COSTS) zustava - kdo bude chtit dražší upgrade, at ji
+# meni tady, ne v obrazovce.
+# Cisla se musi PREMERIT (`tools/balance_sim.gd`) - kdo hybe kadenci, hybe
+# celou hrou.
+const RATES := [1.5, 3.0, 4.5]
 const SHOT_DMG := 10.0
 const TARGETS := [1, 1, 2]
 const COSTS := [70, 150, 300]

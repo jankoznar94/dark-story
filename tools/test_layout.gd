@@ -61,7 +61,13 @@ func _test_spawn_ring_not_drawn() -> void:
 	var src: String = f.get_as_text()
 	_check(not src.contains("draw_arc(layout.center, layout.field_r"),
 		"spawnovaci kruh se kresli, i kdyz ma byt pomyslny")
-	_check(src.contains("draw_arc(layout.center, game.tower.range_px(layout.field_r)"),
+	# BARVA KRUHU DOSTRELU SE MENI S BARVOU VEZE (Jan, Oct 2026: "Attack range
+	# rádius bude měnit barvu podle zvolené barvy věže"). Hlida se MISTO VOLANI:
+	# kdyby se vratila konstanta, hrac by porad videl sedy kruh a nepoznal by
+	# z nej, cim prave strili.
+	_check(src.contains("_range_color()"),
+		"kruh dostrelu nema barvu veze (chybi _range_color())")
+	_check(src.contains("game.tower.range_px(layout.field_r)"),
 		"kruh dostrelu se nekresli (je to jedina geometrie, kterou hrac vidi)")
 
 
@@ -77,8 +83,21 @@ func _test_shots_are_dots() -> void:
 	var src: String = f.get_as_text()
 	_check(src.contains("for s in game.shots"), "strely se vubec nekresli")
 	_check(src.contains("game.shot_r()"), "strela se nekresli jako tecka")
+	_check(src.contains("game.shot_rim_r()"),
+		"strela nema tmavy obrys - na svetlem podkladu se ztrati")
 	_check(src.contains("draw_line(layout.center, p.pos, BEAM, 2.0)"),
 		"paprsek (zamerovani) zmizel - hrac nevidi, kam vez miri")
+	# Z-INDEX: strely musi byt v `_draw` AZ ZA paprskem (a za poutniky i vezi).
+	# Jan: "Projektily musí být výraznější a musí být z indexem nad zaměřováním."
+	# Cisla se nedaji opsat - poradi se cte ze zdroje, protoze prehozeni dvou
+	# radku vypada v kodu jako kosmetika a na obrazovce je to nevidet jen tak.
+	var i_beam: int = src.find("draw_line(layout.center, p.pos, BEAM")
+	var i_tower: int = src.find("\n	_draw_tower()")
+	var i_shots: int = src.find("\n	_draw_shots()")
+	_check(i_beam >= 0 and i_tower >= 0 and i_shots >= 0,
+		"kresleni strel neni hned za vezi (v poli se nevi, co je nad cim)")
+	_check(i_beam < i_tower and i_tower < i_shots,
+		"strely se kresli driv nez paprsek/vez - nejsou nad zamerovanim")
 
 
 # PALETA JE PUNTIK, NE TVAR (Jan, Oct 2026): "bude to zkrátka jen barevný plný

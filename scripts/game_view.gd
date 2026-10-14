@@ -268,21 +268,21 @@ func _draw() -> void:
 	# kde se rozhoduje. SPAWNOVACI KRUH se NEKRESLI (Jan: "Vnější kruh nemá být
 	# viditelný a má být pomyslný"): je vetsi nez displej a poutnici z nej
 	# vchazeji z boku a shora, takze by z nej byl jen oblouk pres celou obrazovku.
-	draw_arc(layout.center, game.tower.range_px(layout.field_r), 0.0, TAU, 96, RANGE_LINE, 1.5)
+	# BARVA KRUHU JE BARVA VEZE (Jan, Oct 2026: "Attack range rádius bude měnit
+	# barvu podle zvolené barvy věže") - hrac tak vidi, cim prave strili, i kdyz
+	# zrovna nikdo v dostrelu neni. Kresli se ztlumeny, aby neprebijel poutniky.
+	draw_arc(layout.center, game.tower.range_px(layout.field_r), 0.0, TAU, 96,
+		_range_color(), maxf(2.0, layout.unit_r * 0.014))
 	for p in game.locks:
 		draw_line(layout.center, p.pos, BEAM, 2.0)
-	# STRELY: tecky, ktere leti od veze k cili. Paprsek je jen zamerovani -
-	# poskozeni udeli az dopad tecky, takze hrac vidi, ze vez opravdu strili
-	# a jak je rychla (vic tecek v paprsku = vyssi stupen).
-	for s in game.shots:
-		var sp: Vector2 = s["pos"]
-		# TECKA MA BARVU VEZE, ktera ji vystrelila (Jan: "dáme mu barvu podle
-		# toho na jakou barvu je [věž] přepnutá") - hrac tak vidi, ktera barva
-		# prave strili, i kdyz v paprsku je vic tecek.
-		draw_circle(sp, game.shot_r(), Hue.color_of(game.tower.hue))
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
+	# STRELY SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
+	# a musí být z indexem nad zaměřováním"). Poradi v `_draw` je proto zavazne:
+	# paprsek -> poutnici -> vez -> strely. Paprsek je jen zamerovani, kdezto
+	# strela je to, co hrac sleduje (a co dava poskozeni).
+	_draw_shots()
 	_draw_bar()
 	_draw_palette()
 	if leave_ask:
@@ -377,6 +377,25 @@ func _closed(pts: PackedVector2Array) -> PackedVector2Array:
 	var out := PackedVector2Array(pts)
 	out.append(pts[0])
 	return out
+
+
+# BARVA KRUHU DOSTRELU = BARVA VEZE. Ztlumena (0,62), aby kruh neprebijel
+# poutniky a paprsek - je to geometrie, ne zbran. Jedno misto pro barvu, aby
+# se kresleni a pripadne mereni v testu nemohla rozejit.
+func _range_color() -> Color:
+	var col: Color = Hue.color_of(game.tower.hue)
+	return Color(col.r, col.g, col.b, 0.62)
+
+
+# STRELY. Plny puntik v barve veze s tmavym obrysem (stejny jazyk jako puntiky
+# palety) a kresli se NAD VSIM v poli - hrac ma videt, co leti a co dava
+# poskozeni, ne jen slabou caru zamerovani.
+func _draw_shots() -> void:
+	var col: Color = Hue.color_of(game.tower.hue)
+	for s in game.shots:
+		var sp: Vector2 = s["pos"]
+		draw_circle(sp, game.shot_rim_r(), GLYPH)
+		draw_circle(sp, game.shot_r(), col)
 
 
 func _draw_tower() -> void:

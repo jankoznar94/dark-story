@@ -51,8 +51,12 @@ const SPAWN_GAP_PER_WAVE := 0.13
 # "zpomalíme pohyb ... i projektilu věže" - 1,00 -> 0,80. Pri kadenci 3 ran/s
 # je v paprsku videt porad nekolik tecek, ale let je pomalejsi a citelnejsi.
 const SHOT_SPEED_FRAC := 0.80
-# POLOMER TECKY. Mala - je to tecka, ne koule; v paprsku jich ma byt videt vic.
-const SHOT_R_FRAC := 0.022
+# POLOMER TECKY. Zvetsen (0,022 -> 0,032) potom, co Jan rekl "Projektily musí
+# být výraznější": drobna tecka se na male obrazovce ztrácela mezi poutniky
+# a v paprsku. Kresli se s tmavym obrysem (`SHOT_RIM_FRAC`), takze je videt
+# na svetlem i tmavem podkladu.
+const SHOT_R_FRAC := 0.032
+const SHOT_RIM_FRAC := 1.55
 
 # ROZVRZENI PLOCHY jde do hry jednim mistem (`set_field`). Rychlost poutnika
 # je z nej ODVOZENA, takze "cesta trva 8 s" plati na telefonu i na velkem
@@ -482,6 +486,12 @@ func shot_speed() -> float:
 
 func shot_r() -> float:
 	return unit_r * SHOT_R_FRAC
+
+
+# VNEJSI POLOMER STRELY (tmavy obrys pod teckou). Kdo kresli strelu, ptá se
+# tohohle - kdyby si obrazovka obrys pocitala sama, rozejdou se dve cisla.
+func shot_rim_r() -> float:
+	return shot_r() * SHOT_RIM_FRAC
 
 
 # ---------------------------------------------------------------- VSTUP
