@@ -71,6 +71,11 @@ const HUD_BACK_W := 104.0
 # Je uzsi nez EDITOR (popisek "PAUZA"/"HRÁT" je kratky) a stoji na kraji
 # displeje, kam se prstem nejlepe dosahne.
 const HUD_PAUSE_W := 86.0
+# ODCHOD Z BOJE. Jan (Oct 2026): "Ještě musíme přidat tlačítko 'menu' do boje.
+# Aby se hráč mohl vrátit z boje předčasně. Musí se hra samozřejmě zeptat jestli
+# chce opravdu ukončit level." Je to treti tlacitko v hornim panelu, vlevo od
+# pauzy - poradi je od kraje: PAUZA, (EDITOR), MENU.
+const HUD_MENU_W := 86.0
 
 var view := Vector2(REF_W, REF_H)
 var s := 1.0
@@ -98,6 +103,13 @@ var hud_back := Rect2()
 # PAUZA v hornim panelu hry. Kresli se VZDY (krome dohrane a prohrane
 # partie) - hrac nesmi hledat, kde si hru zastavi.
 var hud_pause := Rect2()
+# ODCHOD Z BOJE (dotaz "opravdu ukoncit level?"). Tlacitko je v hornim panelu
+# vedle pauzy, dotaz sam je pres cely displej - dokud hrac neodpovi, nic
+# jineho se nedeje.
+var hud_menu := Rect2()
+var leave_box := Rect2()
+var leave_yes := Rect2()
+var leave_no := Rect2()
 
 # --- VYBER LEVELU ---
 # Obrazovka, na kterou se hrac vraci po kazde vyhre. Radky levelu + "volná
@@ -247,6 +259,9 @@ func compute(v: Vector2) -> void:
 		HUD_PAUSE_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
 	hud_back = Rect2(hud_pause.position.x - 6.0 * ui - HUD_BACK_W * ui, 3.0 * ui,
 		HUD_BACK_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
+	hud_menu = Rect2(hud_back.position.x - 6.0 * ui - HUD_MENU_W * ui, 3.0 * ui,
+		HUD_MENU_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
+	leave_panel()
 
 	# --- MENU ---
 	# Ctyři tlacitka pod sebou, svisle vycentrovana. Vyska se drzi na
@@ -648,6 +663,49 @@ func all_level_buttons() -> Array:
 	for r in levels_rows:
 		out.append(r)
 	out.append(levels_back)
+	return out
+
+
+# =========================================================================
+# DOTAZ "OPRAVDU UKONCIT LEVEL?"
+#
+# Jan (Oct 2026): "Musí se hra samozřejmě zeptat jestli chce opravdu ukončit
+# level." Dotaz stoji UPROSTRED displeje, pres vsechno ostatni - dokud hrac
+# neodpovi, nesmi jit omylem klepnout na desku. "UKONČIT" je vlevo (tam hrac
+# saha pozdeji) a "ZPĚT DO HRY" vpravo, na dosah palce.
+# =========================================================================
+const LEAVE_BOX_W := 440.0
+const LEAVE_BOX_H := 150.0
+
+
+func leave_panel() -> void:
+	# ROZVRZENI JESTE NENI (okno ma 0x0 - ve webu nezname velikost, dokud
+	# prohlizec neposle prvni zmenu). Pak se dotaz schova: pocitat obdelnik
+	# se zapornou sirkou by znamenalo chyby v logu a tlacitka, ktera nejdou
+	# zmacknout. Jakmile velikost prijde, `compute` se zavola znovu.
+	if view.x <= 1.0 or view.y <= 1.0:
+		leave_box = Rect2()
+		leave_yes = Rect2()
+		leave_no = Rect2()
+		return
+	var bw: float = minf(LEAVE_BOX_W * ui, view.x - 2.0 * PAD * ui)
+	var bh: float = maxf(MIN_TOUCH * 2.6, LEAVE_BOX_H * ui)
+	leave_box = Rect2((view.x - bw) * 0.5, (view.y - bh) * 0.5, bw, bh)
+	var pad: float = 10.0 * ui
+	var btn_h: float = maxf(MIN_TOUCH, 44.0 * ui)
+	var btn_w: float = (bw - pad * 3.0) * 0.5
+	leave_yes = Rect2(leave_box.position.x + pad, leave_box.end.y - pad - btn_h,
+		btn_w, btn_h)
+	leave_no = Rect2(leave_yes.end.x + pad, leave_yes.position.y, btn_w, btn_h)
+
+
+# Vsechny dotykove cile dotazu: obe odpovedi.
+func all_leave_buttons() -> Array:
+	var out: Array = []
+	if leave_box.size.x <= 0.0:
+		return out
+	out.append(leave_yes)
+	out.append(leave_no)
 	return out
 
 

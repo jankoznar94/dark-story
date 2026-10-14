@@ -69,6 +69,12 @@ var level_index: int = -1
 var win_timer: float = 0.0
 var _win_seen: bool = false
 const WIN_HOLD := 3.0
+# PTÁME SE, JESTLI HRA OPRAVDU UKONČIT LEVEL? Jan (Oct 2026): "Ještě musíme
+# přidat tlačítko 'menu' do boje. Aby se hráč mohl vrátit z boje předčasně.
+# Musí se hra samozřejmě zeptat jestli chce opravdu ukončit level."
+# Dokud je dotaz otevreny, hra stoji (`paused`) a klepnuti mimo dve odpovedi
+# nic nedela - jinak by hrac prisel o rozehranou partii omylem.
+var leave_ask: bool = false
 
 var _music: AudioStreamPlayer = null
 var _sfx: AudioStreamPlayer = null
@@ -471,6 +477,59 @@ func _tick_win(delta: float) -> void:
 			_open_levels()
 
 
+# =========================================================================
+# ODCHOD Z BOJE PREDCASNE
+#
+# Jan (Oct 2026): "Ještě musíme přidat tlačítko 'menu' do boje. Aby se hráč
+# mohl vrátit z boje předčasně. Musí se hra samozřejmě zeptat jestli chce
+# opravdu ukončit level."
+#
+# Hra se PTÁ, protoze rozehrana partie je prace: hrac prisel o level, ktery
+# mohl dohrat. Dotaz partii POZASTAVI (poutnici pod dotazem nechodí) - jinak
+# by se hrac rozhodoval, zatimco mu umiraji zivoty.
+# =========================================================================
+
+func ask_leave() -> void:
+	if game == null or game.is_won() or game.phase == "lost":
+		return
+	leave_ask = true
+	game.paused = true
+
+
+func _handle_leave_tap(pos: Vector2) -> void:
+	if layout.leave_yes.has_point(pos):
+		_click()
+		leave_battle()
+		return
+	if layout.leave_no.has_point(pos):
+		_click()
+		cancel_leave()
+		return
+	# KLEPNUTI MIMO ODPOVED NIC NEDELA: dotaz je nad vsim a hrac na nej musi
+	# odpovedet (jinak by se pod nim dalo stavel a ukoncovalo omylem).
+
+
+func cancel_leave() -> void:
+	leave_ask = false
+	# PAUZA SE ZRUSI TAKY: hrac se vratil do hry, tak aby hra bezela.
+	game.paused = false
+
+
+# UKONCENI LEVELU. Hrac se vraci TAM, ODKUD PRISEL: z kampane do vyberu
+# levelu, z editoru do editoru a z volne hry do menu. Vracet ho pokazde do
+# menu by znamenalo, ze si po kazdem zkouseni levelu v editoru musi znovu
+# projit cele menu.
+func leave_battle() -> void:
+	leave_ask = false
+	if level_index >= 0:
+		_open_levels()
+		return
+	if _from_editor:
+		_back_to_editor()
+		return
+	menu.open_menu()
+
+
 func _pull_toast(delta: float) -> void:
 	if game != null and game.log.size() != last_log_size:
 		last_log_size = game.log.size()
@@ -532,6 +591,7 @@ func _start_battle() -> void:
 	menu.open_battle()
 	_from_editor = false
 	level_index = -1
+	leave_ask = false
 
 
 # VYBER LEVELU. Sem se hrac dostane z menu tlacitkem HRÁT a sem se vraci po
@@ -541,6 +601,7 @@ func _open_levels() -> void:
 	level_index = -1
 	_win_seen = false
 	win_timer = 0.0
+	leave_ask = false
 	_reflow()
 
 
@@ -559,6 +620,7 @@ func _play_campaign(i: int) -> void:
 	level_index = i
 	_win_seen = false
 	win_timer = 0.0
+	leave_ask = false
 
 
 # ---------------------------------------------------------------- vstup
@@ -666,6 +728,11 @@ func _handle_tap(pos: Vector2) -> void:
 	if game.is_won():
 		_open_levels()
 		return
+	# DOTAZ "OPRAVDU UKONCIT LEVEL?" je NAD VSIM: dokud hrac neodpovi,
+	# nesmi se stat nic ostatni (ani pauza, ani stavba na desce).
+	if leave_ask:
+		_handle_leave_tap(pos)
+		return
 	# NAVRAT DO EDITORU z rozehrane hry. Je to PRVNI, co se testuje: je to
 	# v hornim panelu, kde zadna herni interakce neni, takze si to nemuze
 	# s nicim rozumet.
@@ -679,6 +746,12 @@ func _handle_tap(pos: Vector2) -> void:
 	if layout.hud_pause.has_point(pos):
 		_click()
 		game.toggle_pause()
+		return
+	# ODCHOD Z BOJE. Hra se nejdriv zepta - rozehrana partie se nema ztratit
+	# jedním klepnutim.
+	if layout.hud_menu.has_point(pos):
+		_click()
+		ask_leave()
 		return
 	if game.is_paused():
 		return
@@ -977,6 +1050,7 @@ func _play_editor_level() -> void:
 	level_index = -1
 	_win_seen = false
 	win_timer = 0.0
+	leave_ask = false
 
 
 # ZPET DO EDITORU z rozehraneho levelu. Editor si svuj level nechal, takze se
@@ -2387,6 +2461,13 @@ func _draw_hud() -> void:
 		_draw_centered("HRÁT" if game.is_paused() else "PAUZA", pr,
 			pr.position.y + pr.size.y * 0.66, 16, Color(0.90, 0.87, 0.80))
 
+	# ODCHOD Z BOJE. Kresli se VZDY - i po prohre, protoze jinak by hrac po
+	# prohrane partii nemel jak odejit (prohra obrazovku nemeni).
+	var mr: Rect2 = layout.hud_menu
+	draw_rect(mr, Color(0.20, 0.19, 0.17))
+	draw_rect(mr, Color(0.72, 0.70, 0.62, 0.6), false, layout.ul(2.0))
+	_draw_centered("MENU", mr, mr.position.y + mr.size.y * 0.66, 16, Color(0.90, 0.87, 0.80))
+
 	if game.phase == "lost":
 		var bw: float = minf(420.0 * layout.s, layout.view.x * 0.8)
 		var bh: float = 116.0 * layout.s
@@ -2415,16 +2496,36 @@ func _draw_hud() -> void:
 			"za %.0f s zpět na výběr levelů" % maxf(win_timer, 0.0), 13,
 			Color(0.58, 0.55, 0.49), true, ww)
 	# POZASTAVENO: pres desku jde podlozka, aby hrac videl, ze hra stoji.
-	if game.is_paused():
+	# Pod dotazem na ukonceni se pauza nekresli - dotaz je to, co hrac resi.
+	if game.is_paused() and not leave_ask:
 		draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.06, 0.055, 0.05, 0.62))
 		_label(Vector2(layout.view.x * 0.5, layout.view.y * 0.48), "PAUZA", 40,
 			Color(0.88, 0.85, 0.78), true, layout.view.x)
 		_label(Vector2(layout.view.x * 0.5, layout.view.y * 0.58),
 			"klepni na HRÁT v horním panelu a pokračuješ", 15,
 			Color(0.70, 0.67, 0.60), true, layout.view.x)
+	# DOTAZ "OPRAVDU UKONCIT LEVEL?" - NAD VSIM, co je na obrazovce.
+	if leave_ask:
+		_draw_leave()
 	if toast_t > 0.0:
 		_label(Vector2(layout.view.x * 0.5, layout.hud_h + 24.0 * layout.s), toast, 16,
 			Color(0.78, 0.75, 0.68), true, layout.view.x * 0.9)
+
+
+# DOTAZ NA UKONCENI LEVELU. Dve odpovedi, obe dost velke na prst, a zadne
+# "klikni kamkoli" - hrac ma odpovedet, ne uhodnout.
+func _draw_leave() -> void:
+	var b: Rect2 = layout.leave_box
+	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.06, 0.055, 0.05, 0.55))
+	draw_rect(b, PANEL_BG)
+	draw_rect(b, Color(0.78, 0.62, 0.30), false, layout.ul(3.0))
+	_label(Vector2(b.get_center().x, b.position.y + b.size.y * 0.30),
+		"UKONČIT LEVEL?", 22, Color(0.90, 0.87, 0.80), true, b.size.x - 16.0 * layout.ui)
+	_label(Vector2(b.get_center().x, b.position.y + b.size.y * 0.52),
+		"Rozehraná partie se ztratí.", 14, Color(0.70, 0.67, 0.60), true,
+		b.size.x - 16.0 * layout.ui)
+	_draw_bar_btn(layout.leave_yes, "UKONČIT", Color(0.85, 0.42, 0.36), true)
+	_draw_bar_btn(layout.leave_no, "ZPĚT DO HRY", Color(0.65, 0.78, 0.60), true)
 
 
 func _draw_centered(text: String, r: Rect2, baseline_y: float, size: int, col: Color) -> void:

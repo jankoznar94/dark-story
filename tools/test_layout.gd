@@ -39,6 +39,7 @@ func _init() -> void:
 	for r in RESOLUTIONS:
 		_one(r[0], r[1])
 	_strokes_scale()
+	_test_leave_route()
 	if fails.is_empty():
 		print("LAYOUT_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -47,6 +48,74 @@ func _init() -> void:
 			print("  FAIL: " + str(f))
 		print("LAYOUT_ALL_PASS=false (%d kontrol)" % checks)
 		quit(1)
+
+
+# =========================================================================
+# CESTA Z BITVE: KLEPNUTI NA MENU, DOTAZ A ODPOVED
+#
+# Jan (Oct 2026): "Ještě musíme přidat tlačítko 'menu' do boje. Aby se hráč
+# mohl vrátit z boje předčasně. Musí se hra samozřejmě zeptat jestli chce
+# opravdu ukončit level."
+#
+# Tohle se neda overit ctenim zdroje - proto se postavi SKUTECNA obrazovka
+# (`main.tscn`) a klepe se do ni jako prstem. Kontroluje se hlavne to, ze
+# pod dotazem hra STOJI (jinak by se hrac rozhodoval, zatimco mu umiraji
+# poutnici) a ze se hrac vrati TAM, ODKUD PRISEL.
+#
+# POZOR NA SUM V LOGU: v tomhle rezimu (bez okna) hlasi kazde klepnuti
+# "Playback can only happen when a node is inside the scene tree" - zvuk v
+# testu nehraje. Neni to chyba hry: `_setup_audio` hrace do stromu pridava a
+# v realnem behu hraje (viz `test_audio`).
+# =========================================================================
+func _test_leave_route() -> void:
+	var packed: PackedScene = load("res://main.tscn")
+	_check(packed != null, "main.tscn se neda nacist")
+	if packed == null:
+		return
+	var v: Node = packed.instantiate()
+	get_root().add_child(v)
+	# POZOR: v testovacim behu (`--script`) se `_ready` obrazovky jeste
+	# nezavolalo - strom se inicializuje az po `_init`. Zavolame ho sami,
+	# at se testuje SKUTECNA obrazovka a ne prazdny objekt.
+	if v.game == null:
+		v._ready()
+	# A ROZVRZENI SE MUSI DODAT: v testu ma okno 0x0, takze by vsechna
+	# tlacitka vysla mimo displej a klepnuti by nikam netrefilo. Bereme
+	# rozliseni telefonu na sirku - na tom hraji Janovi lidi.
+	v.layout.compute(Vector2(932.0, 430.0))
+	# Z KAMPANE: hraju prvni level z vyberu levelu.
+	v._play_campaign(0)
+	_check(v.menu.is_battle(), "level z kampane se nespustil")
+	_check(v.level_index == 0, "hra nevi, ktery level hraje")
+	v._handle_tap(v.layout.hud_menu.get_center())
+	_check(v.leave_ask, "klepnuti na MENU se nezeptalo, jestli level ukoncit")
+	_check(v.game.is_paused(), "pod dotazem hra bezi dal")
+	# Klepnuti mimo odpoved nesmi nic udelat (ani zavrit dotaz, ani stavel).
+	v._handle_tap(Vector2(4.0, v.layout.view.y * 0.5))
+	_check(v.leave_ask, "klepnuti mimo odpoved dotaz zavrelo")
+	_check(v.game.is_paused(), "klepnuti mimo odpoved hru rozjelo")
+	# ZPET DO HRY: dotaz zmizi a hra jede dal.
+	v._handle_tap(v.layout.leave_no.get_center())
+	_check(not v.leave_ask, "ZPET DO HRY nezavrelo dotaz")
+	_check(not v.game.is_paused(), "po ZPET DO HRY hra stoji")
+	# UKONCIT: hrac se vrati do vyberu levelu.
+	v._handle_tap(v.layout.hud_menu.get_center())
+	v._handle_tap(v.layout.leave_yes.get_center())
+	_check(not v.leave_ask, "po UKONCIT zustal dotaz otevreny")
+	_check(v.menu.is_levels(), "po UKONCIT se hrac nevratil do vyberu levelu")
+	# Z VOLNE HRY: hrac se vraci do menu (vyber levelu nema smysl).
+	v._start_battle()
+	_check(v.menu.is_battle(), "volna hra se nespustila")
+	v._handle_tap(v.layout.hud_menu.get_center())
+	v._handle_tap(v.layout.leave_yes.get_center())
+	_check(v.menu.is_menu(), "z volne hry se hrac nevratil do menu")
+	# PAUZA A MENU SE NESMI PLEST: klepnuti na pauzu hru zastavi, ale dotaz
+	# se neotevre.
+	v._start_battle()
+	v._handle_tap(v.layout.hud_pause.get_center())
+	_check(v.game.is_paused() and not v.leave_ask,
+		"pauza se plete s dotazem na ukonceni")
+	v.queue_free()
 
 
 func _check(cond: bool, msg: String) -> void:
@@ -138,6 +207,14 @@ func _strokes_scale() -> void:
 	# ten pripad, kdy hrac potrebuje videt, co se stalo.
 	_check(src.contains("for item in game.junction_flashes_at(n):"),
 		"kresleni vyhybky bere jen jeden efekt - shluk by nebyl videt")
+	# ODCHOD Z BOJE: tlacitko MENU se musi zeptat a odpovedi musi neco delat.
+	_check(src.contains("func ask_leave()"), "v bitve neni cim se zeptat na ukonceni")
+	_check(src.contains("if leave_ask:\n		_handle_leave_tap(pos)"),
+		"dotaz na ukonceni neni nad ostatnim vstupem - sel by stavel pod nim")
+	_check(src.contains("leave_yes.has_point(pos)") and src.contains("leave_no.has_point(pos)"),
+		"odpovedi na dotaz se nedaji zmacknout")
+	_check(src.contains("func _draw_leave()") and src.contains("_draw_leave()"),
+		"dotaz na ukonceni se nekresli")
 	# PAUZA: tlacitko je jen tehdy funkci, kdyz se na nej da klepnout a kdyz
 	# hra pod pauzou opravdu stoji.
 	_check(src.contains("if layout.hud_pause.has_point(pos):"),
@@ -429,6 +506,37 @@ func _one(w: int, h: int) -> void:
 		"%s: pauza a navrat do editoru se prekryvaji" % tag)
 	_check(layout.hud_pause.end.y <= layout.arena.position.y + 0.6,
 		"%s: pauza leze na herni desku" % tag)
+	# ODCHOD Z BOJE: treti tlacitko v panelu, vlevo od ostatnich.
+	_check(layout.hud_menu.position.x >= -0.6 and layout.hud_menu.end.x <= float(w) + 0.6,
+		"%s: tlacitko MENU utika vodorovne (%.1f..%.1f)" % [tag,
+			layout.hud_menu.position.x, layout.hud_menu.end.x])
+	_check(layout.hud_menu.end.y <= layout.hud_h + 0.6 and layout.hud_menu.position.y >= -0.6,
+		"%s: tlacitko MENU leze z horniho pruhu" % tag)
+	_check(layout.hud_menu.size.x >= ScreenLayout.MIN_TOUCH - 0.6
+			and layout.hud_menu.size.y >= ScreenLayout.MIN_TOUCH * 0.8 - 0.6,
+		"%s: tlacitko MENU je male (%.1f x %.1f)" % [tag, layout.hud_menu.size.x,
+			layout.hud_menu.size.y])
+	_check(not layout.hud_menu.intersects(layout.hud_pause)
+			and not layout.hud_menu.intersects(layout.hud_back),
+		"%s: tlacitko MENU se prekryva s pauzou nebo navratem" % tag)
+	# DOTAZ NA UKONCENI: stoji uprostred displeje a obe odpovedi jsou
+	# dotykove a uvnitr dotazu.
+	_check(layout.leave_box.size.x > 0.0
+			and layout.leave_box.position.x >= -0.6
+			and layout.leave_box.end.x <= float(w) + 0.6
+			and layout.leave_box.position.y >= -0.6
+			and layout.leave_box.end.y <= float(h) + 0.6,
+		"%s: dotaz na ukonceni utika z displeje" % tag)
+	var lb2: Array = layout.all_leave_buttons()
+	_check(lb2.size() == 2, "%s: dotaz nema dve odpovedi (%d)" % [tag, lb2.size()])
+	for ai in range(lb2.size()):
+		var ar: Rect2 = lb2[ai]
+		_check(layout.leave_box.encloses(ar), "%s: odpoved %d leze z dotazu" % [tag, ai])
+		_check(ar.size.x >= ScreenLayout.MIN_TOUCH - 0.6
+				and ar.size.y >= ScreenLayout.MIN_TOUCH - 0.6,
+			"%s: odpoved %d je mala (%.1f x %.1f)" % [tag, ai, ar.size.x, ar.size.y])
+	_check(not layout.leave_yes.intersects(layout.leave_no),
+		"%s: odpovedi dotazu se prekryvaji" % tag)
 
 	# --- VYBER LEVELU: kazdy radek musi byt na displeji, nad dotykovym
 	# minimem a bez prekryvu se ZPET. Klepnuti na radek hraje level, takze
