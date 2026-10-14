@@ -54,6 +54,10 @@ func _test_zero_size() -> void:
 		"nulova velikost okna dela zaporne tlacitko")
 	_check(l.field_r == 0.0, "nulova velikost okna dela plochu")
 	_check(l.layout_palette(5).is_empty(), "nulova velikost okna dela tlacitka palety")
+	_check(l.layout_menu(3).is_empty(), "nulova velikost okna dela tlacitka menu")
+	_check(l.arena.size.x >= 0.0 and l.hud_menu.size.x >= 0.0
+		and l.leave_box.size.x >= 0.0 and l.settings_row.size.x >= 0.0,
+		"nulova velikost okna dela zaporne obdelniky rozvrzeni")
 
 
 func _test_resolution(v: Vector2) -> void:
@@ -114,3 +118,91 @@ func _test_resolution(v: Vector2) -> void:
 		_check(ttk < window,
 			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"
 			% [tag, Hue.name_of(h), window, ttk])
+
+	_test_menu_layout(v, l, tag)
+
+
+# 6) MENU, NASTAVENI A ODCHOD Z BOJE: kazde tlacitko musi jit zmacknout prstem
+# a musi byt CELE na displeji. Neresi se jen "nic neprekryva" - pocita se
+# i to, ze se popisek do tlacitka vejde (na uzke obrazovce jinak text pretece).
+func _test_menu_layout(v: Vector2, l: ScreenLayout, tag: String) -> void:
+	var rects: Array = l.menu_rects
+	_check(rects.size() == Menu.MENU_ITEMS.size(),
+		"%s: menu ma %d tlacitek, cekano %d" % [tag, rects.size(), Menu.MENU_ITEMS.size()])
+	for i in range(rects.size()):
+		var r: Rect2 = rects[i]
+		_check(r.position.x >= -0.5 and r.end.x <= v.x + 0.5,
+			"%s: tlacitko menu '%s' preleza displej" % [tag, str(Menu.MENU_ITEMS[i])])
+		_check(r.size.x >= 44.0 and r.size.y >= 44.0,
+			"%s: tlacitko menu '%s' je male %.0fx%.0f px"
+			% [tag, str(Menu.MENU_ITEMS[i]), r.size.x, r.size.y])
+		_check(_fits(String(Menu.MENU_ITEMS[i]), r.size.x - 16.0, l.menu_item_px),
+			"%s: popisek '%s' se nevejde do tlacitka menu"
+			% [tag, str(Menu.MENU_ITEMS[i])])
+		_check(_fits(String(Menu.MENU_SUBS[i]), r.size.x - 16.0, l.menu_sub_px),
+			"%s: podtitulek '%s' se nevejde do tlacitka menu"
+			% [tag, str(Menu.MENU_SUBS[i])])
+		for j in range(i + 1, rects.size()):
+			_check(not r.intersects(rects[j] as Rect2),
+				"%s: tlacitka menu %d a %d se prekryvaji" % [tag, i, j])
+	_check(l.menu_title_y > 0.0 and l.menu_title_y < (rects[0] as Rect2).position.y,
+		"%s: titul menu neni nad tlacitky" % tag)
+	_check(l.menu_note_y >= (rects[rects.size() - 1] as Rect2).end.y
+		and l.menu_note_y + float(l.menu_sub_px) <= v.y + 0.5,
+		"%s: hlaska pod tlacitky menu neni pod nimi (nebo preleza displej)" % tag)
+
+	# NASTAVENI: dve tlacitka pod sebou, dotykova mez, po jednom sloupci.
+	for r in [l.settings_row, l.settings_back]:
+		var rr: Rect2 = r
+		_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
+			"%s: tlacitko nastaveni je male %.0fx%.0f px" % [tag, rr.size.x, rr.size.y])
+		_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5,
+			"%s: tlacitko nastaveni preleza displej" % tag)
+	_check(not l.settings_row.intersects(l.settings_back),
+		"%s: tlacitka nastaveni se prekryvaji" % tag)
+
+	# HORNI PRUH: MENU, stavovy text a Vylepsit se musi vejit VEDLE SEBE.
+	_check(l.hud_menu.size.x >= 44.0 and l.hud_menu.size.y >= 30.0,
+		"%s: tlacitko MENU v pruhu je male %.0fx%.0f px" % [tag, l.hud_menu.size.x, l.hud_menu.size.y])
+	_check(l.hud_menu.position.x >= -0.5 and l.hud_menu.end.x <= v.x + 0.5,
+		"%s: tlacitko MENU v pruhu preleza displej" % tag)
+	_check(l.hud_menu.end.y <= l.bar_h + 0.5, "%s: tlacitko MENU preleza pruh" % tag)
+	_check(not l.hud_menu.intersects(l.up_rect),
+		"%s: tlacitko MENU se prekryva s vylepsenim" % tag)
+	_check(not l.hud_menu.intersects(l.up_rect) and l.bar_text_w > 0.0,
+		"%s: stavovemu textu nezustalo v pruhu zadne misto" % tag)
+	# STAVOVY TEXT SE NA UZKEM DISPLEJI ZMENSUJE, ale nesmi spadnout na
+	# necitelnych par pixelu - pak je lepsi text zkratit, ne ho zmensit.
+	var state: String = "Vlna 10/10    Životy 12    Zlato 100"
+	var px: int = _fit_px(state, l.bar_text_w, l.font_px)
+	_check(px >= 11, "%s: stavovy text v pruhu ma jen %d px" % [tag, px])
+	_check(_fits(state, l.bar_text_w, px), "%s: stavovy text se nevejde do pruhu" % tag)
+	_check(_fits("MENU", l.hud_menu.size.x - 8.0, l.font_px) or _fit_px("MENU", l.hud_menu.size.x - 8.0, l.font_px) >= 10,
+		"%s: popisek MENU se nevejde do tlacitka" % tag)
+
+	# DOTAZ PRI ODCHODU: kresli se nad vsim, takze musi byt cely na displeji.
+	_check(l.leave_box.position.x >= -0.5 and l.leave_box.end.x <= v.x + 0.5
+		and l.leave_box.position.y >= -0.5 and l.leave_box.end.y <= v.y + 0.5,
+		"%s: dotaz pri odchodu preleza displej" % tag)
+	_check(not l.leave_yes.intersects(l.leave_no), "%s: odpovedi dotazu se prekryvaji" % tag)
+	for r in [l.leave_yes, l.leave_no]:
+		var rr: Rect2 = r
+		_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
+			"%s: odpoved dotazu je mala %.0fx%.0f px" % [tag, rr.size.x, rr.size.y])
+		_check(l.leave_box.encloses(rr), "%s: odpoved dotazu neni v jeho ramecku" % tag)
+
+
+# MERI PISMO JAKO OBRAZOVKA: vejde se popisek do dane sirky pri danem poctu
+# pixelu? Kdyz ne, rozvrzeni nebo popisek je spatne - a pozna se to CISLY,
+# ne okem na snimku.
+func _fits(s: String, width: float, px: int) -> bool:
+	return ThemeDB.fallback_font.get_string_size(
+		s, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= width
+
+
+# NEJVETSI PISMO, KTERE SE DO SIRKY VEJDE (stejne jako `GameView._fit_px`).
+func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
+	var px: int = max_px
+	while px > min_px and not _fits(s, width, px):
+		px -= 1
+	return px

@@ -69,6 +69,15 @@ jobs:
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "LAYOUT_ALL_PASS=true"
 
+      # MENU A NASTAVENI: stavova masina obrazovek, seznam tlacitek a jejich
+      # akce, hlasky aktualizace a prepinac jakosti vykreslovani.
+      - name: Menu test
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_menu.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "MENU_ALL_PASS=true"
+
       - name: Export (Web)
         run: |
           set -e
