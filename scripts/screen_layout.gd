@@ -84,6 +84,11 @@ var hud_menu: Rect2 = Rect2()
 # tlacitkem v pruhu by se text utnul.
 var bar_text_w: float = 0.0
 var font_px: int = 16
+# FORMAT STAVOVEHO TEXTU V PRUHU. Jedno misto pro obrazovku i pro testy - test
+# tak meri presne to, co se kresli. Mezery jsou jednoduche schvalne: na 360px
+# displeji se do pruhu musi vejit VEDLE tlacitek a kazdy znak navic znamena
+# mensi pismo.
+const HUD_STATE_FMT := "Vlna %d/%d   Životy %d   Zlato %d"
 # FONT PRO MERENI POPISKU. Vychozi je patkovy font enginu - stejny, kterym se
 # kresli. Kdo by kreslil jinym, musi ho sem predat (`set_font`), jinak by
 # rozvrzeni merilo jinou velikost, nez hrac vidi.
@@ -144,7 +149,10 @@ func update(v: Vector2) -> void:
 	center = arena.position + arena.size * 0.5
 	tower_r = unit_r * Game.TOWER_R_FRAC
 	pilgrim_r = unit_r * Game.PILGRIM_R_FRAC
-	font_px = int(clampf(minf(v.x, v.y) * 0.042, 13.0, 30.0))
+	# TEXTY JSOU VETSI (Jan, Oct 2026: "I texty mohou být celkově větší"). Zaklad
+	# je podil kratsi strany displeje; strop 34 px je kvuli pruhu (na tabletu je
+	# pruh 96 px vysoky, takze se to vejde).
+	font_px = int(clampf(minf(v.x, v.y) * 0.046, 14.0, 34.0))
 	# HORNI PRUH: [stavovy text] [MENU] [Vylepsit]. Poradi od praveho okraje
 	# je dane tim, jak casto hrac na co klika - vylepseni je herni akce,
 	# menu je odchod. Sirky tlacitek se MERI (viz konstanta vyse), text
@@ -168,6 +176,18 @@ func update(v: Vector2) -> void:
 # nez hrac vidi - proto je to tady jedno misto pro rozvrzeni i pro testy.
 func measure_px(s: String, px: int) -> float:
 	return hud_font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x
+
+
+# NEJVETSI PISMO, KTERE SE DO SIRKY VEJDE. Pouziva se pro texty, ktere se
+# kresli pres celou sirku (podtitulek menu, stavova hlaska) - bez toho by na
+# uzke obrazovce pretekly z displeje a hrac by cetl useknute slovo.
+func fit_px(s: String, max_w: float, max_px: int, min_px: int = 10) -> int:
+	if max_w <= 1.0:
+		return min_px
+	var px: int = max_px
+	while px > min_px and measure_px(s, px) > max_w:
+		px -= 1
+	return px
 
 
 # TLACITKA PALETY. Pocet barev se v prubehu hry meni (barvy pribyvaji), takze
@@ -218,7 +238,11 @@ func layout_menu(count: int) -> Array:
 	var above: float = maxf(24.0, y0 - 6.0)
 	menu_title_px = clampi(int(minf(float(font_px) * 3.2, above * 0.34)), 22, 110)
 	menu_item_px = clampi(int(minf(float(font_px) * 1.65, float(menu_title_px) * 0.62)), 18, 56)
-	menu_sub_px = clampi(int(minf(float(font_px) * 1.05, float(menu_item_px) * 0.72)), 12, 32)
+	# PODTITULEK SE KRESLI PRES CELOU SIRKU - proto se musi vejit. Je to jediny
+	# text hry, ktery je tak dlouhy; bez teto meze pretekl z displeje ve chvili,
+	# kdy se zakladni pismo zvetsilo.
+	var sub_max: int = int(minf(float(font_px) * 1.05, float(menu_item_px) * 0.72))
+	menu_sub_px = clampi(fit_px(Menu.SUBTITLE, view.x * 0.92, sub_max, 12), 12, 32)
 	menu_title_y = maxf(float(menu_title_px) * 1.2,
 		y0 - float(menu_title_px) * 1.7 - float(menu_sub_px))
 	menu_note_y = y0 + total + float(menu_sub_px) * 2.0

@@ -283,7 +283,7 @@ func _test_menu_layout(v: Vector2, l: ScreenLayout, tag: String) -> void:
 		"%s: stavovemu textu nezustalo v pruhu zadne misto" % tag)
 	# STAVOVY TEXT SE NA UZKEM DISPLEJI ZMENSUJE, ale nesmi spadnout na
 	# necitelnych par pixelu - pak je lepsi text zkratit, ne ho zmensit.
-	var state: String = "Vlna 10/10    Životy 12    Zlato 100"
+	var state: String = ScreenLayout.HUD_STATE_FMT % [10, Game.WAVE_MAX, 12, 100]
 	var px: int = _fit_px(state, l.bar_text_w, l.font_px)
 	_check(px >= 11, "%s: stavovy text v pruhu ma jen %d px" % [tag, px])
 	_check(_fits(state, l.bar_text_w, px), "%s: stavovy text se nevejde do pruhu" % tag)

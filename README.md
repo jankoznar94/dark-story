@@ -52,9 +52,12 @@ Barvu vždy nese i **tvar** (runa) — u poutníka je runa přímo tvarem těla:
 oheň trojúhelník, voda kapka, země čtverec, vzduch prstenec. Barva nikdy
 nesmí být jediný nositel informace.
 
-**Menu je velké**: tři tlačítka (HRÁT / SETTINGS / UPDATE) berou 78 % šířky
-displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí mířit prstem.
-Titul se na nízkém displeji zmenší tak, aby nepřelezl do prvního tlačítka.
+**Menu je velké a texty jsou větší**: tři tlačítka (HRÁT / SETTINGS / UPDATE)
+berou 78 % šířky displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí
+mířit prstem; titul má 54 px, popisek 28 px. Větší je i hláška pod pruhem
+(kreslí se základním písmem, ne zmenšeným stavovým), obrazovka NASTAVENÍ
+a dotaz při odchodu z boje. Titul i podtitulek se na nízkém/úzkém displeji
+zmenší tak, aby nepřelezly do tlačítek ani z displeje.
 
 ## Testy
 

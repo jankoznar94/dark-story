@@ -403,7 +403,7 @@ func _label(s: String, r: Rect2, px: int, col: Color, dy: float = 0.0) -> void:
 func _draw_bar() -> void:
 	var f: Font = ThemeDB.fallback_font
 	var pad: float = maxf(8.0, layout.bar_h * 0.18)
-	var state: String = "Vlna %d/%d    Životy %d    Zlato %d" \
+	var state: String = ScreenLayout.HUD_STATE_FMT \
 		% [game.wave, Game.WAVE_MAX, game.lives, game.gold]
 	var fs: int = _fit_px(state, layout.bar_text_w, layout.font_px)
 	draw_string(f, Vector2(pad, layout.bar_h * 0.5 + float(fs) * 0.36),
@@ -424,8 +424,12 @@ func _draw_bar() -> void:
 	_label(label, r, _fit_px(label, r.size.x - 8.0, layout.font_px, 10), bc)
 	var note: String = game.last_note()
 	if note != "":
-		draw_string(f, Vector2(pad, layout.bar_h + float(fs) * 1.6), note,
-			HORIZONTAL_ALIGNMENT_LEFT, layout.view.x - 2.0 * pad, fs, DIM)
+		# HLASKA POD PRUHEM JE VETSIM PISMEM NEZ STAVOVY TEXT: stavovy text se
+		# musi vejit VEDLE tlacitek, kdezto hlaska ma cely radek pro sebe - driv
+		# se obe kreslily stejne malym pismem a hrac hlasky prehlizel.
+		var npx: int = _fit_px(note, layout.view.x - 2.0 * pad, layout.font_px)
+		draw_string(f, Vector2(pad, layout.bar_h + float(npx) * 1.6), note,
+			HORIZONTAL_ALIGNMENT_LEFT, layout.view.x - 2.0 * pad, npx, DIM)
 	if game.is_over():
 		var line: String = "Vyhráno" if game.phase == "won" else "Konec"
 		draw_string(f, Vector2(0.0, layout.center.y),
