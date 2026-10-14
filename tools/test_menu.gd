@@ -12,6 +12,14 @@ var fails: Array = []
 var checks: int = 0
 # Klepaci testy se pousteji JEDNOU, v prvnim snimku (viz poznamka nize).
 var _ran: bool = false
+# VELIKOST TELEFONU, NA KTEREM SE KLEPE.
+const PHONE := Vector2(390.0, 844.0)
+# KOLIK KONTROL MA TEST MIT. Chyba v GDScriptu prerusi funkci, ktera ji
+# zpusobila - a kdyz se test prerusí driv, nez stihne zapsat prvni FAIL,
+# `_run` napise "ok" a sada je ZELENA, i kdyz se polovina testu vubec
+# nespustila. Presne to se stalo, kdyz v obrazovce chybel `game.palette`:
+# misto 83 kontrol jich probehlo 37 a verdikt byl MENU_ALL_PASS=true.
+const MIN_CHECKS := 80
 
 
 # POZOR NA PORADI - dvakrat jsem na to koukal a je to past:
@@ -39,7 +47,11 @@ func _process(_delta: float) -> bool:
 	_ran = true
 	_run("klepnuti na HRAT otevre bitvu", _test_tap_starts_battle)
 	_run("odchod z bitvy se nejdriv zepta", _test_tap_leave_asks)
+	_run("panel upgradu v bitve zastavi partii a nakup funguje", _test_tap_shop_pauses)
+	_run("paleta dole prenastavi barvu veze", _test_tap_palette_switches_hue)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
+	_check(checks >= MIN_CHECKS,
+		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("MENU_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	return true
@@ -68,6 +80,7 @@ func _test_starts_in_menu() -> void:
 	_check(m.is_menu(), "hra nezacina v menu")
 	_check(not m.is_battle(), "hra zacina rovnou v bitve")
 	_check(not m.is_settings(), "hra zacina v nastaveni")
+	_check(not m.is_upgrades(), "hra zacina v upravach")
 	_check(m.update_note == "", "menu zacina s hláskou o aktualizaci")
 
 
@@ -76,7 +89,7 @@ func _test_items_and_actions() -> void:
 		"tlacitek je %d, akci %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_ACTIONS.size()])
 	_check(Menu.MENU_ITEMS.size() == Menu.MENU_SUBS.size(),
 		"tlacitek je %d, podtitulku %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_SUBS.size()])
-	var known: Array = ["battle", "settings", "update"]
+	var known: Array = ["battle", "upgrades", "settings", "update"]
 	var seen: Dictionary = {}
 	for act in Menu.MENU_ACTIONS:
 		_check(known.has(String(act)),
@@ -85,8 +98,8 @@ func _test_items_and_actions() -> void:
 		seen[String(act)] = true
 	# KAZDA OBRAZOVKA, KTERA V MENU JE, MUSI MIT AKCI - jinak je to tlacitko,
 	# ktere nic nedela.
-	_check(seen.has("battle") and seen.has("settings") and seen.has("update"),
-		"v menu chybi nektera z akci (hrani / nastaveni / aktualizace)")
+	_check(seen.has("battle") and seen.has("upgrades") and seen.has("settings") and seen.has("update"),
+		"v menu chybi nektera z akci (hrani / upravy / nastaveni / aktualizace)")
 
 
 func _test_views() -> void:
@@ -95,8 +108,10 @@ func _test_views() -> void:
 	_check(m.is_battle() and not m.is_menu(), "HRAT neotevre bitvu")
 	m.open_settings()
 	_check(m.is_settings() and not m.is_battle(), "SETTINGS neotevre nastaveni")
+	m.open_upgrades()
+	_check(m.is_upgrades() and not m.is_settings(), "UPRAVY neotevrou obrazovku uprav")
 	m.open_menu()
-	_check(m.is_menu() and not m.is_settings(), "ZPET nevrati do menu")
+	_check(m.is_menu() and not m.is_settings() and not m.is_upgrades(), "ZPET nevrati do menu")
 
 
 func _test_update_offline() -> void:
@@ -168,25 +183,43 @@ func _screen() -> Node2D:
 	# Rozvrzeni se prelozi na SKUTECNOU velikost okna - v `_init` by byla
 	# nulova a vsechna tlacitka by vysla mimo displej.
 	v.call("_refield")
+	var l: ScreenLayout = _phone(v)
 	# STRAZCE: kdyby obrazovka nebyla ve strome, je viewport prazdny a vsechny
 	# klepace testy by prosly, aniž by na neco klepaly. To se uz jednou stalo.
-	var l: ScreenLayout = v.get("layout")
-	_check(v.is_inside_tree(), "obrazovka neni ve strome (klepani by nikam netrefilo)")
-	_check(l.view.x > 1.0 and l.view.y > 1.0,
-		"rozvrzeni ma nulovou velikost (klepani by nikam netrefilo)")
+	_check(v.is_inside_tree(), "obrazovka neni ve strome (klepani by nikam trefilo)")
+	_check(l.view == PHONE, "rozvrzeni nema velikost telefonu (%s)" % str(l.view))
 	_check(v.get("layout").menu_rects.size() == Menu.MENU_ITEMS.size(),
 		"obrazovka nema rozvrzene tlacitka menu")
 	return v
 
 
+# ROZVRZENI ZNOVU NA TELEFON. Kazda akce, ktera rozvrzeni prelozi (`_refield`
+# po startu partie, zmena jakosti vykreslovani), ho prelozi na SKUTECNOU
+# velikost okna - a v headless behu je to 64x64. Klepace testy pak klepou na
+# obdelniky z JINEHO rozvrzeni a minou (v 64x64 navic paleta dole leze do
+# horniho pruhu). Prekladat se proto musi po kazde takove akci a `l.view` to
+# hlasi nahlas, misto aby to jen tise minulo.
+func _phone(v: Node2D) -> ScreenLayout:
+	var l: ScreenLayout = v.get("layout")
+	l.update(PHONE)
+	v.get("game").set_field(l.field_r, l.unit_r, l.center)
+	l.layout_palette(v.get("game").palette.size())
+	v.call("_sync_shop_shape")
+	v.call("_sync_dialogs")
+	return l
+
+
 func _test_tap_starts_battle() -> void:
 	var v: Node2D = _screen()
 	var m: Menu = v.get("menu")
+	var l: ScreenLayout = v.get("layout")
 	_check(m.is_menu(), "hra neotevrela menu")
-	var before: float = v.get("game").lives
-	v.call("_tap", (v.get("layout").menu_rects[0] as Rect2).get_center())
+	var before: float = v.get("game").max_hp
+	v.call("_tap", (l.menu_rects[0] as Rect2).get_center())
 	_check(m.is_battle(), "klepnuti na HRAT neotevrelo bitvu")
-	_check(v.get("game").lives == before, "nova partie nezacina s plnymi zivoty")
+	_check(v.get("game").hp == before and v.get("game").max_hp == before,
+		"nova partie nezacina s plnymi zivoty veze")
+	l = _phone(v)
 	# Hra se krokuje JEN v bitve: pod menu se nesmi hrat.
 	v.call("_process", 1.0)
 	var t: float = v.get("game").build_left
@@ -215,15 +248,85 @@ func _test_tap_leave_asks() -> void:
 	_check(bool(v.get("leave_ask")), "klepnuti mimo dotaz ho zavrelo")
 	_check(m.is_battle(), "klepnuti mimo dotaz ukoncilo partii")
 	# ZPET DO HRY vrati hru a partie zase bezi.
-	v.call("_tap", l.leave_no.get_center())
+	v.call("_tap", l.dlg_b.get_center())
 	_check(not bool(v.get("leave_ask")), "ZPET DO HRY nezavrelo dotaz")
 	v.call("_process", 1.0)
 	_check(v.get("game").build_left < t, "po ZPET DO HRY se partie nekrokuje")
 	# UKONCIT vraci do menu (a dotaz zmizi).
 	v.call("_tap", l.hud_menu.get_center())
-	v.call("_tap", l.leave_yes.get_center())
+	v.call("_tap", l.dlg_a.get_center())
 	_check(m.is_menu(), "UKONCIT nevratilo do menu")
 	_check(not bool(v.get("leave_ask")), "po ukonceni zustal dotaz otevreny")
+	v.queue_free()
+
+
+# PANEL UPGRADU V BITVE: otevre se, PARTII ZASTAVI a nakup ji zase pustí.
+func _test_tap_shop_pauses() -> void:
+	var v: Node2D = _screen()
+	var m: Menu = v.get("menu")
+	var l: ScreenLayout = v.get("layout")
+	v.call("_tap", (l.menu_rects[0] as Rect2).get_center())
+	_check(m.is_battle(), "klepnuti na HRAT neotevrelo bitvu")
+	l = _phone(v)
+	v.call("_tap", l.hud_upgrades.get_center())
+	_check(bool(v.get("shop_open")), "tlacitko UPGRADY neotevrelo panel")
+	var t: float = v.get("game").build_left
+	v.call("_process", 1.0)
+	_check(is_equal_approx(v.get("game").build_left, t), "pod panelem partie bezi dal")
+	# KLEPNUTI MIMO PANEL HO ZAVRE (na telefonu je to nejrychlejsi cesta).
+	v.call("_tap", Vector2(2.0, l.bar_h + 2.0))
+	_check(not bool(v.get("shop_open")), "klepnuti mimo panel ho nezavrelo")
+	# NAKUP: klepnuti na "+" v prvnim radku opravdu koupi krok.
+	v.call("_tap", l.hud_upgrades.get_center())
+	var id: String = String((Upgrades.stats_in(String(v.call("_shop_stats")[0]))[0])["id"]) if false else ""
+	var stats: Array = Upgrades.stats_in(String(v.get("SHOP_CATS")[0]))
+	var first_id: String = String(stats[0]["id"])
+	v.get("game").gold = 500
+	v.call("_tap", (l.shop_buttons[0] as Rect2).get_center())
+	_check(v.get("game").temp_level(first_id) == 1,
+		"klepnuti na '+' v panelu nekouplo krok (%s)" % first_id)
+	# KATEGORIE: klepnuti na druhy tab prepne radek (a rozvrzeni se prelozi).
+	v.call("_tap", (l.shop_tabs[1] as Rect2).get_center())
+	_check(int(v.get("shop_cat")) == 1, "klepnuti na tab nezmenilo kategorii")
+	v.queue_free()
+
+
+# PALETA DOLE JE JEDINA CESTA, JAK PRENASTAVIT BARVU VEZE. Kdyz se rozvrhne
+# prazdna (nebo se klepnuti nevyhodnoti), hrac o tuhle mechaniku prijde - a
+# presne to se stalo: `game.palette` po refaktoru neexistoval, obrazovka se v
+# tech mistech nedokreslila, klepnuti na barvu nic nedelalo a VSEchny testy
+# byly zelene. Proto se tady netvrdi jen "pocet sedi" (0 == 0 projde i s chybou),
+# ale "na tom miste opravdu neco je a klepnuti opravdu zmeni barvu".
+func _test_tap_palette_switches_hue() -> void:
+	var v: Node2D = _screen()
+	var g: Game = v.get("game")
+	var l: ScreenLayout = v.get("layout")
+	v.call("_tap", (l.menu_rects[0] as Rect2).get_center())
+	l = _phone(v)
+	_check(g.palette.size() >= 2, "hra nema paletu (%d barev)" % g.palette.size())
+	_check(l.pal_rects.size() >= 2, "paleta nema rozvrzene puntiky (%d)" % l.pal_rects.size())
+	_check(g.palette == g.tower.palette, "vez ma jinou paletu nez hra")
+	if l.pal_rects.size() < 2:
+		v.queue_free()
+		return
+	var other: int = -1
+	for i in range(g.palette.size()):
+		if int(g.palette[i]) != g.tower.hue:
+			other = i
+			break
+	_check(other >= 0, "v palete je jen jedna barva (neni co prepnout)")
+	if other < 0:
+		v.queue_free()
+		return
+	var want: int = int(g.palette[other])
+	v.call("_tap", (l.pal_rects[other] as Rect2).get_center())
+	_check(g.tower.hue == want,
+		"klepnuti na puntik palety nepreplo barvu veze (%s misto %s)"
+		% [Hue.name_of(g.tower.hue), Hue.name_of(want)])
+	var first: int = 0 if other != 0 else 1
+	v.call("_tap", (l.pal_rects[first] as Rect2).get_center())
+	_check(g.tower.hue == int(g.palette[first]),
+		"druhe klepnuti na paletu nic nezmenilo (%s)" % Hue.name_of(g.tower.hue))
 	v.queue_free()
 
 

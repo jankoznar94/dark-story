@@ -1,12 +1,17 @@
 extends Node2D
 
 # KRESLENI A DOTYK. Hra sama (`game.gd`) je bez uzlu a nic nekresli - tady se
-# jen cte stav a kresli. Jedna plocha, jeden hit-test, zadne Button uzly,
-# zadny theme, zadny hover ani focus: plochy strojovy vzhled.
+# jen cte stav a kresli. Zadne Button uzly, zadny theme, zadny hover ani
+# focus: plochy strojovy vzhled.
 #
-# OBRAZOVKY. `Menu` vi, ktera je otevrena (MENU / SETTINGS / BATTLE) a podle
-# toho se kresli i vyhodnocuje vstup. Hra se krokuje JEN v bitve - jinak by
-# pod menu bezela partie, kterou hrac jeste nezacal.
+# OBRAZOVKY. `Menu` vi, ktera je otevrena (MENU / UPRAVY / SETTINGS / BITVA)
+# a podle toho se kresli i vyhodnocuje vstup.
+#
+# DVE MISTA, KDE SE NAKUPUJE:
+#   * V BITVE (panel "UPGRADY") - docasne kroky za ZLATO, kazdy level znovu,
+#   * V MENU (obrazovka "UPRAVY") - permanentni stupne za BODY.
+# Oba panely kresli STEJNY predpis (`_draw_card` + `_draw_row`), takze se
+# nemohou rozejit ani popiskem, ani cenou.
 
 const BG := Color(0.055, 0.052, 0.062)
 const TOWER_BODY := Color(0.11, 0.105, 0.115)
@@ -15,26 +20,29 @@ const TEXT := Color(0.86, 0.85, 0.82)
 const DIM := Color(0.50, 0.49, 0.52)
 const BEAM := Color(0.93, 0.91, 0.86)
 const GLYPH := Color(0.09, 0.085, 0.09)
-# MENU: podklad tlacitka je o stupen svetlejsi nez pozadi, ramecek zlaty u
-# prvniho (HRAT) a sedy u ostatnich - hrac vidi, co je hlavni cesta.
 const MENU_BG := Color(0.135, 0.125, 0.11)
 const MENU_EDGE := Color(0.72, 0.70, 0.62)
 const MENU_EDGE_FIRST := Color(0.78, 0.62, 0.30)
-# ZTLUMENI NEAKTIVNÍCH PUNTÍKŮ PALETY. Od Oct 2026 je tlacitko PLNÝ KRUH
-# v barve, takze ztlumeni uz nemusi zachranovat tvar (driv se tvar kreslil
-# v plne barve a podklad se ztlumoval). 0,72 drzi barvu citelnou (zelena
-# a zluta se v 0,55 slily s podkladem) a zvolena barva se pozna podle bileho
-# ramecku a plne sytosti.
 const PAL_IDLE := 0.72
+# PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
+# od sebe poznat tri vrstvy (pole, panel, tab).
+const CARD_BG := Color(0.095, 0.090, 0.100)
+const CARD_ROW := Color(0.125, 0.118, 0.128)
+const CARD_EDGE := Color(0.34, 0.33, 0.36)
+# ZIVOTY VEZE: zelena dokud drzi, cervena pod tretinou. Barva NENI jediny
+# nositel - cislo je i v hornim pruhu.
+const HP_GOOD := Color(0.62, 0.76, 0.56)
+const HP_MID := Color(0.86, 0.76, 0.40)
+const HP_LOW := Color(0.85, 0.42, 0.36)
 
-# USPORNE VYKRESLOVANI (nastaveni hrace). Hra se jinak kresli v NATIVNIM
-# rozliseni displeje, coz na telefonu (DPR 2-3) znamena nekolikanasobne vic
-# pixelu nez na stolnim displeji - a kdyz se snimek nevejde do 16,7 ms, pohyb
-# poutniku skube. Male platno se na displej roztahne (`MODE_VIEWPORT` - v
-# `CANVAS_ITEMS` by se zmensily jen souradnice a obraz by se porad
-# rasterizoval do plneho rozliseni, takze zadna uspora).
+# USPORNE VYKRESLOVANI (nastaveni hrace) - viz puvodni poznamka.
 const RENDER_W := 960
 const RENDER_H := 600
+
+# KATEGORIE V BITVE: specialy se za zlato NEKUPUJI (jsou jen permanentni),
+# takze jejich tab v bitve nema co nabidnout - a tab, ktery nic nenabizi, je
+# pro hrace lez.
+const SHOP_CATS := [Upgrades.CAT_OFF, Upgrades.CAT_DEF, Upgrades.CAT_ECO]
 
 var game: Game
 var layout: ScreenLayout
@@ -44,11 +52,18 @@ var _pressed: bool = false
 # DOTAZ PRI ODCHODU Z BOJE. Dokud je otevreny, partie se NEKROKUJE - hrac se
 # nema rozhodovat, zatimco mu umiraji poutnici.
 var leave_ask: bool = false
+# PANEL S NAKUPEM V BITVE. Taky PARTII ZASTAVI: prekryva spodni tretinu pole,
+# takze by hrac nevedel, co se mu pod nim deje.
+var shop_open: bool = false
+var shop_cat: int = 0
+var upg_cat: int = 0
 
 
 func _ready() -> void:
 	layout = ScreenLayout.new()
 	game = Game.new()
+	game.profile.load_from_disk()
+	game.start_level(game.profile.level)
 	settings.load_from_disk()
 	menu.web = OS.has_feature("web")
 	if menu.web:
@@ -58,34 +73,59 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_refield)
 
 
+# DIALOG MA JEDNU NEBO DVE ODPOVEDI - rozvrzeni se proto prelozi podle toho,
+# ktery dialog je prave otevreny. Bez toho by "ZPET DO HRY" u dotazu na
+# ukonceni neexistovalo (a klepnuti by nikam nevedlo).
+func _sync_dialogs() -> void:
+	layout.dialog_panel(leave_ask or (menu.is_battle() and game.phase == "won"))
+
+
 func _refield() -> void:
-	# `layout.update` pocita VSE, co jde z velikosti okna (menu, nastaveni,
-	# dotaz pri odchodu) - tady se doplni jen to, co vi az hra: pocet barev.
 	layout.update(get_viewport_rect().size)
 	game.set_field(layout.field_r, layout.unit_r, layout.center)
 	layout.layout_palette(game.palette.size())
+	_sync_shop_shape()
+	_sync_dialogs()
+
+
+# POCET RADKU PANELU SE MENI S KATEGORII. Rozvrzeni si ho musi vzit z TOHO,
+# co se opravdu kresli - jinak by tlacitka "+" sedela na radcich jine
+# kategorie (a klepalo by se na neco jineho, nez hrac vidi).
+func _sync_shop_shape() -> void:
+	var want_tabs: int = SHOP_CATS.size()
+	var want_rows: int = _shop_stats().size()
+	if layout.shop_tab_count != want_tabs or layout.shop_row_count != want_rows:
+		layout.set_shop_shape(want_tabs, maxi(1, want_rows))
+
+
+func _shop_stats() -> Array:
+	return Upgrades.stats_in(String(SHOP_CATS[clampi(shop_cat, 0, SHOP_CATS.size() - 1)]))
+
+
+func _upg_stats() -> Array:
+	var cat: String = String(Upgrades.CATEGORIES[clampi(upg_cat, 0, Upgrades.CATEGORIES.size() - 1)]["id"])
+	return Upgrades.stats_in(cat)
+
+
+# PODLE CEHO SE ROZHODUJE, JESTLI HRA STOJI. Jedno misto - kdyby si to hlídalo
+# vic funkci, stacilo by jedno opomenute volani a hra by pod panelem bezela.
+func is_halted() -> bool:
+	return leave_ask or shop_open or game.is_over()
 
 
 func _process(dt: float) -> void:
-	if menu.is_battle() and not leave_ask:
+	if menu.is_battle() and not is_halted():
 		game.step(dt)
 	_pull_js_state()
-	# POCET BAREV SE V PRUBEHU HRY MENI (barvy pribyvaji). Kdyz se paleta
-	# roztahne, musi se prekreslit i tlacitka - jinak by hrac videl barvu,
-	# ktera se neda zmacknout.
 	if layout.pal_rects.size() != game.palette.size():
 		layout.layout_palette(game.palette.size())
+	_sync_shop_shape()
+	_sync_dialogs()
 	queue_redraw()
 
 
 # =========================================================================
-# STAV Z PROHLIZECE
-#
-# Otisk buildu a vysledek aktualizace posila prohlizec do globalnich promennych
-# a hra si je VYCTE. `JavaScriptBridge.create_callback` se sice podari
-# zaregistrovat (v prohlizeci je videt jako funkce), ale zavolani z JS do hry
-# NEDOJDE - v Chromiu po rucnim `setVersion('PROBE99')` zustal v menu otisk
-# "dev". Necte se to kazdy snimek: staci nekolikrat za sekundu.
+# STAV Z PROHLIZECE (viz puvodni poznamka: callback z JS do hry NEDOJDE)
 # =========================================================================
 
 const JS_POLL_S := 0.25
@@ -103,9 +143,6 @@ func _pull_js_state() -> void:
 	menu.pull_js_state()
 
 
-# USPORNE ROZHLEDNI. NIKDY NEPRIRAZUJE, KDYBY TO ZHORSILO: na displeji mensim
-# nez cilove platno (nebo jen o chlup vetsim) zustava nativni rozliseni - jinak
-# by se kreslilo do vetsiho platna, nez je obrazovka.
 func _apply_render_scale() -> void:
 	var w: Window = get_window()
 	if w == null:
@@ -121,8 +158,7 @@ func _apply_render_scale() -> void:
 
 
 # STRAZCE KLEPNUTI: Godot vyrabi z kazdeho dotyku i mys, takze se reaguje JEN
-# na stisk (pohyb nema akci) a stav se resetuje pri pusteni. Bez toho se jeden
-# dotyk provede dvakrat.
+# na stisk (pohyb nema akci) a stav se resetuje pri pusteni.
 func _unhandled_input(ev: InputEvent) -> void:
 	var pos: Vector2 = Vector2.ZERO
 	var press: bool = false
@@ -143,18 +179,23 @@ func _unhandled_input(ev: InputEvent) -> void:
 	_tap(pos)
 
 
-# PORADI JE ZAVAZNE: dotaz pri odchodu stoji NAD VSIM vstupem (hrac na nej ma
-# odpovedet), pak obrazovka, ktera je otevrena. Klepnuti do hraciho pole
-# NEDELA NIC - hrac ma vybirat barvu mimo desku, aby neztratil prehled.
+# PORADI JE ZAVAZNE: to, co stoji NAD VSIM (dialog), je prvni. Hrac na dotaz
+# ma odpovedet, ne ho odklepnout necim jinym.
 func _tap(pos: Vector2) -> void:
 	if leave_ask:
 		_handle_leave_tap(pos)
+		return
+	if menu.is_battle() and game.is_over():
+		_handle_end_tap(pos)
 		return
 	if menu.is_menu():
 		_handle_menu_tap(pos)
 		return
 	if menu.is_settings():
 		_handle_settings_tap(pos)
+		return
+	if menu.is_upgrades():
+		_handle_upgrades_tap(pos)
 		return
 	_handle_battle_tap(pos)
 
@@ -163,8 +204,6 @@ func _tap(pos: Vector2) -> void:
 # MENU
 # =========================================================================
 
-# AKCE SE VYHODNOCUJE PRES JMENO (`Menu.MENU_ACTIONS`), ne podle poradi -
-# prehozeni tlacitek v seznamu tak nikdy neprehodi, co ktery dela.
 func _handle_menu_tap(pos: Vector2) -> void:
 	for i in range(layout.menu_rects.size()):
 		if not (layout.menu_rects[i] as Rect2).has_point(pos):
@@ -174,6 +213,10 @@ func _handle_menu_tap(pos: Vector2) -> void:
 		match String(Menu.MENU_ACTIONS[i]):
 			"battle":
 				start_battle()
+			"upgrades":
+				upg_cat = 0
+				layout.layout_upgrades()
+				menu.open_upgrades()
 			"settings":
 				menu.open_settings()
 			"update":
@@ -181,12 +224,12 @@ func _handle_menu_tap(pos: Vector2) -> void:
 		return
 
 
-# NOVA PARTIE. Hra se zaklada ZNOVU (ne "reset" na miste): hrac, ktery se
-# vratil do menu a zmackl HRAT, musi dostat cistou desku, ne zbytek te
-# predchozi.
+# NOVA PARTIE. Hra zacina na NEJVYSSIM odemcenem levelu; profil (body
+# i permanentni upgrady) zustava - to je cely smysl permanentnich bonusu.
 func start_battle() -> void:
 	leave_ask = false
-	game = Game.new()
+	shop_open = false
+	game.start_level(game.profile.level)
 	_refield()
 	menu.open_battle()
 
@@ -202,34 +245,78 @@ func _handle_settings_tap(pos: Vector2) -> void:
 
 
 # =========================================================================
+# UPRAVY V MENU (permanentni, za body)
+# =========================================================================
+
+func _handle_upgrades_tap(pos: Vector2) -> void:
+	for i in range(layout.upg_tabs.size()):
+		if (layout.upg_tabs[i] as Rect2).has_point(pos):
+			# Kategorie se prekresli HNAD: pocet radku se lisi, takze by
+			# tlacitka "+" zustala na radcich te predchozi.
+			upg_cat = i
+			layout.layout_upgrades()
+			return
+	for i in range(layout.upg_buttons.size()):
+		if (layout.upg_buttons[i] as Rect2).has_point(pos):
+			var stats: Array = _upg_stats()
+			if i < stats.size():
+				game.buy_perm(String(stats[i]["id"]))
+			return
+	if layout.upg_back.has_point(pos):
+		menu.open_menu()
+		return
+	# KLEPNUTI MIMO PANEL = ZPET (na telefonu je to nejrychlejsi odchod).
+	if not layout.upg_panel.has_point(pos):
+		menu.open_menu()
+
+
+# =========================================================================
 # ODCHOD Z BOJE PREDCASNE
-#
-# Hra se PTÁ, protoze rozehrana partie je prace. Dotaz partii POZASTAVI
-# (viz `_process`) - bez toho by se hrac rozhodoval, zatimco mu umiraji
-# poutnici. Dohrana partie se neptá: tam uz neni o co přijít.
 # =========================================================================
 
 func ask_leave() -> void:
-	if game.is_over():
-		leave_battle()
-		return
 	leave_ask = true
+	_sync_dialogs()
 
 
 func _handle_leave_tap(pos: Vector2) -> void:
-	if layout.leave_yes.has_point(pos):
-		leave_battle()
+	if layout.dlg_a.has_point(pos):
+		_do_leave()
 		return
-	if layout.leave_no.has_point(pos):
+	if layout.dlg_b.has_point(pos):
 		leave_ask = false
 		return
 	# KLEPNUTI MIMO ODPOVED NIC NEDELA: dotaz neni hlaseni, hrac na nej ma
 	# odpovedet.
 
 
-func leave_battle() -> void:
+func _do_leave() -> void:
 	leave_ask = false
+	shop_open = false
 	menu.open_menu()
+
+
+# =========================================================================
+# KONEC LEVELU: VYHRA A PROHRA
+#
+# Vyhra NENI konec hry: hrac si v klidu nakoupi permanentni upgrady a jde na
+# dalsi level. Prohra vraci do menu - zlato z rozehraneho levelu propada,
+# upgrady i body zustavaji (Jan, Oct 2026).
+# =========================================================================
+
+func _handle_end_tap(pos: Vector2) -> void:
+	if game.phase == "won":
+		if layout.dlg_a.has_point(pos):
+			game.next_level()
+			shop_open = false
+			_refield()
+			return
+		if layout.dlg_b.has_point(pos):
+			_do_leave()
+		return
+	# PROHRA: jedina odpoved je navrat do menu.
+	if layout.dlg_a.has_point(pos):
+		_do_leave()
 
 
 # =========================================================================
@@ -242,11 +329,28 @@ func _handle_battle_tap(pos: Vector2) -> void:
 			if i < game.palette.size():
 				game.select_hue(int(game.palette[i]))
 			return
-	if layout.up_rect.has_point(pos):
-		game.buy_upgrade()
-		return
 	if layout.hud_menu.has_point(pos):
 		ask_leave()
+		return
+	if layout.hud_upgrades.has_point(pos):
+		shop_open = not shop_open
+		return
+	if not shop_open:
+		return
+	if layout.shop_close.has_point(pos) or not layout.shop_panel.has_point(pos):
+		shop_open = false
+		return
+	for i in range(layout.shop_tabs.size()):
+		if (layout.shop_tabs[i] as Rect2).has_point(pos):
+			shop_cat = i
+			_sync_shop_shape()
+			return
+	for i in range(layout.shop_buttons.size()):
+		if (layout.shop_buttons[i] as Rect2).has_point(pos):
+			var stats: Array = _shop_stats()
+			if i < stats.size():
+				game.buy_temp(String(stats[i]["id"]))
+			return
 
 
 # =========================================================================
@@ -254,43 +358,44 @@ func _handle_battle_tap(pos: Vector2) -> void:
 # =========================================================================
 
 func _draw() -> void:
+	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	if menu.is_menu():
 		_draw_menu()
 		return
 	if menu.is_settings():
 		_draw_settings()
 		return
-	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
+	if menu.is_upgrades():
+		_draw_upgrades()
+		return
+	_draw_battle()
+
+
+func _draw_battle() -> void:
 	if layout.field_r <= 0.0:
 		return
-	# KRUH DOSTRELU. Je to jedina geometrie, kterou hrac potrebuje videt - misto,
-	# kde se rozhoduje. SPAWNOVACI KRUH se NEKRESLI (Jan: "Vnější kruh nemá být
-	# viditelný a má být pomyslný"): je vetsi nez displej a poutnici z nej
-	# vchazeji z boku a shora, takze by z nej byl jen oblouk pres celou obrazovku.
-	# BARVA KRUHU JE BARVA VEZE (Jan, Oct 2026: "Attack range rádius bude měnit
-	# barvu podle zvolené barvy věže") - hrac tak vidi, cim prave strili, i kdyz
-	# zrovna nikdo v dostrelu neni. Kresli se ztlumeny, aby neprebijel poutniky.
-	draw_arc(layout.center, game.tower.range_px(layout.field_r), 0.0, TAU, 96,
-		_range_color(), maxf(2.0, layout.unit_r * 0.014))
+	draw_arc(layout.center, game.range_px(), 0.0, TAU, 96, _range_color(),
+		maxf(2.0, layout.unit_r * 0.014))
 	for p in game.locks:
 		draw_line(layout.center, p.pos, BEAM, 2.0)
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
 	# STRELY SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
-	# a musí být z indexem nad zaměřováním"). Poradi v `_draw` je proto zavazne:
-	# paprsek -> poutnici -> vez -> strely. Paprsek je jen zamerovani, kdezto
-	# strela je to, co hrac sleduje (a co dava poskozeni).
+	# a musí být z indexem nad zaměřováním").
 	_draw_shots()
 	_draw_bar()
 	_draw_palette()
+	if shop_open:
+		_draw_shop()
+	if game.is_over():
+		_draw_end()
 	if leave_ask:
 		_draw_leave()
 
 
-# PISMO, KTERE SE VEJDE. Stavovy text v hornim pruhu ma pevne misto (vlevo od
-# tlacitek) a na uzke obrazovce je puvodni velikost vetsi nez to misto - bez
-# zmenseni by se text utnul o tlacitko. Radsi mensi pismo nez utnute slovo.
+# PISMO, KTERE SE VEJDE. Stavovy text v hornim pruhu ma pevne misto a na
+# uzkem displeji je puvodni velikost vetsi nez to misto.
 func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 	if width <= 1.0:
 		return min_px
@@ -304,16 +409,18 @@ func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 func _draw_pilgrim(p: Pilgrim) -> void:
 	var col: Color = Hue.color_of(p.hue)
 	var r: float = layout.pilgrim_r * p.size
-	# PRIRAVA (fialova po prvnim zasahu): kresli se JEN OBRYS v plne barve.
-	# Hrac tak vidi, kde poutnik je, ale pozna, ze na nej ted nema cenu mirrit.
 	_shape(p.hue, p.pos, r, col, p.is_ghost())
 	if p.hp_frac() < 0.999:
 		draw_arc(p.pos, r * 1.55, -PI * 0.5, -PI * 0.5 + TAU * p.hp_frac(), 24, TEXT, 2.0)
+	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji.
+	if p.ice_left > 0.0:
+		draw_arc(p.pos, r * 1.9, 0.0, TAU, 20, Color(0.45, 0.72, 0.90, 0.85), 2.0)
+	if p.poison_left > 0.0:
+		draw_arc(p.pos, r * 2.2, 0.0, TAU, 20, Color(0.55, 0.80, 0.35, 0.85), 2.0)
 
 
 # TVAR BAREV. Barva nikdy neni jediny nositel informace - u sesti barev to
-# plati dvojnasob (cervena se zelenou je nejcastejsi porucha barvocitu,
-# fialova s modrou se pletou taky). Tvar je to, co hrac na plose opravdu cte.
+# plati dvojnasob (cervena se zelenou je nejcastejsi porucha barvocitu).
 func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> void:
 	var w: float = maxf(1.6, r * 0.26)
 	match Hue.shape_of(h):
@@ -365,7 +472,6 @@ func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> v
 			else:
 				draw_colored_polygon(d, col)
 		_:
-			# KRUH (stribrna). Dutina nema smysl, ale obrys ano.
 			if hollow:
 				draw_arc(p, 0.85 * r, 0.0, TAU, 28, col, w)
 			else:
@@ -379,16 +485,12 @@ func _closed(pts: PackedVector2Array) -> PackedVector2Array:
 
 
 # BARVA KRUHU DOSTRELU = BARVA VEZE. Ztlumena (0,62), aby kruh neprebijel
-# poutniky a paprsek - je to geometrie, ne zbran. Jedno misto pro barvu, aby
-# se kresleni a pripadne mereni v testu nemohla rozejit.
+# poutniky a paprsek - je to geometrie, ne zbran.
 func _range_color() -> Color:
 	var col: Color = Hue.color_of(game.tower.hue)
 	return Color(col.r, col.g, col.b, 0.62)
 
 
-# STRELY. Plny puntik v barve veze s tmavym obrysem (stejny jazyk jako puntiky
-# palety) a kresli se NAD VSIM v poli - hrac ma videt, co leti a co dava
-# poskozeni, ne jen slabou caru zamerovani.
 func _draw_shots() -> void:
 	var col: Color = Hue.color_of(game.tower.hue)
 	for s in game.shots:
@@ -397,74 +499,61 @@ func _draw_shots() -> void:
 		draw_circle(sp, game.shot_r(), col)
 
 
+# VEZ. Misto stupnu ma ZIVOTY: tlusty oblouk kolem tela, barva podle toho,
+# kolik jestli zbylo. Cislo je vzdy i v hornim pruhu, takze barva nikdy neni
+# jediny nositel informace.
 func _draw_tower() -> void:
 	var c: Vector2 = layout.center
 	var tr: float = layout.tower_r
 	draw_circle(c, tr, TOWER_BODY)
-	# PRSTENEC ZVOLENE BARVY. Meni se jen barva prstence, telo veze zustava -
-	# vez je porad ta sama vec, jen se prebiji.
 	draw_arc(c, tr * 0.92, 0.0, TAU, 48, Hue.color_of(game.tower.hue), maxf(2.0, tr * 0.13))
 	_shape(game.tower.hue, c, tr * 0.52, Hue.color_of(game.tower.hue))
-	# TECKY STUPNE uvnitr veze (jeden az tri).
-	var dr: float = maxf(1.6, tr * 0.10)
-	for i in range(game.tower.level):
-		var dx: float = (float(i) - (float(game.tower.level) - 1.0) * 0.5) * dr * 3.0
-		draw_circle(c + Vector2(dx, tr * 0.70), dr, TOWER_DOT)
+	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
+	draw_arc(c, tr * 1.22, -PI * 0.5, -PI * 0.5 + TAU * frac, 64, _hp_color(frac),
+		maxf(3.0, tr * 0.24))
 
 
-# TEXT V PRUHU. Vzdy na stred sveho obdelniku - `draw_string` ma sirku, do
-# ktere se vejde, takze se nikdy nesmi kreslit do sirky ciziho tlacitka.
-func _label(s: String, r: Rect2, px: int, col: Color, dy: float = 0.0) -> void:
-	var f: Font = ThemeDB.fallback_font
-	draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.5 + float(px) * 0.36 + dy),
-		s, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, px, col)
+func _hp_color(frac: float) -> Color:
+	if frac > 0.6:
+		return HP_GOOD
+	if frac > 0.3:
+		return HP_MID
+	return HP_LOW
 
+
+# =========================================================================
+# HORNI PRUH A PALETA
+# =========================================================================
 
 func _draw_bar() -> void:
-	var f: Font = ThemeDB.fallback_font
 	var pad: float = maxf(8.0, layout.bar_h * 0.18)
-	var state: String = ScreenLayout.HUD_STATE_FMT \
-		% [game.wave, Game.WAVE_MAX, game.lives, game.gold]
-	var fs: int = _fit_px(state, layout.bar_text_w, layout.font_px)
-	draw_string(f, Vector2(pad, layout.bar_h * 0.5 + float(fs) * 0.36),
-		state, HORIZONTAL_ALIGNMENT_LEFT, layout.bar_text_w, fs, TEXT)
-	# TLACITKO MENU (odchod z partie). Kresli se VZDY, i po dohrani - jinak by
-	# hrac po prohre nemel jak odejit.
+	var l1: String = ScreenLayout.HUD_LINE1_FMT % [game.level, game.wave, game.waves_in_level()]
+	var l2: String = ScreenLayout.HUD_LINE2_FMT % [int(ceil(game.hp)), int(game.max_hp), game.gold]
+	var px1: int = _fit_px(l1, layout.bar_text_w, layout.font_px)
+	var px2: int = _fit_px(l2, layout.bar_text_w, layout.font_px)
+	draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h * 0.34 + float(px1) * 0.36),
+		l1, HORIZONTAL_ALIGNMENT_LEFT, layout.bar_text_w, px1, TEXT)
+	draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h * 0.78 + float(px2) * 0.36),
+		l2, HORIZONTAL_ALIGNMENT_LEFT, layout.bar_text_w, px2, DIM)
+	# TLACITKO UPGRADY (panel s nakupem) - kresli se VZDY, i po dohrani.
+	var ur: Rect2 = layout.hud_upgrades
+	draw_rect(ur, CARD_ROW if not shop_open else TOWER_BODY, true)
+	draw_rect(ur, TEXT if not shop_open else DIM, false, 2.0)
+	_label("UPGRADY", ur, _fit_px("UPGRADY", ur.size.x - 8.0, layout.font_px, 10), TEXT)
+	# TLACITKO MENU (odchod z partie).
 	var mr: Rect2 = layout.hud_menu
 	draw_rect(mr, TOWER_BODY, true)
 	draw_rect(mr, DIM, false, 2.0)
 	_label("MENU", mr, _fit_px("MENU", mr.size.x - 8.0, layout.font_px, 10), TEXT)
-	# TLACITKO VYLEPSENI
-	var r: Rect2 = layout.up_rect
-	var can: bool = game.tower.can_upgrade() and game.gold >= game.tower.upgrade_cost()
-	var bc: Color = TEXT if can else DIM
-	draw_rect(r, TOWER_BODY, true)
-	draw_rect(r, bc, false, 2.0)
-	var label: String = ("Vylepšit %d" % game.tower.upgrade_cost()) if game.tower.can_upgrade() else "Max"
-	_label(label, r, _fit_px(label, r.size.x - 8.0, layout.font_px, 10), bc)
 	var note: String = game.last_note()
 	if note != "":
-		# HLASKA POD PRUHEM JE VETSIM PISMEM NEZ STAVOVY TEXT: stavovy text se
-		# musi vejit VEDLE tlacitek, kdezto hlaska ma cely radek pro sebe - driv
-		# se obe kreslily stejne malym pismem a hrac hlasky prehlizel.
 		var npx: int = _fit_px(note, layout.view.x - 2.0 * pad, layout.font_px)
-		draw_string(f, Vector2(pad, layout.bar_h + float(npx) * 1.6), note,
+		draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h + float(npx) * 1.6), note,
 			HORIZONTAL_ALIGNMENT_LEFT, layout.view.x - 2.0 * pad, npx, DIM)
-	if game.is_over():
-		var line: String = "Vyhráno" if game.phase == "won" else "Konec"
-		draw_string(f, Vector2(0.0, layout.center.y),
-			line, HORIZONTAL_ALIGNMENT_CENTER, layout.view.x, fs * 3, TEXT)
 
 
-# PALETA BAREV DOLE. Je to jedine misto, kam hrac klika - proto nema vyznam
-# klepat do pole.
-#
-# PUNTIK, NE TVAR (Jan, Oct 2026): "tlačítka na přepínání barev věže budou mít
-# kulatý formát, budou větší a bude to zkrátka jen barevný plný puntík
-# s borderem. Žádné tvary." Kresli se tedy PLNÝ KRUH v barve a kolem nej
-# ramecek: zvolena barva ma svetly (bilý) border a plnou barvu, nezvolena ma
-# border ve sve barve a ztlumeny podklad. Tvar (runa) z palety zmizel - je
-# videt na poutnikovi i ve vezi.
+# PALETA BAREV DOLE. Tlacitko je PLNÝ KRUH v barve s rameckem (Jan: "jen
+# barevný plný puntík s borderem. Žádné tvary.").
 func _draw_palette() -> void:
 	for i in range(layout.pal_rects.size()):
 		if i >= game.palette.size():
@@ -484,20 +573,145 @@ func _draw_palette() -> void:
 
 
 # =========================================================================
+# PANEL S NAKUPEM (SPOLECNY PRO BITVU I MENU)
+# =========================================================================
+
+func _text(s: String, r: Rect2, px: int, col: Color, align: int) -> void:
+	draw_string(ThemeDB.fallback_font,
+		Vector2(r.position.x, r.position.y + r.size.y * 0.5 + float(px) * 0.36),
+		s, align, r.size.x, px, col)
+
+
+func _label(s: String, r: Rect2, px: int, col: Color, dy: float = 0.0) -> void:
+	_text(s, Rect2(r.position.x, r.position.y + dy, r.size.x, r.size.y), px, col,
+		HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _card_frame(r: Rect2) -> void:
+	draw_rect(r, CARD_BG, true)
+	draw_rect(r, CARD_EDGE, false, 2.0)
+
+
+func _draw_close(r: Rect2) -> void:
+	draw_rect(r, TOWER_BODY, true)
+	draw_rect(r, DIM, false, 2.0)
+	_label("×", r, layout.font_px, TEXT)
+
+
+# RADKY PARAMETRU. `costs` je text ceny, `afford` je seznam, jestli na to hrac
+# ma (nema = ztlumene, ale porad videt, KOLIK to stoji - jinak by hrac nevedel,
+# na co setri).
+func _draw_rows(rows: Array, buttons: Array, stats: Array, costs: Array,
+		values: Array, levels: Array) -> void:
+	for i in range(rows.size()):
+		var r: Rect2 = rows[i]
+		draw_rect(r, CARD_ROW, true)
+		if i >= stats.size():
+			continue
+		var s: Dictionary = stats[i]
+		var id: String = String(s["id"])
+		var br: Rect2 = buttons[i]
+		var label_w: float = maxf(40.0, r.size.x - br.size.x - 3.0 * maxf(6.0, r.size.x * 0.02))
+		var lr := Rect2(r.position.x + 8.0, r.position.y, label_w * 0.52, r.size.y)
+		var vr := Rect2(r.position.x + label_w * 0.52, r.position.y, label_w * 0.48, r.size.y)
+		_text(String(s["label"]), lr, _fit_px(String(s["label"]), lr.size.x, layout.font_px, 10), TEXT,
+			HORIZONTAL_ALIGNMENT_LEFT)
+		_text(String(values[i]), vr, _fit_px(String(values[i]), vr.size.x, layout.font_px, 10),
+			MENU_EDGE_FIRST, HORIZONTAL_ALIGNMENT_RIGHT)
+		draw_rect(br, CARD_BG, true)
+		var col: Color = TEXT if bool(costs[i][1]) else DIM
+		draw_rect(br, col, false, 2.0)
+		var ct: String = String(costs[i][0])
+		_label(ct, br, _fit_px(ct, br.size.x - 6.0, layout.font_px, 10), col)
+		# STUPEN "3/6+2" = kolik ma permanentne + kolik koupil v tomto levelu.
+		# Cislo je u radku vzdy - hrac musi videt, jak daleko je.
+		var lv: String = String(levels[i])
+		if lv != "" and r.size.x > 220.0:
+			var lvr := Rect2(vr.end.x - 54.0, r.position.y + r.size.y * 0.55, 54.0, r.size.y * 0.45)
+			_text(lv, lvr, maxi(9, layout.font_px - 5), DIM, HORIZONTAL_ALIGNMENT_RIGHT)
+
+
+func _draw_card(panel: Rect2, tabs: Array, active: int, labels: Array, close: Rect2,
+		show_close: bool) -> void:
+	_card_frame(panel)
+	for i in range(tabs.size()):
+		var tr: Rect2 = tabs[i]
+		var on: bool = (i == active)
+		draw_rect(tr, CARD_ROW if on else CARD_BG, true)
+		var col: Color = TEXT if on else DIM
+		draw_rect(tr, col if on else CARD_EDGE, false, 2.0 if on else 1.0)
+		var lb: String = String(labels[i])
+		_label(lb, tr, _fit_px(lb, tr.size.x - 8.0, layout.font_px, 10), col)
+	if show_close:
+		_draw_close(close)
+
+
+# PANEL V BITVE: docasne kroky za zlato. Hra je pod nim ZASTAVENA.
+func _draw_shop() -> void:
+	var labels: Array = []
+	for c in SHOP_CATS:
+		for row in Upgrades.CATEGORIES:
+			if String(row["id"]) == String(c):
+				labels.append(String(row["label"]))
+	_draw_card(layout.shop_panel, layout.shop_tabs, shop_cat, labels, layout.shop_close, true)
+	var stats: Array = _shop_stats()
+	var costs: Array = []
+	var values: Array = []
+	var levels: Array = []
+	for s in stats:
+		var id: String = String(s["id"])
+		var have: int = game.temp_level(id)
+		var c: int = Upgrades.temp_cost(id, have)
+		var maxed: bool = have >= Upgrades.temp_max(id)
+		costs.append(["MAX" if maxed else "+%d zl." % c, (not maxed) and game.gold >= c])
+		values.append(Upgrades.value_text(id, game.profile.perm_level(id), have))
+		levels.append("%d/%d" % [have, Upgrades.temp_max(id)])
+	_draw_rows(layout.shop_rows, layout.shop_buttons, stats, costs, values, levels)
+
+
+# OBRAZOVKA UPRAVY V MENU: permanentni stupne za body.
+func _draw_upgrades() -> void:
+	_label("UPRAVY", Rect2(0.0, upg_title_y(), layout.view.x, float(layout.menu_title_px)),
+		layout.menu_title_px, Color(0.90, 0.87, 0.80))
+	_label(game.profile.menu_note(), Rect2(0.0, layout.upg_note_y, layout.view.x, float(layout.font_px) * 1.4),
+		layout.menu_sub_px, MENU_EDGE)
+	var labels: Array = []
+	for row in Upgrades.CATEGORIES:
+		labels.append(String(row["label"]))
+	_draw_card(layout.upg_panel, layout.upg_tabs, upg_cat, labels, Rect2(), false)
+	var stats: Array = _upg_stats()
+	var costs: Array = []
+	var values: Array = []
+	var levels: Array = []
+	for s in stats:
+		var id: String = String(s["id"])
+		var have: int = game.profile.perm_level(id)
+		var c: int = Upgrades.perm_cost(id, have)
+		var maxed: bool = have >= Upgrades.perm_max(id)
+		costs.append(["MAX" if maxed else "+%d b." % c, (not maxed) and game.profile.body >= c])
+		values.append(Upgrades.value_text(id, have, 0))
+		levels.append("%d/%d" % [have, Upgrades.perm_max(id)])
+	_draw_rows(layout.upg_rows, layout.upg_buttons, stats, costs, values, levels)
+	var br: Rect2 = layout.upg_back
+	draw_rect(br, MENU_BG, true)
+	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
+	_label("ZPĚT", br, _fit_px("ZPĚT", br.size.x - 16.0, layout.menu_item_px, 13), Color(0.90, 0.87, 0.80))
+
+
+func upg_title_y() -> float:
+	return maxf(6.0, layout.upg_panel.position.y - float(layout.menu_title_px) * 1.5)
+
+
+# =========================================================================
 # MENU A NASTAVENI
 # =========================================================================
 
-# Prvni obrazovka. Plochy strojovy design jako zbytek hry - zadne karty,
-# zadne efekty. Podbarveni je naznak puvodnich zelek, aby menu a hra
-# vypadaly jako jedna vec.
 func _draw_menu() -> void:
-	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	for i in range(9):
 		var t: float = float(i) / 8.0
 		var y: float = t * layout.view.y
 		draw_line(Vector2(0.0, y + 12.0), Vector2(layout.view.x, y - 18.0),
 			Color(0.145, 0.135, 0.115, 0.55), 1.0)
-	var cx: float = layout.view.x * 0.5
 	_label(Menu.TITLE, Rect2(0.0, layout.menu_title_y - float(layout.menu_title_px) * 0.8,
 		layout.view.x, float(layout.menu_title_px)), layout.menu_title_px, Color(0.90, 0.87, 0.80))
 	_label(Menu.SUBTITLE, Rect2(0.0, layout.menu_title_y + float(layout.menu_title_px) * 0.5,
@@ -509,8 +723,6 @@ func _draw_menu() -> void:
 		var accent: Color = MENU_EDGE_FIRST if i == 0 else MENU_EDGE
 		draw_rect(r, MENU_BG, true)
 		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
-		# POPISEK A PODTITULEK jsou dva radky jednoho tlacitka - podtitulek
-		# neni druhe tlacitko, takze se macka cely obdelnik.
 		var item: String = String(Menu.MENU_ITEMS[i])
 		var ipx: int = _fit_px(item, r.size.x - 16.0, layout.menu_item_px, 13)
 		var sub: String = String(Menu.MENU_SUBS[i])
@@ -521,23 +733,21 @@ func _draw_menu() -> void:
 		draw_string(ThemeDB.fallback_font,
 			Vector2(r.position.x, r.position.y + r.size.y * 0.86),
 			sub, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, spx, Color(0.56, 0.53, 0.48))
+	# STAV PROFILU: ktery level hrac hraje a kolik ma bodu. Bez toho by hrac
+	# nevidel, ze se neco za vyhrane levely nasbiralo.
+	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_state_y, layout.view.x,
+		float(layout.menu_sub_px) * 1.4), layout.menu_sub_px, MENU_EDGE)
 	if not menu.update_note.is_empty():
 		_label(menu.update_note, Rect2(layout.view.x * 0.05, layout.menu_note_y,
 			layout.view.x * 0.9, float(layout.menu_sub_px) * 1.4),
 			layout.menu_sub_px, Color(0.72, 0.70, 0.62))
-	# OTAZK BUILDU. Bez nej se neda poznat, jestli hra po aktualizaci opravdu
-	# bezi z nove verze, nebo ji jeste drzi cache service workera. Je to mala
-	# informace v rohu, ne ovladaci prvek.
 	_label("build %s" % menu.build_id, Rect2(0.0, layout.view.y - float(layout.menu_sub_px) * 2.0,
 		layout.view.x, float(layout.menu_sub_px)), layout.menu_sub_px, Color(0.42, 0.40, 0.36))
 
 
 func _draw_settings() -> void:
-	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	_label("NASTAVENÍ", Rect2(0.0, layout.settings_row.position.y - float(layout.menu_title_px) * 1.6,
 		layout.view.x, float(layout.menu_title_px)), layout.menu_title_px, Color(0.90, 0.87, 0.80))
-	# HODNOTA JE TEXT, TLACITKO JEN TO, CO SE MACKA: cely radek je prepinac,
-	# takze se popisek kresli vlevo a hodnota vpravo - ramecek je jeden.
 	var r: Rect2 = layout.settings_row
 	var f: Font = ThemeDB.fallback_font
 	var px: int = _fit_px("Jakost vykreslování", r.size.x * 0.6, layout.menu_item_px, 12)
@@ -555,24 +765,43 @@ func _draw_settings() -> void:
 	_label("ZPĚT", br, _fit_px("ZPĚT", br.size.x - 16.0, layout.menu_item_px, 13), Color(0.90, 0.87, 0.80))
 
 
-# DOTAZ PRI ODCHODU. Podbarvi cely displej, aby bylo videt, ze hra stoji.
-func _draw_leave() -> void:
+# =========================================================================
+# DIALOGY
+# =========================================================================
+
+func _draw_dialog(title: String, sub: String, a: String, a_col: Color, b: String, b_col: Color) -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.03, 0.028, 0.034, 0.72), true)
-	var b: Rect2 = layout.leave_box
-	draw_rect(b, MENU_BG, true)
-	draw_rect(b, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.7), false, 2.0)
-	var px: int = _fit_px("Opravdu ukončit rozehranou partii?",
-		b.size.x - 24.0, layout.menu_item_px, 12)
-	_label("Opravdu ukončit rozehranou partii?",
-		Rect2(b.position.x, b.position.y + b.size.y * 0.16, b.size.x, float(px) * 1.6),
-		px, Color(0.90, 0.87, 0.80))
-	# UKONCIT je cervene, ZPET DO HRY zelene: hrac vidi, ktera odpoved ho
-	# vrati do hry a ktera ho o partii pripravi.
-	_label("UKONČIT", layout.leave_yes,
-		_fit_px("UKONČIT", layout.leave_yes.size.x - 12.0, layout.menu_item_px, 12),
-		Color(0.85, 0.42, 0.36))
-	_label("ZPĚT DO HRY", layout.leave_no,
-		_fit_px("ZPĚT DO HRY", layout.leave_no.size.x - 12.0, layout.menu_item_px, 12),
-		Color(0.65, 0.78, 0.60))
-	draw_rect(layout.leave_yes, Color(0.85, 0.42, 0.36, 0.45), false, 2.0)
-	draw_rect(layout.leave_no, Color(0.65, 0.78, 0.60, 0.45), false, 2.0)
+	var bx: Rect2 = layout.dlg_box
+	draw_rect(bx, MENU_BG, true)
+	draw_rect(bx, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.7), false, 2.0)
+	var px: int = _fit_px(title, bx.size.x - 24.0, layout.menu_item_px, 12)
+	var box := Rect2(bx.position.x, bx.position.y + bx.size.y * 0.14, bx.size.x, float(px) * 1.5)
+	_label(title, box, px, Color(0.90, 0.87, 0.80))
+	if sub != "":
+		var spx: int = _fit_px(sub, bx.size.x - 24.0, layout.menu_sub_px, 10)
+		_label(sub, Rect2(bx.position.x, box.position.y + float(px) * 1.35, bx.size.x,
+			float(spx) * 1.5), spx, MENU_EDGE)
+	if layout.dlg_a.size.x > 0.0:
+		_label(a, layout.dlg_a,
+			_fit_px(a, layout.dlg_a.size.x - 12.0, layout.menu_item_px, 11), a_col)
+		draw_rect(layout.dlg_a, Color(a_col.r, a_col.g, a_col.b, 0.45), false, 2.0)
+	if b != "" and layout.dlg_b.size.x > 0.0:
+		_label(b, layout.dlg_b,
+			_fit_px(b, layout.dlg_b.size.x - 12.0, layout.menu_item_px, 11), b_col)
+		draw_rect(layout.dlg_b, Color(b_col.r, b_col.g, b_col.b, 0.45), false, 2.0)
+
+
+func _draw_leave() -> void:
+	_draw_dialog("Opravdu ukončit rozehranou partii?", "Zlato z levelu propadne, upgrady zůstávají.",
+		"UKONČIT", Color(0.85, 0.42, 0.36), "ZPĚT DO HRY", Color(0.65, 0.78, 0.60))
+
+
+func _draw_end() -> void:
+	if game.phase == "won":
+		_draw_dialog("Level %d vyhrán" % game.level,
+			"+%d bodů · další level má %d vln" % [game.body_earned, game.level + 1],
+			"DALŠÍ LEVEL", Color(0.65, 0.78, 0.60), "MENU", Color(0.72, 0.70, 0.62))
+		return
+	_draw_dialog("Konec — věž padla na levelu %d" % game.level,
+		"Zlato propadá, body a upgrady zůstávají.",
+		"ZPĚT DO MENU", Color(0.72, 0.70, 0.62), "", Color.WHITE)

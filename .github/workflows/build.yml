@@ -42,6 +42,13 @@ jobs:
       - name: Import assets
         run: ./godot --headless --path . --import
 
+      # KONTROLA OPACNYM SMEREM: co obrazovky volaji na `game`/`layout`/`menu`/
+      # `tower`, musi na tech objektech opravdu byt. GDScript takovou chybu jen
+      # ohlasí do logu a funkci prerusí - obrazovka se pak v tom miste vubec
+      # nedokresli (tak jednou zmizela cela paleta barev a testy byly zelene).
+      - name: Symbols exist (view vs game)
+        run: python3 tools/check_symbols.py .
+
       - name: Every script loads
         run: |
           set -e
@@ -49,15 +56,25 @@ jobs:
           echo "$OUT" | tail -20
           echo "$OUT" | grep -q "SCRIPTS_ALL_PASS=true"
 
-      # HERNI LOGIKA: vez vidi jen svou barvu, svazek drzi jeden cil do jeho
-      # smrti, cesta od okraje k vezi trva 8 s, mimo dostrel se nedeje nic,
-      # klepnuti na vysek vence prepne barvu, vlna micha vsechny ctyri barvy.
+      # HERNI LOGIKA: vez vidi jen svou barvu, poskozeni dava az dopad strely,
+      # level ma 3-5 vln, za vyhru jsou BODY a vez ma ZIVOTY (zbroj, regenerace).
       - name: Game rules test (srdce a vez)
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_core.gd 2>&1)
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "CORE_ALL_PASS=true"
+
+      # TABULKA UPGRADU A PROFIL: hodnota je start + (permanentni + docasne)
+      # kroky, permanentni stupen POSOUVA START a cena docasneho kroku se
+      # nemeni, specialy jsou jen permanentni. Tohle je jedina ochrana toho,
+      # ze "co hrac vidi" a "s cim hra pocita" je jedno cislo.
+      - name: Upgrades test (tabulka a profil)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_upgrades.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "UPGRADES_ALL_PASS=true"
 
       # ROZVRZENI: kruh plochy se vejde do displeje, poutnik je citelny
       # a poutnik prvni vlny stihne umrit v kruhu dostrelu (jinak je hra

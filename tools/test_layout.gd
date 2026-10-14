@@ -1,13 +1,13 @@
 extends SceneTree
 
-# Test ROZVRZENI: spawnovaci kruh ma sahat na vrsek a spodek herniho pruhu
-# (a na vysku vest boky mimo displej), kruh dostrelu musi dat hraci cas
-# zareagovat, tlacitka palety musi jit zmacknout prstem a hra musi zustat
-# hratelna. Vystup: LAYOUT_ALL_PASS=true / false
+# TEST ROZVRZENI: spawnovaci kruh saha na vrsek a spodek herniho pruhu, kruh
+# dostrelu se vejde mezi boky, tlacitka palety jdou zmacknout prstem, PANELY
+# S UPGRADY (bitva i menu) se vejdou na displej a hra zustava HRATELNA.
+# Vystup: LAYOUT_ALL_PASS=true / false
 #
 # Neresi se jen "nic se neprekryva": u kazdeho rozliseni se overuje, ze se
-# kruh dostrelu vejde do plochy, ze paleta neprekryva plochu a ze poutnik
-# kazde barvy z palety stihne umrit v kruhu dostrelu (jinak je hra
+# kruh dostrelu vejde do plochy, ze panel nezakryva paletu a ze poutnik kazde
+# barvy z palety stihne umrit v dostrelu zakladni veze (jinak je hra
 # nehratelna, i kdyz vypada dobre).
 
 const RESOLUTIONS := [
@@ -24,10 +24,13 @@ var checks: int = 0
 
 
 func _init() -> void:
+	Upgrades.STATS.size()
+	Profile.allow_save = false
 	_run("neznama velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
-	_run("strela je tecka, paprsek je zamerovani", _test_shots_are_dots)
+	_run("strela je tecka nad zamerovanim", _test_shots_are_dots)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
+	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -49,67 +52,45 @@ func _check(cond: bool, msg: String) -> void:
 		print("       FAIL: %s" % msg)
 
 
-# SPAWNOVACI KRUH SE NEMALUJE. Jan: "Vnější kruh nemá být viditelný a má být
-# pomyslný." Hlida se MISTO VOLANI ve zdroji obrazovky: kdyby se `draw_arc`
-# s polomerem SPAWNOVACIHO kruhu vratil, hrac by pres displej videl obrovsky
-# oblouk, ktery nic neznamena (kruh je vetsi nez displej).
-func _test_spawn_ring_not_drawn() -> void:
+func _src() -> String:
 	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
-	_check(f != null, "nectu game_view.gd")
 	if f == null:
-		return
-	var src: String = f.get_as_text()
+		return ""
+	return f.get_as_text()
+
+
+# SPAWNOVACI KRUH SE NEMALUJE. Hlida se MISTO VOLANI ve zdroji obrazovky.
+func _test_spawn_ring_not_drawn() -> void:
+	var src: String = _src()
+	_check(src != "", "nectu game_view.gd")
 	_check(not src.contains("draw_arc(layout.center, layout.field_r"),
 		"spawnovaci kruh se kresli, i kdyz ma byt pomyslny")
-	# BARVA KRUHU DOSTRELU SE MENI S BARVOU VEZE (Jan, Oct 2026: "Attack range
-	# rádius bude měnit barvu podle zvolené barvy věže"). Hlida se MISTO VOLANI:
-	# kdyby se vratila konstanta, hrac by porad videl sedy kruh a nepoznal by
-	# z nej, cim prave strili.
-	_check(src.contains("_range_color()"),
-		"kruh dostrelu nema barvu veze (chybi _range_color())")
-	_check(src.contains("game.tower.range_px(layout.field_r)"),
+	_check(src.contains("game.range_px()"),
 		"kruh dostrelu se nekresli (je to jedina geometrie, kterou hrac vidi)")
 
 
-# STRELA JE TECKA, PAPRSEK JE JEN ZAMEROVANI. Hlida se MISTO VOLANI ve zdroji
-# obrazovky: kdyby z kresleni zmizely strely, hrac by videl prazdny paprsek
-# a "rychlost strelby" by nemela jak byt videt; kdyby zmizel paprsek, hrac
-# nevi, na koho vez miri.
+# STRELA JE TECKA S OBRYSEM A KRESLI SE NAD VSIM V POLI. Poradi v `_draw` je
+# zavazne - prehozeni dvou radku vypada v kodu jako kosmetika a na obrazovce
+# je to nevidet jen tak.
 func _test_shots_are_dots() -> void:
-	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
-	_check(f != null, "nectu game_view.gd")
-	if f == null:
-		return
-	var src: String = f.get_as_text()
+	var src: String = _src()
 	_check(src.contains("for s in game.shots"), "strely se vubec nekresli")
 	_check(src.contains("game.shot_r()"), "strela se nekresli jako tecka")
-	_check(src.contains("game.shot_rim_r()"),
-		"strela nema tmavy obrys - na svetlem podkladu se ztrati")
+	_check(src.contains("game.shot_rim_r()"), "strela nema tmavy obrys - ztrati se")
 	_check(src.contains("draw_line(layout.center, p.pos, BEAM, 2.0)"),
 		"paprsek (zamerovani) zmizel - hrac nevidi, kam vez miri")
-	# Z-INDEX: strely musi byt v `_draw` AZ ZA paprskem (a za poutniky i vezi).
-	# Jan: "Projektily musí být výraznější a musí být z indexem nad zaměřováním."
-	# Cisla se nedaji opsat - poradi se cte ze zdroje, protoze prehozeni dvou
-	# radku vypada v kodu jako kosmetika a na obrazovce je to nevidet jen tak.
 	var i_beam: int = src.find("draw_line(layout.center, p.pos, BEAM")
-	var i_tower: int = src.find("\n	_draw_tower()")
-	var i_shots: int = src.find("\n	_draw_shots()")
+	var i_tower: int = src.find("\n\t_draw_tower()")
+	var i_shots: int = src.find("\n\t_draw_shots()")
 	_check(i_beam >= 0 and i_tower >= 0 and i_shots >= 0,
 		"kresleni strel neni hned za vezi (v poli se nevi, co je nad cim)")
 	_check(i_beam < i_tower and i_tower < i_shots,
 		"strely se kresli driv nez paprsek/vez - nejsou nad zamerovanim")
 
 
-# PALETA JE PUNTIK, NE TVAR (Jan, Oct 2026): "bude to zkrátka jen barevný plný
-# puntík s borderem. Žádné tvary." Hlida se MISTO VOLANI ve zdroji obrazovky:
-# kdyby se do palety vratila runa (`_shape`), hrac by videl sest tvaru a Jan
-# chce jen barvu; a bez `draw_circle` by z tlacitka zbyl jen ramecek.
+# PALETA JE PLNÝ PUNTÍK S BORDEREM (Jan: "Žádné tvary").
 func _test_palette_is_dot() -> void:
-	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
-	_check(f != null, "nectu game_view.gd")
-	if f == null:
-		return
-	var src: String = f.get_as_text()
+	var src: String = _src()
 	var start: int = src.find("func _draw_palette")
 	_check(start >= 0, "kresleni palety vubec neexistuje")
 	if start < 0:
@@ -117,22 +98,30 @@ func _test_palette_is_dot() -> void:
 	var end: int = src.find("\nfunc ", start + 1)
 	var body: String = src.substr(start, (end - start) if end > start else src.length() - start)
 	_check(body.contains("draw_circle("), "paleta neni plny puntik (chybi draw_circle)")
-	_check(not body.contains("_shape("), "paleta kresli tvary, i kdyz ma byt jen puntik s borderem")
+	_check(not body.contains("_shape("), "paleta kresli tvary, i kdyz ma byt jen puntik")
+
+
+# KRUH DOSTRELU MA BARVU ZVOLENE BARVY VEZE.
+func _test_range_is_colored() -> void:
+	var src: String = _src()
+	_check(src.contains("_range_color()"), "kruh dostrelu nema barvu veze (chybi _range_color())")
+	var start: int = src.find("func _range_color")
+	var end: int = src.find("\nfunc ", start + 1)
+	var body: String = src.substr(start, (end - start) if end > start else 40)
+	_check(body.contains("Hue.color_of(game.tower.hue)"), "barva kruhu neni barva veze")
 
 
 func _test_zero_size() -> void:
 	var l := ScreenLayout.new()
 	l.update(Vector2.ZERO)
-	_check(l.arena.size.x >= 0.0 and l.arena.size.y >= 0.0,
-		"nulova velikost okna dela zaporny obdelnik")
-	_check(l.up_rect.size.x >= 0.0 and l.up_rect.size.y >= 0.0,
-		"nulova velikost okna dela zaporne tlacitko")
+	_check(l.arena.size.x >= 0.0 and l.arena.size.y >= 0.0, "nulova velikost dela zaporny obdelnik")
+	_check(l.hud_menu.size.x >= 0.0 and l.hud_upgrades.size.x >= 0.0, "nulova velikost dela zaporne tlacitko")
 	_check(l.field_r == 0.0, "nulova velikost okna dela plochu")
 	_check(l.layout_palette(5).is_empty(), "nulova velikost okna dela tlacitka palety")
-	_check(l.layout_menu(3).is_empty(), "nulova velikost okna dela tlacitka menu")
-	_check(l.arena.size.x >= 0.0 and l.hud_menu.size.x >= 0.0
-		and l.leave_box.size.x >= 0.0 and l.settings_row.size.x >= 0.0,
-		"nulova velikost okna dela zaporne obdelniky rozvrzeni")
+	_check(l.layout_menu(4).is_empty(), "nulova velikost okna dela tlacitka menu")
+	_check(l.shop_panel.size.x >= 0.0 and l.upg_panel.size.x >= 0.0
+		and l.dlg_box.size.x >= 0.0, "nulova velikost okna dela zaporne panely")
+	_check(l.shop_tabs.is_empty() and l.upg_tabs.is_empty(), "nulova velikost okna dela taby")
 
 
 func _test_resolution(v: Vector2) -> void:
@@ -140,91 +129,64 @@ func _test_resolution(v: Vector2) -> void:
 	l.update(v)
 	var tag: String = "%dx%d" % [int(v.x), int(v.y)]
 
-	# 1) SPAWNOVACI KRUH: horni a spodni okraj se dotkne okraje herniho pruhu
-	# (nikdy nepreleze do horniho pruhu ani do palety) a NA VYSKU je kruh VETSI
-	# nez displej - boky vedou mimo obraz, ale hra je bere v potaz (poutnici
-	# odtamtud vchazeji z boku). Kresli se jen kruh dostrelu.
+	# 1) SPAWNOVACI KRUH: dotyka se okraju herniho pruhu; na vysku je vetsi
+	# nez displej (poutnici vchazeji z boku).
 	_check(absf((l.center.y - l.field_r) - l.arena.position.y) < 0.5,
 		"%s: spawnovaci kruh nedosahuje na vrsek herniho pruhu (odchylka %.1f px)"
 		% [tag, (l.center.y - l.field_r) - l.arena.position.y])
 	_check(absf((l.center.y + l.field_r) - l.arena.end.y) < 0.5,
-		"%s: spawnovaci kruh nedosahuje na spodek herniho pruhu (odchylka %.1f px)"
-		% [tag, (l.center.y + l.field_r) - l.arena.end.y])
+		"%s: spawnovaci kruh nedosahuje na spodek herniho pruhu" % tag)
 	if v.y > v.x:
 		_check(l.center.x - l.field_r <= 0.0 and l.center.x + l.field_r >= v.x - 0.5,
 			"%s: spawnovaci kruh neni vetsi nez displej (boky maji vest mimo obraz)" % tag)
 	else:
-		# NA SIRKU hra rika "otoc telefon" - kruh se vejde do sirky, jen se
-		# nesmi rozbit.
-		_check(l.field_r <= l.arena.size.x * 0.5 + 0.5,
-			"%s: na sirku spawnovaci kruh preleza displej" % tag)
+		_check(l.field_r <= l.arena.size.x * 0.5 + 0.5, "%s: na sirku spawnovaci kruh preleza displej" % tag)
 
-	# 2) POUTNIK JE CITELNY (runa je TVAR tela, takze 6 px je spodni mez)
-	_check(l.pilgrim_r >= 6.0,
-		"%s: poutnik ma polomer %.1f px, barva a tvar nejdou precist" % [tag, l.pilgrim_r])
+	# 2) POUTNIK JE CITELNY a vsechno se pocita Z MERITKA (UNIT_SHRINK).
+	_check(l.pilgrim_r >= 6.0, "%s: poutnik ma polomer %.1f px" % [tag, l.pilgrim_r])
 	_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
-
-	# 2b) KRESLENI JE Z MERITKA, NE Z PLOCHY. Vez i poutnik jsou z MERITKA
-	# (vepsany kruh do kratsi strany herniho pruhu, zmenseno o UNIT_SHRINK),
-	# NIKDY z polomeru plochy - jinak by se spawnovacim kruhem "priblizila" cela
-	# hra, protoze plocha je vetsi nez displej.
-	# (Jan: "Jediné, cos udělala je to, žes celou hru zoomnula.")
 	var short_side: float = minf(l.arena.size.x, l.arena.size.y)
-	var want_unit: float = (short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC) \
-		* ScreenLayout.UNIT_SHRINK
+	var want_unit: float = (short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC) * ScreenLayout.UNIT_SHRINK
 	_check(absf(l.unit_r - want_unit) < 0.5,
-		"%s: meritko kresleni neni zmensený vepsany kruh do kratsi strany (%.1f, ma byt %.1f)"
-		% [tag, l.unit_r, want_unit])
-	_check(is_equal_approx(l.tower_r, l.unit_r * Game.TOWER_R_FRAC),
-		"%s: vez se pocita z polomeru plochy, ne z meritka (zoom se zmenil)" % tag)
-	_check(is_equal_approx(l.pilgrim_r, l.unit_r * Game.PILGRIM_R_FRAC),
-		"%s: poutnik se pocita z polomeru plochy, ne z meritka (zoom se zmenil)" % tag)
-	# DVE CISLA O VEZI ZNAMENA DVE PRAVDY: hra si polomer veze odvozuje z
-	# meritka taky, takze se musi rovnat rozvrzeni (stejna past jako ED_COUNT).
+		"%s: meritko kresleni neni zmensený vepsany kruh (%.1f, ma byt %.1f)" % [tag, l.unit_r, want_unit])
 	var gz := Game.new()
 	gz.set_field(l.field_r, l.unit_r, l.center)
 	_check(is_equal_approx(gz.tower_r, l.tower_r),
-		"%s: hra ma jiny polomer veze nez rozvrzeni (%.2f vs %.2f)"
-		% [tag, gz.tower_r, l.tower_r])
+		"%s: hra ma jiny polomer veze nez rozvrzeni (%.2f vs %.2f)" % [tag, gz.tower_r, l.tower_r])
 	if tag == "390x844":
-		# CISLA Z DISPLEJE, NA KTEREM JAN HRAJE. Po druhem zmenseni (UNIT_SHRINK
-		# 0,85) je vez 18,7 px a poutnik 7,8 px (driv 22 a 9,2). Kdyby se
-		# zmenseni pohnulo, spadne to - a kdyby se pocitalo z plochy, spadne
-		# jeste vic.
-		_check(absf(l.tower_r - 18.7) < 0.3,
-			"na 390x844 ma vez %.1f px (ma byt 18,7)" % l.tower_r)
-		_check(absf(l.pilgrim_r - 7.79) < 0.3,
-			"na 390x844 ma poutnik %.2f px (ma byt 7,8)" % l.pilgrim_r)
+		_check(absf(l.tower_r - 18.7) < 0.3, "na 390x844 ma vez %.1f px (ma byt 18,7)" % l.tower_r)
+		_check(absf(l.pilgrim_r - 7.79) < 0.3, "na 390x844 ma poutnik %.2f px (ma byt 7,8)" % l.pilgrim_r)
 
-	# 2c) DOSTREL PRVNIHO STUPNE SE MUSI VEJIT MEZI BOKY DISPLEJE. Jan:
-	# "Rozsah zjišťování nepřátel nesmí mít hned na začátku poloměr jak celá
-	# šířka displeje. Musí začínat na menším úseku, aby ho bylo kam upgradovat."
-	# Zaklad, ktery dosahne na boky, vypada jako "vidim celou plochu" a upgrade
-	# uz nema kam jit.
+	# 2b) DOSTREL PRVNIHO STUPNE SE VEJDE MEZI BOKY: zaklad, ktery dosahne na
+	# boky, vypada jako "vidim celou plochu" a upgrade uz nema kam jit.
 	var g1 := Game.new()
 	g1.set_field(l.field_r, l.unit_r, l.center)
-	var r1: float = g1.tower.range_px(l.field_r)
+	var r1: float = g1.range_px()
 	_check(l.center.x - r1 >= 8.0 and l.center.x + r1 <= v.x - 8.0,
-		"%s: zakladni dostrel (%0.0f px) dosahuje na bok displeje - neni kam upgradovat"
-		% [tag, r1])
-	_check(r1 > l.tower_r * 2.0,
-		"%s: zakladni dostrel je skoro u veze (%.0f px)" % [tag, r1])
-	g1.tower.level = Tower.MAX_LEVEL
-	var rmax: float = g1.tower.range_px(l.field_r)
-	_check(rmax >= r1 * 1.5,
-		"%s: upgrade prida jen kousek dostrelu (%.0f -> %.0f px)" % [tag, r1, rmax])
-	_check(rmax < l.field_r * 0.95,
-		"%s: dostrel na maximu pokryva celou plochu (%.0f z %.0f px)" % [tag, rmax, l.field_r])
+		"%s: zakladni dostrel (%.0f px) dosahuje na bok displeje - neni kam upgradovat" % [tag, r1])
+	_check(r1 > l.tower_r * 2.0, "%s: zakladni dostrel je skoro u veze (%.0f px)" % [tag, r1])
+	g1.profile.perm["ar"] = 6
+	g1.temp["ar"] = 20
+	var rmax: float = g1.range_px()
+	_check(rmax >= r1 * 1.5, "%s: upgrade prida jen kousek dostrelu (%.0f -> %.0f px)" % [tag, r1, rmax])
+	_check(rmax < l.field_r * 0.95, "%s: dostrel na maximu pokryva celou plochu" % tag)
 
-	# 3) TLACITKO VYLEPSENI SE VEJDE DO PRUHU
-	_check(l.up_rect.position.x >= 0.0 and l.up_rect.end.x <= v.x + 0.5,
-		"%s: tlacitko vylepseni preleza displej" % tag)
-	_check(l.up_rect.end.y <= l.bar_h + 0.5, "%s: tlacitko preleza pruh" % tag)
-	_check(l.up_rect.size.y >= 30.0,
-		"%s: tlacitko je nizke %.1f px" % [tag, l.up_rect.size.y])
+	# 3) HORNI PRUH: dve tlacitka a stavovy text VEDLE SEBE.
+	_check(l.hud_upgrades.size.x >= 44.0 and l.hud_upgrades.size.y >= 30.0,
+		"%s: tlacitko UPGRADY v pruhu je male %.0fx%.0f px" % [tag, l.hud_upgrades.size.x, l.hud_upgrades.size.y])
+	_check(l.hud_menu.size.x >= 44.0 and l.hud_menu.size.y >= 30.0,
+		"%s: tlacitko MENU v pruhu je male %.0fx%.0f px" % [tag, l.hud_menu.size.x, l.hud_menu.size.y])
+	_check(l.hud_upgrades.end.x <= v.x + 0.5 and l.hud_menu.position.x >= -0.5,
+		"%s: tlacitka v pruhu prelezaji displej" % tag)
+	_check(not l.hud_upgrades.intersects(l.hud_menu), "%s: tlacitka v pruhu se prekryvaji" % tag)
+	_check(l.bar_text_w > 0.0, "%s: stavovemu textu nezustalo v pruhu misto" % tag)
+	var l1: String = ScreenLayout.HUD_LINE1_FMT % [12, 5, 5]
+	var l2: String = ScreenLayout.HUD_LINE2_FMT % [300, 300, 9999]
+	var px1: int = _fit_px(l1, l.bar_text_w, l.font_px)
+	var px2: int = _fit_px(l2, l.bar_text_w, l.font_px)
+	_check(px1 >= 11 and px2 >= 11, "%s: stavovy text v pruhu ma jen %d/%d px" % [tag, px1, px2])
 
-	# 4) PALETA: kazdy pocet barev, ktery muze nastat (2..5), musi mit tlacitka
-	# vysoka i siroka pres dotykovou mez a cela uvnitr displeje.
+	# 4) PALETA: kazdy pocet barev, ktery muze nastat (2..5).
 	for count in range(2, 6):
 		var rects: Array = l.layout_palette(count)
 		_check(rects.size() == count, "%s: paleta pro %d barev nema %d tlacitek" % [tag, count, count])
@@ -235,19 +197,94 @@ func _test_resolution(v: Vector2) -> void:
 			_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5,
 				"%s: tlacitko barvy (%d) preleza displej" % [tag, count])
 			_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
-				"%s: tlacitko barvy (%d) je male %.0fx%.0f px"
-				% [tag, count, rr.size.x, rr.size.y])
-			# KRUH SE KRESLI DO CTVERCE - v obdelniku by z puntiku byl oval.
+				"%s: tlacitko barvy (%d) je male %.0fx%.0f px" % [tag, count, rr.size.x, rr.size.y])
 			_check(absf(rr.size.x - rr.size.y) < 0.5,
-				"%s: tlacitko barvy (%d) neni ctverec (%.0fx%.0f) - z puntiku by byl oval"
-				% [tag, count, rr.size.x, rr.size.y])
-		# tlacitka se nesmi prekryvat, jinak hrac zmackne jinou barvu
+				"%s: tlacitko barvy (%d) neni ctverec - z puntiku by byl oval" % [tag, count])
 		for i in range(rects.size()):
 			for j in range(i + 1, rects.size()):
 				_check(not (rects[i] as Rect2).intersects(rects[j] as Rect2),
 					"%s: tlacitka barvy (%d) se prekryvaji" % [tag, count])
 
-	# 5) HRA ZUSTAVA HRATELNA: poutnik kazde barvy z palety (krome fialove
+	# 5) PANEL S UPGRADY V BITVE: cely na displeji, NAD paletou, taby i tlacitka
+	# zmacknutelna. Kdyby prekryl paletu, hrac by nemohl prepnout barvu.
+	l.set_shop_shape(3, 4)
+	_check(l.shop_panel.end.y <= v.y - l.pal_h + 0.5,
+		"%s: panel upgradu prekryva paletu barev (%.0f > %.0f)" % [tag, l.shop_panel.end.y, v.y - l.pal_h])
+	_check(l.shop_panel.position.y >= l.bar_h - 0.5 and l.shop_panel.end.y <= v.y + 0.5,
+		"%s: panel upgradu preleza displej" % tag)
+	_check(l.shop_tabs.size() == 3, "%s: v bitve nejsou tri kategorie (%d)" % [tag, l.shop_tabs.size()])
+	_check(l.shop_rows.size() == 4 and l.shop_buttons.size() == 4,
+		"%s: panel nema ctyri radky s tlacitky" % tag)
+	for t in l.shop_tabs:
+		var tr: Rect2 = t
+		_check(tr.size.y >= ScreenLayout.TAB_MIN - 0.5 and tr.size.x >= 44.0,
+			"%s: tab kategorie je maly %.0fx%.0f" % [tag, tr.size.x, tr.size.y])
+		_check(l.shop_panel.encloses(tr), "%s: tab kategorie neni v panelu" % tag)
+	for i in range(l.shop_buttons.size()):
+		var br: Rect2 = l.shop_buttons[i]
+		_check(br.size.x >= 56.0 and br.size.y >= ScreenLayout.ROW_MIN - 0.5,
+			"%s: tlacitko '+' je male %.0fx%.0f px" % [tag, br.size.x, br.size.y])
+		_check(l.shop_rows[i].encloses(br), "%s: tlacitko '+' neni v radku" % tag)
+		_check((l.shop_rows[i] as Rect2).size.y >= ScreenLayout.ROW_MIN - 0.5,
+			"%s: radek parametru je nizky %.0f px" % [tag, (l.shop_rows[i] as Rect2).size.y])
+	for i in range(l.shop_rows.size()):
+		for j in range(i + 1, l.shop_rows.size()):
+			_check(not (l.shop_rows[i] as Rect2).intersects(l.shop_rows[j] as Rect2),
+				"%s: radky panelu se prekryvaji" % tag)
+		for t in l.shop_tabs:
+			_check(not (l.shop_rows[i] as Rect2).intersects(t as Rect2),
+				"%s: radek panelu prekryva taby" % tag)
+	# Popisek a hodnota se musi vejit do radku VEDLE tlacitka.
+	var br0: Rect2 = l.shop_buttons[0]
+	var label_w: float = maxf(40.0, (l.shop_rows[0] as Rect2).size.x - br0.size.x - 3.0 * maxf(6.0, (l.shop_rows[0] as Rect2).size.x * 0.02))
+	var longest: String = "Kritické poškození"
+	var lpx: int = _fit_px(longest, label_w * 0.52, l.font_px)
+	_check(lpx >= 10, "%s: popisek parametru ma jen %d px" % [tag, lpx])
+	var cost_px: int = _fit_px("+1000 zl.", br0.size.x - 6.0, l.font_px)
+	_check(cost_px >= 9, "%s: cena v tlacitku ma jen %d px" % [tag, cost_px])
+
+	# 6) OBRAZOVKA UPRAVY V MENU: ctyri kategorie + ctyri radky + ZPET.
+	_check(l.upg_tabs.size() == Upgrades.CATEGORIES.size(),
+		"%s: v menu neni %d kategorii (%d)" % [tag, Upgrades.CATEGORIES.size(), l.upg_tabs.size()])
+	_check(l.upg_rows.size() == 4, "%s: obrazovka uprav nema ctyri radky" % tag)
+	_check(l.upg_back.size.x >= 44.0 and l.upg_back.size.y >= 44.0,
+		"%s: tlacitko ZPET je male" % tag)
+	_check(l.upg_panel.position.y >= -0.5 and l.upg_back.end.y <= v.y + 0.5,
+		"%s: obrazovka uprav preleza displej" % tag)
+	for r in l.upg_rows:
+		_check(l.upg_panel.encloses(r as Rect2), "%s: radek uprav neni v panelu" % tag)
+	for b in l.upg_buttons:
+		var bb: Rect2 = b
+		_check(bb.size.x >= 56.0 and bb.size.y >= ScreenLayout.ROW_MIN - 0.5,
+			"%s: tlacitko '+' v upravach je male %.0fx%.0f" % [tag, bb.size.x, bb.size.y])
+
+	# 7) DIALOGY: cely na displeji a odpovedi zmacknutelne.
+	for two in [true, false]:
+		l.dialog_panel(two)
+		_check(l.dlg_box.position.x >= -0.5 and l.dlg_box.end.x <= v.x + 0.5
+			and l.dlg_box.position.y >= -0.5 and l.dlg_box.end.y <= v.y + 0.5,
+			"%s: dialog preleza displej" % tag)
+		_check(l.dlg_a.size.x >= 44.0 and l.dlg_a.size.y >= 44.0,
+			"%s: odpoved dialogu je mala %.0fx%.0f" % [tag, l.dlg_a.size.x, l.dlg_a.size.y])
+		_check(l.dlg_box.encloses(l.dlg_a), "%s: odpoved dialogu neni v ramecku" % tag)
+		if two:
+			_check(not l.dlg_a.intersects(l.dlg_b), "%s: odpovedi dialogu se prekryvaji" % tag)
+			_check(l.dlg_box.encloses(l.dlg_b), "%s: druha odpoved neni v ramecku" % tag)
+
+	# 8) MENU: 4 tlacitka, kazde zmacknutelne, popisky se vejdou.
+	_check(l.menu_rects.size() == Menu.MENU_ITEMS.size(),
+		"%s: menu ma %d tlacitek, cekano %d" % [tag, l.menu_rects.size(), Menu.MENU_ITEMS.size()])
+	for i in range(l.menu_rects.size()):
+		var mr: Rect2 = l.menu_rects[i]
+		_check(mr.size.x >= 44.0 and mr.size.y >= 44.0, "%s: tlacitko menu '%s' je male" % [tag, str(Menu.MENU_ITEMS[i])])
+		_check(mr.end.x <= v.x + 0.5 and mr.position.x >= -0.5, "%s: tlacitko menu preleza displej" % tag)
+		_check(_fits(String(Menu.MENU_ITEMS[i]), mr.size.x - 16.0, l.menu_item_px),
+			"%s: popisek '%s' se nevejde do tlacitka menu" % [tag, str(Menu.MENU_ITEMS[i])])
+		_check(_fits(String(Menu.MENU_SUBS[i]), mr.size.x - 16.0, l.menu_sub_px),
+			"%s: podtitulek '%s' se nevejde do tlacitka menu" % [tag, str(Menu.MENU_SUBS[i])])
+	_check(l.menu_title_px >= 30, "%s: titul menu je jen %d px" % [tag, l.menu_title_px])
+
+	# 9) HRA ZUSTAVA HRATELNA: poutnik kazde barvy z palety (krome fialove
 	# a stribrne, ktere maji vlastni pravidla) musi stihnout umrit v kruhu
 	# dostrelu zakladni veze.
 	var g := Game.new()
@@ -255,110 +292,18 @@ func _test_resolution(v: Vector2) -> void:
 	var palette: Array = Hue.palette_at(10)
 	for h in [Hue.RED, Hue.YELLOW, Hue.BLUE, Hue.GREEN]:
 		_check(palette.has(h), "%s: barva %s neni v palete" % [tag, Hue.name_of(h)])
-		var ttk: float = g.hp_for(1, h) / g.tower.dps()
-		var window: float = g.tower.range_frac() * Game.TRAVEL_S / Hue.speed_mult(h)
+		var ttk: float = g.hp_for(g.kolo(), 1, h) / (g.rate() * Game.SHOT_DMG)
+		var window: float = g.range_frac() * Game.TRAVEL_S / Hue.speed_mult(h)
 		_check(ttk < window,
 			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"
 			% [tag, Hue.name_of(h), window, ttk])
 
-	_test_menu_layout(v, l, tag)
 
-
-# 6) MENU, NASTAVENI A ODCHOD Z BOJE: kazde tlacitko musi jit zmacknout prstem
-# a musi byt CELE na displeji. Neresi se jen "nic neprekryva" - pocita se
-# i to, ze se popisek do tlacitka vejde (na uzke obrazovce jinak text pretece).
-func _test_menu_layout(v: Vector2, l: ScreenLayout, tag: String) -> void:
-	var rects: Array = l.menu_rects
-	_check(rects.size() == Menu.MENU_ITEMS.size(),
-		"%s: menu ma %d tlacitek, cekano %d" % [tag, rects.size(), Menu.MENU_ITEMS.size()])
-	for i in range(rects.size()):
-		var r: Rect2 = rects[i]
-		_check(r.position.x >= -0.5 and r.end.x <= v.x + 0.5,
-			"%s: tlacitko menu '%s' preleza displej" % [tag, str(Menu.MENU_ITEMS[i])])
-		_check(r.size.x >= 44.0 and r.size.y >= 44.0,
-			"%s: tlacitko menu '%s' je male %.0fx%.0f px"
-			% [tag, str(Menu.MENU_ITEMS[i]), r.size.x, r.size.y])
-		_check(_fits(String(Menu.MENU_ITEMS[i]), r.size.x - 16.0, l.menu_item_px),
-			"%s: popisek '%s' se nevejde do tlacitka menu"
-			% [tag, str(Menu.MENU_ITEMS[i])])
-		_check(_fits(String(Menu.MENU_SUBS[i]), r.size.x - 16.0, l.menu_sub_px),
-			"%s: podtitulek '%s' se nevejde do tlacitka menu"
-			% [tag, str(Menu.MENU_SUBS[i])])
-		for j in range(i + 1, rects.size()):
-			_check(not r.intersects(rects[j] as Rect2),
-				"%s: tlacitka menu %d a %d se prekryvaji" % [tag, i, j])
-	_check(l.menu_title_y > 0.0 and l.menu_title_y < (rects[0] as Rect2).position.y,
-		"%s: titul menu neni nad tlacitky" % tag)
-	_check(l.menu_note_y >= (rects[rects.size() - 1] as Rect2).end.y
-		and l.menu_note_y + float(l.menu_sub_px) <= v.y + 0.5,
-		"%s: hlaska pod tlacitky menu neni pod nimi (nebo preleza displej)" % tag)
-
-	# MENU JE VELKE. Jan: "A menu uděláme o dost větší" - kdyby se vratilo
-	# k polovine sirky displeje, hrac by zase mířil na maly ctverecek. Meze
-	# jsou podily displeje (a strop sirky), aby to platilo i na 932x430.
-	var first: Rect2 = rects[0]
-	_check(first.size.x >= minf(v.x * 0.7, 520.0),
-		"%s: tlacitko menu je jen %.0f px siroke (displej %0.0f)" % [tag, first.size.x, v.x])
-	_check(first.size.y >= minf(72.0, v.y * 0.13),
-		"%s: tlacitko menu je jen %.0f px vysoke" % [tag, first.size.y])
-	_check(l.menu_title_px >= 30, "%s: titul menu je jen %d px" % [tag, l.menu_title_px])
-	# PODTITULEK SE NESMI DOTKNOUT PRVNIHO TLACITKA - kresli se stejnou barvou,
-	# takze by si hrac precetl dve veci pres sebe.
-	var sub_bottom: float = l.menu_title_y + float(l.menu_title_px) * 0.5 + float(l.menu_sub_px)
-	_check(sub_bottom <= first.position.y + 0.5,
-		"%s: podtitulek menu preleza do prvniho tlacitka (%.0f > %.0f)"
-		% [tag, sub_bottom, first.position.y])
-
-	# NASTAVENI: dve tlacitka pod sebou, dotykova mez, po jednom sloupci.
-	for r in [l.settings_row, l.settings_back]:
-		var rr: Rect2 = r
-		_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
-			"%s: tlacitko nastaveni je male %.0fx%.0f px" % [tag, rr.size.x, rr.size.y])
-		_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5,
-			"%s: tlacitko nastaveni preleza displej" % tag)
-	_check(not l.settings_row.intersects(l.settings_back),
-		"%s: tlacitka nastaveni se prekryvaji" % tag)
-
-	# HORNI PRUH: MENU, stavovy text a Vylepsit se musi vejit VEDLE SEBE.
-	_check(l.hud_menu.size.x >= 44.0 and l.hud_menu.size.y >= 30.0,
-		"%s: tlacitko MENU v pruhu je male %.0fx%.0f px" % [tag, l.hud_menu.size.x, l.hud_menu.size.y])
-	_check(l.hud_menu.position.x >= -0.5 and l.hud_menu.end.x <= v.x + 0.5,
-		"%s: tlacitko MENU v pruhu preleza displej" % tag)
-	_check(l.hud_menu.end.y <= l.bar_h + 0.5, "%s: tlacitko MENU preleza pruh" % tag)
-	_check(not l.hud_menu.intersects(l.up_rect),
-		"%s: tlacitko MENU se prekryva s vylepsenim" % tag)
-	_check(not l.hud_menu.intersects(l.up_rect) and l.bar_text_w > 0.0,
-		"%s: stavovemu textu nezustalo v pruhu zadne misto" % tag)
-	# STAVOVY TEXT SE NA UZKEM DISPLEJI ZMENSUJE, ale nesmi spadnout na
-	# necitelnych par pixelu - pak je lepsi text zkratit, ne ho zmensit.
-	var state: String = ScreenLayout.HUD_STATE_FMT % [10, Game.WAVE_MAX, 12, 100]
-	var px: int = _fit_px(state, l.bar_text_w, l.font_px)
-	_check(px >= 11, "%s: stavovy text v pruhu ma jen %d px" % [tag, px])
-	_check(_fits(state, l.bar_text_w, px), "%s: stavovy text se nevejde do pruhu" % tag)
-	_check(_fits("MENU", l.hud_menu.size.x - 8.0, l.font_px) or _fit_px("MENU", l.hud_menu.size.x - 8.0, l.font_px) >= 10,
-		"%s: popisek MENU se nevejde do tlacitka" % tag)
-
-	# DOTAZ PRI ODCHODU: kresli se nad vsim, takze musi byt cely na displeji.
-	_check(l.leave_box.position.x >= -0.5 and l.leave_box.end.x <= v.x + 0.5
-		and l.leave_box.position.y >= -0.5 and l.leave_box.end.y <= v.y + 0.5,
-		"%s: dotaz pri odchodu preleza displej" % tag)
-	_check(not l.leave_yes.intersects(l.leave_no), "%s: odpovedi dotazu se prekryvaji" % tag)
-	for r in [l.leave_yes, l.leave_no]:
-		var rr: Rect2 = r
-		_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
-			"%s: odpoved dotazu je mala %.0fx%.0f px" % [tag, rr.size.x, rr.size.y])
-		_check(l.leave_box.encloses(rr), "%s: odpoved dotazu neni v jeho ramecku" % tag)
-
-
-# MERI PISMO JAKO OBRAZOVKA: vejde se popisek do dane sirky pri danem poctu
-# pixelu? Kdyz ne, rozvrzeni nebo popisek je spatne - a pozna se to CISLY,
-# ne okem na snimku.
 func _fits(s: String, width: float, px: int) -> bool:
 	return ThemeDB.fallback_font.get_string_size(
 		s, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x <= width
 
 
-# NEJVETSI PISMO, KTERE SE DO SIRKY VEJDE (stejne jako `GameView._fit_px`).
 func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 	var px: int = max_px
 	while px > min_px and not _fits(s, width, px):

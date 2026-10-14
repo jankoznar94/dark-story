@@ -14,7 +14,7 @@ extends RefCounted
 # jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim okne) a ma manifest
 # + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, SETTINGS, BATTLE }
+enum View { MENU, SETTINGS, BATTLE, UPGRADES }
 
 const TITLE := "ŽILY 2"
 const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
@@ -24,13 +24,12 @@ const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
 # (jmena tady, cisla v obrazovce) uz jednou vedly k tomu, ze klepnuti na
 # "EDITOR" otevrelo navod: akce se vybirala podle poradi, ne podle jmena.
 #
-# V zily2 zatim NEJSOU editor, vyber levelu ani zvuk, takze v menu nejsou:
-# tlacitko, ktere nic nedela, je lez. SETTINGS existuje, protoze opravdu
-# prepina jakost vykreslovani.
-const MENU_ITEMS := ["HRÁT", "SETTINGS", "UPDATE"]
-const MENU_SUBS := ["začít novou partii", "jakost vykreslování", "stáhnout novou verzi"]
+# UPRAVY jsou permanentni upgrady za BODY - bez te obrazovky by hrac nemel
+# jak utratit body za vyhrane levely.
+const MENU_ITEMS := ["HRÁT", "UPRAVY", "SETTINGS", "UPDATE"]
+const MENU_SUBS := ["partie od nejvyššího levelu", "permanentní vylepšení", "jakost vykreslování", "stáhnout novou verzi"]
 # Akce se vyhodnocuji PRES JMENO, ne podle poradi.
-const MENU_ACTIONS := ["battle", "settings", "update"]
+const MENU_ACTIONS := ["battle", "upgrades", "settings", "update"]
 
 # GLOBALNI PROMENNE, KTERYMI PROHLIZEC MLUVI S HROU. Hra si je sama VYCTE
 # (`pull_js_state`) - viz poznamka u te funkce, proc to neni callback.
@@ -58,6 +57,14 @@ func open_settings() -> void:
 
 func open_battle() -> void:
 	view = View.BATTLE
+
+
+func open_upgrades() -> void:
+	view = View.UPGRADES
+
+
+func is_upgrades() -> bool:
+	return view == View.UPGRADES
 
 
 func is_menu() -> bool:

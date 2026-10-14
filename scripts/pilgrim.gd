@@ -28,12 +28,28 @@ var was_hit: bool = false
 var ghost_left: float = 0.0
 # STRIBRNA: za kolik sekund zmeni barvu.
 var shift_left: float = 0.0
+# JED (poison shot): kolik sekund ucinek jeste potrva a kolik poskozeni za
+# sekundu dava. Aplikuje se pri kazdem zasahu (cas se obnovi), takze slabsi
+# kadence znamená i slabsi jed.
+var poison_left: float = 0.0
+var poison_dps: float = 0.0
+# LED (ice shot): o kolik je poutnik zpomaleny a jak dlouho to jeste potrva.
+var ice_left: float = 0.0
+var ice_frac: float = 0.0
 
 
 func hp_frac() -> float:
 	if max_hp <= 0.0:
 		return 0.0
 	return clampf(hp / max_hp, 0.0, 1.0)
+
+
+# ZPOMALENI POHYBU. Jedno misto, odkud se bere rychlost - kdyby si to hra
+# pocitala sama, zapomnelo by se to na nekterem miste.
+func slow_mult() -> float:
+	if ice_left <= 0.0:
+		return 1.0
+	return clampf(1.0 - ice_frac, 0.1, 1.0)
 
 
 # VIDI NA NEJ VEZ VUBEC? Fialova po prvnim zasahu na 3 s zmizi - putuje dal,
