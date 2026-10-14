@@ -28,7 +28,14 @@ const MAX_LEVEL := 3
 # 0,62 dava ~4,7 s (meri to `test_core._test_reaction_window`) a upgrade
 # k tomu prida. Strop zustava pod 0,9, aby dostrel nikdy neobsahl celou plochu.
 const RANGE_FRACS := [0.62, 0.74, 0.86]
-const DPS := [30.0, 48.0, 72.0]
+
+# RYCHLOST STRELBY JE UPGRADE, KTERY JE VIDET (Jan, Oct 2026): "mám tu možnost
+# pracovat s rychlostí střelby, což je velmi uspokojivý upgrade." Poskozeni
+# JEDNE rany se nemění (SHOT_DMG) - nahoru jde pocet ran za sekundu, takze
+# paprskem rytmicky proudi vic tecek. `dps()` je z toho ODVOZENE (rate * dmg),
+# aby prumerne poskozeni za sekundu zustalo 30 / 48 / 72 jako driv.
+const RATES := [3.0, 4.8, 7.2]
+const SHOT_DMG := 10.0
 const TARGETS := [1, 1, 2]
 const COSTS := [70, 150, 300]
 
@@ -53,8 +60,20 @@ func range_px(field_r: float) -> float:
 	return range_frac() * field_r
 
 
+# RYCHLOST STRELBY: kolik ran vez vystreli za sekundu.
+func rate() -> float:
+	return float(RATES[_idx()])
+
+
+# POSKOZENI JEDNE RANY (tecka, ktera doleti). Nemeni se - meni se kadence.
+func shot_damage() -> float:
+	return SHOT_DMG
+
+
+# PRUMERNE POSKOZENI ZA SEKUNDU. Je odvozene z rany a kadence, aby existovalo
+# JEDNO cislo pro HUD, testy a simulaci obtiznosti.
 func dps() -> float:
-	return float(DPS[_idx()])
+	return rate() * shot_damage()
 
 
 func targets() -> int:

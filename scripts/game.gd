@@ -11,6 +11,10 @@ extends RefCounted
 #   * svazek drzi jeden cil, dokud neumre,
 #   * poutnici vstupuji na okraji plochy NASLEPO a jdou rovne k vezi,
 #   * cesta od okraje k vezi trva 8 s (u zakladni barvy),
+#   * PAPRSEK JE JEN ZAMEROVANI (ukazuje, na koho vez miri) - poskozeni
+#     neubira on, ale DOPAD strely: od veze leti velmi rychla tecka a teprve
+#     jeji dopad ubere zivoty,
+#   * rychlost strelby je upgrade (vic ran za sekundu = vic tecek v paprsku),
 #   * barvy se vybiraji z palety DOLE, do pole se neklepe,
 #   * kazda barva ma sve chovani (rozpad, regenerace, mizeni, zmena barvy),
 #   * barvy pribyvaji s obtiznosti (odemykaji se vlnami, dokud nejsou levely).
@@ -33,6 +37,14 @@ const SPAWN_GAP_START := 2.5
 const SPAWN_GAP_MIN := 1.2
 const SPAWN_GAP_PER_WAVE := 0.13
 
+# STRELA JE VELMI RYCHLA TECKA. Rychlost je podil POLOMERU PLOCHY, ne pevne
+# pixely za sekundu - pres zakladni dostrel (0,62 polomeru) ma let trvat stejne
+# dlouho na telefonu i na velkem displeji (0,15 s), takze proud tecek vypada
+# vsude stejne. Stejna logika jako "cesta od okraje k vezi trva 8 s".
+const SHOT_SPEED_FRAC := 4.2
+# POLOMER TECKY. Mala - je to tecka, ne koule; v paprsku jich ma byt videt vic.
+const SHOT_R_FRAC := 0.022
+
 # ROZVRZENI PLOCHY jde do hry jednim mistem (`set_field`). Rychlost poutnika
 # je z nej ODVOZENA, takze "cesta trva 8 s" plati na telefonu i na velkem
 # displeji; pevne pixely za sekundu by na male obrazovce znamenaly kratsi
@@ -53,6 +65,14 @@ var center: Vector2 = Vector2.ZERO
 var tower: Tower = Tower.new()
 var pilgrims: Array = []
 var locks: Array = []
+# STRELY. Kazda je slovnik `{pos, target, dmg}`: tecka leti od veze k cili a
+# poskozeni udeli az v okamziku dopadu. `shots_fired` je pocitadlo vsech ran
+# (HUD i testy se ho ptaji, kolik jich vez za cas vystrelila).
+var shots: Array = []
+var shots_fired: int = 0
+# RYTMUS STRELBY: cas do dalsi rany a ktery z zamerenych cilu je na rade.
+var fire_left: float = 0.0
+var fire_i: int = 0
 var palette: Array = []
 var phase: String = "build"
 var wave: int = 1
@@ -134,7 +154,9 @@ func step(dt: float) -> void:
 		return
 	_phase_step(dt)
 	_move(dt)
-	_beam(dt)
+	_aim()
+	_fire(dt)
+	_advance_shots(dt)
 	_prune()
 
 
@@ -306,10 +328,11 @@ func in_range(p: Pilgrim, r: float) -> bool:
 	return p.pos.distance_to(center) <= r
 
 
-# SVAZEK. Drzi cil, dokud neumre - a zámek se uvolni jen tehdy, kdyz je cil
-# mrtvy, mimo dostrel, nebo kdyz hrac zmenil barvu (pak uz ho vez nevidi).
-# Poskozeni jde KAZDY SNIMEK: zadny skryty cooldown, zadny prebytek rany.
-func _beam(dt: float) -> void:
+# SVAZEK (ZAMEROVANI). Drzi cil, dokud neumre - a zámek se uvolni jen tehdy,
+# kdyz je cil mrtvy, mimo dostrel, nebo kdyz hrac zmenil barvu (pak uz ho vez
+# nevidi). SAM POSKOZENI NEDAVA: paprsek je od Oct 2026 jen ukazatel, na koho
+# vez miri ("Bude to ukazatel na koho věž míří. Jako zaměřování.").
+func _aim() -> void:
 	var r: float = tower.range_px(field_r)
 	var keep: Array = []
 	for p in locks:
@@ -324,19 +347,72 @@ func _beam(dt: float) -> void:
 		pool.sort_custom(_closer)
 		while locks.size() < tower.targets() and not pool.is_empty():
 			locks.append(pool.pop_front())
-	for p in locks:
-		if not p.alive:
+
+
+# RYTMUS STRELBY. Vez strili na zamrene cile; kadence je z tabulky veze
+# (`Tower.rate`), takze upgrade je videt jako hustsi proud tecek. Kdyz nema
+# vez na co mirrit, hlaven se "nabije" hned (dalsi rana pri zamereni).
+func _fire(dt: float) -> void:
+	if locks.is_empty():
+		fire_left = 0.0
+		return
+	fire_left -= dt
+	# STRAZCE: kdyby dt prislo obrovske (teleport ve hre), nema se vystrelit
+	# sto ran v jednom snimku.
+	var guard: int = 0
+	while fire_left <= 0.0 and guard < 8:
+		guard += 1
+		_spawn_shot(locks[fire_i % locks.size()])
+		fire_i += 1
+		fire_left += 1.0 / tower.rate()
+
+
+# STRELA VYCHAZI Z OKRAJE VEZE, ne z jejiho stredu - tecka ma byt videt jako
+# neco, co z veze opravdu vyletelo.
+func _spawn_shot(p: Pilgrim) -> void:
+	var dir: Vector2 = (p.pos - center).normalized()
+	shots.append({"pos": center + dir * tower_r, "target": p, "dmg": tower.shot_damage()})
+	shots_fired += 1
+
+
+# LET STRELY A DOPAD. Strela leti VELMI RYCHLE (v paprsku jich je proto videt
+# nekolik naraz a vypada to jako stabilni paprsek, kterym rytmicky proudi
+# strely) a poskozeni udeli az ve chvili, kdy do cile doleti. Kdyz cil mezitim
+# zmizi (umrel, hrac prepnul barvu, fialova se zneviditelnila), strela zanikne -
+# nikoho jineho nezasahne.
+func _advance_shots(dt: float) -> void:
+	var keep: Array = []
+	for s in shots:
+		var p: Pilgrim = s["target"]
+		if not p.alive or not tower.sees(p):
 			continue
-		var before: float = p.hp
-		p.hp -= tower.dps() * dt
-		if p.hp < before and not p.was_hit:
-			p.was_hit = true
-			# FIALOVA: po PRVNIM zasahu zmizi na 3 s (putuje dal, ale vez ji
-			# nevidi, i kdyz ma hrac jeji barvu).
-			if p.behaviour == Hue.B_VANISH:
-				p.ghost_left = Hue.VANISH_S
-		if p.hp <= 0.0:
-			_kill(p)
+		var pos: Vector2 = s["pos"]
+		var d: Vector2 = p.pos - pos
+		var step_len: float = shot_speed() * dt
+		if d.length() <= step_len + shot_r():
+			_damage(p, float(s["dmg"]))
+			continue
+		s["pos"] = pos + d.normalized() * step_len
+		keep.append(s)
+	shots = keep
+
+
+# POSKOZENI POUTNIKA. Jedno misto pro dopad strely (a pro kohokoli dalsiho,
+# kdo bude v budoucnu ublizovat): prvni zasah je pro fialovou znameni, ze ma
+# zmizet, a nula zivotu znamena smrt.
+func _damage(p: Pilgrim, amount: float) -> void:
+	if not p.alive:
+		return
+	var before: float = p.hp
+	p.hp -= amount
+	if p.hp < before and not p.was_hit:
+		p.was_hit = true
+		# FIALOVA: po PRVNIM zasahu zmizi na 3 s (putuje dal, ale vez ji
+		# nevidi, i kdyz ma hrac jeji barvu).
+		if p.behaviour == Hue.B_VANISH:
+			p.ghost_left = Hue.VANISH_S
+	if p.hp <= 0.0:
+		_kill(p)
 
 
 func _kill(p: Pilgrim) -> void:
@@ -388,15 +464,33 @@ func pilgrim_r() -> float:
 	return unit_r * PILGRIM_R_FRAC
 
 
+# RYCHLOST LETU STRELY A POLOMER TECKY. Rychlost je podil POLOMERU PLOCHY
+# (let pres dostrel trva porad stejne dlouho), polomer tecky podil MERITKA
+# (tecka je stejne velka, i kdyz je plocha vetsi nez displej).
+func shot_speed() -> float:
+	return field_r * SHOT_SPEED_FRAC
+
+
+func shot_r() -> float:
+	return unit_r * SHOT_R_FRAC
+
+
 # ---------------------------------------------------------------- VSTUP
+
+# POPIS UPGRADU SE TYKA TOHO, CO HRAc OPRAVDU POZNA: kadence (pocet ran za
+# sekundu) je ta vec, ktera je videt, a cisla se pisi s ceskou desetinnou
+# carkou.
+func _rate_text() -> String:
+	return ("%.1f" % tower.rate()).replace(".", ",") + " ran/s"
+
 
 func buy_upgrade() -> bool:
 	if not tower.can_upgrade() or gold < tower.upgrade_cost():
 		return false
 	gold -= tower.upgrade_cost()
 	tower.upgrade()
-	_note("Věž na %d. stupni (dostřel %d %%, %d cíl)."
-		% [tower.level, int(round(tower.range_frac() * 100.0)), tower.targets()])
+	_note("Věž na %d. stupni (dostřel %d %%, %s, %d cíl)."
+		% [tower.level, int(round(tower.range_frac() * 100.0)), _rate_text(), tower.targets()])
 	return true
 
 

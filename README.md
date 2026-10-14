@@ -11,7 +11,16 @@ nepoužívá.
   („jako by je vůbec neviděla“).
 - **Přepnutí barvy = klepnutí na věž.** Přesně na výsek vence kolem věže,
   nebo na tělo věže (otočí barvu na další).
-- **Svazek drží jeden cíl, dokud neumře.** Vylepšení později přidá další cíle.
+- **Paprsek je jen ZAMĚŘOVÁNÍ** — ukazuje, na koho věž míří, ale sám
+  neubírá životy. Poškození přijde **až dopadem střely**: od věže letí velmi
+  rychlá **tečka** (přes základní dostřel ~0,15 s), takže to vypadá jako
+  stabilní paprsek, kterým rytmicky proudí střely.
+- **Svazek drží jeden cíl, dokud neumře.** Střela, jejíž cíl mezitím zmizí
+  (umřel, hráč přepnul barvu, fialová se zneviditelnila), zanikne a nikoho
+  jiného nezasáhne.
+- **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10, roste počet
+  ran za sekundu: **3 → 4,8 → 7,2 ran/s** (tj. 30 / 48 / 72 za sekundu) a od
+  3. stupně věž míří na dva cíle. V paprsku je tím vidět hustší proud teček.
 - **Poutníci vstupují na SPAWNOVACÍM KRUHU naslepo**, náhodným směrem, a jdou
   rovně k věži. Cesta od okraje k okraji věže trvá **8 s**.
 - **Spawnovací kruh je větší než displej a NIKDE se nekreslí** (je pomyslný):

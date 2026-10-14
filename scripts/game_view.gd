@@ -269,6 +269,12 @@ func _draw() -> void:
 	draw_arc(layout.center, game.tower.range_px(layout.field_r), 0.0, TAU, 96, RANGE_LINE, 1.5)
 	for p in game.locks:
 		draw_line(layout.center, p.pos, BEAM, 2.0)
+	# STRELY: tecky, ktere leti od veze k cili. Paprsek je jen zamerovani -
+	# poskozeni udeli az dopad tecky, takze hrac vidi, ze vez opravdu strili
+	# a jak je rychla (vic tecek v paprsku = vyssi stupen).
+	for s in game.shots:
+		var sp: Vector2 = s["pos"]
+		draw_circle(sp, game.shot_r(), BEAM)
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()

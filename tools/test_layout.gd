@@ -26,6 +26,7 @@ var checks: int = 0
 func _init() -> void:
 	_run("neznama velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
+	_run("strela je tecka, paprsek je zamerovani", _test_shots_are_dots)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -61,6 +62,22 @@ func _test_spawn_ring_not_drawn() -> void:
 		"spawnovaci kruh se kresli, i kdyz ma byt pomyslny")
 	_check(src.contains("draw_arc(layout.center, game.tower.range_px(layout.field_r)"),
 		"kruh dostrelu se nekresli (je to jedina geometrie, kterou hrac vidi)")
+
+
+# STRELA JE TECKA, PAPRSEK JE JEN ZAMEROVANI. Hlida se MISTO VOLANI ve zdroji
+# obrazovky: kdyby z kresleni zmizely strely, hrac by videl prazdny paprsek
+# a "rychlost strelby" by nemela jak byt videt; kdyby zmizel paprsek, hrac
+# nevi, na koho vez miri.
+func _test_shots_are_dots() -> void:
+	var f := FileAccess.open("res://scripts/game_view.gd", FileAccess.READ)
+	_check(f != null, "nectu game_view.gd")
+	if f == null:
+		return
+	var src: String = f.get_as_text()
+	_check(src.contains("for s in game.shots"), "strely se vubec nekresli")
+	_check(src.contains("game.shot_r()"), "strela se nekresli jako tecka")
+	_check(src.contains("draw_line(layout.center, p.pos, BEAM, 2.0)"),
+		"paprsek (zamerovani) zmizel - hrac nevidi, kam vez miri")
 
 
 func _test_zero_size() -> void:
