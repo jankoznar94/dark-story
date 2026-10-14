@@ -29,6 +29,7 @@ func _init() -> void:
 	_run("stavba podle typu cesty (zivel, nebo neutralni vez)", _test_build_elements)
 	_run("tecky urovne uvnitr veze", _test_tower_dots)
 	_run("efekt pruchodu vyhybkou", _test_junction_flash)
+	_run("shluk na vyhybce se rozdeli sam", _test_junction_cluster)
 	_run("typ vstupniho useku", _test_entry_type)
 	_run("prepnuti vyhybky", _test_switch_changes_route)
 	_run("poutnik dojde do cile", _test_reaches_exit)
@@ -1108,6 +1109,116 @@ func _test_junction_flash() -> void:
 		g.step(dt)
 		guard += 1
 	_check(g.junction_flash_at(node).is_empty(), "efekt po case nezmizel")
+
+
+# SHLUK NA VYHYBCE. Jan (Oct 2026): "Když nastane scénář, kdy dorazí na
+# výhybku dva nepřátelé příliš blízko u sebe, tak je výhybka rozdělí
+# automaticky, korektně. Takže to bude ve výsledku příjemný incident."
+#
+# Korektne = "jde tam, kde dostane nejvetsi poskozeni". Meri se to, kam
+# poutnik OPRAVDU odesel - hrac pritom ma vyhybku nastavenou na usek, ktery
+# je pro oba spatny, aby bylo videt, ze rozhodla hra a ne on.
+func _test_junction_cluster() -> void:
+	var g := _new_game()
+	var node: int = g.net.lane_end_node(g.net.entry_lane)
+	var j: int = g.net.junction_index_of_node(node)
+	_check(j >= 0, "vstupni usek nekonci ve vyhybce")
+	if j < 0:
+		return
+	var air: int = -1
+	var fire: int = -1
+	var neutral: int = -1
+	for lane in range(g.net.lane_count()):
+		if g.net.lane_junction(lane) != j:
+			continue
+		var el: int = g.level.lane_element(lane)
+		if el == Element.AIR:
+			air = lane
+		elif el == Element.FIRE:
+			fire = lane
+		elif el == Level.NEUTRAL:
+			neutral = lane
+	_check(air >= 0 and fire >= 0 and neutral >= 0,
+		"vyhybka nema vzduch, ohen i neutralni usek (%d/%d/%d)" % [air, fire, neutral])
+	if air < 0 or fire < 0 or neutral < 0:
+		return
+
+	# SPATNA VOLBA HRACE pro oba: poslat je na vzduch.
+	g.set_switch(air)
+	var lead: Enemy = g.debug_spawn(Element.WATER)
+	var tail: Enemy = g.debug_spawn(Element.FIRE)
+	lead.s = 20.0
+	# 2 px za nim = 0,038 s, tedy hluboko v okne shluku.
+	tail.s = 18.0
+	var dt: float = 1.0 / 60.0
+	_run_past_node(g, lead, dt)
+	# VODNI: protiklad je ohen -> bere tam 200 %, vsude jinde min.
+	_check(lead.lane == fire, "vodni poutnik sel na %s, cekal se ohnivy usek (%s)"
+		% [g.level.lane_type_name(lead.lane), g.level.lane_type_name(fire)])
+	_run_past_node(g, tail, dt)
+	# OHNIVY: vlastni usek nedava nic, neutralni bere vsem 100 % -> neutralni.
+	_check(tail.lane == neutral, "ohnivy poutnik sel na %s, cekal se neutralni usek (%s)"
+		% [g.level.lane_type_name(tail.lane), g.level.lane_type_name(neutral)])
+	# A HRAC TO UVIDI: u vyhybky sviti DVA krouzky, kazdy v barve sve koleje.
+	# Kdyby se kreslil jen prvni, druhy poutnik by z desky "zmizel".
+	_check(g.junction_flashes_at(node).size() == 2,
+		"po shluku sviti %d krouzku, cekaly se dva" % g.junction_flashes_at(node).size())
+	# HRAC TO MUSI VIDET. Kdyz hra mluvi jen tim, ze poutnik sel jinam, nez
+	# hrac nastavil, vypada to jako chyba.
+	var said: bool = false
+	for line in g.log:
+		if str(line).contains("Shluk"):
+			said = true
+	_check(said, "hra nerekla, ze na vyhybce byl shluk")
+
+	# BEZ SHLUKU PLATI VOLBA HRACE. Rozestup 30 px je 0,58 s, tedy vic nez
+	# okno - kazdy si jde po sve.
+	var g2 := _new_game()
+	g2.set_switch(air)
+	var a: Enemy = g2.debug_spawn(Element.WATER)
+	var b: Enemy = g2.debug_spawn(Element.FIRE)
+	a.s = 40.0
+	b.s = 10.0
+	_run_past_node(g2, a, dt)
+	_check(a.lane == air, "mimo shluk sel vodni poutnik na %s, cekal se vzduch (%s)"
+		% [g2.level.lane_type_name(a.lane), g2.level.lane_type_name(air)])
+	_run_past_node(g2, b, dt)
+	_check(b.lane == air, "mimo shluk sel ohnivy poutnik na %s, cekal se vzduch (%s)"
+		% [g2.level.lane_type_name(b.lane), g2.level.lane_type_name(air)])
+
+	# ODKUD SE VYSTUP VYBERA. Jedno misto (`Game._lane_hurt`): kmen nebere
+	# vubec, neutralni bere vsem stejne a element dava nasobek z tabulky.
+	# Dvojzivelny poutnik je imunni na oba sve zivly, takze nulu bere i na
+	# sve protikladne koleji - a nejlepsi je pro nej neutral.
+	var dual := Enemy.new()
+	dual.element = Element.FIRE
+	dual.element2 = Element.WATER
+	_check(is_equal_approx(g._lane_hurt(dual, fire), 0.0),
+		"dvojzivelny bere na ohnivem useku %.2f, cekala se 0" % g._lane_hurt(dual, fire))
+	_check(is_equal_approx(g._lane_hurt(dual, neutral), Element.NEUTRAL),
+		"dvojzivelny bere na neutralnim useku %.2f, cekala se 1" % g._lane_hurt(dual, neutral))
+	_check(is_equal_approx(g._lane_hurt(dual, g.net.entry_lane), 0.0),
+		"kmen bere %.2f, cekala se 0" % g._lane_hurt(dual, g.net.entry_lane))
+	var lanes: Array = g.net.junction_lanes[j]
+	_check(g._auto_sel(dual, j) == lanes.find(neutral),
+		"dvojzivelny nema jit na neutralni usek")
+	var water_only := Enemy.new()
+	water_only.element = Element.WATER
+	_check(is_equal_approx(g._lane_hurt(water_only, fire), Element.STRONG),
+		"vodni poutnik bere na ohnivem useku %.2f, cekal se dvojnasobek"
+			% g._lane_hurt(water_only, fire))
+	_check(g._auto_sel(water_only, j) == lanes.find(fire),
+		"vodni poutnik nema jit na ohnivy usek")
+
+
+# KROKUJ, DOKUD POUTNIK NEPROJDE SVYM UZLEM (zmeni usek). Jinak by se merilo
+# neco jineho, nez co test zajima.
+func _run_past_node(g: Game, e: Enemy, dt: float) -> void:
+	var from_lane: int = e.lane
+	var guard: int = 0
+	while e.alive and e.lane == from_lane and guard < 900:
+		g.step(dt)
+		guard += 1
 
 
 # VSTUPNI USEK JE OD VYCHOZIHO STAVU KMEN, ALE JE TO NORMALNI TYP USEKU: hrac

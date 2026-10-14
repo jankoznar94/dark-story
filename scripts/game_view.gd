@@ -1943,19 +1943,20 @@ func _draw_exit_mark(p: Vector2) -> void:
 # Kresli se KROUZEK KOLEM UZLU VYHYBKY, ktery se rozpina a zhasina, v BARVE
 # ZVOLENE KOLEJE: hrac z nej vi nejen "uz prosel", ale i KAM ho poslal.
 # Krouzek (ne vypln) je zamer - deska ma zustat znackova, ne svetelna show.
-# Cas efektu vede hra (`Game.junction_flash_at`), tady se jen kresli.
+# Cas efektu vede hra (`Game.junction_flashes_at`), tady se jen kresli.
+# Pri shluku na vyhybce sviti krouzky DVA (kazdy poutnik ma svuj) - proto se
+# jich kresli tolik, kolik jich hra hlasi, a ne jen jeden.
 func _draw_junction_flash() -> void:
 	for j in range(game.net.junction_count()):
 		var n: int = game.net.junction_nodes[j]
-		var f: Dictionary = game.junction_flash_at(n)
-		if f.is_empty():
-			continue
-		var k: float = float(f["k"])
-		var p: Vector2 = game.net.node_pos[n]
-		var rr: float = Game.flash_radius(k, game.net.switch_r)
-		var col: Color = _lane_color(int(f["lane"]))
-		col.a = k * 0.95
-		draw_arc(p, rr, 0.0, TAU, 28, col, maxf(2.0, 3.6 * layout.s))
+		for item in game.junction_flashes_at(n):
+			var f: Dictionary = item
+			var k: float = float(f["k"])
+			var p: Vector2 = game.net.node_pos[n]
+			var rr: float = Game.flash_radius(k, game.net.switch_r)
+			var col: Color = _lane_color(int(f["lane"]))
+			col.a = k * 0.95
+			draw_arc(p, rr, 0.0, TAU, 28, col, maxf(2.0, 3.6 * layout.s))
 
 
 func _draw_y(c: Vector2, r: float, col: Color, up: bool) -> void:

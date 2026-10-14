@@ -38,6 +38,14 @@ var s: float = 0.0
 var pos: Vector2 = Vector2.ZERO
 # Kterym kmenem (vstupem) poutnik do mapy vstoupil. Map muze mit kmenu vic.
 var trunk: int = 0
+# ROZHODNUTI VYHYBKY ZA HRACE. Kdyz se na vyhybku blizi vic poutniku v jednom
+# okne (`Game.CLUSTER_WINDOW`), hrac nema jak stihnout dve rozhodnuti - a
+# hlavne nema jak poznat, ktery z nich je prvni. Vyhybka je proto rozdeli
+# sama: kazdy dostane usek, kde bere nejvetsi poskozeni (`Game._lane_hurt`),
+# a pri shode se losuje. Prirazeni je pro JEDEN konkretni uzel a plati jen
+# do pruchodu tim uzlem.
+var route_node: int = -1
+var route_sel: int = -1
 var alive: bool = true
 var leaked: bool = false
 

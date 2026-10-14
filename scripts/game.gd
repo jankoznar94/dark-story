@@ -148,6 +148,16 @@ var log: Array = []
 # zmerit, kdy efekt vznikne a kdy zmizi.
 var junction_flash: Array = []
 const FLASH_TIME := 0.55
+# OKNO SHLUKU NA VYHYBCE. Kdyz do jednoho uzlu dojdou dva (a vic) poutniku
+# v tomhle case, vyhybka je rozdeli sama - hrac nema jak stihnout dve
+# rozhodnuti a nema jak zjistit, ktery je prvni (viz `_cluster_at`).
+#
+# Merene (zakladni deska, partie po 20 vlnach, ctyri ruzne rychlosti poutniku):
+# geometrickych shluku je pri 0,2 s ~2,5 % vsech pruchodu vyhybkami a pri
+# 0,5 s uz ~5,5 %. V hre, kde hrac posila vsechno na jednu kolej, rozhodne
+# vyhybka v ~4 % pruchodu. Uzsi okno = vzacnejsi jev, ale porad dost casty
+# na to, aby hrac neveril, ze o neco prisel.
+const CLUSTER_WINDOW := 0.2
 # ZIVLY, KTERE SE V TOMHLE LEVELU POSILAJI. Neni to vzdycky vsechny ctyri:
 # mapa, ktera ma jen vodu a ohen, posila jen vodni a ohnive poutniky - na
 # ostatni by v mape nebyl protiklad a hrac by je nemel jak zabit.
@@ -899,6 +909,9 @@ func wave_done() -> void:
 
 
 func _move_enemies(delta: float) -> void:
+	# POSUN. Vsechno se nejdriv posune, teprve pak se rozhoduje - kdyz dva
+	# poutnici dojdou do uzlu ve stejnem snimku, musi se o nich rozhodnout
+	# NAJEDNOU (viz `_cluster_at`).
 	for item in enemies:
 		var e: Enemy = item
 		if not e.alive:
@@ -912,12 +925,39 @@ func _move_enemies(delta: float) -> void:
 			continue
 		e.s += e.speed * delta
 		e.pos = net.point_at(e.lane, e.s)
+
+	# SHLUK NA VYHYBCE. Kdyz se do jednoho uzlu hrne vic poutniku v okne
+	# `CLUSTER_WINDOW`, hrac nema sanci: nestihne dve klepnuti a hlavne nema
+	# jak zjistit, ktery z nich je prvni (je to hod minci). Vyhybka je proto
+	# rozdeli sama. Detekuje se to DOPREDU - z pozice a rychlosti kazdeho
+	# poutnika se spocita, za jak dlouho do uzlu dojde, takze nikdo nemusi
+	# cekat (poutnici plynou jako dosud).
+	for item in enemies:
+		var e: Enemy = item
+		if not e.alive or e.route_node >= 0 or not e.on_lane():
+			continue
+		if e.s < float(net.lane_len[e.lane]):
+			continue
+		var nd: int = net.lane_end_node(e.lane)
+		if net.junction_index_of_node(nd) < 0:
+			continue
+		var group: Array = _cluster_at(nd, e)
+		if group.size() > 1:
+			_route_cluster(nd, group)
+
+	for item in enemies:
+		var e: Enemy = item
+		if not e.alive:
+			continue
+		if not e.on_lane():
+			continue
 		if e.s < float(net.lane_len[e.lane]):
 			continue
 		# KONEC USEKU = POUTNIK JE V UZLU. Tam se rozhodne:
 		#   vyhybka             - hrac svou volbou posle poutnika na jeden
 		#                         ze svych vystupu (rozhoduje se az ted,
-		#                         v okamziku pruchodu),
+		#                         v okamziku pruchodu); kdyz je poutnik ve
+		#                         shluku, rozhodla uz za nej hra,
 		#   spojka / uzel / start - jediny vystup, zadne rozhodovani,
 		#   cil                - konec cesty, stoji zivot.
 		var nd: int = net.lane_end_node(e.lane)
@@ -929,10 +969,17 @@ func _move_enemies(delta: float) -> void:
 			j = net.junction_index_of_node(nd)
 			var sel: int = 0
 			if j >= 0:
-				if switch_sel.size() != net.junction_count():
-					_sync_switch()
-				sel = int(switch_sel[j])
+				if e.route_node == nd:
+					# SHLUK: takhle rozhodla vyhybka sama, hrac na to nemel
+					# jak zareagovat. Prirazeni je pro tenhle pruchod.
+					sel = e.route_sel
+				else:
+					if switch_sel.size() != net.junction_count():
+						_sync_switch()
+					sel = int(switch_sel[j])
 			nxt = level.next_lane(nd, sel)
+		e.route_node = -1
+		e.route_sel = -1
 		if nxt < 0 or nxt >= net.lane_count():
 			e.leaked = true
 			e.alive = false
@@ -950,6 +997,131 @@ func _move_enemies(delta: float) -> void:
 		e.lane = nxt
 		e.s = 0.0
 		e.pos = net.point_at(nxt, 0.0)
+
+
+# =========================================================================
+# SHLUK NA VYHYBCE
+#
+# Jan (Oct 2026): "Když nastane scénář, kdy dorazí na výhybku dva nepřátelé
+# příliš blízko u sebe, tak je výhybka rozdělí automaticky, korektně. Takže
+# to bude ve výsledku příjemný incident."
+#
+# PROC TO TU JE: poutnici maji ruzne rychlosti (2,7x rozdil mezi lehkym a
+# tezkym), takze se pred vyhybkou dohaneji a nekdy do ni vejdou v jednom
+# okamziku. Hrac ma na klepnuti ~0,2 s a hlavne NEMA JAK ZJISTIT, ktery
+# z nich je prvni - oba vypadaji stejne blizko. Dve rozhodnuti v jednom
+# okamziku tedy nejsou o sikovnosti, ale o hode minci.
+#
+# Reseni: hra to vi PRESNE (cas do uzlu je z pozice a rychlosti dany), takze
+# se na to podiva DOPREDU a rozhodne za hrace. Nikdo neceka a nikdo se
+# neřadí - poutnici plynou po svych kolejich jako dosud.
+# =========================================================================
+
+# Kdo vsechno do uzlu dojde v jednom okne. Zacne se tim, kdo tam je prave ted,
+# a prida se kazdy, kdo se vejde do okna za POSLEDNIM pridanym clenem. Tak se
+# posklada i retez (tri poutnici v rozestupu 0,4 s a okno 0,5 s jsou jeden
+# shluk), ktery by se po dvojicich rozpadl.
+func _cluster_at(node: int, first: Enemy) -> Array:
+	var group: Array = [first]
+	var t: float = 0.0
+	var guard: int = 0
+	while guard < 32:
+		guard += 1
+		var added: bool = false
+		for item in enemies:
+			var e: Enemy = item
+			if not e.alive or e.route_node >= 0 or group.has(e):
+				continue
+			var ta: float = _arrival_in(e, node)
+			if ta < 0.0 or ta > t + CLUSTER_WINDOW:
+				continue
+			group.append(e)
+			t = maxf(t, ta)
+			added = true
+		if not added:
+			break
+	return group
+
+
+# ZA JAK DLOUHO POUTNIK DOJDE DO UZLU `node`. Cesta se pocita jen pres uzly
+# bez rozhodovani (start, spojka, uzel) - pres vyhybku nebo cil se predpovidat
+# NEDA (nevime, kam hrac klepne), takze takovy poutnik do shluku nepatri.
+# -1 = nedozvime se.
+func _arrival_in(e: Enemy, node: int) -> float:
+	var lane: int = e.lane
+	var s: float = e.s
+	var sp: float = maxf(e.speed, 0.001)
+	var t: float = 0.0
+	for step_i in range(4):
+		if lane < 0 or lane >= net.lane_count():
+			return -1.0
+		var ln: float = float(net.lane_len[lane])
+		if s < ln:
+			t += (ln - s) / sp
+			s = ln
+		var nd: int = net.lane_end_node(lane)
+		if nd == node:
+			return t
+		if nd < 0:
+			return -1.0
+		var kind: int = int(net.node_kind[nd])
+		if kind == Level.VYHYBKA or kind == Level.CIL:
+			return -1.0
+		lane = level.next_lane(nd, 0)
+	return -1.0
+
+
+# ROZDĚLENÍ SHLUKU. Kazdy clen dostane usek, kde bere nejvetsi poskozeni;
+# kdyz je to nerozhodne (typicky dvojzivelny poutnik, ktery ma na obou svych
+# zivlech nulu), losuje se.
+func _route_cluster(node: int, group: Array) -> void:
+	var j: int = net.junction_index_of_node(node)
+	if j < 0:
+		return
+	for item in group:
+		var e: Enemy = item
+		e.route_node = node
+		e.route_sel = _auto_sel(e, j)
+	var names: Array = []
+	for item in group:
+		names.append((item as Enemy).title())
+	_note("Shluk na výhybce - výhybka ho rozdělila sama: %s." % ", ".join(names))
+
+
+# VYSTUP S NEJVETSiM POSKOZENIM PRO TOHOHLE POUTNIKA. Pocita se z ELEMENTU
+# vystupniho useku, ne z vezi, ktere na nem stoji - Jan (Oct 2026): "To, že
+# na správné koleji nic nestojí už je hráčův problém." Pri shode se losuje.
+func _auto_sel(e: Enemy, j: int) -> int:
+	var lanes: Array = net.junction_lanes[j]
+	if lanes.is_empty():
+		return 0
+	var best: float = -1.0
+	var picks: Array = []
+	for k in range(lanes.size()):
+		var m: float = _lane_hurt(e, int(lanes[k]))
+		if m > best + 0.0001:
+			best = m
+			picks = [k]
+		elif absf(m - best) <= 0.0001:
+			picks.append(k)
+	if picks.is_empty():
+		return 0
+	if picks.size() == 1:
+		return int(picks[0])
+	return int(picks[_next_int(picks.size())])
+
+
+# KOLIK POUTNIK NA TOMHLE USEKU DOSTANE. Jedine misto, kde se to pro potreby
+# automatickeho rozřazení pocita: kmen neposkozuje vubec, neutralni usek bere
+# vsem stejne (a je tedy "bezpecna volba", kdyz poutnik nema svuj protiklad)
+# a elementarni usek dava nasobek z tabulky `Element`.
+func _lane_hurt(e: Enemy, lane: int) -> float:
+	var el: int = level.lane_element(lane)
+	if el == Level.KMEN:
+		return 0.0
+	if el < 0 or el >= Element.COUNT:
+		return Element.NEUTRAL
+	return e.mult_against(el)
 
 
 # ZAZNAMENEJ PRUCHOD VYHYBKOU. Efekt se prida k te, ktera ho opravdu pustila
@@ -996,6 +1168,20 @@ func junction_flash_at(node: int) -> Dictionary:
 		if best.is_empty() or k > float(best["k"]):
 			best = {"k": k, "lane": int(f["lane"])}
 	return best
+
+
+# VSECHNY EFEKTY NA TOMHLE UZLU. Pri shluku na vyhybce jich je vic - kazdy
+# poutnik ma svuj krouzek v barve sve koleje. `junction_flash_at` vraci jen
+# ten nejsilnejsi, coz staci klepnuti i testum; kresleni potrebuje vsechny,
+# jinak by hrac videl, ze jeden poutnik odesel a druhy nekam zmizel.
+func junction_flashes_at(node: int) -> Array:
+	var out: Array = []
+	for item in junction_flash:
+		var f: Dictionary = item
+		if int(f["node"]) != node:
+			continue
+		out.append({"k": float(f["t"]) / FLASH_TIME, "lane": int(f["lane"])})
+	return out
 
 
 # ---------------------------------------------------------------- strelba

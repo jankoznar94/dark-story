@@ -132,6 +132,12 @@ func _strokes_scale() -> void:
 		"pruh editoru nepozná tlacitko menu")
 	_check(src.contains("if editor.is_menu(act):\n			menu.open_menu()"),
 		"klepnuti na menu v editoru neotevre menu")
+	# SHLUK NA VYHYBCE: kdyz se u vyhybky rozdeli dva poutnici, musi hrac
+	# videt DVA krouzky. Kdyby kresleni bralo jen nejsilnejsi efekt
+	# (`junction_flash_at`), druhy poutnik by z desky zmizel - a to je presne
+	# ten pripad, kdy hrac potrebuje videt, co se stalo.
+	_check(src.contains("for item in game.junction_flashes_at(n):"),
+		"kresleni vyhybky bere jen jeden efekt - shluk by nebyl videt")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
