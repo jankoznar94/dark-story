@@ -20,17 +20,21 @@ nepoužívá.
   je vidět, je jen **kruh dostřelu**.
 - **Dosah je kruh** (kreslený na zemi): základ 62 % poloměru plochy, vylepšením
   74 % a 86 % — nikdy ne celá plocha. Je to okno, ve kterém hráč musí stihnout
-  přepnout barvu: **4,6 s / 5,6 s / 6,7 s** v ohni (dřív 2,5 s, což bylo málo).
+  přepnout barvu: **4,7 s / 5,8 s / 6,8 s** v ohni (dřív 2,5 s, což bylo málo).
 - **Levely vypadají stejně**, liší se jen složením vln (každá vlna míchá
   všechny čtyři barvy).
 
 ## Rozvržení
 
-Hra je na **výšku**: poloměr spawnovacího kruhu je **polovina výšky herního
-pruhu**, takže se kruh dotýká horního i spodního okraje pruhu a na displeji na
-výšku vede boky mimo obraz (na 390×844 o 147 px na každé straně). Na šířku je
-pruh širší než vyšší a z kruhu se stane kruh vepsaný — hra se nerozbije, jen
-řekne „otoč telefon“.
+Hra je na **výšku**. **Plocha a zoom jsou dvě různá čísla:**
+- **Zoom** (věž, poutníci, tahy) se počítá z **vepsaného kruhu do kratší strany**
+  herního pruhu — přesně jako dřív, takže velikosti zůstávají stejné (na
+  390×844 věž 22 px, poutník 9 px) a nic se „nepřibližuje“.
+- **Spawnovací kruh** je polovina **výšky** herního pruhu: dotýká se horního
+  i spodního okraje pruhu a na výšku vede boky **147 px mimo obraz** (na 390×844),
+  takže poutníci vcházejí ze všech směrů. Nikdy není menší než zoom.
+  Na šířku je pruh širší než vyšší, kruh se tedy vejde do šířky a hra jen řekne
+  „otoč telefon“.
 
 Barvu vždy nese i **tvar** (runa) — u poutníka je runa přímo tvarem těla:
 oheň trojúhelník, voda kapka, země čtverec, vzduch prstenec. Barva nikdy

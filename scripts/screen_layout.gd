@@ -14,14 +14,21 @@ extends RefCounted
 # hrana sahat až k vršku displeje. Boky budou jak kdyby mimo obrazovku, ale
 # budou brány v potaz."
 #
-# Polomer plochy je proto POLOVINA VYSKY herniho pruhu (ne vepsana kratka
-# strana): horni i spodni okraj kruhu se dotkne okraje herniho pruhu a na
-# displeji na vysku (~390x844) vedou boky 147 px MIMO obraz - poutnici odtamtud
-# vchazeji z boku. Kruh se NIKDE nekresli (je pomyslny), hrac vidi jen kruh
-# dostrelu.
+# PLOCHA A MERITKO KRESLENI JSOU DVE CISLA (Jan: "Zoom měl zůstat stejný. Jen
+# se měly změnit rozměry jednotlivých zón."):
+#   * `unit_r`  = MERITKO KRESLENI, polomer VEPSANEHO kruhu do kratsi strany
+#                 herniho pruhu (presne to, co delalo polomer plochy driv).
+#                 Z nej se pocita vez, poutnik i tahy - takze zoom je stejny
+#                 jako pred zmenou.
+#   * `field_r` = SPAWNOVACI KRUH, polovina VYSKY herniho pruhu. Jeho horni
+#                 a spodni okraj se dotkne okraje pruhu a na displeji na vysku
+#                 (~390x844) vedou boky 147 px MIMO obraz - poutnici odtamtud
+#                 vchazeji z boku. Nikdy neni mensi nez meritko.
 #
-# Na sirku (kde hra rika "otoc telefon") je pruh sirsi nez vyssi a kruh se
-# vejde do sirky - hra se tim nerozbije, jen se z nej stane vepsany kruh.
+# Kruh se NIKDE nekresli (je pomyslny), hrac vidi jen kruh dostrelu.
+#
+# Na sirku (kde hra rika "otoc telefon") je pruh sirsi nez vyssi a z kruhu se
+# stane kruh vepsany - hra se tim nerozbije.
 #
 # MENU je prvni obrazovka (viz `Menu`) a ma vlastni rozvrzeni: tri tlacitka
 # pod sebou, svisle vycentrovana. Vysky zustavaji na dotykovem minimu a
@@ -33,7 +40,11 @@ const BAR_FRAC := 0.075
 const BAR_MIN := 44.0
 const PAL_FRAC := 0.115
 const PAL_MIN := 64.0
-const TOWER_FRAC := 0.12
+# MERITKO KRESLENI (vez, poutnik, tahy): polomer VEPSANEHO kruhu do kratsi
+# strany herniho pruhu, zmenseno o okraj. Je to presne to cislo, ktere driv
+# delalo polomer plochy - proto zustava zoom hry stejny, i kdyz je spawnovaci
+# kruh ted vetsi nez displej.
+const MARGIN_FRAC := 0.03
 # DOTYKOVA MEZ. Tlacitko barvy je to jedine, na co hrac klika - pod 44 px
 # se na telefonu neda spolehlive trefit.
 const BTN_MIN := 44.0
@@ -58,6 +69,9 @@ var pal_h: float = 0.0
 var arena: Rect2 = Rect2()
 var center: Vector2 = Vector2.ZERO
 var field_r: float = 0.0
+# MERITKO KRESLENI (vez, poutnik, tahy). NENI to polomer plochy: spawnovaci
+# kruh je vetsi nez displej, ale zoom hry se menit nesmi.
+var unit_r: float = 0.0
 var tower_r: float = 0.0
 var pilgrim_r: float = 0.0
 var up_rect: Rect2 = Rect2()
@@ -101,6 +115,7 @@ func update(v: Vector2) -> void:
 		arena = Rect2()
 		center = Vector2.ZERO
 		field_r = 0.0
+		unit_r = 0.0
 		tower_r = 0.0
 		pilgrim_r = 0.0
 		up_rect = Rect2()
@@ -117,10 +132,16 @@ func update(v: Vector2) -> void:
 	bar_h = maxf(BAR_MIN, v.y * BAR_FRAC)
 	pal_h = maxf(PAL_MIN, v.y * PAL_FRAC)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, v.y - bar_h - pal_h))
-	field_r = maxf(20.0, arena.size.y * 0.5)
+	# MERITKO KRESLENI: vepsany kruh do kratsi strany (jako driv) - z nej se
+	# pocita vez i poutnik, takze se zoom hry nemeni.
+	var short_side: float = minf(arena.size.x, arena.size.y)
+	unit_r = maxf(20.0, short_side * 0.5 - short_side * MARGIN_FRAC)
+	# SPAWNOVACI KRUH: dotyka se horniho i spodniho okraje herniho pruhu a je
+	# vetsi nez displej. Pod meritko nikdy nejde (na sirku zustane vepsany).
+	field_r = maxf(unit_r, arena.size.y * 0.5)
 	center = arena.position + arena.size * 0.5
-	tower_r = field_r * TOWER_FRAC
-	pilgrim_r = field_r * Game.PILGRIM_R_FRAC
+	tower_r = unit_r * Game.TOWER_R_FRAC
+	pilgrim_r = unit_r * Game.PILGRIM_R_FRAC
 	font_px = int(clampf(minf(v.x, v.y) * 0.042, 13.0, 30.0))
 	# HORNI PRUH: [stavovy text] [MENU] [Vylepsit]. Poradi od praveho okraje
 	# je dane tim, jak casto hrac na co klika - vylepseni je herni akce,

@@ -37,7 +37,16 @@ const SPAWN_GAP_PER_WAVE := 0.13
 # je z nej ODVOZENA, takze "cesta trva 8 s" plati na telefonu i na velkem
 # displeji; pevne pixely za sekundu by na male obrazovce znamenaly kratsi
 # dobu v ohne - a tim jinou hru.
+#
+# PLOCHA A MERITKO JSOU DVE RUZNA CISLA (Jan, Oct 2026: "Zoom měl zůstat
+# stejný. Jen se měly změnit rozměry jednotlivých zón."). Spawnovaci kruh je
+# vetsi nez displej, ale vez, poutnici a tahy zustavaji stejne velke:
+#   * `field_r` = SPAWNOVACI KRUH (odkud poutnici vstupuji, muze vest mimo obraz)
+#   * `unit_r`  = MERITKO KRESLENI (polomer stareho vepsaneho kruhu)
+# `tower_r` je z meritka ODVOZENY (`unit_r * TOWER_R_FRAC`) - nikdy se
+# nenastavuje zvlast, aby se dve cisla nemohla rozejit.
 var field_r: float = 300.0
+var unit_r: float = 300.0
 var tower_r: float = 30.0
 var center: Vector2 = Vector2.ZERO
 
@@ -62,9 +71,15 @@ func _init() -> void:
 	refresh_palette()
 
 
-func set_field(r: float, t: float, c: Vector2) -> void:
+# MERITKO KRESLENI VEZE. Je to podil MERITKA (`unit_r`), ne polomeru plochy -
+# plocha muze byt vetsi nez displej, ale vez ma porad stejnou velikost.
+const TOWER_R_FRAC := 0.12
+
+
+func set_field(r: float, u: float, c: Vector2) -> void:
 	field_r = maxf(r, 1.0)
-	tower_r = maxf(t, 1.0)
+	unit_r = maxf(u, 1.0)
+	tower_r = unit_r * TOWER_R_FRAC
 	center = c
 
 
@@ -370,7 +385,7 @@ func _prune() -> void:
 const PILGRIM_R_FRAC := 0.05
 
 func pilgrim_r() -> float:
-	return field_r * PILGRIM_R_FRAC
+	return unit_r * PILGRIM_R_FRAC
 
 
 # ---------------------------------------------------------------- VSTUP

@@ -52,7 +52,9 @@ func _check(cond: bool, msg: String) -> void:
 
 func _fresh() -> Game:
 	var g := Game.new()
-	g.set_field(300.0, 36.0, Vector2(500.0, 500.0))
+	# MERITKO = POLOMER PLOCHY (jednotkove rozvrzeni): hra pak ma ve vez stejne
+	# cisla jako driv (tower_r = 0.12 * 300 = 36) a testy meri pravidla, ne zoom.
+	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
 	return g
 
 
@@ -180,10 +182,15 @@ func _test_range() -> void:
 # plochy) daval ~2,5 s, coz bylo malo; dnes je zaklad 0,62 a cas roste s
 # vylepsenim. Mimo dostrel se nedeje nic, takze okno je i to, co hra umi.
 func _test_reaction_window() -> void:
+	# MERI SE NA ROZVRZENI TELEFONU, na kterem Jan hraje (390x844) - cisla
+	# z jednotkoveho rozvrzeni testu by o realne hre nerikala nic.
+	var lay := ScreenLayout.new()
+	lay.update(Vector2(390.0, 844.0))
 	var prev: float = -1.0
 	for lv in range(1, Tower.MAX_LEVEL + 1):
-		var g: Game = _fresh()
+		var g: Game = Game.new()
 		_quiet(g)
+		g.set_field(lay.field_r, lay.unit_r, lay.center)
 		g.tower.level = lv
 		# JINA BARVA: vez na modreho poutnika vubec nestrili, takze se meri
 		# cista cesta kruhem dostrelu (zadne poskozeni do mereni nezasahuje).

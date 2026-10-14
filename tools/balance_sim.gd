@@ -34,7 +34,7 @@ func _run() -> void:
 	# kruh je vetsi nez displej), takze opsana cisla by merila jinou hru.
 	var l := ScreenLayout.new()
 	l.update(Vector2(390.0, 844.0))
-	g.set_field(l.field_r, l.tower_r, l.center)
+	g.set_field(l.field_r, l.unit_r, l.center)
 	var dt: float = 1.0 / 60.0
 	var t: float = 0.0
 	var last_wave: int = 0

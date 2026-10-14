@@ -25,7 +25,7 @@ const MAX_LEVEL := 3
 # který určuje vzdálenost zjišťování nepřátel je tak malý, že hráč nemá moc času
 # reagovat. Zjišťování by mělo být někde mezi těmito dvěma kruhy." Zaklad byl
 # 0,40 polomeru plochy, coz dava jen ~2,5 s v ohne - hrac nestihne zareagovat.
-# 0,62 dava ~4,6 s (meri to `test_core._test_reaction_window`) a upgrade
+# 0,62 dava ~4,7 s (meri to `test_core._test_reaction_window`) a upgrade
 # k tomu prida. Strop zustava pod 0,9, aby dostrel nikdy neobsahl celou plochu.
 const RANGE_FRACS := [0.62, 0.74, 0.86]
 const DPS := [30.0, 48.0, 72.0]

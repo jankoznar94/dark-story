@@ -107,6 +107,34 @@ func _test_resolution(v: Vector2) -> void:
 		"%s: poutnik ma polomer %.1f px, barva a tvar nejdou precist" % [tag, l.pilgrim_r])
 	_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
 
+	# 2b) ZOOM SE NEMENI. Vez i poutnik jsou z MERITKA (vepsany kruh do kratsi
+	# strany herniho pruhu), NIKDY z polomeru plochy - jinak se spawnovacim
+	# kruhem "priblizi" cela hra, protoze plocha je ted vetsi nez displej.
+	# (Jan: "Jediné, cos udělala je to, žes celou hru zoomnula.")
+	var short_side: float = minf(l.arena.size.x, l.arena.size.y)
+	var want_unit: float = short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC
+	_check(absf(l.unit_r - want_unit) < 0.5,
+		"%s: meritko kresleni neni vepsany kruh do kratsi strany (%.1f, ma byt %.1f)"
+		% [tag, l.unit_r, want_unit])
+	_check(is_equal_approx(l.tower_r, l.unit_r * Game.TOWER_R_FRAC),
+		"%s: vez se pocita z polomeru plochy, ne z meritka (zoom se zmenil)" % tag)
+	_check(is_equal_approx(l.pilgrim_r, l.unit_r * Game.PILGRIM_R_FRAC),
+		"%s: poutnik se pocita z polomeru plochy, ne z meritka (zoom se zmenil)" % tag)
+	# DVE CISLA O VEZI ZNAMENA DVE PRAVDY: hra si polomer veze odvozuje z
+	# meritka taky, takze se musi rovnat rozvrzeni (stejna past jako ED_COUNT).
+	var gz := Game.new()
+	gz.set_field(l.field_r, l.unit_r, l.center)
+	_check(is_equal_approx(gz.tower_r, l.tower_r),
+		"%s: hra ma jiny polomer veze nez rozvrzeni (%.2f vs %.2f)"
+		% [tag, gz.tower_r, l.tower_r])
+	if tag == "390x844":
+		# CISLA Z DISPLEJE, NA KTEREM JAN HRAJE: vez 22 px a poutnik 9,2 px -
+		# presne jako pred zmensenim plochy. Kdyby se zoom pohnul, spadne to.
+		_check(absf(l.tower_r - 22.0) < 0.3,
+			"na 390x844 ma vez %.1f px (ma byt 22)" % l.tower_r)
+		_check(absf(l.pilgrim_r - 9.17) < 0.3,
+			"na 390x844 ma poutnik %.2f px (ma byt 9,2)" % l.pilgrim_r)
+
 	# 3) TLACITKO VYLEPSENI SE VEJDE DO PRUHU
 	_check(l.up_rect.position.x >= 0.0 and l.up_rect.end.x <= v.x + 0.5,
 		"%s: tlacitko vylepseni preleza displej" % tag)
@@ -138,7 +166,7 @@ func _test_resolution(v: Vector2) -> void:
 	# a stribrne, ktere maji vlastni pravidla) musi stihnout umrit v kruhu
 	# dostrelu zakladni veze.
 	var g := Game.new()
-	g.set_field(l.field_r, l.tower_r, l.center)
+	g.set_field(l.field_r, l.unit_r, l.center)
 	var palette: Array = Hue.palette_at(10)
 	for h in [Hue.RED, Hue.YELLOW, Hue.BLUE, Hue.GREEN]:
 		_check(palette.has(h), "%s: barva %s neni v palete" % [tag, Hue.name_of(h)])

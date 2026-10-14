@@ -61,7 +61,7 @@ func _refield() -> void:
 	# `layout.update` pocita VSE, co jde z velikosti okna (menu, nastaveni,
 	# dotaz pri odchodu) - tady se doplni jen to, co vi az hra: pocet barev.
 	layout.update(get_viewport_rect().size)
-	game.set_field(layout.field_r, layout.tower_r, layout.center)
+	game.set_field(layout.field_r, layout.unit_r, layout.center)
 	layout.layout_palette(game.palette.size())
 
 
