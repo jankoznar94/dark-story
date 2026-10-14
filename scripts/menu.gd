@@ -156,6 +156,15 @@ func request_update() -> void:
 	  const note = (c) => { window.%s = c; };
 	  try {
 	    if (!('serviceWorker' in navigator)) { note('n/a'); return 'n/a'; }
+	    // SERVICE WORKER SE REGISTRUJE ASYNC. Kdyz hrac klepne na Update hned
+	    // po startu hry, je seznam registraci jeste PRAZDNY a hra by jen
+	    // rekla "neni co aktualizovat" - pritom staci chvilku pockat. Ceka se
+	    // proto na AKTIVNI registraci, ale S LIMITEM: `serviceWorker.ready`
+	    // bez registrace visi VECNE (a hra by se uz nikdy neozvala).
+	    await Promise.race([
+	      navigator.serviceWorker.ready,
+	      new Promise((r) => setTimeout(() => r(null), 3000))
+	    ]);
 	    const regs = await navigator.serviceWorker.getRegistrations();
 	    if (regs.length === 0) { note('none'); return 'none'; }
 	    for (const r of regs) { await r.update(); }
