@@ -28,6 +28,7 @@ func _init() -> void:
 	_run("posila se jen zivel s protikladem", _test_spawn_needs_opposite)
 	_run("neutralni cesta neposila nikoho", _test_neutral_lane_sends_nobody)
 	_run("diamant", _test_diamond_survives)
+	_run("zakotvene levely", _test_builtin_levels)
 	if fails.is_empty():
 		print("GRID_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -706,6 +707,36 @@ func _test_multi_start() -> void:
 
 # Rozdel -> dve paralelni trasy -> spoj. Presne to, co stary stromovy
 # model neumel: usek, do ktereho se vleji dve cesty.
+# ZAKOTVENE LEVELY. Kod levelu se do `BuiltinLevels` vklada DOSLOVA a nikdo ho
+# neupravuje rucne - takze se hlida, ze kazdy zakotveny level jde precist,
+# ze plati a ze se znak po znaku zapise ZPET presne tak, jak je ulozeny.
+# Bez toho by se "opraveny" kod mohl tise rozejit s tim, co je ve hre.
+func _test_builtin_levels() -> void:
+	_check(BuiltinLevels.LEVELS.size() >= 1, "hra nema ani jeden zakotveny level")
+	for i in range(BuiltinLevels.LEVELS.size()):
+		var e: Dictionary = BuiltinLevels.LEVELS[i]
+		var nm: String = str(e.get("name", ""))
+		var code: String = str(e.get("code", ""))
+		_check(nm != "", "level %d nema jmeno v seznamu" % i)
+		_check(not code.is_empty(), "level %d (%s) nema kod" % [i, nm])
+		var lv := Level.from_code(code)
+		_check(lv != null, "level %d (%s) se neda precist z kodu" % [i, nm])
+		if lv == null:
+			continue
+		var errs: Array = lv.validate()
+		_check(errs.is_empty(), "level %d (%s) neplati: %s" % [i, nm, str(errs)])
+		_check(lv.to_code() == code,
+			"level %d (%s) se zapisuje jinak, nez je ulozeny" % [i, nm])
+		# Z MAPY SE MUSI DAT POSILAT POUTNIKY - mapa bez protikladu by se
+		# hrala do prazdna.
+		_check(not lv.spawn_elements().is_empty(),
+			"level %d (%s) neposila zadne poutniky" % [i, nm])
+		_check(not lv.start_nodes().is_empty(), "level %d (%s) nema start" % [i, nm])
+	var first := Level.from_code(str(BuiltinLevels.LEVELS[0]["code"]))
+	if first != null:
+		_check(first.lane_count() > 0, "prvni level nema zadny usek")
+
+
 func _test_diamond_survives() -> void:
 	var lv := Level.new()
 	var start := lv.add_node(1, 5, Level.START)

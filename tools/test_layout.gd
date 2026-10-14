@@ -138,6 +138,30 @@ func _strokes_scale() -> void:
 	# ten pripad, kdy hrac potrebuje videt, co se stalo.
 	_check(src.contains("for item in game.junction_flashes_at(n):"),
 		"kresleni vyhybky bere jen jeden efekt - shluk by nebyl videt")
+	# PAUZA: tlacitko je jen tehdy funkci, kdyz se na nej da klepnout a kdyz
+	# hra pod pauzou opravdu stoji.
+	_check(src.contains("if layout.hud_pause.has_point(pos):"),
+		"tlacitko pauzy se nedá zmacknout")
+	_check(src.contains("game.toggle_pause()"), "klepnuti na pauzu hru nezastavi")
+	_check(src.contains("not game.is_paused()"),
+		"obrazovka kroku hrou i pod pauzou - pauza by nic nedelala")
+	_check(src.contains("\"PAUZA\""), "tlacitko pauzy nema popisek")
+	# VYHRA: level se musi zapsat a hrac se musi vratit do vyberu levelu.
+	_check(src.contains("campaign.mark_cleared(level_index)"),
+		"vyhra se neoznaci (level by zustal zamceny)")
+	_check(src.contains("func _open_levels()") and src.contains("_open_levels()"),
+		"po vyhre se hrac nevrátí do vyberu levelu")
+	_check(src.contains("campaign.is_unlocked(i)"),
+		"vyber levelu necte, co je odemcene")
+	# PREJMENOVANI A SMAZANI v seznamu editoru: tlacitka musi neco delat.
+	_check(src.contains("editor.begin_rename(key)"), "tlacitko nazvu nic nedela")
+	_check(src.contains("editor.ask_delete(key)"), "tlacitko smazani nic nedela")
+	_check(src.contains("editor.name_grid()"),
+		"klavesnice se nebere z editoru - rozvrzeni by se rozejlo")
+	var edsrc: String = FileAccess.get_file_as_string("res://scripts/editor.gd")
+	_check(edsrc.contains("func name_grid()"), "editor nema klavesnici pro nazev")
+	_check(edsrc.contains("Level.delete_key("), "editor neumi level smazat")
+	_check(edsrc.contains("Level.rename_key("), "editor neumi level prejmenovat")
 
 
 # Lezi bod na okraji displeje (areny)? Pouziva se na vstup a cile: poutnici
@@ -389,3 +413,68 @@ func _one(w: int, h: int) -> void:
 				tag, si, gap_px, ScreenLayout.SET_GAP * layout.ui])
 		_check(chk.end.x <= rowr.end.x - ScreenLayout.SET_PAD * layout.ui + 0.6,
 			"%s: zaskrtravatko radku %d je nalepene na okraji radku" % [tag, si])
+
+	# --- PAUZA A NAVRAT DO EDITORU v hornim panelu. Obe tlacitka jsou MIMO
+	# herni desku (deska zustava bez ovladani) a nad dotykovym minimem -
+	# jinak by si hrac nemel kde hru zastavit.
+	for pr in [layout.hud_pause, layout.hud_back]:
+		var prr: Rect2 = pr
+		_check(prr.position.x >= -0.6 and prr.end.x <= float(w) + 0.6,
+			"%s: tlacitko panelu utika vodorovne (%.1f..%.1f)" % [tag, prr.position.x, prr.end.x])
+		_check(prr.position.y >= -0.6 and prr.end.y <= layout.hud_h + 0.6,
+			"%s: tlacitko panelu leze z horniho pruhu (%.1f..%.1f)" % [tag, prr.position.y, prr.end.y])
+		_check(prr.size.y >= ScreenLayout.MIN_TOUCH * 0.8 - 0.6,
+			"%s: tlacitko panelu je nizke %.1f px" % [tag, prr.size.y])
+	_check(not layout.hud_pause.intersects(layout.hud_back),
+		"%s: pauza a navrat do editoru se prekryvaji" % tag)
+	_check(layout.hud_pause.end.y <= layout.arena.position.y + 0.6,
+		"%s: pauza leze na herni desku" % tag)
+
+	# --- VYBER LEVELU: kazdy radek musi byt na displeji, nad dotykovym
+	# minimem a bez prekryvu se ZPET. Klepnuti na radek hraje level, takze
+	# spatne rozvrzeni znamena, ze se hrac netrefi.
+	layout.levels_panel(Campaign.level_count())
+	_check(layout.levels_rows.size() == layout.levels_fit + 1,
+		"%s: vyber levelu ma %d radku, ceka se %d" % [tag, layout.levels_rows.size(),
+			layout.levels_fit + 1])
+	var lb: Array = layout.all_level_buttons()
+	_check(lb.size() >= 2, "%s: vyber levelu nema ani radek a ZPET" % tag)
+	for li in range(lb.size()):
+		var lr: Rect2 = lb[li]
+		_check(lr.position.x >= -0.6 and lr.end.x <= float(w) + 0.6,
+			"%s: cíl vyberu levelu %d utika vodorovne" % [tag, li])
+		_check(lr.position.y >= -0.6 and lr.end.y <= float(h) + 0.6,
+			"%s: cíl vyberu levelu %d utika svisle (%.1f..%.1f)" % [tag, li,
+				lr.position.y, lr.end.y])
+		_check(lr.size.y >= ScreenLayout.MIN_TOUCH - 0.6,
+			"%s: cíl vyberu levelu %d je nizky %.1f px" % [tag, li, lr.size.y])
+		for lj in range(li + 1, lb.size()):
+			var lr2: Rect2 = lb[lj]
+			_check(not lr.intersects(lr2),
+				"%s: cile vyberu levelu %d a %d se prekryvaji" % [tag, li, lj])
+
+	# --- KLAVESNICE PRO PREJMENOVANI: rozvrzeni musi mit PRESNE tolik klaves,
+	# kolik jich editor nabizi, vsechny na displeji a dotykove.
+	var ed := Editor.new()
+	var grid: Array = ed.name_grid()
+	layout.name_keys(ed.name_row_counts())
+	_check(layout.ed_name_rows.size() == grid.size(),
+		"%s: klavesnice ma %d radku, editor %d" % [tag, layout.ed_name_rows.size(),
+			grid.size()])
+	var keys: Array = layout.all_name_keys()
+	var nkeys: int = 0
+	for row in grid:
+		nkeys += (row as Array).size()
+	_check(keys.size() == nkeys, "%s: rozvrzeno %d klaves, editor jich ma %d" % [
+		tag, keys.size(), nkeys])
+	for ki in range(keys.size()):
+		var kr: Rect2 = keys[ki]
+		_check(kr.position.x >= -0.6 and kr.end.x <= float(w) + 0.6,
+			"%s: klavesa %d utika vodorovne" % [tag, ki])
+		_check(kr.position.y >= -0.6 and kr.end.y <= float(h) + 0.6,
+			"%s: klavesa %d utika svisle" % [tag, ki])
+		_check(kr.size.y >= ScreenLayout.MIN_TOUCH - 0.6,
+			"%s: klavesa %d je nizka %.1f px" % [tag, ki, kr.size.y])
+		for kj in range(ki + 1, keys.size()):
+			var kr2: Rect2 = keys[kj]
+			_check(not kr.intersects(kr2), "%s: klavesy %d a %d se prekryvaji" % [tag, ki, kj])

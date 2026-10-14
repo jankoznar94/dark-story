@@ -152,7 +152,29 @@ const TOOL_KINDS := [Level.NEUTRAL, Level.START, Level.CIL, Level.VYHYBKA,
 # data), takze se jich par desitek vejde i na telefon.
 const UNDO_MAX := 30
 
-enum { MODE_EDIT, MODE_LIST }
+enum { MODE_EDIT, MODE_LIST, MODE_NAME }
+
+# --- PREJMENOVANI LEVELU (klavesnice na obrazovce) -------------------------
+# Jan (Oct 2026): "Přidáme možnost názvy levelů v seznamu editoru měnit,
+# jednotlivé levely mazat, atd."
+#
+# Text na telefonu neni cim napsat: hra nema zadny textovy vstup (zadne Button
+# nody, zadne tema) a nativni klavesku si na webu nevydupeme vsude. Klavesnice
+# je proto NAKRESLENA hrou - vzdy stejna, na vsech platformach a da se
+# otestovat headless.
+#
+# ZNAK JE CISLO ZNAKU (kladne), AKCE JSOU ZAPORNE. Jedno misto, kde se
+# rozhoduje, co ktera klavesa dela.
+const NAME_BACK := -1        # smazat posledni znak
+const NAME_CLEAR := -2       # smazat cely nazev
+const NAME_OK := -3          # ulozit
+const NAME_CANCEL := -4      # zrusit
+const NAME_MAX := 18
+# Znaky, ktere jdou v nazvu pouzit. Mala pismena, cislice a pomlcka - nazev
+# levelu neni veta, je to jmenovka (a velka pismena by na dotykovem displeji
+# znamenala druhou rovinu klavesnice).
+const NAME_CHARS := "abcdefghijklmnopqrstuvwxyz0123456789-"
+const NAME_PER_ROW := 10
 
 var level: Level = null
 var tool: int = TOOL_ROAD
@@ -184,6 +206,15 @@ var code: String = ""
 var code_show: bool = false
 var local_name: String = ""
 var mode: int = MODE_EDIT
+# PREJMENOVANI: ktery soubor se prejmenovava (`rename_key`) a co je zatim
+# napsane (`name_text`). Text se do souboru zapise az stiskem "hotovo" -
+# kazdy znak by jinak znamenal prejmenovani souboru.
+var rename_key: String = ""
+var name_text: String = ""
+# SMAZANI NA DVA KLEPNUTI. Soubor je jedina kopie hracovy prace, takze prvni
+# klepnuti jen rekne, co se stane; maze se druhe klepnuti na TOTEZ tlacitko.
+# Klepnuti jinam cekani zrusi (viz `clear_pending_delete`).
+var pending_delete: String = ""
 # KTERY PANEL JE OTEVRENY. Panel prekryva spodni kus desky, takze klepnuti na
 # desku ho zavre (aby se pod panelem omylem nekladl prvek) - proto je to stav,
 # ktery znaji kresleni, klepnuti i rozvrzeni.
@@ -377,6 +408,9 @@ func is_list() -> bool:
 
 func open_list() -> void:
 	mode = MODE_LIST
+	# Cekani na potvrzeni smazani plati jen pro tu navstevu seznamu, ve
+	# ktere vzniklo - jinak by druhe klepnuti prislo o minutu pozdeji.
+	pending_delete = ""
 
 
 func close_list() -> void:
@@ -394,6 +428,8 @@ func list_items() -> Array:
 
 func pick(item: Dictionary) -> void:
 	var kind: String = str(item["kind"])
+	# Nacteni levelu rusi cekani na smazani: hrac prave dela neco jineho.
+	pending_delete = ""
 	if kind == "new":
 		reset()
 		return
@@ -416,6 +452,143 @@ func pick(item: Dictionary) -> void:
 	else:
 		status = "Level %s se nepodařilo načíst." % key
 	close_list()
+
+
+# =========================================================================
+# PREJMENOVANI A SMAZANI ULOZENYCH LEVELU
+#
+# Jan (Oct 2026): "Přidáme možnost názvy levelů v seznamu editoru měnit,
+# jednotlivé levely mazat, atd." Obe veci se delaji z RADKU SEZNAMU, kde hrac
+# na level vidi - nikam se neodchazi.
+# =========================================================================
+
+func is_name() -> bool:
+	return mode == MODE_NAME
+
+
+# KLAVESNICE PRO PREJMENOVANI. Radky jdou shora dolu, kazda polozka je
+# {"label", "act"}: `act` >= 0 je znak (jeho kod), zaporna cisla jsou akce.
+# Jeden zdroj pro kresleni, klepnuti i rozvrzeni - pocet klaves v radku se
+# z toho pocita (`ScreenLayout.name_keys`), takze se klavesnice nemuze
+# rozvrstvit jinak, nez vypada.
+func name_grid() -> Array:
+	var rows: Array = []
+	var row: Array = []
+	for i in range(NAME_CHARS.length()):
+		row.append({"label": NAME_CHARS[i], "act": NAME_CHARS.unicode_at(i)})
+		if row.size() >= NAME_PER_ROW:
+			rows.append(row)
+			row = []
+	if not row.is_empty():
+		rows.append(row)
+	rows.append([
+		{"label": "smazat znak", "act": NAME_BACK},
+		{"label": "smazat vše", "act": NAME_CLEAR},
+		{"label": "hotovo", "act": NAME_OK},
+		{"label": "zrušit", "act": NAME_CANCEL},
+	])
+	return rows
+
+
+# POCTY KLAVES V RADcICH pro rozvrzeni. Bere se z `name_grid`, aby se obe
+# strany nemohly rozejit (klavesa nakreslena jinde, nez kde se macka, je ta
+# nejhorsi chyba UI).
+func name_row_counts() -> Array:
+	var out: Array = []
+	for row in name_grid():
+		out.append(row.size())
+	return out
+
+
+func begin_rename(key: String) -> void:
+	if key.is_empty():
+		return
+	rename_key = key
+	name_text = key
+	mode = MODE_NAME
+	pending_delete = ""
+	status = "Název levelu — piš na klávesnici, pak „hotovo“."
+
+
+# STISK KLAVESY. Zapisuje se JEN do textu; soubor se prejmenuje az "hotovo".
+func name_press(item: Dictionary) -> void:
+	var act: int = int(item.get("act", -1))
+	if act >= 0:
+		if name_text.length() < NAME_MAX:
+			name_text += String.chr(act)
+		return
+	match act:
+		NAME_BACK:
+			if name_text.length() > 0:
+				name_text = name_text.substr(0, name_text.length() - 1)
+		NAME_CLEAR:
+			name_text = ""
+		NAME_OK:
+			commit_name()
+		NAME_CANCEL:
+			close_name()
+			status = "Přejmenování zrušeno."
+
+
+# ULOZENI NOVEHO NAZVU. Je to PRESUN SOUBORU (viz `Level.rename_key`): kdyby
+# se jen zapsalo nove jmeno, zustal by v seznamu i stary soubor a hrac by mel
+# dve verze te same mapy.
+#
+# Kdyz je prejmenovavany level prave otevreny, drzi si editor i jeho jmeno -
+# jinak by dalsi autosave zapsal praci pod STARYM jmenem a smazany level by
+# se vratil zpet.
+func commit_name() -> void:
+	var want: String = Level.safe_key(name_text)
+	if want.is_empty():
+		status = "Název nesmí být prázdný."
+		return
+	if want == rename_key:
+		close_name()
+		status = "Název zůstal stejný."
+		return
+	if not Level.rename_key(rename_key, want):
+		status = "Název %s už existuje (nebo level zmizel) — vyber jiný." % want
+		return
+	if local_name == rename_key:
+		local_name = want
+		if level != null:
+			level.name = want
+	close_name()
+	status = "Přejmenováno: %s → %s." % [rename_key, want]
+
+
+func close_name() -> void:
+	mode = MODE_EDIT
+	rename_key = ""
+	name_text = ""
+
+
+# SMAZANI NA DVE KLEPNUTI. Prvni klepnuti rekne, co se stane, druhe maze -
+# soubor je jedina kopie hracovy prace a omylem smazany level se neda vratit.
+func ask_delete(key: String) -> void:
+	if key.is_empty():
+		return
+	if pending_delete != key:
+		pending_delete = key
+		status = "Smazat level %s? Klepni na „smazat“ znovu." % key
+		return
+	pending_delete = ""
+	var was_open: bool = key == local_name
+	if not Level.delete_key(key):
+		status = "Level %s se nepodařilo smazat." % key
+		return
+	# SMAZANY LEVEL SE NESMI VRATIT AUTOSAVEM. Kdyz ho hrac mel otevreny,
+	# drzi ho editor v pameti a dalsi zmena by ho znovu ulozila - takze se
+	# z pameti uklidi taky (a "zpet" ho umi vratit, dokud je v historii).
+	if was_open:
+		reset()
+		status = "Level %s smazán (a v editoru je prázdná mřížka)." % key
+	else:
+		status = "Level %s smazán." % key
+
+
+func clear_pending_delete() -> void:
+	pending_delete = ""
 
 
 # =========================================================================

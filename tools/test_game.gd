@@ -35,6 +35,10 @@ func _init() -> void:
 	_run("poutnik dojde do cile", _test_reaches_exit)
 	_run("vlny: pocet, poradi a mezery", _test_wave_spawns)
 	_run("kazda vlna je tezsi", _test_waves_get_harder)
+	_run("boss vlny (mini-boss v 5., boss v 10.)", _test_boss_waves)
+	_run("level ma deset vln", _test_level_ends_after_ten_waves)
+	_run("pauza zastavi hru", _test_pause)
+	_run("postup hrou (odemceni dalsiho levelu)", _test_campaign_progress)
 	_run("pocet poutniku je vlastnost levelu", _test_wave_count_is_level_data)
 	_run("determinismus", _test_determinism)
 	_run("prohra pri zahlceni", _test_pile_up_loses)
@@ -990,11 +994,17 @@ func _test_waves_get_harder() -> void:
 	var prev_hp: float = -1.0
 	var prev_cnt: int = 0
 	var prev_kinds: int = 0
-	for n in range(1, 13):
+	# LEVEL MA DESET VLN (Jan: "Levely by měly mít jen 10 kol") - vic jich
+	# neexistuje, takze se testuje presne tech deset.
+	for n in range(1, Game.WAVE_MAX + 1):
 		var c: Dictionary = g.wave_counts(n)
 		var hp: float = float(c["basic"])
 		hp += float(c["light"]) * Enemy.tier_hp(Enemy.TIER_LIGHT)
 		hp += float(c["heavy"]) * Enemy.tier_hp(Enemy.TIER_HEAVY)
+		# MINI-BOSS A BOSS MAJI VLASTNI ZIVOTY - kdyby se nepocitali, vysla
+		# by boss vlna jako nejlehci z cele hry.
+		hp += float(c["mini"]) * Enemy.tier_hp(Enemy.TIER_MINI)
+		hp += float(c["boss"]) * Enemy.tier_hp(Enemy.TIER_BOSS)
 		# DVOJZIVELNY ma zivoty zakladniho (dva zivly jsou vyhoda v obrane,
 		# ne vic zivotu).
 		hp += float(c["dual"])
@@ -1012,21 +1022,162 @@ func _test_waves_get_harder() -> void:
 		prev_cnt = cnt
 		prev_kinds = kinds
 	# NOVE DRUHY SE OHLAZUJI POSTUPNE: prvni dve vlny zakladni, ve treti
-	# pribude lehky, v pate tezky a v sedme dvojzivelny.
+	# pribude lehky, v pate tezky a MINI-BOSS, v sedme dvojzivelny a v desate
+	# BOSS.
 	_check(_kinds_in(g, 1) == 1, "prvni vlna nema jediny druh (%d)" % _kinds_in(g, 1))
 	_check(_kinds_in(g, 3) == 2, "ve treti vlne nepribyl lehky (%d druhu)" % _kinds_in(g, 3))
-	_check(_kinds_in(g, 5) == 3, "v pate vlne nepribyl tezky (%d druhu)" % _kinds_in(g, 5))
-	_check(_kinds_in(g, 7) == 4, "v sedme vlne nepribyl dvojzivelny (%d druhu)" % _kinds_in(g, 7))
+	_check(_kinds_in(g, 5) == 4, "v pate vlne nepribyl tezky s mini-bossem (%d druhu)"
+		% _kinds_in(g, 5))
+	_check(_kinds_in(g, 7) == 4, "v sedme vlne nepribyl dvojzivelny (%d druhu)"
+		% _kinds_in(g, 7))
+	_check(_kinds_in(g, Game.WAVE_MAX) == 5, "v posledni vlne neni boss (%d druhu)"
+		% _kinds_in(g, Game.WAVE_MAX))
 
 
 # Kolik DRUHU vlna posila (0 poutniku se nepocita).
 func _kinds_in(g: Game, n: int) -> int:
 	var c: Dictionary = g.wave_counts(n)
 	var k: int = 0
-	for key in ["basic", "light", "heavy", "dual"]:
+	for key in ["basic", "light", "heavy", "dual", "mini", "boss"]:
 		if int(c[key]) > 0:
 			k += 1
 	return k
+
+
+# BOSS VLNY. Jan (Oct 2026): "5. Kolo by měl být trochu mini-boss fight,
+# 10. Kolo boss fight." Test meri to, co se neda poznat okem: ve kterych
+# vlnach boss opravdu je, ze je silnejsi nez tezky poutnik a ze se jeho
+# pocet NENASOBI obtiznosti levelu (jinak by z tezsiho levelu bylo zdivo).
+func _test_boss_waves() -> void:
+	var g := _new_game()
+	for n in range(1, Game.WAVE_MAX + 1):
+		var c: Dictionary = g.wave_counts(n)
+		var is_mini: bool = n == Game.MINI_BOSS_WAVE
+		var is_boss: bool = n == Game.BOSS_WAVE
+		_check(int(c["mini"]) == (1 if is_mini else 0),
+			"vlna %d ma %d mini-bossu (ceka se %d)" % [n, int(c["mini"]), 1 if is_mini else 0])
+		_check(int(c["boss"]) == (1 if is_boss else 0),
+			"vlna %d ma %d bossu (ceka se %d)" % [n, int(c["boss"]), 1 if is_boss else 0])
+	# PLAN VLNY OBSAHUJE TY DRUHY. Tabulka je jen data - hra posila z planu.
+	var plan5: Array = g.wave_plan(Game.MINI_BOSS_WAVE)
+	var plan10: Array = g.wave_plan(Game.BOSS_WAVE)
+	_check(_tier_in_plan(plan5, Enemy.TIER_MINI),
+		"mini-boss neni v planu %d. vlny" % Game.MINI_BOSS_WAVE)
+	_check(_tier_in_plan(plan10, Enemy.TIER_BOSS),
+		"boss neni v planu %d. vlny" % Game.BOSS_WAVE)
+	_check(not _tier_in_plan(g.wave_plan(1), Enemy.TIER_BOSS), "boss chodi uz v prvni vlne")
+	_check(Enemy.tier_hp(Enemy.TIER_BOSS) > Enemy.tier_hp(Enemy.TIER_HEAVY),
+		"boss nema vic zivotu nez tezky poutnik")
+	_check(Enemy.tier_hp(Enemy.TIER_MINI) > Enemy.tier_hp(Enemy.TIER_HEAVY),
+		"mini-boss nema vic zivotu nez tezky poutnik")
+	_check(Enemy.tier_speed(Enemy.TIER_BOSS) < Enemy.tier_speed(Enemy.TIER_BASIC),
+		"boss neni pomalejsi nez zakladni poutnik")
+	# POCET BOSSU JE VZDY JEDEN - i na levelu, ktery posila dvojnasobek
+	# poutniku. Boss je bytost sve vlny, ne dav.
+	var hard := Level.base()
+	hard.wave_count = 12
+	var g2 := _new_game(hard)
+	_check(int(g2.wave_counts(Game.BOSS_WAVE)["boss"]) == 1,
+		"tezsi level posila %d bossu" % int(g2.wave_counts(Game.BOSS_WAVE)["boss"]))
+	_check(g2.wave_size(Game.BOSS_WAVE) > g.wave_size(Game.BOSS_WAVE),
+		"tezsi level neposila vic poutniku v boss vlne")
+
+
+func _tier_in_plan(plan: Array, tier: int) -> bool:
+	for item in plan:
+		if int((item as Dictionary)["tier"]) == tier:
+			return true
+	return false
+
+
+# DOHRANY LEVEL. Po desate vlnne uz hra neposila dalsi - prepne se do stavu
+# "won" a obrazovka hrace vrati do vyberu levelu.
+func _test_level_ends_after_ten_waves() -> void:
+	var lv := Level.base()
+	# PRAZDNY POUTNICI: nechceme hrat deset vln, chceme videt, co hra udela,
+	# kdyz posledni vlna skonci. Vlna bez poutniku se doresi hned.
+	var g := _new_game(lv)
+	g.auto_wave = false
+	g.wave = Game.WAVE_MAX
+	g.wave_done()
+	_check(g.is_won(), "po desate vlne hra neskoncila (faze %s)" % g.phase)
+	_check(g.phase == "won", "faze po vyhre je %s" % g.phase)
+	# DOHRANA HRA SE UZ NEHNE: kdyby `step` dal neco delal, mohl by hrac
+	# prijit o zivot po vyhre.
+	var gold_before: int = g.gold
+	g.run_for(2.0)
+	_check(g.gold == gold_before and g.lives == lv.lives,
+		"dohrana hra se porad meni (zlato %d -> %d)" % [gold_before, g.gold])
+	# DEVATA VLNA LEVEL NEDOHRAJE.
+	var g2 := _new_game(Level.base())
+	g2.wave = Game.WAVE_MAX - 1
+	g2.wave_done()
+	_check(not g2.is_won(), "level skoncil uz po %d. vlne" % (Game.WAVE_MAX - 1))
+	_check(g2.phase == "build", "po predposledni vlne neni priprava (je %s)" % g2.phase)
+
+
+# PAUZA. Hra se pod pauzou nesmi hybat - jinak by tlacitko nic nedelalo.
+func _test_pause() -> void:
+	var g := _new_game()
+	g.auto_wave = false
+	g.phase = "wave"
+	g.plan = g.wave_plan(1)
+	g.spawn_index = 0
+	g.spawn_wait = 99.0
+	var e: Enemy = g.debug_spawn(Element.FIRE)
+	_check(e != null, "poutnik se neobjevil")
+	if e == null:
+		return
+	var s0: float = e.s
+	g.toggle_pause()
+	_check(g.is_paused(), "hra se nepozastavila")
+	g.step(1.0)
+	_check(absf(e.s - s0) < 0.001, "pod pauzou se poutnik pohnul (%.3f -> %.3f)" % [s0, e.s])
+	g.toggle_pause()
+	_check(not g.is_paused(), "hra se nerozjela")
+	g.step(1.0)
+	_check(e.s > s0, "po zruseni pauzy se poutnik nepohnul")
+	# DOHRANA A PROHRANA PARTIE SE NEDAJI POZASTAVIT: tlacitko by slibovalo
+	# neco, co se uz nedeje.
+	g.phase = "lost"
+	g.toggle_pause()
+	_check(not g.is_paused(), "prohranou partii jde pozastavit")
+	_check(g.phase == "lost", "prohrana partie se zmenila na %s" % g.phase)
+
+
+# POSTUP HROU. Jan (Oct 2026): "Po výhře levelu se musí hráč vrátit zpět do
+# výběru levelů, musí se odemknout následující level a vyhraný se musí označit
+# jako vyhraný."
+func _test_campaign_progress() -> void:
+	var c := Campaign.new()
+	c.reset()
+	_check(Campaign.level_count() == BuiltinLevels.LEVELS.size(),
+		"kampan ma %d levelu, zakotvenych je %d" % [Campaign.level_count(),
+			BuiltinLevels.LEVELS.size()])
+	_check(Campaign.level_count() >= 1, "kampan nema ani jeden level")
+	_check(c.is_unlocked(0), "prvni level neni odemceny")
+	_check(not c.is_cleared(0), "prvni level je vyhrany, i kdyz se nehral")
+	if Campaign.level_count() < 2:
+		# S jedinym levelem nema "odemkne se dalsi" co zkoumat - zbytek testu
+		# by meril neco, co v datech neni.
+		return
+	_check(not c.is_unlocked(1), "druhy level je odemceny pred vyhrou prvniho")
+	_check(c.mark_cleared(0), "vyhra prvniho levelu se nezapsala")
+	_check(c.is_cleared(0), "prvni level neni oznaceny jako vyhrany")
+	_check(c.is_unlocked(1), "po vyhre prvniho levelu se druhy neodemkl")
+	_check(not c.mark_cleared(0), "druha vyhra se zapsala znovu")
+	# POSTUP SE UKLADA - hrac si ho nesmi ztratit zavrenim prohlizece.
+	var again := Campaign.new()
+	again.load_from_disk()
+	_check(again.is_cleared(0), "postup se neulozil na disk")
+	# A LEVEL SE Z KODU OPRAVDU POSTAVI (jinak by vyber levelu nic nespustil).
+	var lv: Level = Campaign.make_level(0)
+	_check(lv != null, "prvni level se neda postavit z kodu")
+	if lv != null:
+		_check(lv.validate().is_empty(), "prvni level neplati: %s" % str(lv.validate()))
+		_check(lv.name == Campaign.level_name(0),
+			"level se jmenuje %s, v seznamu je %s" % [lv.name, Campaign.level_name(0)])
+	c.reset()
 
 
 # POCET POUTNIKU JE VLASTNOST LEVELU. `Level.wave_count` je pocet v prvni

@@ -14,7 +14,7 @@ extends RefCounted
 # instalaci jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim
 # okne) a ma manifest + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, EDITOR, GUIDE, SETTINGS, BATTLE }
+enum View { MENU, LEVELS, EDITOR, GUIDE, SETTINGS, BATTLE }
 
 const TITLE := "ZILY"
 const SUBTITLE := "elementární poutníci na žilách many"
@@ -24,12 +24,16 @@ const SUBTITLE := "elementární poutníci na žilách many"
 # seznamy (jmena v Menu, cisla v game_view) a stacilo pridat tlacitko
 # doprostred, aby EDITOR vedl na NAVOD: hrac klepl na "EDITOR" a otevrel se
 # navod, protoze se akce vybirala podle poradi, ne podle jmena.
-const MENU_ITEMS := ["BATTLE", "EDITOR", "NÁVOD", "SETTINGS", "UPDATE"]
-const MENU_SUBS := ["spustit kolo", "vyrobit si level", "pravidla hry a poškození",
+#
+# "HRÁT" NEOTEVRIRA ROVNOU DESKU: prvni obrazovka je VYBER LEVELU (Jan,
+# Oct 2026: "Po výhře levelu se musí hráč vrátit zpět do výběru levelů").
+# Hrac tak vzdy vi, ktery level si zahraje a ktery uz ma za sebou.
+const MENU_ITEMS := ["HRÁT", "EDITOR", "NÁVOD", "SETTINGS", "UPDATE"]
+const MENU_SUBS := ["vyber si level", "vyrobit si level", "pravidla hry a poškození",
 	"hudba a zvuky", "stáhnout novou verzi"]
 # Akce tlacitek. game_view je vyhodnocuje PRES JMENO, ne podle poradi -
 # takze prehozeni tlacitek v seznamu nikdy neprehodi, co ktery dela.
-const MENU_ACTIONS := ["battle", "editor", "guide", "settings", "update"]
+const MENU_ACTIONS := ["levels", "editor", "guide", "settings", "update"]
 
 # Prepisuje se v _ready() podle toho, jestli hra bezi ve webovem exportu.
 var web: bool = false
@@ -69,6 +73,18 @@ func load_build_id() -> void:
 
 func open_battle() -> void:
 	view = View.BATTLE
+
+
+# VYBER LEVELU. Prvni obrazovka, kdyz hrac zmackne HRÁT: seznam levelu
+# s tim, ktery je odemceny a ktery uz je vyhrany. Sem se hrac vraci po
+# kazde vyhre (Jan: "Po výhře levelu se musí hráč vrátit zpět do výběru
+# levelů") - proto je to vlastni obrazovka a ne taby v bitve.
+func open_levels() -> void:
+	view = View.LEVELS
+
+
+func is_levels() -> bool:
+	return view == View.LEVELS
 
 
 # EDITOR LEVELU. Sem se chodi vyrabet levely rucne - klepnutim na usek se

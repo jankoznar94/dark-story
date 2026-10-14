@@ -1400,17 +1400,66 @@ static func storage_dir() -> String:
 	return "user://levels/"
 
 
-func storage_key() -> String:
-	var s: String = name if name != "" else "vlastni"
+# JMENO SOUBORU Z JMENA LEVELU. Jedno misto, kde se jmeno prevadi na klic
+# souboru: pouziva ho ukladani (`save`), prejmenovani (`rename_key`) i mazani
+# (`delete_key`). Kdyby si to kazde misto pocitalo samo, ulozil by se level
+# pod jinym jmenem, nez pod jakym se pak maze - a hrac by mel dva soubory.
+static func safe_key(s: String) -> String:
 	var out := ""
 	for ch in s:
 		if ch == "/" or ch == "\\" or ch == ":":
 			out += "_"
 		else:
 			out += ch
+	out = out.strip_edges()
 	if out == "":
 		out = "vlastni"
 	return out
+
+
+func storage_key() -> String:
+	var s: String = name if name != "" else "vlastni"
+	return safe_key(s)
+
+
+# PREJMENOVANI ULOZENEHO LEVELU. Jan (Oct 2026): "Přidáme možnost názvy
+# levelů v seznamu editoru měnit, jednotlivé levely mazat, atd."
+#
+# Je to PRESUN SOUBORU, ne "uloz pod novym jmenem": puvodni musi zmizet,
+# jinak by v seznamu zustaly oba a hrac by mel dve verze te same mapy.
+# Existujici jmeno se NEPREPISUJE - prepsat cizi praci jednim klepnutim je
+# to nejhorsi, co editor umi, takze se to rekne a nic se nedeje.
+static func rename_key(old_key: String, new_key: String) -> bool:
+	var from: String = storage_dir() + safe_key(old_key) + ".zily"
+	var to: String = storage_dir() + safe_key(new_key) + ".zily"
+	if not FileAccess.file_exists(from):
+		return false
+	if from == to:
+		return true
+	if FileAccess.file_exists(to):
+		return false
+	var f := FileAccess.open(from, FileAccess.READ)
+	if f == null:
+		return false
+	var text: String = f.get_as_text()
+	f.close()
+	var out := FileAccess.open(to, FileAccess.WRITE)
+	if out == null:
+		return false
+	out.store_string(text)
+	out.close()
+	DirAccess.remove_absolute(from)
+	return not FileAccess.file_exists(from)
+
+
+# SMAZANI ULOZENEHO LEVELU. Soubor je jedina kopie hracovy prace, takze se
+# maze jen na vyslovne potvrzeni (dve klepnuti) - viz `Editor.press`.
+static func delete_key(key: String) -> bool:
+	var path: String = storage_dir() + safe_key(key) + ".zily"
+	if not FileAccess.file_exists(path):
+		return false
+	DirAccess.remove_absolute(path)
+	return not FileAccess.file_exists(path)
 
 
 func save() -> bool:

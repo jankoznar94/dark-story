@@ -66,6 +66,11 @@ const ED_COMPACT_REF := 56.0
 # desce: panel neni hraci plocha a hrac se z rozdelaneho levelu musi dostat
 # zpet. Sirka je zamerne velkorysa - je to cil pro prst.
 const HUD_BACK_W := 104.0
+# PAUZA. Druhe tlacitko v hornim panelu a take mimo desku: Jan (Oct 2026):
+# "Přidáme do boje tlačítko Pause/Resume. Když hráč potřebuje hru pozastavit."
+# Je uzsi nez EDITOR (popisek "PAUZA"/"HRÁT" je kratky) a stoji na kraji
+# displeje, kam se prstem nejlepe dosahne.
+const HUD_PAUSE_W := 86.0
 
 var view := Vector2(REF_W, REF_H)
 var s := 1.0
@@ -90,6 +95,20 @@ var settings_back := Rect2()
 const SETTINGS_ROWS := 3
 # Navrat do editoru v hornim panelu hry (jen kdyz hrac hraje level z editoru).
 var hud_back := Rect2()
+# PAUZA v hornim panelu hry. Kresli se VZDY (krome dohrane a prohrane
+# partie) - hrac nesmi hledat, kde si hru zastavi.
+var hud_pause := Rect2()
+
+# --- VYBER LEVELU ---
+# Obrazovka, na kterou se hrac vraci po kazde vyhre. Radky levelu + "volná
+# hra" + ZPET; rozvrzeni je pocita z poctu levelu, proto se neda predpocitat
+# v `compute` (pocet se dozvi az obrazovka).
+var levels_rows: Array = []
+var levels_back := Rect2()
+# KOLIK RADKU LEVELU SE NA DISPLEJ VEJDE. Zbytek by pretekl z obrazovky,
+# takze se rekne, kolik jich je schovanych - ticha ztrata levelu by hrace
+# nechala myslet, ze hra prisla o jeho praci.
+var levels_fit := 0
 
 # --- PANEL VYBRANE VEZE ---
 # Vyskoci JEN kdyz je vez vybrana, takze si nesmi brat misto desce natrvalo
@@ -221,9 +240,12 @@ func compute(v: Vector2) -> void:
 		v.y - MIN_TOUCH - 8.0 * ui, SKIP_W * ui, MIN_TOUCH)
 	# NAVRAT DO EDITORU v hornim panelu. Kresli se jen tehdy, kdyz hrac hraje
 	# level z editoru - jinak by na desce bylo tlacitko, ktere nema co delat.
-	# Je to v panelu, ne na desce, a je to co nejvetsi: prst se na telefon
-	# nema kam jinam vejit.
-	hud_back = Rect2(v.x - PAD * ui * 0.5 - HUD_BACK_W * ui, 3.0 * ui,
+	# PAUZA JE VZDY VPRAVO (na kraj displeje se prstem dosahne nejlip) a
+	# navrat do editoru stoji VLEVO od ni - obe tlacitka jsou mimo desku,
+	# takze si neberou hraci plochu.
+	hud_pause = Rect2(v.x - PAD * ui * 0.5 - HUD_PAUSE_W * ui, 3.0 * ui,
+		HUD_PAUSE_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
+	hud_back = Rect2(hud_pause.position.x - 6.0 * ui - HUD_BACK_W * ui, 3.0 * ui,
 		HUD_BACK_W * ui, maxf(MIN_TOUCH * 0.8, hud_h - 6.0 * ui))
 
 	# --- MENU ---
@@ -275,8 +297,14 @@ func compute(v: Vector2) -> void:
 	ed_buttons = []
 	# Panel se pocita zvlast (`editor_panel`) z obsahu, ktery da editor -
 	# tady se jen uklidi, aby po zmene velikosti okna nezustaly stare recty.
+	# To same plati pro ostatni obrazovky, ktere si rozvrzeni pocitaji az z
+	# obsahu (seznam levelu, vyber levelu, klavesnice pro prejmenovani):
+	# stary rect by jinak zustal na miste, kde uz nic neni.
 	ed_panel_rows = []
 	ed_panel_top = v.y
+	levels_rows = []
+	levels_back = Rect2()
+	ed_name_rows = []
 	var ex0: float = PAD * ui
 	var ey: float = v.y - eh - 6.0 * ui
 	for i in range(ED_COUNT):
@@ -539,6 +567,31 @@ func editor_list_rows(count: int) -> Array:
 	return out
 
 
+# TLACITKA NA RADKU SEZNAMU LEVELU. Jan (Oct 2026): "Přidáme možnost názvy
+# levelů v seznamu editoru měnit, jednotlivé levely mazat, atd."
+#
+# Na kazdem radku jsou dve, u PRAVEHO okraje: "název" (prejmenovat) a
+# "smazat". Zbytek radku zustava klepnuti na level (nacte ho) - takze se
+# hrac nemusi ucit nic noveho: klepnuti na radek jako dosud, nova jsou jen
+# dve tlacitka vpravo.
+#
+# `which` 0 = prejmenovat, 1 = smazat. Sirka je z rozvrzeni, aby se kresleni
+# a klepnuti nemohly rozejit.
+const LIST_BTN_W := 92.0
+
+
+func editor_list_button(i: int, which: int) -> Rect2:
+	var rows: Array = editor_list_rows(i + 1)
+	if i < 0 or i >= rows.size():
+		return Rect2()
+	var r: Rect2 = rows[i]
+	var pad: float = 4.0 * ui
+	var bw: float = clampf(LIST_BTN_W * ui, MIN_TOUCH, maxf(r.size.x * 0.34, MIN_TOUCH))
+	var del := Rect2(r.end.x - pad - bw, r.position.y + pad, bw, r.size.y - pad * 2.0)
+	var ren := Rect2(del.position.x - pad - bw, del.position.y, bw, del.size.y)
+	return ren if which == 0 else del
+
+
 # Vsechny dotykove cile MENU. Menu a nastaveni se nikdy nezobrazuji
 # soucasne, proto se testuji kazde zvlast - míchat je do jednoho seznamu
 # by hlasilo prekryvy, ktere hrac nikdy nevidi.
@@ -546,6 +599,103 @@ func all_menu_buttons() -> Array:
 	var out: Array = []
 	for r in menu_buttons:
 		out.append(r)
+	return out
+
+
+# =========================================================================
+# VYBER LEVELU
+#
+# Obrazovka, na kterou se hrac vraci po kazde vyhre. Radky jdou SHORA DOLU
+# (prvni level nahore, jak se hrou postupuje) a "volná hra" je POSLEDNI -
+# je to bonus, ne krok postupu. ZPET stoji v rohu jako v navodu.
+#
+# Hrac musi videt CELY displej: kdyz je levelu vic, nez se vejde, rekne se
+# to (viz `levels_fit`) - ticha ztrata radku by hrace nechala myslet, ze
+# prisel o level.
+# =========================================================================
+const LEVEL_ROW_H := 46.0
+const LEVEL_GAP := 8.0
+
+
+func levels_panel(count: int) -> void:
+	levels_rows = []
+	var mw: float = minf(MENU_BTN_W * ui * 1.7, view.x - 2.0 * PAD * ui)
+	var rh: float = maxf(MIN_TOUCH, LEVEL_ROW_H * ui)
+	var gap: float = LEVEL_GAP * ui
+	# ZPET je v rohu obrazovky, seznam nad nim.
+	levels_back = Rect2(view.x - PAD * ui - SKIP_W * ui,
+		view.y - MIN_TOUCH - 6.0 * ui, SKIP_W * ui, MIN_TOUCH)
+	var top: float = hud_h + 10.0 * ui
+	var room: float = maxf(levels_back.position.y - 6.0 * ui - top, MIN_TOUCH)
+	# RADKY: kolik levelu + "volná hra".
+	var want: int = maxi(count, 0) + 1
+	if float(want) * rh + float(want - 1) * gap > room:
+		# Nejdřív se zmensi MEZERA, teprve pak se ubere radek - radsi
+		# tesnejsi seznam nez seznam, ktery nema vsechno.
+		gap = maxf(2.0, (room - float(want) * rh) / float(maxi(want - 1, 1)))
+	var fit_total: int = int((room + gap) / (rh + gap))
+	levels_fit = clampi(fit_total - 1, 1, maxi(count, 1))
+	var rows: int = levels_fit + 1
+	var y: float = top
+	for i in range(rows):
+		levels_rows.append(Rect2((view.x - mw) * 0.5, y, mw, rh))
+		y += rh + gap
+
+
+# Vsechny dotykove cile obrazovky s vyberem levelu: radky + ZPET.
+func all_level_buttons() -> Array:
+	var out: Array = []
+	for r in levels_rows:
+		out.append(r)
+	out.append(levels_back)
+	return out
+
+
+# =========================================================================
+# KLAVESNICE PRO PREJMENOVANI LEVELU
+#
+# Jan (Oct 2026): "Přidáme možnost názvy levelů v seznamu editoru měnit."
+# Na telefonu neni jak napsat text, kdyz hra zadny textovy vstup nema - a
+# mit ho jen na webu by znamenalo, ze na pulce zarizeni prejmenovat nelze.
+# Klavesnice je proto NAKRESLENA hrou: stejny princip jako vsechno ostatni
+# (zadne Button nody, zadne tema) a funguje vsude stejne.
+#
+# Radky jdou SHORA DOLU jako na klavesnici; kazdy radek se deli ROVNYM
+# dilem, takze posledni radek s akcemi ("hotovo") je siroky a dobře se
+# macka. Vyska radku se zmensi, jen kdyz by se jinak nevesly.
+# =========================================================================
+var ed_name_rows: Array = []
+
+
+func name_keys(counts: Array) -> void:
+	ed_name_rows = []
+	if counts.is_empty():
+		return
+	var n: int = counts.size()
+	var gap: float = ED_GAP * ui
+	var top: float = hud_h + 6.0 * ui
+	var bottom: float = view.y - 6.0 * ui
+	var rh: float = (bottom - top - gap * float(n - 1)) / float(n)
+	if float(n) * rh + gap * float(n - 1) > bottom - top:
+		rh = maxf(24.0, (bottom - top - gap * float(n - 1)) / float(n))
+	var y: float = top
+	for row in counts:
+		var cnt: int = maxi(int(row), 1)
+		var w: float = (view.x - 2.0 * PAD * ui - gap * float(cnt - 1)) / float(cnt)
+		var line: Array = []
+		for i in range(cnt):
+			line.append(Rect2(PAD * ui + float(i) * (w + gap), y, w, rh))
+		ed_name_rows.append(line)
+		y += rh + gap
+
+
+# Vsechny dotykove cile klavesnice. Jedno misto pro kontrolu, ze se klavesy
+# neprekryvaji a ze jsou na displeji.
+func all_name_keys() -> Array:
+	var out: Array = []
+	for row in ed_name_rows:
+		for r in row:
+			out.append(r)
 	return out
 
 

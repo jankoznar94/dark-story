@@ -41,26 +41,38 @@ const REWARD := 12
 # určitého typu, kteří budou přicházet v náhodném pořadí. Každá vlna bude buď
 # více nepřátel, nebo přibude nový typ."
 #
+# LEVEL MA DESET VLN. Jan (Oct 2026): "Levely by měly mít jen 10 kol.
+# 5. Kolo by měl být trochu mini-boss fight, 10. Kolo boss fight." Tabulka
+# proto nema "dalsi" vlny - po desate je level dohrany (`wave_done`).
+#
 # Tabulka je SLOZENI VLNY: kolik poutniku ktereho druhu vlna posle. Poradi
 # druhu v ramci vlny se losuje (viz `wave_plan`), pocet kazdeho je dany -
 # hrac tedy vi, KOLIK jich prijde, ale ne v jakem poradi.
 #   * lehky (rychly, malo zivotu) se objevi ve 3. vlne,
-#   * tezky (pomaly, hodne zivotu) v 5. vlne,
-#   * dvojzivelny (bere nevyhody obou zivlu) v 7. vlne.
+#   * tezky (pomaly, hodne zivotu) a MINI-BOSS v 5. vlne,
+#   * dvojzivelny (bere nevyhody obou zivlu) v 7. vlne,
+#   * BOSS v 10. vlne.
 # Kazda dalsi vlna ma BUD vic poutniku, NEBO novy druh - nikdy mene. Hlida to
 # test `_test_waves_get_harder` (součet zivotu vlny musi rust).
 const WAVES := [
-	{"basic": 6, "light": 0, "heavy": 0, "dual": 0},    # 1
-	{"basic": 8, "light": 0, "heavy": 0, "dual": 0},    # 2
-	{"basic": 8, "light": 2, "heavy": 0, "dual": 0},    # 3 - novy druh: lehky
-	{"basic": 10, "light": 2, "heavy": 0, "dual": 0},   # 4
-	{"basic": 10, "light": 3, "heavy": 1, "dual": 0},   # 5 - novy druh: tezky
-	{"basic": 11, "light": 4, "heavy": 1, "dual": 0},   # 6
-	{"basic": 12, "light": 4, "heavy": 2, "dual": 1},   # 7 - novy druh: dvojzivelny
-	{"basic": 12, "light": 5, "heavy": 2, "dual": 1},   # 8
-	{"basic": 13, "light": 5, "heavy": 3, "dual": 2},   # 9
-	{"basic": 14, "light": 6, "heavy": 3, "dual": 2},   # 10
+	{"basic": 6, "light": 0, "heavy": 0, "dual": 0},     # 1
+	{"basic": 8, "light": 0, "heavy": 0, "dual": 0},     # 2
+	{"basic": 8, "light": 2, "heavy": 0, "dual": 0},     # 3 - novy druh: lehky
+	{"basic": 10, "light": 2, "heavy": 0, "dual": 0},    # 4
+	{"basic": 8, "light": 2, "heavy": 1, "dual": 0},     # 5 - mini-boss
+	{"basic": 10, "light": 3, "heavy": 2, "dual": 0},    # 6
+	{"basic": 12, "light": 4, "heavy": 2, "dual": 1},    # 7 - novy druh: dvojzivelny
+	{"basic": 12, "light": 5, "heavy": 3, "dual": 1},    # 8
+	{"basic": 13, "light": 5, "heavy": 3, "dual": 2},    # 9
+	{"basic": 13, "light": 5, "heavy": 3, "dual": 2},    # 10 - boss
 ]
+# KOLIK VLN MA LEVEL. Po teto vlne je level dohrany a hrac se vraci do vyberu
+# levelu - hra uz nema nekonecny strop (Jan: "Levely by měly mít jen 10 kol").
+const WAVE_MAX := 10
+# KTERA VLNA JE BOSS FIGHT. Obe cisla jsou tu, aby se "boss vlna" nehledala
+# nikde jinde: tabulka i hlaska se na ne ptaji tady.
+const MINI_BOSS_WAVE := 5
+const BOSS_WAVE := 10
 # NEJKRATSI A NEJDELSI MEZERA MEZI DVA POUTNIKY. Hrac musi stihnout
 # prepnout vyhybku pro kazdeho zvlast, takze i ta nejkratsi mezera je
 # hratelnostni vec: 1 s = 52 px na zakladni rychlosti.
@@ -169,6 +181,9 @@ var spawn_pool: Array = []
 var lives_max: int = START_LIVES
 # Vypnuto v testech, ktere sleduji jednoho poutnika. V hre vzdy zapnuto.
 var auto_wave: bool = true
+# JE HRA POZASTAVENA? Rozhoduje o tom jen obrazovka (kdyz je `true`, nekrokuje
+# hrou) - hra sama se pozastavit neumi, aby se stav nedal zmenit odnikud.
+var paused: bool = false
 # VYHYBKY. Kazda si drzi svou volbu - index useku, ktery z ni vede. Je to stav
 # ROZEHRANE PARTIE, ne level: proto to neni v Levelu a proto se to pri zmene
 # velikosti okna neztrati (sit se prelozi, volba hrace zustava).
@@ -200,6 +215,7 @@ func setup(r: Rect2, scale_hint: float = 1.0, bar_top: float = 1.0e9,
 	spawned = 0
 	junction_flash = []
 	log = []
+	paused = false
 
 
 # Vymena levelu za behu - pouziva ji editor, ktery si hru nechava postavenou
@@ -615,6 +631,13 @@ func start_wave() -> void:
 	spawn_wait = 0.0
 	spawned = 0
 	var msg: String = "Vlna %d: %s." % [wave, wave_summary(wave)]
+	# BOSS VLNA SE HlASI PREDEM. Jan (Oct 2026): "5. Kolo by měl být trochu
+	# mini-boss fight, 10. Kolo boss fight." Kdyz hrac nevi, ze jde o bosse,
+	# vypada silny poutnik jako chyba balancu.
+	if wave == MINI_BOSS_WAVE:
+		msg += " MINI-BOSS — drž se!"
+	elif wave == BOSS_WAVE:
+		msg += " BOSS — poslední vlna levelu!"
 	# DVOJZIVELNY JE IMUNNI NA OBA SVOJE ZIVLY (viz `Enemy.mult_against`),
 	# takze na nej plati jen neutralni vez. Pravidlo se rekne JEDNOU, v prvni
 	# vlne, kde se dvojzivelni objevi - hrac jinak vidi, jak rany nic nedelaji,
@@ -641,18 +664,20 @@ func start_wave() -> void:
 	_note(msg)
 
 
-# SLOZENI VLNY. Radek tabulky pro vlny 1..10; dal se pocita vzorcem - kazda
-# dalsi vlna prida zakladniho poutnika a ob vlnu i jednoho z kazdeho dalsiho
-# druhu. Hra tim nema strop a obtiznost roste porad (viz `WAVES`).
+# SLOZENI VLNY. Radek tabulky pro vlny 1..10 - level vic vlny nema (`WAVE_MAX`),
+# takze se dal uz nic nedopocitava. Boss vlny dostavaji navic svou bytost
+# (mini-boss v 5., boss v 10.) - jsou to PRVKY SVÉ VLNY, ne druhy, ktere by se
+# objevovaly dal.
 func wave_mix(n: int) -> Dictionary:
-	var idx: int = clampi(n, 1, WAVES.size()) - 1
+	var idx: int = clampi(n, 1, WAVE_MAX) - 1
 	var row: Dictionary = WAVES[idx]
-	var extra: int = maxi(n - WAVES.size(), 0)
 	return {
-		"basic": int(row["basic"]) + extra,
-		"light": int(row["light"]) + (extra + 1) / 2,
-		"heavy": int(row["heavy"]) + (extra + 1) / 2,
-		"dual": int(row["dual"]) + extra / 2,
+		"basic": int(row["basic"]),
+		"light": int(row["light"]),
+		"heavy": int(row["heavy"]),
+		"dual": int(row["dual"]),
+		"mini": 1 if n == MINI_BOSS_WAVE else 0,
+		"boss": 1 if n == BOSS_WAVE else 0,
 	}
 
 
@@ -668,6 +693,12 @@ func wave_counts(n: int) -> Dictionary:
 	var k: float = float(base) / float(BASE_WAVE_ENEMIES)
 	var out: Dictionary = {}
 	for key in mix.keys():
+		# BOSSOVE SE NENASOBI. Jsou to bytosti sve vlny, ne dav: level
+		# s dvojnasobkem poutniku posle porad jednoho bosse (jinak by
+		# z "tezsiho levelu" bylo neprekonatelne zdivo).
+		if key == "mini" or key == "boss":
+			out[key] = int(mix[key])
+			continue
 		var c: int = int(mix[key])
 		out[key] = 0 if c <= 0 else maxi(1, int(round(float(c) * k)))
 	return out
@@ -688,6 +719,10 @@ func wave_plan(n: int) -> Array:
 	_plan_push(out, Enemy.TIER_LIGHT, int(c["light"]), false)
 	_plan_push(out, Enemy.TIER_HEAVY, int(c["heavy"]), false)
 	_plan_push(out, Enemy.TIER_BASIC, int(c["dual"]), true)
+	# BOSSOVE JDOU NA KONEC TABULKY, ale poradi vlny se stejne losuje -
+	# rozhoduje jen to, kolik jich je (viz `WAVE_WORD`).
+	_plan_push(out, Enemy.TIER_MINI, int(c["mini"]), false)
+	_plan_push(out, Enemy.TIER_BOSS, int(c["boss"]), false)
 	for i in range(out.size() - 1, 0, -1):
 		var j: int = _next_int(i + 1)
 		var tmp = out[i]
@@ -700,21 +735,24 @@ func wave_plan(n: int) -> Array:
 # chysta - "vic poutniku" bez druhu je jen cislo.
 const WAVE_WORD := {
 	"basic": "základních", "light": "lehkých", "heavy": "těžkých",
-	"dual": "dvojživelných",
+	"dual": "dvojživelných", "mini": "mini-boss", "boss": "boss",
 }
 
 
 # KOLIK POUTNIKU TAHLE VLNA POSLE (soucet vsech druhu).
 func wave_size(n: int) -> int:
 	var c: Dictionary = wave_counts(n)
-	return int(c["basic"]) + int(c["light"]) + int(c["heavy"]) + int(c["dual"])
+	var total: int = 0
+	for key in c.keys():
+		total += int(c[key])
+	return total
 
 
 # SLOZENI VLNY SLOVY, treba "12 základních · 5 lehkých · 2 těžkých".
 func wave_summary(n: int) -> String:
 	var c: Dictionary = wave_counts(n)
 	var parts: Array = []
-	for key in ["basic", "light", "heavy", "dual"]:
+	for key in ["basic", "light", "heavy", "dual", "mini", "boss"]:
 		var cnt: int = int(c[key])
 		if cnt > 0:
 			parts.append("%d %s" % [cnt, WAVE_WORD[key]])
@@ -852,7 +890,10 @@ func _next_dual_pair() -> Array:
 # ---------------------------------------------------------------- krok
 
 func step(delta: float) -> void:
-	if phase == "lost" or phase == "won":
+	# POZASTAVENA HRA SE NEKROKUJE. Kontrola je tady, ne jen v obrazovce:
+	# kdyby si ji každý volající zapomněl udělat sám, hra by se pod pauzou
+	# hýbala - a to je přesně to, co hráč nechce.
+	if paused or phase == "lost" or phase == "won":
 		return
 
 	if phase == "build":
@@ -900,12 +941,43 @@ func step(delta: float) -> void:
 # dalsi obranu - jinak by se hrac dostal do stavu, kdy uz nema z ceho stavet
 # a jen ceka na konec (Jan: "nemáš peníze na další věže a jsi odsouzen k
 # záhubě"). Bonus dostava i hrac, ktery vsechno nezvladl.
+#
+# PO DESATE VLNE JE LEVEL DOHRANY. Jan (Oct 2026): "Levely by měly mít jen
+# 10 kol." Hra tim prestava byt nekonecna: misto dalsi vlny se prepne do
+# stavu "won" a obrazovka hrace vrati do vyberu levelu (a odemkne dalsi).
 func wave_done() -> void:
 	var bonus: int = WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave
 	gold += bonus
+	if wave >= WAVE_MAX:
+		phase = "won"
+		_note("Level dohrán — všech %d vln odraženo." % WAVE_MAX)
+		return
 	phase = "build"
 	build_timer = BUILD_TIME
 	_note("Vlna %d odražena (+%d zlata)." % [wave, bonus])
+
+
+# JE LEVEL DOHRANY? Obrazovka se na to ptá jedním cislem, aby se "vyhra"
+# nevyhodnocovala na dvou mistech.
+func is_won() -> bool:
+	return phase == "won"
+
+
+# POZASTAVENI HRY. Jan (Oct 2026): "Přidáme do boje tlačítko Pause/Resume.
+# Když hráč potřebuje hru pozastavit." Je to stav HRY, ne obrazovky: kdo
+# rozhoduje o kroku, je `_process` obrazovky, a ten se ptá tady. Diky tomu
+# se da pozastaveni otestovat bez obrazovky.
+func toggle_pause() -> void:
+	# Pozastavit dohranou nebo prohranou partii nema smysl - tlacitko by
+	# slibovalo neco, co se uz nedeje.
+	if phase == "lost" or phase == "won":
+		return
+	paused = not paused
+	_note("Hra pozastavena." if paused else "Hra pokračuje.")
+
+
+func is_paused() -> bool:
+	return paused and phase != "lost" and phase != "won"
 
 
 func _move_enemies(delta: float) -> void:

@@ -11,13 +11,26 @@ extends RefCounted
 const TIER_BASIC := 0
 const TIER_LIGHT := 1
 const TIER_HEAVY := 2
+# MINI-BOSS A BOSS. Jan (Oct 2026): "5. Kolo by měl být trochu mini-boss
+# fight, 10. Kolo boss fight." Nejsou to nove mechaniky - jsou to jen dalsi
+# radky te same tabulky, takze plati vsechna pravidla poskozeni (zivel,
+# imunita, tecky, odmena) beze zmeny. Do hry vstupuji jen ve svych vlnach
+# (`Game.MINI_BOSS_WAVE` / `Game.BOSS_WAVE`).
+const TIER_MINI := 3
+const TIER_BOSS := 4
 # "gold" je ABSOLUTNI odmena za zabiti, ne nasobek: hrac pocita zlato, ne
 # procenta. Zakladni druh ma 12 jako dosud.
 const TIERS := [
 	{"name": "Základní", "hp": 1.0, "speed": 1.0, "gold": 12, "size": 1.0},
 	{"name": "Lehký", "hp": 0.6, "speed": 1.6, "gold": 8, "size": 0.86},
 	{"name": "Těžký", "hp": 2.2, "speed": 0.6, "gold": 25, "size": 1.18},
+	{"name": "Mini-boss", "hp": 2.6, "speed": 0.75, "gold": 60, "size": 1.34},
+	{"name": "Boss", "hp": 6.0, "speed": 0.5, "gold": 220, "size": 1.60},
 ]
+# KOLIKA NASOBEK JE POVAZOVANY ZA BOSSE. Neni to jen kosmetika: obrazovka
+# z toho kresli zvlastni obrys, aby hrac na prvni pohled vedel, ze na nej
+# plati vsechno ostatni - a ze ho nema cekat v kazde vlne.
+const TIER_BOSS_FROM := TIER_MINI
 
 var element: int = 0
 # DRUHY ZIVEL POUTNIKA, nebo -1. Dvojzivelny poutnik (ohen + voda, zeme +
@@ -84,6 +97,12 @@ static func tier_speed(index: int) -> float:
 
 static func tier_size(index: int) -> float:
 	return float(tier_row(index)["size"])
+
+
+# JE TO BOSS (mini-boss nebo boss)? Obrazovka z toho kresli zvlastni obrys
+# a hra z toho dela hlasku na zacatku vlny - jedno misto, kde se to rozhoduje.
+static func tier_is_boss(index: int) -> bool:
+	return index >= TIER_BOSS_FROM
 
 
 # NASOBEK POSKOZENI OD VEZE TOHOTO ZIVLU. Jednozivelny poutnik ma jeden

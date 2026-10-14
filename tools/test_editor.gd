@@ -44,6 +44,7 @@ func _init() -> void:
 	_run("parametry levelu", _test_level_params)
 	_run("rozvrzeni editoru", _test_editor_layout)
 	_run("seznam levelu", _test_list)
+	_run("prejmenovani a smazani levelu", _test_rename_and_delete)
 	if fails.is_empty():
 		print("EDITOR_ALL_PASS=true (%d kontrol)" % checks)
 		quit(0)
@@ -2469,3 +2470,92 @@ func _test_list() -> void:
 	_check(c.level.lane_count() == 1,
 		"po nacteni ma prvni level %d useku" % c.level.lane_count())
 	_wipe_levels()
+
+
+# PREJMENOVANI A SMAZANI ULOZENYCH LEVELU. Jan (Oct 2026): "Přidáme možnost
+# názvy levelů v seznamu editoru měnit, jednotlivé levely mazat, atd."
+#
+# Meri se SOUBORY, ne text v hlasce: prejmenovani musi byt presun (stary
+# soubor zmizi) a smazani nesmi nastat po prvnim klepnuti.
+func _test_rename_and_delete() -> void:
+	_wipe_levels()
+	var a := Editor.new()
+	a.reset()
+	a.tool = Editor.TOOL_START
+	a.tap_cell(Vector2i(1, 5))
+	a.tool = Editor.TOOL_CIL
+	a.tap_cell(Vector2i(5, 5))
+	_stroke(a, [Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5), Vector2i(4, 5), Vector2i(5, 5)])
+	var first: String = a.local_name
+	_check(first != "", "level nema jmeno")
+	_check(Level.saved_keys().has(first), "level se neulozil")
+
+	# KLAVESNICE. Text se meni jen v pameti - soubor se prejmenuje az
+	# "hotovo", takze se da preklep vzit zpet.
+	a.begin_rename(first)
+	_check(a.is_name(), "klavesnice pro prejmenovani se neotevrela")
+	_check(a.name_text == first, "v klavesnici neni soucasny nazev (%s)" % a.name_text)
+	_name_key(a, "x")
+	_name_key(a, "y")
+	_check(a.name_text == first + "xy", "znaky se neprisly (%s)" % a.name_text)
+	a.name_press({"act": Editor.NAME_BACK})
+	_check(a.name_text == first + "x", "smazani znaku nefunguje (%s)" % a.name_text)
+	_check(Level.saved_keys().has(first), "soubor se prejmenoval uz pri psani")
+	_check(Level.saved_keys().size() == 1, "behem psani vznikl dalsi soubor")
+	a.name_press({"act": Editor.NAME_OK})
+	_check(not a.is_name(), "klavesnice se po hotovo nezavrela")
+	var want: String = first + "x"
+	_check(Level.saved_keys().has(want), "level se neprejmenoval (%s)" % str(Level.saved_keys()))
+	_check(not Level.saved_keys().has(first), "stary soubor po prejmenovani zustal")
+	_check(a.local_name == want, "editor si nove jmeno nepamatuje (%s)" % a.local_name)
+
+	# Z NOVEHO SOUBORU SE LEVEL OPRAVDU NACTE (jinak by prejmenovani ztratilo
+	# praci).
+	var b := Editor.new()
+	_check(b.level.load_from_disk(want), "prejmenovany level se neda nacist")
+	_check(b.level.lane_count() == 1, "prejmenovany level nema svuj usek")
+
+	# DRUHY LEVEL: prejmenovat na existujici jmeno se NESMI - prepsat cizi
+	# praci jednim klepnutim je to nejhorsi, co editor umi.
+	var c := Editor.new()
+	c.reset()
+	c.tool = Editor.TOOL_START
+	c.tap_cell(Vector2i(2, 2))
+	c.tool = Editor.TOOL_CIL
+	c.tap_cell(Vector2i(6, 2))
+	_stroke(c, [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(6, 2)])
+	var second: String = c.local_name
+	_check(second != want, "druhy level dostal stejne jmeno")
+	c.begin_rename(second)
+	c.name_text = want
+	c.commit_name()
+	_check(Level.saved_keys().has(second), "kolize jmen se prepsala - druhy level zmizel")
+	_check(b.level.load_from_disk(want) and b.level.lane_count() == 1,
+		"kolize jmen prepsala prvni level")
+	_check(c.is_name(), "po odmitnute kolizi se klavesnice zavrela")
+
+	# SMAZANI NA DVE KLEPNUTI. Prvni klepnuti jen rekne, co se stane.
+	c.close_name()
+	c.ask_delete(second)
+	_check(Level.saved_keys().has(second), "level zmizel uz po prvnim klepnuti")
+	_check(c.pending_delete == second, "cekaci smazani se nezapamatovalo")
+	c.clear_pending_delete()
+	c.ask_delete(second)
+	_check(Level.saved_keys().has(second), "klepnuti po zruseni cekani level smazalo")
+	c.ask_delete(second)
+	_check(not Level.saved_keys().has(second), "druhe klepnuti level nesmazalo")
+	_check(c.local_name != second or c.level.lane_count() == 0,
+		"smazany level zustal otevreny - autosave by ho vratil")
+	_check(Level.saved_keys().has(want), "smazani vzalo i jiny level")
+	_wipe_levels()
+
+
+# STISK KLAVESY PODLE POPISKU. Hleda se v `name_grid` - stejne, jako to dela
+# obrazovka, takze test nemuze zmacknout klavesu, ktera na displeji neni.
+func _name_key(e: Editor, label: String) -> void:
+	for row in e.name_grid():
+		for it in row:
+			if str(it["label"]) == label:
+				e.name_press(it)
+				return
+	_check(false, "klavesa '%s' v klavesnici neni" % label)

@@ -57,6 +57,18 @@ var _tap_live: bool = false
 # dat vratit - hrac si level zkousi opakovane a nechce u toho pokazde projit
 # menu. V hornim panelu je kvuli tomu navrat do editoru.
 var _from_editor: bool = false
+# POSTUP HROU (ktere levely jsou vyhrane) a KTERY LEVEL SE HRAJE. `level_index`
+# je -1, kdyz se nehraje kampaň (volná hra nebo level z editoru) - pak se nic
+# neodemyka a hrac se vraci tam, odkud prisel.
+var campaign := Campaign.new()
+var level_index: int = -1
+# CAS, KTERY ZBYVA DO AUTOMATICKEHO NAVRATU DO VYBERU LEVELU po vyhre.
+# Hrac se musi vratit (Jan: "Po výhře levelu se musí hráč vrátit zpět do
+# výběru levelů"), ale musi take videt, ze vyhral - proto chvilka na precteni
+# a klepnuti kamkoli ji preskoci.
+var win_timer: float = 0.0
+var _win_seen: bool = false
+const WIN_HOLD := 3.0
 
 var _music: AudioStreamPlayer = null
 var _sfx: AudioStreamPlayer = null
@@ -66,6 +78,7 @@ var _music_playing: bool = false
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	game = Game.new()
+	campaign.load_from_disk()
 	menu.web = OS.has_feature("web")
 	if menu.web:
 		_install_js_bridge()
@@ -168,6 +181,18 @@ func _ready() -> void:
 	elif args.has("--battle"):
 		# Rovnou do hry - pouziva se pri kontrole vzhledu herni plochy.
 		_start_battle()
+	elif args.has("--levels-shot"):
+		# Snimek VYBERU LEVELU: jediny zpusob, jak zkontrolovat, ze se seznam
+		# rozvrhl na displej a ze stavy ("vyhráno"/"zamčeno") jsou videt.
+		_open_levels()
+		_shot = true
+	elif args.has("--name-shot"):
+		# Snimek KLAVESNICE PRO PREJMENOVANI: bez nej by se nedalo overit,
+		# ze se vsechny klavesy vejdou a maji citelny popisek.
+		_open_editor()
+		editor.begin_rename("level-1")
+		_reflow()
+		_shot = true
 	elif args.has("--shop-shot"):
 		# Snimek OBCHODU S VEZEMI: oznacene stavebni misto a pruh s druhy.
 		# Jediny zpusob, jak zmerit, ze se popisky druhu vejdou do tlacitek
@@ -235,8 +260,15 @@ func _reflow() -> void:
 		# Font se predava kvuli mereni kompaktnich tlacitek.
 		layout.set_editor_font(_font)
 		layout.editor_panel(editor.panel_rows())
+		# KLAVESNICE PRO PREJMENOVANI se rozvrhne z toho, co editor opravdu
+		# nabizi (`name_grid`) - takze klavesa nemuze byt nakreslena jinde,
+		# nez kde se macka.
+		layout.name_keys(editor.name_row_counts())
 		game.rebuild_network(layout.editor_arena, layout.s, layout.editor_bar_top())
 		return
+	# VYBER LEVELU: pocet radku vi az obrazovka (kolik je levelu), takze se
+	# rozvrzeni pocita tady - jinak by se po pridani levelu nezobrazil.
+	layout.levels_panel(Campaign.level_count())
 	game.rebuild_network(layout.arena, layout.s, layout.board_bottom)
 
 
@@ -405,11 +437,38 @@ func _process(delta: float) -> void:
 		queue_redraw()
 		return
 	_sync_audio()
-	if menu.is_battle() and game != null and game.phase != "lost":
+	# POZASTAVENA HRA SE NEKROKUJE (a hra to vi taky, viz `Game.step`) - hrac
+	# si hru zastavi tlacitkem v hornim panelu.
+	if menu.is_battle() and game != null and not game.is_won() and not game.is_paused():
 		game.step(delta)
+	# VYHRA: level je dohrany. Hrac musi videt, ze vyhral, a pak se vratit do
+	# vyberu levelu (Jan: "Po výhře levelu se musí hráč vrátit zpět do výběru
+	# levelů") - klepnuti kamkoli cekani zkrati.
+	if menu.is_battle() and game != null:
+		_tick_win(delta)
 	if menu.is_battle():
 		_pull_toast(delta)
 	queue_redraw()
+
+
+# DOHRANY LEVEL. Postup se zapise JEDNOU (a hned na disk), pak se chvilku
+# necha vysledek na obrazovce a hrac se vraci do vyberu levelu.
+func _tick_win(delta: float) -> void:
+	if not game.is_won():
+		_win_seen = false
+		win_timer = 0.0
+		return
+	if not _win_seen:
+		_win_seen = true
+		win_timer = WIN_HOLD
+		# VYHRA SE ZAPISE HNED, ne az pri odchodu: kdyby hrac hru zavrel
+		# behem te chvilky, prisel by o odemceny level.
+		if level_index >= 0:
+			campaign.mark_cleared(level_index)
+	if win_timer > 0.0:
+		win_timer -= delta
+		if win_timer <= 0.0:
+			_open_levels()
 
 
 func _pull_toast(delta: float) -> void:
@@ -472,6 +531,34 @@ func _start_battle() -> void:
 	game.setup(layout.arena, layout.s, layout.board_bottom)
 	menu.open_battle()
 	_from_editor = false
+	level_index = -1
+
+
+# VYBER LEVELU. Sem se hrac dostane z menu tlacitkem HRÁT a sem se vraci po
+# kazde vyhre. Rozvrzeni se pocita z poctu levelu, proto se prelozi tady.
+func _open_levels() -> void:
+	menu.open_levels()
+	level_index = -1
+	_win_seen = false
+	win_timer = 0.0
+	_reflow()
+
+
+# HRANI LEVELU Z KAMPANE. Do hry jde level postaveny z jeho kodu (viz
+# `Campaign.make_level`) a s nim index - z nej se pozna, co odemknout po
+# vyhre.
+func _play_campaign(i: int) -> void:
+	if not campaign.is_unlocked(i):
+		return
+	var lv: Level = Campaign.make_level(i)
+	if lv == null:
+		return
+	game.setup(layout.arena, layout.s, layout.board_bottom, lv)
+	menu.open_battle()
+	_from_editor = false
+	level_index = i
+	_win_seen = false
+	win_timer = 0.0
 
 
 # ---------------------------------------------------------------- vstup
@@ -562,6 +649,9 @@ func _handle_tap(pos: Vector2) -> void:
 	if menu.is_menu():
 		_handle_menu_tap(pos)
 		return
+	if menu.is_levels():
+		_handle_levels_tap(pos)
+		return
 	if menu.is_guide():
 		_handle_guide_tap(pos)
 		return
@@ -571,12 +661,26 @@ func _handle_tap(pos: Vector2) -> void:
 	if menu.is_editor():
 		_handle_editor_tap(pos)
 		return
-	# Navrat do editoru z rozehrane hry. Je to PRVNI, co se testuje: je to
+	# DOHRANY LEVEL: klepnuti kamkoli hrace vrati do vyberu levelu (cekame
+	# jen chvilku, ale hrac to nemusi vydrzet).
+	if game.is_won():
+		_open_levels()
+		return
+	# NAVRAT DO EDITORU z rozehrane hry. Je to PRVNI, co se testuje: je to
 	# v hornim panelu, kde zadna herni interakce neni, takze si to nemuze
 	# s nicim rozumet.
 	if _from_editor and layout.hud_back.has_point(pos):
 		_click()
 		_back_to_editor()
+		return
+	# PAUZA. Je to druha vec v hornim panelu, tedy mimo herni desku. Pod
+	# pauzou deska NEREAGUJE na nic - jinak by hrac pozastaveny hre stavel
+	# veze, ktere si pod pauzou nema jak rozmyslet.
+	if layout.hud_pause.has_point(pos):
+		_click()
+		game.toggle_pause()
+		return
+	if game.is_paused():
 		return
 	# Na desce uz zadane tlacitko neni - jedina interakce je klepnuti na
 	# bunku PASU (stavi / vylepsi vez) a klepnuti kamkoli JINAM na usek
@@ -656,8 +760,8 @@ func _handle_menu_tap(pos: Vector2) -> void:
 		# se - pribyl EDITOR) a klepnuti musi porad delat to, co je na
 		# tlacitku napsane.
 		match Menu.MENU_ACTIONS[i]:
-			"battle":
-				_start_battle()
+			"levels":
+				_open_levels()
 			"editor":
 				_open_editor()
 			"guide":
@@ -666,6 +770,30 @@ func _handle_menu_tap(pos: Vector2) -> void:
 				menu.open_settings()
 			"update":
 				menu.request_update()
+		return
+
+
+# VYBER LEVELU: klepnuti na radek level hraje, klepnuti na ZPET vraci do menu.
+# Zamceny level se nedeje NIC (a je to videt na barve) - hrát zamek jinak by
+# znamenalo, ze zamceni nic neznamena.
+func _handle_levels_tap(pos: Vector2) -> void:
+	if layout.levels_back.has_point(pos):
+		_click()
+		menu.open_menu()
+		return
+	for i in range(layout.levels_rows.size()):
+		var r: Rect2 = layout.levels_rows[i]
+		if not r.has_point(pos):
+			continue
+		# POSLEDNI RADEK JE VOLNA HRA - neni to level kampane.
+		if i >= layout.levels_fit:
+			_click()
+			_start_battle()
+			return
+		if not campaign.is_unlocked(i):
+			return
+		_click()
+		_play_campaign(i)
 		return
 
 
@@ -681,10 +809,41 @@ func _handle_guide_tap(pos: Vector2) -> void:
 # prvni, klepnuti na panel by kreslilo cestu pod nim a tlacitko by nikdy
 # nezabralo.
 func _handle_editor_tap(pos: Vector2) -> void:
+	# KLAVESNICE PRO PREJMENOVANI. Je to samostatny rezim obrazovky (jako
+	# seznam), takze se testuje prvni - jinak by klepnuti na klavesu
+	# propadlo na desku pod ni.
+	if editor.is_name():
+		var grid: Array = editor.name_grid()
+		for i in range(mini(grid.size(), layout.ed_name_rows.size())):
+			var line: Array = grid[i]
+			var rects: Array = layout.ed_name_rows[i]
+			for j in range(mini(line.size(), rects.size())):
+				var kr: Rect2 = rects[j]
+				if kr.has_point(pos):
+					_click()
+					editor.name_press(line[j])
+					return
+		return
 	# SEZNAM: kazdy radek je level k nacteni (prvni je novy, posledni navrat).
 	if editor.is_list():
 		var items: Array = editor.list_items()
 		var rects: Array = layout.editor_list_rows(items.size())
+		# TLACITKA NA RADKU se testuji PRED klepnutim na radek: radek sam
+		# level nacita, "název" ho prejmenovava a "smazat" maze - kdyby
+		# klepnuti na tlacitko propadlo na radek, hrac by si level nacetl
+		# misto toho, aby ho prejmenoval.
+		for i in range(items.size()):
+			if str(items[i]["kind"]) != "level":
+				continue
+			var key: String = str(items[i]["key"])
+			if layout.editor_list_button(i, 0).has_point(pos):
+				_click()
+				editor.begin_rename(key)
+				return
+			if layout.editor_list_button(i, 1).has_point(pos):
+				_click()
+				editor.ask_delete(key)
+				return
 		for i in range(rects.size()):
 			var rr: Rect2 = rects[i]
 			if rr.has_point(pos):
@@ -692,6 +851,9 @@ func _handle_editor_tap(pos: Vector2) -> void:
 				editor.pick(items[i])
 				_push_editor_level()
 				return
+		# KLEPNUTI MIMO RADEK zrusi cekani na potvrzeni smazani (jinak by
+		# druhe klepnuti na "smazat" prislo o minutu pozdeji a smazalo).
+		editor.clear_pending_delete()
 		return
 	# PRUH: taby oteviraji panel, akce (zpet, seznam, export, hrat) se delaji hned.
 	var bar: Array = editor.bar_entries()
@@ -810,6 +972,11 @@ func _play_editor_level() -> void:
 	game.setup(layout.arena, layout.s, layout.board_bottom, editor.level.clone())
 	menu.open_battle()
 	_from_editor = true
+	# LEVEL Z EDITORU NENI KAMPAŇ: nic se neodemyka a hrac se vraci do
+	# editoru, ne do vyberu levelu.
+	level_index = -1
+	_win_seen = false
+	win_timer = 0.0
 
 
 # ZPET DO EDITORU z rozehraneho levelu. Editor si svuj level nechal, takze se
@@ -829,6 +996,9 @@ func _open_editor() -> void:
 
 
 func _draw_editor() -> void:
+	if editor.is_name():
+		_draw_editor_name()
+		return
 	if editor.is_list():
 		_draw_editor_list()
 		return
@@ -916,6 +1086,62 @@ func _draw_editor_list() -> void:
 		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
 		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
 			str(it["name"]), 17, Color(0.88, 0.85, 0.78))
+		# PREJMENOVAT A SMAZAT. Jen na radcich s levelem - "nový level"
+		# ani "zpět" neni co prejmenovat. Smazani, na ktere hrac uz jednou
+		# klepl, sviti cervene: druhe klepnuti maze, takze musi byt videt,
+		# ze se to opravdu chysta.
+		if kind == "level":
+			var key: String = str(it["key"])
+			var waiting: bool = editor.pending_delete == key
+			_draw_list_btn(layout.editor_list_button(i, 0), "název", Color(0.72, 0.70, 0.62), false)
+			_draw_list_btn(layout.editor_list_button(i, 1), "smazat",
+				Color(0.85, 0.42, 0.36), waiting)
+
+
+# TLACITKO NA RADKU SEZNAMU. Kresli se stejnym stylem jako vsechno ostatni
+# (plochy ramecek, zadne hover efekty) - stav se meni jen klepnutim.
+func _draw_list_btn(r: Rect2, text: String, accent: Color, strong: bool) -> void:
+	if r.size.x <= 0.0:
+		return
+	draw_rect(r, PANEL_BTN)
+	draw_rect(r, Color(accent.r, accent.g, accent.b, 0.9 if strong else 0.45), false,
+		layout.ul(2.0))
+	_draw_centered(text, r, r.position.y + r.size.y * 0.64, 14,
+		Color(0.92, 0.89, 0.82) if strong else Color(0.76, 0.73, 0.66))
+
+
+# KLAVESNICE PRO PREJMENOVANI. Nahore je videt, co hrac pise (a ze se pise do
+# jmena levelu), dole klavesy. Klepnuti na klavesu se hleda PRESNE podle
+# rozvrzeni (`layout.ed_name_rows`) - jedna pravda pro kresleni i klepnuti.
+func _draw_editor_name() -> void:
+	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
+	var pad: float = _pad_left()
+	_label(Vector2(pad, layout.hud_h * 0.62), "NÁZEV LEVELU", 15, Color(0.58, 0.55, 0.49))
+	# NAPSANY TEXT: kdyz je prazdny, ukaze se, ze se ceka na znak - prazdny
+	# radek by vypadal, jako ze se nic nedeje.
+	var shown: String = editor.name_text if not editor.name_text.is_empty() else "…"
+	_label(Vector2(pad, layout.hud_h * 1.30), "%s|" % shown, 20, Color(0.90, 0.87, 0.80))
+	_label_right(editor.status, layout.hud_h * 0.62, 13, Color(0.72, 0.70, 0.62),
+		layout.view.x - pad)
+	var grid: Array = editor.name_grid()
+	for i in range(mini(grid.size(), layout.ed_name_rows.size())):
+		var line: Array = grid[i]
+		var rects: Array = layout.ed_name_rows[i]
+		for j in range(mini(line.size(), rects.size())):
+			var r: Rect2 = rects[j]
+			var it: Dictionary = line[j]
+			var act: int = int(it["act"])
+			var accent: Color = Color(0.44, 0.41, 0.36)
+			if act == Editor.NAME_OK:
+				accent = Color(0.65, 0.78, 0.60)
+			elif act == Editor.NAME_CANCEL:
+				accent = Color(0.72, 0.70, 0.62)
+			elif act < 0:
+				accent = Color(0.66, 0.34, 0.30)
+			draw_rect(r, PANEL_BTN)
+			draw_rect(r, Color(accent.r, accent.g, accent.b, 0.6), false, layout.ul(2.0))
+			_draw_centered(str(it["label"]), r, r.position.y + r.size.y * 0.64,
+				15 if act >= 0 else 14, Color(0.90, 0.87, 0.80))
 
 
 # CO Hrac PRAVE KRESLI. Do levelu se to dostane, az kdyz prst zvedne - do
@@ -1158,6 +1384,9 @@ func _draw() -> void:
 	if menu.is_menu():
 		_draw_menu()
 		return
+	if menu.is_levels():
+		_draw_levels()
+		return
 	if menu.is_guide():
 		_draw_guide()
 		return
@@ -1168,6 +1397,58 @@ func _draw() -> void:
 		_draw_editor()
 		return
 	_draw_battle()
+
+
+# VYBER LEVELU. Seznam levelu kampane a pod nim "volná hra". Stav levelu je
+# videt na prvni pohled a to je cely smysl obrazovky:
+#   * vyhrany   - zeleny ramecek a "vyhráno",
+#   * odemceny  - svetly ramecek a "hrát",
+#   * zamceny   - sedivy text a "zamčeno" (klepnuti nic nedela).
+# Cislo levelu stoji vlevo: hrac tak vi, kolikaty level hraje.
+func _draw_levels() -> void:
+	draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.10, 0.095, 0.085))
+	var cx: float = layout.view.x * 0.5
+	_label(Vector2(cx, layout.hud_h * 0.80), "LEVELY", 22,
+		Color(0.90, 0.87, 0.80), true, layout.view.x)
+	for i in range(layout.levels_rows.size()):
+		var r: Rect2 = layout.levels_rows[i]
+		var free_row: bool = i >= layout.levels_fit
+		var accent: Color = Color(0.55, 0.53, 0.48)
+		var name: String = "volná hra"
+		var state: String = "základní deska"
+		if not free_row:
+			name = "%d. %s" % [i + 1, Campaign.level_name(i)]
+			if campaign.is_cleared(i):
+				accent = Color(0.65, 0.78, 0.60)
+				state = "vyhráno"
+			elif campaign.is_unlocked(i):
+				accent = Color(0.78, 0.62, 0.30)
+				state = "hrát"
+			else:
+				accent = Color(0.34, 0.32, 0.30)
+				state = "zamčeno"
+		else:
+			accent = Color(0.72, 0.70, 0.62)
+		draw_rect(r, Color(0.135, 0.125, 0.11))
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, layout.ul(2.0))
+		var name_col: Color = Color(0.88, 0.85, 0.78) if (free_row or campaign.is_unlocked(i)) \
+			else Color(0.45, 0.43, 0.40)
+		_label(Vector2(r.position.x + 14.0 * layout.ui, r.position.y + r.size.y * 0.64),
+			name, 17, name_col)
+		var st_col: Color = accent if (free_row or campaign.is_unlocked(i)) \
+			else Color(0.42, 0.40, 0.37)
+		_draw_right(state, Rect2(r.position.x, r.position.y, r.size.x - 14.0 * layout.ui, r.size.y),
+			r.position.y + r.size.y * 0.64, 15, st_col)
+	# Kdyz je levelu vic, nez se vejde, rekne se to - ticha ztrata radku by
+	# hrace nechala myslet, ze prisel o level.
+	if Campaign.level_count() > layout.levels_fit:
+		_label(Vector2(cx, layout.levels_back.position.y - 4.0 * layout.ui),
+			"na displej se vejde %d z %d levelů" % [layout.levels_fit, Campaign.level_count()],
+			12, Color(0.62, 0.55, 0.45), true, layout.view.x * 0.9)
+	var br: Rect2 = layout.levels_back
+	draw_rect(br, Color(0.20, 0.19, 0.17))
+	draw_rect(br, Color(0.38, 0.35, 0.30), false, layout.ul(2.0))
+	_draw_centered("ZPĚT", br, br.position.y + br.size.y * 0.64, 18, Color(0.85, 0.82, 0.76))
 
 
 # HERNI DESKA. Pruh je pryc, takze posledni prvek je HUD - a deska saha
@@ -2076,6 +2357,8 @@ func _draw_hud() -> void:
 		info = "dočištění · v úsecích %d" % game.enemies.size()
 	elif game.phase == "lost":
 		info = "síť padla"
+	elif game.phase == "won":
+		info = "dohráno"
 	else:
 		info = "v úsecích: %d" % game.enemies.size()
 	_label(Vector2(x0 + step * 3.0, layout.hud_h * 0.88), info, 13, info_col)
@@ -2090,6 +2373,20 @@ func _draw_hud() -> void:
 		_draw_centered("EDITOR", br, br.position.y + br.size.y * 0.66, 16,
 			Color(0.90, 0.87, 0.80))
 
+	# PAUZA / POKRAČOVAT. Je to jedine tlacitko, ktere hrac v bitve potrebuje
+	# mit porad na ocich (Jan: "Přidáme do boje tlačítko Pause/Resume"), a
+	# stoji v hornim panelu, takze si nebere hraci plochu. Popisek meni stav:
+	# "PAUZA" kdyz hra bezi, "HRÁT" kdyz stoji - jedno tlacitko, dva vyznamy,
+	# zadny druhy stav k zapamatovani.
+	if not game.is_won() and game.phase != "lost":
+		var pr: Rect2 = layout.hud_pause
+		var pa: Color = Color(0.78, 0.62, 0.30) if game.is_paused() \
+			else Color(0.62, 0.60, 0.54)
+		draw_rect(pr, Color(0.20, 0.19, 0.17))
+		draw_rect(pr, Color(pa.r, pa.g, pa.b, 0.75), false, layout.ul(2.0))
+		_draw_centered("HRÁT" if game.is_paused() else "PAUZA", pr,
+			pr.position.y + pr.size.y * 0.66, 16, Color(0.90, 0.87, 0.80))
+
 	if game.phase == "lost":
 		var bw: float = minf(420.0 * layout.s, layout.view.x * 0.8)
 		var bh: float = 116.0 * layout.s
@@ -2101,6 +2398,30 @@ func _draw_hud() -> void:
 		_label(Vector2(bp.x + bw * 0.5, bp.y + bh * 0.78),
 			"vydržels %d %s" % [game.wave, _waves_word(game.wave)], 16,
 			Color(0.75, 0.71, 0.65), true, bw)
+	# VYHRA LEVELU. Hrac se vraci do vyberu levelu (a dalsi level je tim
+	# odemceny) - proto se rekne, co nasleduje, a ze klepnuti to urychli.
+	if game.is_won():
+		var ww: float = minf(460.0 * layout.s, layout.view.x * 0.8)
+		var wh: float = 132.0 * layout.s
+		var wp := Vector2((layout.view.x - ww) * 0.5, layout.view.y * 0.34)
+		draw_rect(Rect2(wp, Vector2(ww, wh)), Color(0.10, 0.12, 0.09))
+		draw_rect(Rect2(wp, Vector2(ww, wh)), Color(0.55, 0.72, 0.48), false, layout.ul(3.0))
+		_label(Vector2(wp.x + ww * 0.5, wp.y + wh * 0.40), "LEVEL VYHRÁN", 30,
+			Color(0.70, 0.86, 0.60), true, ww)
+		_label(Vector2(wp.x + ww * 0.5, wp.y + wh * 0.66),
+			"všech %d vln odraženo" % Game.WAVE_MAX, 15,
+			Color(0.72, 0.70, 0.64), true, ww)
+		_label(Vector2(wp.x + ww * 0.5, wp.y + wh * 0.90),
+			"za %.0f s zpět na výběr levelů" % maxf(win_timer, 0.0), 13,
+			Color(0.58, 0.55, 0.49), true, ww)
+	# POZASTAVENO: pres desku jde podlozka, aby hrac videl, ze hra stoji.
+	if game.is_paused():
+		draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.06, 0.055, 0.05, 0.62))
+		_label(Vector2(layout.view.x * 0.5, layout.view.y * 0.48), "PAUZA", 40,
+			Color(0.88, 0.85, 0.78), true, layout.view.x)
+		_label(Vector2(layout.view.x * 0.5, layout.view.y * 0.58),
+			"klepni na HRÁT v horním panelu a pokračuješ", 15,
+			Color(0.70, 0.67, 0.60), true, layout.view.x)
 	if toast_t > 0.0:
 		_label(Vector2(layout.view.x * 0.5, layout.hud_h + 24.0 * layout.s), toast, 16,
 			Color(0.78, 0.75, 0.68), true, layout.view.x * 0.9)
@@ -2153,6 +2474,8 @@ func _phase_word() -> String:
 			return "dočištění"
 		"lost":
 			return "prohra"
+		"won":
+			return "dohráno"
 	return game.phase
 
 
