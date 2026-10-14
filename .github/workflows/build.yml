@@ -1,0 +1,131 @@
+name: Zily 2 (build)
+
+# Tato hra zije na SVOJI vetvi jednoho repozitare (vetev = hra). Spousti se
+# jen na ni, aby neprepisovala build druhe hry ani nepadala na testech, ktere
+# v tomto stromu neexistuji.
+on:
+  push:
+    branches: ["zily2"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Godot editor + export templates
+        run: |
+          set -e
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -O godot.zip
+          python3 -c "import zipfile; zipfile.ZipFile('godot.zip').extractall('.')"
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot
+          chmod +x godot
+          wget -q "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -O tpl.tpz
+          python3 -c "import zipfile; zipfile.ZipFile('tpl.tpz').extractall('.')"
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$DEST"
+          cp -r templates/. "$DEST"/
+          ./godot --headless --version
+
+      - name: Import assets
+        run: ./godot --headless --path . --import
+
+      - name: Every script loads
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_scripts_load.gd 2>&1)
+          echo "$OUT" | tail -20
+          echo "$OUT" | grep -q "SCRIPTS_ALL_PASS=true"
+
+      # HERNI LOGIKA: vez vidi jen svou barvu, svazek drzi jeden cil do jeho
+      # smrti, cesta od okraje k vezi trva 8 s, mimo dostrel se nedeje nic,
+      # klepnuti na vysek vence prepne barvu, vlna micha vsechny ctyri barvy.
+      - name: Game rules test (srdce a vez)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_core.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "CORE_ALL_PASS=true"
+
+      # ROZVRZENI: kruh plochy se vejde do displeje, poutnik je citelny
+      # a poutnik prvni vlny stihne umrit v kruhu dostrelu (jinak je hra
+      # nehratelna, i kdyz vypada dobre).
+      - name: Layout test (6 realnych rozliseni)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_layout.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "LAYOUT_ALL_PASS=true"
+
+      - name: Export (Web)
+        run: |
+          set -e
+          mkdir -p build/web
+          ./godot --headless --path . --export-release "Web" || true
+          ls -la build/web
+
+      # Godot generuje manifest s minimem poli a Androidu to nestaci - chce
+      # short_name, theme_color, id, scope a hlavne ikonu 192x192, kterou export
+      # vubec neumi. Navic jeho service worker v install nevola skipWaiting()
+      # a navigaci vyrizuje cache-first, takze hrac po nasazení zustane na stare
+      # hre. Otisk commitu jde do CACHE_VERSION, aby prohlizec novou verzi vubec
+      # zaregistroval.
+      - name: Fix PWA export (manifest + service worker + orientace)
+        run: python3 tools/fix_pwa_export.py build/web "${GITHUB_SHA:0:7}"
+
+      # Service worker je generovany soubor bez buildu - kdyz v nem zustane
+      # neplatna syntaxe, prohlizec ho zahodi a cela PWA prestane fungovat.
+      - name: Service worker must be valid JavaScript
+        run: node --check build/web/index.service.worker.js
+
+      # ORIENTACE JE SOUCAST HRY: na sirku je plocha ~270 px a barvy se na
+      # 18px poutnikovi nedaji precist. Kontroluje se to tady, protoze spatna
+      # hodnota v exportnim presetu se jinak projevi jen ticho - hrou, ktera
+      # se na telefonu neda hrat.
+      - name: Manifest must be portrait
+        run: |
+          set -e
+          grep -q '"orientation": "portrait"' build/web/index.manifest.json
+          echo "MANIFEST_ORIENTATION=portrait"
+
+      # Otisk buildu do hry. Bez nej hrac nepozna, jestli ma po aktualizaci
+      # opravdu novou verzi, nebo mu ji drzi cache service workera.
+      - name: Build stamp
+        run: printf '%s' "${GITHUB_SHA:0:7}" > build/web/version.txt
+
+      - name: Assert the expected artifacts exist
+        run: |
+          set -e
+          MISSING=0
+          for f in build/web/index.html build/web/index.wasm build/web/index.pck \
+                   build/web/index.manifest.json build/web/index.service.worker.js \
+                   build/web/index.192x192.png build/web/version.txt; do
+            if [ -f "$f" ]; then echo "OK   $(du -h "$f" | cut -f1)  $f";
+            else echo "MISS ---  $f"; MISSING=1; fi
+          done
+          if [ "$MISSING" = "1" ]; then echo "ARTIFACTS_ALL_PRESENT=false"; exit 1; fi
+          echo "ARTIFACTS_ALL_PRESENT=true"
+
+      # Vlastni podadresar na gh-pages + keep_files, aby tato hra NIKDY
+      # neprepsala web build druhe hry v tomtez repozitari.
+      - name: Publish to GitHub Pages (subfolder, keeps other games)
+        if: hashFiles('build/web/index.html') != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          publish_branch: gh-pages
+          destination_dir: zily2
+          keep_files: true
