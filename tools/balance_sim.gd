@@ -83,7 +83,8 @@ func _run() -> void:
 func _play(g: Game) -> void:
 	for id in TEMP_ORDER:
 		var have: int = g.temp_level(id)
-		if have >= Upgrades.temp_max(id):
+		# DOCASNE ZEBRICKY JSOU NEOMEZENE - ptáme se na cenu, ne na strop.
+		if Upgrades.temp_is_maxed(id, have):
 			continue
 		if g.gold >= Upgrades.temp_cost(id, have):
 			g.buy_temp(id)

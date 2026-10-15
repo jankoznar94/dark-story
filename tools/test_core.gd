@@ -24,6 +24,9 @@ func _init() -> void:
 	_run("kriticka sance a poskozeni jsou z tabulky upgradu", _test_crit)
 	_run("multishot drzi vic cilu zaraz", _test_multishot)
 	_run("ricochet se odrazi na stejnou barvu a kazdy dostane nejvyse jednou", _test_ricochet)
+	_run("odrazena strela leti z tela obeti (ricochet je videt)", _test_ricochet_shot_flies)
+	_run("strela po prepsani barvy veze doleti a ubira", _test_shot_lands_after_hue_switch)
+	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
 	_run("docasny krok stoji 5xN zlata a hodnota roste", _test_temp_buy)
@@ -338,6 +341,90 @@ func _test_ricochet() -> void:
 		"odraz zasahl stejneho poutnika vickrat")
 
 
+# ODRAZ JE VIDET (Jan, Oct 2026: "Ricochet musí mít nějakou animaci pro
+# projektil, který se odráží mezi nepřáteli. Teď uděluje poškození, ale není nic
+# vidět."). Odrazena strela musi VZNIKNOUT V TELE predchozi obeti a odtud letět
+# - driv si "odkud" spocitala sama a vysla z NOVEHO cile, takze doletela v tom
+# samem snimku, ubrala zivoty a nebylo ji videt.
+func _test_ricochet_shot_flies() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	g.profile.perm["rc"] = 1
+	var a: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.70, 0.0)
+	var b: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.70, 0.0)
+	b.pos = a.pos + Vector2(60.0, 0.0)
+	for q in [a, b]:
+		q.speed = 0.0
+		q.hp = 100000.0
+		q.max_hp = 100000.0
+	var t: float = 0.0
+	var seen: bool = false
+	var bad_spawn: bool = false
+	while t < 1.2 and not seen:
+		g.step(1.0 / 240.0)
+		t += 1.0 / 240.0
+		for s in g.shots:
+			if s["target"] != b:
+				continue
+			seen = true
+			if (s["pos"] as Vector2).distance_to(a.pos) > 1.0:
+				bad_spawn = true
+	_check(seen, "odrazena strela vubec nevznikla - neni co videt")
+	_check(not bad_spawn, "odrazena strela vznikla uz ve svem cili (nema let)")
+	var t2: float = 0.0
+	while b.hp >= 100000.0 and t2 < 1.5:
+		g.step(1.0 / 240.0)
+		t2 += 1.0 / 240.0
+	_check(b.hp < 100000.0, "odrazena strela druheho poutnika nezasahl")
+
+
+# JEDNOU VYSTRELENA STRELA DOZENE SVUJ CIL (Jan, Oct 2026: "Když už věž
+# vystřelí, tak musí projektil doletět do cíle a udělit poškození."). Driv
+# strela v okamziku prepsani barvy zmizela a cil nedostal nic.
+func _test_shot_lands_after_hue_switch() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
+	p.speed = 0.0
+	p.hp = 1000.0
+	p.max_hp = 1000.0
+	var hp0: float = p.hp
+	g.step(1.0 / 240.0)
+	_check(g.shots.size() == 1, "vez pri zamereni nevystrelila (%d strel)" % g.shots.size())
+	# PREPNUTI BARVY BEHEM LETU: vez uz cervenou nevidi, ale strela uz leti.
+	_check(g.select_hue(Hue.YELLOW), "barva veze se neprepla")
+	var t: float = 0.0
+	while is_equal_approx(p.hp, hp0) and t < 3.0:
+		g.step(1.0 / 240.0)
+		t += 1.0 / 240.0
+	_check(p.hp < hp0, "strela po prepsani barvy zmizela - cil nedostal poskozeni")
+	_check(absf((hp0 - p.hp) - g.shot_dmg()) < 0.01,
+		"dopad po prepsani barvy neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
+
+
+# ZRYCHLENI HRY (Jan, Oct 2026: "Veškerý čas ve hře se zrychlí. Pohyb,
+# rychlost palby, rychlost animací, vše."). Nasobi se CELY krok hry, takze se
+# vsechno, co je na case, zrychli stejne - kdo by zrychloval jen pohyb, zmenil
+# by tim obtiznost.
+func _test_game_speed_scales_time() -> void:
+	var g: Game = _fresh()
+	_check(absf(g.time_scale() - 1.0) < 0.001, "zakladni hra nema tempo 1,0x")
+	var slow: Pilgrim = g.spawn_at_angle(0.0, Hue.BLUE)
+	var a0: Vector2 = slow.pos
+	_tick(g, 1.0)
+	var slow_move: float = a0.distance_to(slow.pos)
+	_check(slow_move > 1.0, "poutnik se vubec nepohnul")
+	var fast: Game = _fresh()
+	fast.profile.perm["gs"] = 3
+	_check(absf(fast.time_scale() - 2.5) < 0.001, "tempo na 3. stupni neni 2,5x (%.2f)" % fast.time_scale())
+	var q: Pilgrim = fast.spawn_at_angle(0.0, Hue.BLUE)
+	var b0: Vector2 = q.pos
+	_tick(fast, 1.0)
+	var fast_move: float = b0.distance_to(q.pos)
+	_check(absf(fast_move / slow_move - 2.5) < 0.05,
+		"poutnik se v 2,5x tempu nepohnul 2,5x dal (%.1f vs %.1f px)" % [fast_move, slow_move])
+
+
 func _test_poison() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.YELLOW       # vez do poutnika nestrili - meri se jen jed
@@ -398,12 +485,23 @@ func _test_temp_buy() -> void:
 	g2.gold = 4
 	_check(not g2.buy_temp("as"), "krok se koupil bez zlata")
 	_check(g2.gold == 4, "zlato se ubralo, i kdyz se nekoupilo")
-	# STROP: dal uz nejde, ani za zlato.
+	# BEZ STROPU: docasny zebricek uz "MAX" nema (Jan, Oct 2026: "já prozatím
+	# nechci žádné stropy"). Kupuje se tak dlouho, dokud je zlato - driv tu
+	# stala zed na 0,60 s a dal se koupit nedalo.
 	var g3: Game = _fresh()
 	g3.gold = 100000
-	for i in range(Upgrades.temp_max("as")):
-		g3.buy_temp("as")
-	_check(not g3.buy_temp("as"), "nad strop docasneho kroku se da koupit")
+	var want: int = 12
+	var sold: int = 0
+	for i in range(want):
+		if g3.buy_temp("as"):
+			sold += 1
+	_check(sold == want, "docasnych kroku kadence se koupilo %d z %d" % [sold, want])
+	_check(absf(g3.val("as") - 0.40) < 0.0001,
+		"po %d docasnych krocich neni kadence 0,40 s (je %.2f s)" % [want, g3.val("as")])
+	_check(g3.val("as") < 0.60, "docasny zebricek porad konci na 0,60 s")
+	var paid: int = 100000 - g3.gold
+	_check(paid == 5 * (want * (want + 1) / 2), "cena %d docasnych kroku neni %d zlata (%d)" % [want, 5 * (want * (want + 1) / 2), paid])
+	_check(g3.buy_temp("as"), "posledni krok se nedal koupit, i kdyz je zlato")
 	# ZIVOTY SE DOSTANOU HNAD, ne az v dalsim levelu.
 	var g4: Game = _fresh()
 	g4.gold = 5

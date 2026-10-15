@@ -23,22 +23,28 @@ extends RefCounted
 
 const BAR_FRAC := 0.075
 const BAR_MIN := 44.0
-const PAL_FRAC := 0.115
-const PAL_MIN := 64.0
+# PRUH PALETY JE O NECO VYSSI NEZ DRIV (Jan, Oct 2026: "Trochu zvětšíme barevná
+# tlačítka palety."): tlacitko je kruh, takže ho zvetsi jen vyska pruhu a to,
+# kolik z nej si vezme - sirka je dana poctem barev.
+const PAL_FRAC := 0.125
+const PAL_MIN := 72.0
 const MARGIN_FRAC := 0.03
 # ZMENSENI KRESLENI (Jan: "A vše uděláme o něco menší ... Musíme opticky
 # zvětšit celou tuhle plochu"): plati pro vez, poutnika i tecku strely.
 const UNIT_SHRINK := 0.85
 const BTN_MIN := 44.0
-const PAL_BTN_MAX := 132.0
+const PAL_BTN_MAX := 150.0
 const MENU_BTN_MIN := 56.0
 const MENU_BTN_MAX := 120.0
 # PAUZA / POKRAČOVAT: sirka se MERI z delsiho popisku, aby tlacitko pri
 # prepnuti neměnilo velikost (a aby se na uzkem displeji veslo).
 const PAUSE_BTN_MIN := 56.0
 const PAUSE_BTN_MAX := 132.0
-# TAB KATEGORIE A BUNKA UPGRADU. Tab musi jit zmacknout prstem (44 px).
-const TAB_MIN := 40.0
+# TAB KATEGORIE A BUNKA UPGRADU. Tab musi jit zmacknout prstem (44 px) a IKONA
+# KATEGORIE V NEM MUSI BYT VIDET (Jan, Oct 2026: "Zvětšíme ikony kategorií
+# upgradu. Jak v menu tak v levelu.") - tab je proto vyssi nez driv, ikona
+# bere 84 % jeho vysky.
+const TAB_MIN := 44.0
 # MRIZKA UPGRADU: DVE BUNKY NA RADEK a kazda bunka je CELE TLACITKO - nazev,
 # aktualni hodnota a cena jsou UVNITR (Jan, Oct 2026: "Bude to grid. Dvě
 # obdélníková tlačítka na řádek. Každé tlačítko obsahuje název, cenu a aktuální
@@ -259,8 +265,10 @@ func grid_rows(cell_count: int) -> int:
 	return int(ceil(float(maxi(1, cell_count)) / float(GRID_COLS)))
 
 
+# VYSKA TABU KATEGORIE. Je to NOSNIK IKONY (ikona bere 84 % z ni), takze se
+# pocita z pisma a je vyssi nez driv - vetsi ikona je to, co Jan chtel videt.
 func card_tabs_h() -> float:
-	return maxf(TAB_MIN, minf(52.0, float(font_px) * 2.4))
+	return maxf(TAB_MIN, minf(62.0, float(font_px) * 2.7))
 
 
 # VELIKOST PANELU PRO DANY POCET UPGRADU. Pocita se Z MRIZKY, ne naopak -
@@ -315,8 +323,12 @@ func layout_grid(r: Rect2, tab_count: int, cell_count: int, shrink: float = 1.0)
 # IKONA KATEGORIE VE TABU. Ctverec UPROSTRED tabu - ikony jsou ctvercove masky
 # (bile na pruhlednem), takze se do nej vejdou bez orezani a maji stejnou
 # velikost ve vsech tabech. Text popisku se do tabu uz nekresli.
+#
+# IKONA ZABIRA 84 % VYSKY TABU (Jan, Oct 2026: "Zvětšíme ikony kategorií
+# upgradu."): driv to bylo 66 %, takze ikona byla skoro polovicni. Sirku
+# orezava jen okraj tabu (`- 8 px`), aby ikona nikdy neprelezla ramecek.
 func tab_icon_rect(tr: Rect2) -> Rect2:
-	var side: float = minf(maxf(16.0, tr.size.y * 0.66), maxf(16.0, tr.size.x - 10.0))
+	var side: float = minf(maxf(18.0, tr.size.y * 0.84), maxf(18.0, tr.size.x - 8.0))
 	return Rect2(tr.position + (tr.size - Vector2(side, side)) * 0.5, Vector2(side, side))
 
 
@@ -417,14 +429,19 @@ func dialog_panel(two_buttons: bool) -> void:
 # se rozvrzeni pocita z poctu, ktery dostane - ne z konstanty. Tlacitko je
 # KRUH: kresli se do CTVERCE, proto ctvercove bunky (v obdelniku by z puntiku
 # byl oval).
+#
+# VETSÍ NEZ DRIV (Jan, Oct 2026: "Trochu zvětšíme barevná tlačítka palety.").
+# Kruh roste jen s VYSKOU pruhu, takze se bere vic z pruhu (vnitrni odsazeni
+# 5 %) a mene z okraju - na pet barev je sirka to, co ho drzi, takze se
+# zmensily mezery a krajovy odstup.
 func layout_palette(count: int) -> Array:
 	if count <= 0 or view.x < 1.0:
 		pal_rects = []
 		return pal_rects
-	var pad: float = maxf(8.0, view.x * 0.025)
-	var gap: float = maxf(10.0, view.x * 0.028)
+	var pad: float = maxf(6.0, view.x * 0.015)
+	var gap: float = maxf(8.0, view.x * 0.020)
 	var room_w: float = (view.x - 2.0 * pad - gap * float(count - 1)) / float(count)
-	var room_h: float = pal_h - 2.0 * maxf(6.0, pal_h * 0.10)
+	var room_h: float = pal_h - 2.0 * maxf(4.0, pal_h * 0.05)
 	var side: float = minf(clampf(room_w, BTN_MIN, PAL_BTN_MAX), maxf(BTN_MIN, room_h))
 	var total: float = side * float(count) + gap * float(count - 1)
 	var x: float = (view.x - total) * 0.5

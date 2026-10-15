@@ -116,12 +116,13 @@ func _sync_shop_shape() -> void:
 
 
 func _shop_stats() -> Array:
-	# JEN STATY, KTERE JDOU V BITVE KOUPIT. Stat s `temp_max` 0 (dostrel,
-	# specialy) by jinak zabiral bunku, ukazoval cenu 0 a "MAX" - hrac by
-	# videl tlacitko, ktere nic nedela a nerekne proc.
+	# JEN STATY, KTERE JDOU V BITVE KOUPIT. Stat, ktery v bitve nema co
+	# nabidnout (`temp_max` 0 = dostrel, specialy), by jinak zabiral bunku,
+	# ukazoval cenu 0 a "MAX" - hrac by videl tlacitko, ktere nic nedela
+	# a nerekne proc. STATY S NEOMEZENYM ZEBRICKEM (`temp_max` -1) sem PATRI.
 	var out: Array = []
 	for s in Upgrades.stats_in(String(SHOP_CATS[clampi(shop_cat, 0, SHOP_CATS.size() - 1)])):
-		if Upgrades.temp_max(String(s["id"])) > 0:
+		if Upgrades.temp_buyable(String(s["id"])):
 			out.append(s)
 	return out
 
@@ -537,10 +538,13 @@ func _range_color() -> Color:
 	return Color(col.r, col.g, col.b, 0.62)
 
 
+# STRELA SE KRESLI SVOU VLASTNI BARVOU (`s["hue"]`), ne barvou veze: hrac muze
+# behem letu prebit vez na jinou barvu a tecka ve vzduchu nesmi zmenit barvu -
+# leti porad ta, ktera vystrelila (a proto i doleti, viz `Game._advance_shots`).
 func _draw_shots() -> void:
-	var col: Color = Hue.color_of(game.tower.hue)
 	for s in game.shots:
 		var sp: Vector2 = s["pos"]
+		var col: Color = Hue.color_of(int(s.get("hue", game.tower.hue)))
 		draw_circle(sp, game.shot_rim_r(), GLYPH)
 		draw_circle(sp, game.shot_r(), col)
 
@@ -811,7 +815,7 @@ func _draw_shop() -> void:
 	for s in stats:
 		var id: String = String(s["id"])
 		var have: int = game.temp_level(id)
-		var maxed: bool = have >= Upgrades.temp_max(id)
+		var maxed: bool = Upgrades.temp_is_maxed(id, have)
 		var c: int = Upgrades.temp_cost(id, have)
 		names.append(Upgrades.label_of(id))
 		values.append(Upgrades.value_text(id, game.profile.perm_level(id), have))

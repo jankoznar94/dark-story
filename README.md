@@ -15,9 +15,12 @@ nepoužívá.
   neubírá životy. Poškození přijde **až dopadem střely**: od věže letí tečka
   **v barvě věže** (přes základní dostřel ~0,33 s), takže to vypadá jako
   stabilní paprsek, kterým rytmicky proudí střely.
-- **Svazek drží jeden cíl, dokud neumře.** Střela, jejíž cíl mezitím zmizí
-  (umřel, hráč přepnul barvu, fialová se zneviditelnila), zanikne a nikoho
-  jiného nezasáhne.
+- **Svazek drží cíle, dokud jsou naživu, a JEDNOU VYSTŘELENÁ STŘELA SVŮJ CÍL
+  DOSTIHNE** (Jan, Oct 2026: „Když už věž vystřelí, tak musí projektil doletět
+  do cíle a udělit poškození.“). Střela proto zanikne jen s mrtvým cílem —
+  přepnutí barvy věže ani to, že se cíl přestal zaměřovat, ji nezastaví.
+  Odražená střela **letí z těla předchozí oběti** k dalšímu nepříteli, takže je
+  vidět, jak se mezi nimi odráží.
 - **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10, roste počet
   ran za sekundu: **3 → 4,8 → 7,2 ran/s** (tj. 30 / 48 / 72 za sekundu) a od
   3. stupně věž míří na dva cíle. V paprsku je tím vidět hustší proud teček.
@@ -35,6 +38,23 @@ nepoužívá.
   (dřív 2,5 s, což bylo málo).
 - **Levely vypadají stejně**, liší se jen složením vln (každá vlna míchá
   všechny čtyři barvy).
+
+## Upgrady a tempo hry (Oct 2026)
+
+- **Dočasné (bitevní) upgrady NEMAJÍ STROP** (Jan: „já prozatím nechci žádné
+  stropy. Žádné max.“). Kupují se za zlato tak dlouho, dokud na ně hráč má;
+  jediným stropem je rostoucí cena (5, 10, 15, … zlata). V panelu se proto
+  nikdy neobjeví „MAX“. **Permanentní upgrady strop mají dál** (platí se body
+  z vyhraných levelů) — jejich konec je hodnota v tabulce `Upgrades.STATS`
+  (`cap`) a v menu se na něm napíše „MAX“.
+- **Kadence má jen fyzikální pojistku** (`Upgrades.MIN_INTERVAL` = 0,05 s, tj.
+  20 ran/s): kadence je čas a nula by dělila nulou. Hráč se k ní dostane až po
+  ~19 krocích (přes 900 zlata v jednom levelu).
+- **Zrychlení hry** je nový speciální permanentní upgrade (`gs`): **1,0x /
+  1,5x / 2,0x / 2,5x** za body. Násobí se **celý krok hry** (`Game.step`), takže
+  se zrychlí všechno, co je na čase — pohyb poutníků, kadence, let střely, jed
+  i led, regenerace i časy vln. Kdyby se zrychloval jen pohyb, změnila by se
+  obtížnost.
 
 ## Rozvržení
 

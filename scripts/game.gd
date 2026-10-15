@@ -154,9 +154,20 @@ func temp_level(id: String) -> int:
 	return int(temp.get(id, 0))
 
 
+# ZRYCHLENI HRY (specialni permanentni upgrade "gs"): nasobek, kterym se
+# prepocte KAZDY krok hry. Je to na JEDNOM miste (`step`), takze se zrychli
+# vsechno, co je na case - pohyb poutniku, kadence, let strely, jed i led,
+# regenerace i casy vln. Kdo by nasobil jen nekde (treba jen pohyb), ten by
+# tise zmenil obtiznost.
+func time_scale() -> float:
+	return maxf(0.25, val("gs"))
+
+
 # KADENCE VEZE (rany za sekundu). Parametr je INTERVAL, takze se prepocitava.
+# Podlaha je stejna jako v tabulce (`Upgrades.MIN_INTERVAL`) - kadence je cas
+# a nula by delila nulou.
 func rate() -> float:
-	return 1.0 / maxf(0.05, val("as"))
+	return 1.0 / maxf(Upgrades.MIN_INTERVAL, val("as"))
 
 
 func range_frac() -> float:
@@ -298,9 +309,11 @@ func _lose() -> void:
 
 # DOCASNY KROK ZA ZLATO (kupuje se kazdy level znovu). Vraci true, kdyz se
 # opravdu koupil - obrazovka se na to ptá, ne na to, "co se asi stalo".
+# DOCASNE KROKY NEJSOU SHORA OMEZENE (Jan, Oct 2026): jedinym stropem je zlato
+# hrace, proto se ptáme na cenu, ne na "kolik jich jeste zbývá".
 func buy_temp(id: String) -> bool:
 	var have: int = temp_level(id)
-	if have >= Upgrades.temp_max(id):
+	if Upgrades.temp_is_maxed(id, have):
 		return false
 	var cost: int = Upgrades.temp_cost(id, have)
 	if gold < cost:
@@ -353,6 +366,9 @@ func is_paused() -> bool:
 func step(dt: float) -> void:
 	if is_over() or paused:
 		return
+	# ZRYCHLENI HRY: nasobi se CELY krok, takze se zrychli vsechno, co je na
+	# case (pohyb, kadence, let strely, jed, led, regenerace, casy vln).
+	dt *= time_scale()
 	_phase_step(dt)
 	_regen(dt)
 	_move(dt)
@@ -616,51 +632,78 @@ func _fire_at(p: Pilgrim) -> void:
 	var dmg: float = shot_dmg()
 	if rng.randf() < crit_chance():
 		dmg *= crit_dmg()
-	_fire_shot(p, dmg, ricochet(), [])
+	shots.append(_make_shot(p, dmg, ricochet(), [], muzzle(p)))
 
 
-# STRELA VYCHAZI Z OKRAJE VEZE. `bounce` = kolik odrazu jeste zbyva, `hit` =
-# na koho uz se v tomto odrazu dostalo (kazdy poutnik nejvyse jednou).
-func _fire_shot(p: Pilgrim, dmg: float, bounce: int, hit: Array) -> void:
-	var from: Vector2 = center
-	if not hit.is_empty():
-		from = p.pos
-	else:
-		from = center + (p.pos - center).normalized() * tower_r
+# USTI HLAVNE. Strela vychazi z OKRAJE veze, ne ze stredu - hrac vidi, kterym
+# smerem leti.
+func muzzle(p: Pilgrim) -> Vector2:
+	return center + (p.pos - center).normalized() * tower_r
+
+
+# STRELA. `bounce` = kolik odrazu jeste zbyva, `hit` = na koho uz se v tomto
+# odrazu dostalo (kazdy poutnik nejvyse jednou), `from` = ODKUD leti.
+#
+# `from` JE PARAMETR, ne pocitana hodnota: hlavni strela vychazi z veze, ale
+# ODRAZ vychazi z TELA predchozi obeti. Kdyz si odraz spocital "odkud" sam
+# (`from = p.pos`, kde `p` je NOVY cil), strela vznikla uz VE svem cili -
+# v tom samem snimku doletela, ubrala zivoty a nebylo ji videt. Presne to Jan
+# nasel: "Ricochet ... teď uděluje poškození, ale není nic vidět."
+#
+# BARVA SE DRZI PRI STRELE, ne u veze: hrac muze behem letu prebit vez na
+# jinou barvu a tecka ve vzduchu nesmi zmenit barvu - leti porad ta, ktera
+# vystrelila (a proto i po prepnuti doleti, viz `_advance_shots`).
+func _make_shot(p: Pilgrim, dmg: float, bounce: int, hit: Array, from: Vector2) -> Dictionary:
 	var already: Array = hit.duplicate()
 	already.append(p)
-	shots.append({"pos": from, "target": p, "dmg": dmg, "bounce": bounce, "hit": already})
 	shots_fired += 1
+	return {"pos": from, "target": p, "dmg": dmg, "bounce": bounce,
+		"hit": already, "hue": tower.hue}
 
 
-# LET STRELY A DOPAD. Poskozeni udeli az ve chvili, kdy do cile doleti. Kdyz
-# cil mezitim zmizi (umrel, hrac prepnul barvu, fialova se zneviditelnila),
-# strela zanikne - nikoho jineho nezasahne.
+# LET STRELY A DOPAD. Poskozeni udeli az ve chvili, kdy do cile doleti.
+#
+# JEDNOU VYSTRELENA STRELA DOZENE SVUJ CIL (Jan, Oct 2026: "Když už věž
+# vystřelí, tak musí projektil doletět do cíle a udělit poškození."). Driv
+# strela zanikla, jakmile hrac prepl barvu veze - hrac videl, jak projektil
+# zmizi a neubral nic. Strela proto zanikne JEN s MRTVYM cilem; zmena barvy
+# veze ani to, ze se cíl prestal zamerovat, ji nezastavi.
+#
+# ODRAZ VZNIKA UVNITR TOHOTO PRUCHODU, takze se nove strely sbiraji vedle
+# (`born`) a pripoji se az na konci. Kdyby se spolehlo na to, ze je smycka jeste
+# stihne projit, prisly by o ne `shots = keep` a odraz by nebylo videt.
 func _advance_shots(dt: float) -> void:
 	var keep: Array = []
+	var born: Array = []
 	for s in shots:
 		var p: Pilgrim = s["target"]
-		if not p.alive or not tower.sees(p):
+		if not p.alive:
 			continue
 		var pos: Vector2 = s["pos"]
 		var d: Vector2 = p.pos - pos
 		var step_len: float = shot_speed() * dt
 		if d.length() <= step_len + shot_r():
 			_damage(p, float(s["dmg"]))
-			_ricochet_from(p, s)
+			var next: Dictionary = _ricochet_from(p, s)
+			if not next.is_empty():
+				born.append(next)
 			continue
 		s["pos"] = pos + d.normalized() * step_len
+		keep.append(s)
+	for s in born:
 		keep.append(s)
 	shots = keep
 
 
 # ODRAZ (RICOCHET). Strela se odrazi na dalsiho poutnika STEJNE BARVY, na
 # ktereho se v tomto odrazu jeste nedostalo - a to i kdyz uz je mimo dostrel
-# (je to odraz, ne zamereni). Kazdy poutnik dostane nejvyse jednu ranu.
-func _ricochet_from(p: Pilgrim, s: Dictionary) -> void:
+# (je to odraz, ne zamereni). Kazdy poutnik dostane nejvyce jednu ranu.
+# Vraci NOVOU strelu (nebo prazdny slovnik), aby si ji `_advance_shots` mohl
+# pridat do sveho seznamu - do `shots` se sahat nesmi, prave se pres ni jde.
+func _ricochet_from(p: Pilgrim, s: Dictionary) -> Dictionary:
 	var bounce: int = int(s["bounce"])
 	if bounce <= 0:
-		return
+		return {}
 	var hit: Array = s["hit"]
 	var best: Pilgrim = null
 	var best_d: float = RICOCHET_RANGE_FRAC * field_r
@@ -672,8 +715,8 @@ func _ricochet_from(p: Pilgrim, s: Dictionary) -> void:
 			best_d = d
 			best = q
 	if best == null:
-		return
-	_fire_shot(best, float(s["dmg"]), bounce - 1, hit)
+		return {}
+	return _make_shot(best, float(s["dmg"]), bounce - 1, hit, p.pos)
 
 
 # ------------------------------------------------------------------ POSKOZENI

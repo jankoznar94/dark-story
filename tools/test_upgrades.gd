@@ -19,6 +19,7 @@ func _init() -> void:
 	_run("permanentni cena roste a specialy jsou drazsi", _test_perm_cost)
 	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
 	_run("soucty: kazdy stat ma start, krok, strop a stropy dava smysl", _test_table_sane)
+	_run("zrychleni hry: 1,0x / 1,5x / 2,0x / 2,5x za body", _test_game_speed)
 	_run("texty hodnot jsou cesky a nejsou prazdne", _test_texts)
 	_run("profil: koupe permanentu za body, strop, nedostatek bodu", _test_profile_buy)
 	_run("profil: vyhrany level odemkne dalsi", _test_profile_clear)
@@ -42,22 +43,31 @@ func _check(cond: bool, msg: String) -> void:
 
 
 func _test_value() -> void:
-	# Attack speed: start 1,00 s, krok -0,05 s, strop 0,30 s.
+	# Attack speed: start 1,00 s, krok -0,05 s.
 	_check(absf(Upgrades.value_of("as", 0, 0) - 1.0) < 0.0001, "as bez upgradu neni 1,00 s")
 	_check(absf(Upgrades.value_of("as", 0, 2) - 0.90) < 0.0001, "as po 2 krocích neni 0,90 s")
 	_check(absf(Upgrades.value_of("as", 2, 0) - 0.90) < 0.0001, "as po 2 permanentních neni 0,90 s")
-	_check(absf(Upgrades.value_of("as", 8, 10) - 0.10) < 0.0001, "as na maximu neni 0,10 s")
-	# Strop se NESMI prelezt, ani kdyz si obrazovka rekne o vic kroku.
-	_check(absf(Upgrades.value_of("as", 99, 99) - 0.10) < 0.0001, "as prelezl strop")
-	# ZED NA 0,60 s BYLA CHYBA (Jan, Oct 2026: "Attack speed by nemel byt omezen
-	# na min střela/0,6s"): samotny docasny zebricek tam koncil a panel ukazal
-	# "MAX", i kdyz mel hrac jeste kam kupovat.
-	_check(Upgrades.value_of("as", 0, Upgrades.temp_max("as")) < 0.60,
+	# PERMANENTNI ZEBRICEK STROP MA (Jan, Oct 2026: "permanentní ať mají strop
+	# dál"): 1,00 s - 8 * 0,05 s = 0,60 s, a pres to ani 99 kroku neprojde.
+	_check(absf(Upgrades.value_of("as", 8, 0) - 0.60) < 0.0001, "as na 8. permanentním neni 0,60 s")
+	_check(absf(Upgrades.value_of("as", 99, 0) - 0.60) < 0.0001, "permanentni kadence prelezla strop")
+	# DOCASNE KROKY SHORA OMEZENE NEJSOU (Jan, Oct 2026: "já prozatím nechci
+	# žádné stropy. Žádné max."). Driv docasny zebricek koncil na 0,60 s a panel
+	# ukazal "MAX", i kdyz hrac mel jeste zlato i kde kupovat.
+	_check(Upgrades.value_of("as", 0, 14) < 0.60,
 		"docasny zebricek kadence konci na 0,60 s - hrac za tim vidi zed")
+	_check(Upgrades.value_of("as", 0, 19) < Upgrades.value_of("as", 0, 18),
+		"dalsi docasny krok uz kadenci nezrychli")
+	# POJISTKA, NE STROP HRACE: kadence je cas a nula by delila nulou.
+	_check(Upgrades.value_of("as", 8, 99) >= Upgrades.MIN_INTERVAL - 0.0001,
+		"kadence spadla pod pojistku %.2f s" % Upgrades.MIN_INTERVAL)
 	# POSKOZENI RANY je parametr hrace ("Ještě musíme přidat upgrade pro Attack
-	# damage").
+	# damage") a plati pro nej to same: permanentni strop, docasne bez stropu.
 	_check(absf(Upgrades.value_of("ad", 0, 0) - 10.0) < 0.0001, "zakladni poskozeni neni 10")
 	_check(absf(Upgrades.value_of("ad", 0, 1) - 12.0) < 0.0001, "krok poskozeni neni +2")
+	_check(absf(Upgrades.value_of("ad", 7, 0) - 24.0) < 0.0001, "poskozeni na 7. permanentním neni 24")
+	_check(Upgrades.value_of("ad", 7, 20) > Upgrades.value_of("ad", 7, 0),
+		"docasne kroky poskozeni nic nepridaly")
 	# Rostouci parametr: dostrel 34 % -> 40 % po sesti krocich.
 	_check(absf(Upgrades.value_of("ar", 6, 0) - 0.40) < 0.0001, "dostrel po 6 krocích neni 40 %")
 	_check(absf(Upgrades.value_of("ar", 99, 99) - 0.60) < 0.0001, "dostrel neni na stropu 60 %")
@@ -70,6 +80,21 @@ func _test_value() -> void:
 	_check(absf(Upgrades.value_of("ps", 3, 0) - 0.50) < 0.0001, "jed na maximu neni 50 %")
 
 
+# ZRYCHLENI HRY (Jan, Oct 2026: "Přidáme do speciálních permanentních upgradů
+# novou mechaniku. Zrychlení hry. 1.5x, 2x, 2.5x."). Je to SPECIAL: v bitve se
+# nekupuje, plati se body a posouva tempo CELE hry (`Game.time_scale`).
+func _test_game_speed() -> void:
+	_check(Upgrades.perm_max("gs") == 3, "zrychleni hry nema tri stupne")
+	_check(Upgrades.temp_max("gs") == 0, "zrychleni hry jde koupit za zlato v bitve")
+	_check(absf(Upgrades.value_of("gs", 0, 0) - 1.0) < 0.0001, "zakladni tempo neni 1,0x")
+	_check(absf(Upgrades.value_of("gs", 1, 0) - 1.5) < 0.0001, "1. stupen tempa neni 1,5x")
+	_check(absf(Upgrades.value_of("gs", 2, 0) - 2.0) < 0.0001, "2. stupen tempa neni 2,0x")
+	_check(absf(Upgrades.value_of("gs", 3, 0) - 2.5) < 0.0001, "3. stupen tempa neni 2,5x")
+	_check(Upgrades.value_text("gs", 2, 0) == "2,0x",
+		"tempo se hracovi netiskne jako 2,0x (%s)" % Upgrades.value_text("gs", 2, 0))
+	_check(Upgrades.perm_cost("gs", 0) > 0, "zrychleni hry je zadarmo")
+
+
 func _test_perm_shifts_start() -> void:
 	# TOHLE JE CELY SMYSL PERMANENTNICH UPGRADU (Jan: "Když bude permanentní
 	# upgrade lvl 2, tak budu začínat na střela/0.9s. Cena dočasných upgradů ale
@@ -77,7 +102,7 @@ func _test_perm_shifts_start() -> void:
 	# za to, ze si v menu neco koupil.
 	for s in Upgrades.STATS:
 		var id: String = String(s["id"])
-		if Upgrades.temp_max(id) <= 0:
+		if not Upgrades.temp_buyable(id):
 			continue
 		var c0: int = Upgrades.temp_cost(id, 0)
 		var c1: int = Upgrades.temp_cost(id, 0)
@@ -123,7 +148,7 @@ func _test_special_is_perm_only() -> void:
 	for cat in [Upgrades.CAT_OFF, Upgrades.CAT_DEF, Upgrades.CAT_ECO]:
 		var buyable: int = 0
 		for s in Upgrades.stats_in(cat):
-			if Upgrades.temp_max(String(s["id"])) > 0:
+			if Upgrades.temp_buyable(String(s["id"])):
 				buyable += 1
 		_check(buyable > 0, "%s: celou kategorii nelze v bitve koupit" % cat)
 	# DOSTREL JE PERM-ONLY, ale NENI special: ma vlastni permanentni zebricek a
@@ -141,28 +166,38 @@ func _test_table_sane() -> void:
 		var step: float = float(s["step"])
 		var cap: float = float(s["cap"])
 		_check(absf(step) > 0.00001, "%s: krok je nula (upgrade nic nedela)" % id)
-		var n: int = Upgrades.perm_max(id) + Upgrades.temp_max(id)
+		# STROP PLATI NA PERMANENTNI ZEBRICEK (`perm_max`), ne na soucet
+		# s docasnymi kroky: ty jsou od Oct 2026 neomezene.
+		var n: int = Upgrades.perm_max(id)
 		# U "levels" je strop POCET STUPNU (0,20/0,35/0,50 neni primka), takze
 		# se porovnava pocet, ne hodnota.
 		if String(s["kind"]) == "levels":
 			_check(n == int(cap), "%s: stupnu je %d, ale strop tabulky je %d" % [id, n, int(cap)])
 			continue
-		# Strop musi byt dosazitelny presne na hranici (permanent + docasne),
+		# Strop permanentniho zebricku musi byt dosazitelny presne na hranici,
 		# jinak by cast tabulky byla nedosazitelna a hrac by platil za nic.
-		var v: float = Upgrades.value_of(id, Upgrades.perm_max(id), Upgrades.temp_max(id))
+		var v: float = Upgrades.value_of(id, Upgrades.perm_max(id), 0)
 		if start < cap:
-			_check(v >= cap - 0.0001, "%s: na maximu nedosahne stropu (%.3f z %.3f)" % [id, v, cap])
+			_check(v >= cap - 0.0001, "%s: permanentni zebricek nedosahne stropu (%.3f z %.3f)" % [id, v, cap])
 			_check(absf(start + step * float(n) - cap) < 0.0001,
-				"%s: maximum (perm %d + temp %d) neni presne strop (%.3f vs %.3f)"
-				% [id, Upgrades.perm_max(id), Upgrades.temp_max(id), start + step * float(n), cap])
+				"%s: maximum permanentniho zebricku (perm %d) neni presne strop (%.3f vs %.3f)"
+				% [id, n, start + step * float(n), cap])
 		else:
-			_check(v <= cap + 0.0001, "%s: na maximu preleze strop (%.3f z %.3f)" % [id, v, cap])
+			_check(v <= cap + 0.0001, "%s: permanentni zebricek preleze strop (%.3f z %.3f)" % [id, v, cap])
 			_check(absf(start + step * float(n) - cap) < 0.0001,
-				"%s: maximum neni presne strop (%.3f vs %.3f)" % [id, start + step * float(n), cap])
+				"%s: maximum permanentniho zebricku neni presne strop (%.3f vs %.3f)" % [id, start + step * float(n), cap])
+		# NEOMEZENY DOCASNY ZEBRICEK: musi mit cenu (jinak se neda koupit)
+		# a NIKDY nesmi hlasit strop - prave to dělalo "MAX" uprostred bitvy.
+		if Upgrades.temp_unlimited(id):
+			_check(Upgrades.temp_cost(id, 0) > 0, "%s: neomezeny docasny zebricek je zadarmo" % id)
+			_check(not Upgrades.temp_is_maxed(id, 9999), "%s: neomezeny zebricek hlasi strop" % id)
+			_check(Upgrades.temp_buyable(id), "%s: neomezeny zebricek se v bitve nenabizi" % id)
+		else:
+			_check(int(Upgrades.temp_max(id)) == 0, "%s: docasny zebricek neni ani neomezeny, ani perm-only" % id)
 	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 5, "kategorie utok nema 5 parametru")
 	_check(Upgrades.stats_in(Upgrades.CAT_DEF).size() == 3, "kategorie obrana nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_ECO).size() == 3, "kategorie ekonomika nema 3 parametry")
-	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 4, "kategorie special nema 4 parametry")
+	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 5, "kategorie special nema 5 parametru")
 	_check(Upgrades.CATEGORIES.size() == 4, "kategorii neni ctvero")
 
 
