@@ -494,6 +494,37 @@ func _test_resolution(v: Vector2) -> void:
 		"%s: nadpis vyberu levelu preleza do dlazdic" % tag)
 	_check(l.lvl_tiles[0].position.y >= l.lvl_note_y and l.lvl_prev.position.y > l.lvl_tiles[l.lvl_tiles.size() - 1].end.y,
 		"%s: sipky na stranky nejsou pod dlazdicemi" % tag)
+	# VYHRANY LEVEL = ZELENY ramecek + ZELENA FAJFKA (Jan, Oct 2026: "Hotové
+	# levely budou mít zelený Border a zelenou fajfku"). Kresleni se testem
+	# nezmeri, hlida se MISTO VOLANI ve zdroji obrazovky - stejna strazce jako
+	# u ostatnich obrazovek. Barva NESMI byt jedina znacka: fajfka je i TVAR.
+	_check(_src().contains("_check_mark("),
+		"vyhrany level nema fajfku (v obrazovce chybi _check_mark)")
+	_check(_src().contains("WON_GREEN"),
+		"vyhrany level nema zeleny ramecek (chybi WON_GREEN)")
+	_check(_src().contains("if done:") and _src().contains("_check_mark(r)"),
+		"fajfka se nekresli ve vetvi vyhraneho levelu (popisek zustal)")
+	# FAJFKA SE DA ZMERIT: `check_mark_points` vraci tri body, takze se hlida
+	# TVAR (prostredni bod je dole, pravy nahore - to je fajfka, ne strecha),
+	# ze se vejde do dlazdice a ze je dost velka na precteni.
+	var MARK_S: GDScript = load("res://scripts/game_view.gd")
+	var mark: Node2D = MARK_S.new()
+	var wg: Color = MARK_S.get_script_constant_map()["WON_GREEN"]
+	_check(wg.g > wg.r and wg.g > wg.b, "WON_GREEN neni zelena (%.2f/%.2f/%.2f)" % [wg.r, wg.g, wg.b])
+	var pts: Array = mark.call("check_mark_points", l.lvl_tiles[0] as Rect2)
+	_check(pts.size() == 3, "fajfka nema tri body (%d)" % pts.size())
+	if pts.size() == 3:
+		var a: Vector2 = pts[0]
+		var b: Vector2 = pts[1]
+		var c: Vector2 = pts[2]
+		_check(a.x < b.x and b.x < c.x, "fajfka nejde zleva doprava")
+		_check(b.y > a.y and b.y > c.y, "prostredni bod fajfky neni dole (neni to fajfka)")
+		var tr: Rect2 = l.lvl_tiles[0] as Rect2
+		for p in pts:
+			_check(tr.grow(-1.0).has_point(p), "fajfka preleza z dlazdice %.0fx%.0f" % [tr.size.x, tr.size.y])
+		_check(c.x - a.x >= tr.size.y * 0.30,
+			"fajfka je mala (%.0f px na dlazdici %.0f px)" % [c.x - a.x, tr.size.y])
+	mark.free()
 	_check(l.lvl_next.position.x - l.lvl_prev.end.x > l.measure_px("1 / 2", l.menu_sub_px) + 8.0,
 		"%s: mezi sipkami neni misto na cislo stranky" % tag)
 	_check(l.lvl_prev.position.x >= -0.5 and l.lvl_next.end.x <= v.x + 0.5

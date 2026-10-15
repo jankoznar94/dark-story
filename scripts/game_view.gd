@@ -35,6 +35,10 @@ const CARD_EDGE := Color(0.34, 0.33, 0.36)
 const HP_GOOD := Color(0.62, 0.76, 0.56)
 const HP_MID := Color(0.86, 0.76, 0.40)
 const HP_LOW := Color(0.85, 0.42, 0.36)
+# HOTOVO = ZELENA. Je to stejna zelená jako zivoty veze - v cele hre znamena
+# jedna barva jednu vec. Vyzene levely maji zeleny ramecek a zelenou fajfku
+# (Jan, Oct 2026: "Hotové levely budou mít zelený Border a zelenou fajfku").
+const WON_GREEN := HP_GOOD
 
 # USPORNE VYKRESLOVANI (nastaveni hrace) - viz puvodni poznamka.
 const RENDER_W := 960
@@ -567,6 +571,29 @@ func _hp_color(frac: float) -> Color:
 # HORNI PRUH A PALETA
 # =========================================================================
 
+# FAJFKA U VYHRANEHO LEVELU. Dve tlusty cary pod cislem levelu - velikost se
+# bere z dlazdice, aby byla citelna i na malem displeji (Jan: velke prvky).
+# TRI BODY jsou ve vlastni funkci, aby se daly ZMERIT - kresleni se testovat
+# neda, geometrie ano.
+func check_mark_points(r: Rect2) -> Array:
+	var w: float = r.size.y * 0.46
+	var h: float = r.size.y * 0.30
+	var x: float = r.position.x + (r.size.x - w) * 0.5
+	var y: float = r.position.y + r.size.y * 0.60
+	return [Vector2(x + w * 0.02, y + h * 0.48),
+		Vector2(x + w * 0.36, y + h * 0.94),
+		Vector2(x + w * 0.98, y + h * 0.04)]
+
+
+func _check_mark(r: Rect2) -> void:
+	# FAJFKA misto popisku: dve tlusty cary. Znak "✓" v zakladnim pismu Godotu
+	# neni - kdyz chybi, nakresli se prazdny ctverecek.
+	var p: Array = check_mark_points(r)
+	var lw: float = maxf(3.0, r.size.y * 0.075)
+	draw_line(p[0], p[1], WON_GREEN, lw)
+	draw_line(p[1], p[2], WON_GREEN, lw)
+
+
 # PAUZA PRES POLE. Hrac se diva na srdce, ne do pruhu - kdyz se hra zastavi,
 # musi to videt tam, kam se diva. Text stoji NAD srdcem, ne na nem (zakryte
 # srdce by hrac videl jako chybu kresleni) a je stejne zluty jako tlacitko.
@@ -865,16 +892,25 @@ func _draw_levels() -> void:
 		var r: Rect2 = layout.lvl_tiles[i]
 		var n: int = layout.lvl_page * ScreenLayout.LVL_PER_PAGE + i + 1
 		var done: bool = n <= game.profile.best
-		var accent: Color = MENU_EDGE_FIRST if done else MENU_EDGE
+		# VYHRANY LEVEL: ZELENY ramecek a zelena fajfka. Zelenou nese i TVAR
+		# (fajfka) - kdyby stav nesla jen barva, hrac s poruchou videni barvy
+		# vidi jen "nejaky" ramecek.
+		var accent: Color = WON_GREEN if done else MENU_EDGE
+		var edge_a: float = 0.90 if done else 0.55
 		draw_rect(r, MENU_BG, true)
-		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, edge_a), false, maxf(2.0, r.size.x * 0.03))
 		var npx: int = _fit_px(str(n), r.size.x - 12.0, int(r.size.y * 0.46), 14)
 		draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.56),
 			str(n), HORIZONTAL_ALIGNMENT_CENTER, r.size.x, npx, Color(0.90, 0.87, 0.80))
-		var cap: String = "vyhráno" if done else "odemčeno"
-		var cpx: int = _fit_px(cap, r.size.x - 10.0, int(r.size.y * 0.24), 9)
-		draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.88),
-			cap, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, cpx, Color(accent.r, accent.g, accent.b, 0.9))
+		if done:
+			# FAJFKA misto popisku: dve tlusty cary. Znak "✓" v zakladnim pismu
+			# Godotu neni - kdyz chybi, nakresli se prazdny ctverecek.
+			_check_mark(r)
+		else:
+			var cpx: int = _fit_px("odemčeno", r.size.x - 10.0, int(r.size.y * 0.24), 9)
+			draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.88),
+				"odemčeno", HORIZONTAL_ALIGNMENT_CENTER, r.size.x, cpx,
+				Color(accent.r, accent.g, accent.b, 0.9))
 	# STRANKY: sipky jsou videt vzdy, ale kdyz neni kam, jsou ztlumene.
 	var pages: String = "%d / %d" % [layout.lvl_page + 1, layout.lvl_pages]
 	_label(pages, Rect2(layout.lvl_prev.end.x, layout.lvl_prev.position.y,
