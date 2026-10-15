@@ -32,6 +32,7 @@ func _init() -> void:
 	_run("dalsi level: zlato znovu, docasne kroky pryc", _test_next_level)
 	_run("obtiznost roste s levelem, barvy po levelech", _test_difficulty)
 	_run("nove barvy prichazeji po levelech, ne uprostred bitvy", _test_hue_unlock)
+	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
@@ -536,6 +537,42 @@ func _test_hue_unlock() -> void:
 	_check(not first.spawn_pool().has(Hue.BLUE), "modri poutnici chodi uz v prvnim levelu")
 	first.start_level(2)
 	_check(first.palette.has(Hue.BLUE), "ve druhem levelu modra neprisla")
+
+
+# OPAKOVANY LEVEL NEDAVA BODY. Hrac se muze vratit k vyhranemu levelu
+# (Jan, Oct 2026: "Abych se mohl vrátit i k hotovým.") - ale kdyby se za kazdy
+# pruchod platilo, stacilo by opakovat prvni level a body by se jen sypaly.
+func _test_replay_no_body() -> void:
+	var g := Game.new()
+	g.profile = Profile.new()
+	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
+	g.profile.best = 5
+	g.profile.level = 6
+	g.start_level(3)
+	var body0: int = g.profile.body
+	_win_now(g)
+	_check(g.phase == "won", "level se nevyhral (faze %s)" % g.phase)
+	_check(g.body_earned == 0, "opakovany level dal %d bodu" % g.body_earned)
+	_check(g.profile.body == body0, "opakovany level zmenil body (%d -> %d)" % [body0, g.profile.body])
+	_check(g.profile.best == 5 and g.profile.level == 6, "opakovany level posunul postup")
+	# A NOVY LEVEL DAL PLATI: sesty level jeste vyhrany nebyl.
+	g.next_level()
+	_check(g.level == 4, "dalsi level neni ctvrty (%d)" % g.level)
+	g.start_level(6)
+	_win_now(g)
+	_check(g.body_earned == Game.BODY_BASE + Game.BODY_PER_LEVEL * 6,
+		"novy level nedal %d bodu (dal %d)" % [Game.BODY_BASE + Game.BODY_PER_LEVEL * 6, g.body_earned])
+	_check(g.profile.best == 6 and g.profile.level == 7, "novy level neposunul postup")
+
+
+# VYHRA LEVELU BEZ CEKANI: prazdna deska znamena, ze vlna je odrazena.
+func _win_now(g: Game) -> void:
+	g.wave = g.waves_in_level()
+	g.phase = "wave"
+	g.plan = []
+	g.spawned = 0
+	g.pilgrims = []
+	g.step(0.02)
 
 
 func _test_pause() -> void:

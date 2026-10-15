@@ -20,12 +20,15 @@ func _init() -> void:
 	var w: float = DEF_W
 	var h: float = DEF_H
 	var pal: int = 4
+	var lvl_unlocked: int = 1
 	if args.size() > 0:
 		w = float(args[0])
 	if args.size() > 1:
 		h = float(args[1])
 	if args.size() > 2:
 		pal = int(args[2])
+	if args.size() > 3:
+		lvl_unlocked = maxi(1, int(args[3]))
 
 	var lay := ScreenLayout.new()
 	lay.update(Vector2(w, h))
@@ -34,6 +37,11 @@ func _init() -> void:
 	var shop_cells: int = Upgrades.stats_in(Upgrades.CAT_OFF).size()
 	lay.set_shop_shape(3, maxi(1, shop_cells))
 	lay.set_upg_shape(maxi(1, shop_cells))
+	# VYBER LEVELU: pocet ODEMCENYCH levelu jde z prikazove radky (4. argument),
+	# protoze se pocet dlazdic meni s postupem hrace - sonda, ktera si vezme
+	# rozvrzeni pro 14 levelu a kouka do hry s jedním, meri neco jineho.
+	# Vychozi jednicka = cerstvy profil, tedy to, co uvidi novy hrac.
+	lay.set_levels(lvl_unlocked, 0)
 	lay.layout_palette(pal)
 
 	var out: Dictionary = {
@@ -57,6 +65,23 @@ func _init() -> void:
 		"upg_cells": _rects(lay.upg_cells),
 		"upg_back": _p(lay.upg_back.get_center()),
 		"upg_title_y": lay.upg_note_y,
+		# VYBER LEVELU: dlazdice + sipky, aby je sonda v prohlizeci umela
+		# naklepat (a nemusela si vzorce prepisovat).
+		"lvl_unlocked": lay.lvl_unlocked,
+		"lvl_pages": lay.lvl_pages,
+		"lvl_page": lay.lvl_page,
+		"lvl_title_y": lay.lvl_title_y,
+		"lvl_note_y": lay.lvl_note_y,
+		"lvl_title_px": lay.lvl_title_px,
+		"menu_sub_px": lay.menu_sub_px,
+		"menu_title_px": lay.menu_title_px,
+		"lvl_tiles": _rects(lay.lvl_tiles),
+		"lvl_prev": _p(lay.lvl_prev.get_center()),
+		"lvl_prev_rect": _r(lay.lvl_prev),
+		"lvl_next": _p(lay.lvl_next.get_center()),
+		"lvl_next_rect": _r(lay.lvl_next),
+		"lvl_back": _p(lay.lvl_back.get_center()),
+		"lvl_back_rect": _r(lay.lvl_back),
 		"shop_panel": _r(lay.shop_panel),
 		"shop_tabs": _centers(lay.shop_tabs),
 		"shop_tab_rects": _rects(lay.shop_tabs),

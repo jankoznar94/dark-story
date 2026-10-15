@@ -462,6 +462,38 @@ func _test_resolution(v: Vector2) -> void:
 			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"
 			% [tag, Hue.name_of(h), window, ttk])
 
+	# 10) VYBER LEVELU: dlazdice se vejdou na displej, jsou dost velke na prst,
+	# neprekryvaji se, nadpis s stazem profilu stoji nad nimi a mezi sipkami
+	# zustava misto na "1 / 2".
+	l.set_levels(14, 0)
+	_check(l.lvl_tiles.size() == ScreenLayout.LVL_PER_PAGE,
+		"%s: prvni stranka nema %d dlazdic (%d)" % [tag, ScreenLayout.LVL_PER_PAGE, l.lvl_tiles.size()])
+	var first_y: float = 1.0e9
+	for i in range(l.lvl_tiles.size()):
+		var tr: Rect2 = l.lvl_tiles[i]
+		first_y = minf(first_y, tr.position.y)
+		_check(tr.size.x >= 44.0 and tr.size.y >= 44.0,
+			"%s: dlazdice levelu je mala na prst (%.0fx%.0f)" % [tag, tr.size.x, tr.size.y])
+		_check(tr.position.x >= -0.5 and tr.end.x <= v.x + 0.5
+			and tr.position.y >= -0.5 and tr.end.y <= v.y + 0.5,
+			"%s: dlazdice levelu preleza displej" % tag)
+		for j in range(i + 1, l.lvl_tiles.size()):
+			_check(not tr.intersects(l.lvl_tiles[j] as Rect2), "%s: dlazdice levelu se prekryvaji" % tag)
+	_check(l.lvl_title_y >= 0.0 and l.lvl_note_y + float(l.menu_sub_px) * 1.4 <= first_y,
+		"%s: nadpis vyberu levelu preleza do dlazdic" % tag)
+	_check(l.lvl_tiles[0].position.y >= l.lvl_note_y and l.lvl_prev.position.y > l.lvl_tiles[l.lvl_tiles.size() - 1].end.y,
+		"%s: sipky na stranky nejsou pod dlazdicemi" % tag)
+	_check(l.lvl_next.position.x - l.lvl_prev.end.x > l.measure_px("1 / 2", l.menu_sub_px) + 8.0,
+		"%s: mezi sipkami neni misto na cislo stranky" % tag)
+	_check(l.lvl_prev.position.x >= -0.5 and l.lvl_next.end.x <= v.x + 0.5
+		and l.lvl_back.position.x >= -0.5 and l.lvl_back.end.x <= v.x + 0.5,
+		"%s: sipky nebo ZPET prelezaji displej" % tag)
+	_check(l.lvl_prev.end.y <= l.lvl_back.position.y + 0.5,
+		"%s: sipky na stranky preleza ZPET" % tag)
+	_check(l.lvl_back.end.y <= v.y + 0.5, "%s: ZPET je pod spodnim okrajem" % tag)
+	l.set_levels(1, 0)
+	_check(l.lvl_tiles.size() == 1, "%s: jeden odemceny level nema jednu dlazdici" % tag)
+
 
 func _fits(s: String, width: float, px: int) -> bool:
 	return ThemeDB.fallback_font.get_string_size(

@@ -264,12 +264,22 @@ func fired_reset() -> void:
 
 # VYHRANY LEVEL: body za level, odemkne se dalsi. Hra dal nekrokuje, dokud se
 # hrac nerozhodne (`next_level` / obrazovka do menu).
+#
+# BODY SE DAVAJI JEN ZA NOVY LEVEL (Jan, Oct 2026: "Abych se mohl vrátit i k
+# hotovým."). Kdo si vyhrany level zahraje znovu, nedostane nic - jinak by
+# stacilo opakovat prvni level a body by se jen sypaly.
 func _level_won() -> void:
 	phase = "won"
-	body_earned = BODY_BASE + BODY_PER_LEVEL * level
-	profile.add_body(body_earned)
+	var first: bool = level > profile.best
+	body_earned = 0
+	if first:
+		body_earned = BODY_BASE + BODY_PER_LEVEL * level
+		profile.add_body(body_earned)
 	profile.clear_level(level)
-	_note("Level %d vyhrán — %d bodů do menu." % [level, body_earned])
+	if first:
+		_note("Level %d vyhrán — %d bodů do menu." % [level, body_earned])
+	else:
+		_note("Level %d vyhrán znovu — body se dávají jen za nový level." % level)
 
 
 func next_level() -> void:

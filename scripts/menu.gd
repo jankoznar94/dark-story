@@ -14,7 +14,7 @@ extends RefCounted
 # jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim okne) a ma manifest
 # + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, SETTINGS, BATTLE, UPGRADES }
+enum View { MENU, LEVELS, SETTINGS, BATTLE, UPGRADES }
 
 const TITLE := "ŽILY 2"
 const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
@@ -26,10 +26,10 @@ const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
 #
 # UPRAVY jsou permanentni upgrady za BODY - bez te obrazovky by hrac nemel
 # jak utratit body za vyhrane levely.
-const MENU_ITEMS := ["HRÁT", "UPRAVY", "SETTINGS", "UPDATE"]
-const MENU_SUBS := ["partie od nejvyššího levelu", "permanentní vylepšení", "jakost vykreslování", "stáhnout novou verzi"]
+const MENU_ITEMS := ["HRÁT", "LEVELY", "UPRAVY", "SETTINGS", "UPDATE"]
+const MENU_SUBS := ["partie od nejvyššího levelu", "vrátit se i k vyhraným", "permanentní vylepšení", "jakost vykreslování", "stáhnout novou verzi"]
 # Akce se vyhodnocuji PRES JMENO, ne podle poradi.
-const MENU_ACTIONS := ["battle", "upgrades", "settings", "update"]
+const MENU_ACTIONS := ["battle", "levels", "upgrades", "settings", "update"]
 
 # GLOBALNI PROMENNE, KTERYMI PROHLIZEC MLUVI S HROU. Hra si je sama VYCTE
 # (`pull_js_state`) - viz poznamka u te funkce, proc to neni callback.
@@ -53,6 +53,14 @@ func open_menu() -> void:
 
 func open_settings() -> void:
 	view = View.SETTINGS
+
+
+func open_levels() -> void:
+	view = View.LEVELS
+
+
+func is_levels() -> bool:
+	return view == View.LEVELS
 
 
 func open_battle() -> void:

@@ -56,6 +56,14 @@ const CELL_MAX_H := 96.0
 # na kazdem displeji tak zustane zmenseni stejne videt.
 const CELL_LEVEL_SHRINK := 0.88
 
+## VYBER LEVELU (Jan, Oct 2026: "dáme možnost si levely ručně vybírat. Abych se
+## mohl vrátit i k hotovým."). Dlazdice s cislem levelu ve mrizce 4x3 na
+## strance; strankuje se jen tehdy, kdyz je odemcenych levelu vic. Urovne je
+## nekonecne, takze bez stranek by seznam nemel kam rust.
+const LVL_COLS := 4
+const LVL_ROWS := 3
+const LVL_PER_PAGE := 12
+
 var view: Vector2 = Vector2.ZERO
 var bar_h: float = 0.0
 var pal_h: float = 0.0
@@ -103,6 +111,23 @@ var menu_note_y: float = 0.0
 var menu_title_px: int = 30
 var menu_item_px: int = 18
 var menu_sub_px: int = 12
+# VYBER LEVELU: dlazdice s cisly levelu, sipky na stranky a ZPET. Pocet
+# odemcenych levelu a stranka se sem NASTAVUJI (`set_levels`) - rozvrzeni si je
+# jinak nesmi vymyslet, jinak by klepnuti pocitalo s jinym poctem dlazdic, nez
+# hrac vidi.
+var lvl_tiles: Array = []
+var lvl_prev: Rect2 = Rect2()
+var lvl_next: Rect2 = Rect2()
+var lvl_back: Rect2 = Rect2()
+var lvl_unlocked: int = 1
+var lvl_page: int = 0
+var lvl_pages: int = 1
+var lvl_title_y: float = 0.0
+var lvl_note_y: float = 0.0
+# NADPIS VYBERU JE MENSI NEZ NADPIS MENU. Na sirokem displeji je pismo menu
+# obri (105 px), a tolik mista si obrazovka s mrizkou nemuze dovolit - dlazdice
+# by spadly pod 44 px. Je to vlastni cislo, aby ho kresleni cetlo odtud.
+var lvl_title_px: int = 30
 var menu_state_y: float = 0.0
 # NASTAVENI
 var settings_row: Rect2 = Rect2()
@@ -140,6 +165,10 @@ func update(v: Vector2) -> void:
 		upg_tab_icons = []
 		upg_cells = []
 		upg_back = Rect2()
+		lvl_tiles = []
+		lvl_prev = Rect2()
+		lvl_next = Rect2()
+		lvl_back = Rect2()
 		pal_rects = []
 		menu_rects = []
 		settings_row = Rect2()
@@ -169,7 +198,10 @@ func update(v: Vector2) -> void:
 	# napevno, pripravi hrace o jednu odpoved.
 	layout_upgrades()
 	layout_palette(pal_rects.size())
+	# MENU SE POCITA PRED VYBEREM LEVELU: nadpis obrazovky levelu pouziva stejne
+	# pismo jako nadpis menu, takze musi byt hotove prvni.
 	layout_menu(Menu.MENU_ITEMS.size())
+	layout_levels()
 	layout_settings()
 
 
@@ -399,30 +431,113 @@ func layout_menu(count: int) -> Array:
 		menu_rects = []
 		return menu_rects
 	var w: float = clampf(view.x * 0.78, 260.0, 560.0)
-	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.13))
+	# PET POLOZEK NA MALEM DISPLEJI: nadpis, staz profilu, hlaska a otisk
+	# buildu potrebuji sve misto, takze se tlacitka zmensi - ne oni. Kdo
+	# zmensi nadpis pod 30 px, tomu hrac neprecte, jak se hra jmenuje.
+	var per: float = view.y * (0.105 if count > 4 else 0.13)
+	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, per))
 	var gap: float = maxf(14.0, view.y * 0.03)
+	# NADPIS SE POCITA Z DISPLEJE, ne z toho, co zbylo pod nim.
+	menu_title_px = clampi(int(float(font_px) * 3.2), 30, 110)
+	menu_item_px = clampi(int(minf(float(font_px) * 1.65, float(menu_title_px) * 0.62)), 18, 56)
+	var sub_max: int = int(minf(float(font_px) * 1.05, float(menu_item_px) * 0.72))
+	menu_sub_px = clampi(fit_px(Menu.SUBTITLE, view.x * 0.92, sub_max, 12), 12, 32)
+	# MISTO NAD TLACITKY (nadpis, podtitulek, stav profilu) a POD NIMI (hlaska
+	# o aktualizaci, otisk buildu).
+	var above: float = float(menu_title_px) * 1.7 + float(menu_sub_px) * 2.9
+	var below: float = float(menu_sub_px) * 3.2
+	var room: float = maxf(float(count) * MENU_BTN_MIN, view.y - above - below)
+	if h * float(count) + gap * float(count - 1) > room:
+		h = maxf(MENU_BTN_MIN * 0.8, (room - gap * float(count - 1)) / float(count))
+		room = maxf(float(count) * MENU_BTN_MIN, view.y - above - below)
+		if h * float(count) + gap * float(count - 1) > room:
+			gap = maxf(4.0, (room - h * float(count)) / float(count - 1))
 	var total: float = h * float(count) + gap * float(count - 1)
-	var room: float = view.y - h - 12.0
-	if total > room:
-		gap = maxf(4.0, (room - h * float(count)) / float(count - 1))
-		total = h * float(count) + gap * float(count - 1)
-	var y0: float = (view.y - total) * 0.5 + view.y * 0.05
+	# TITUL SE MUSI VEJIT NAD TLACITKA a stav profilu pod nej; kdyz se to
+	# nevejde na stred, tlacitka se posunou dolu (nadpis ma vzdy prednost).
+	var y0: float = maxf(above, minf((view.y - total) * 0.5 + view.y * 0.05, view.y - below - total))
 	var x: float = (view.x - w) * 0.5
 	menu_rects = []
 	for i in range(count):
 		menu_rects.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
-	# TITUL SE MUSI VEJIT NAD TLACITKA: na nizkem displeji se zmensi podle
-	# mista, ktere mu zbylo - jinak by prelezl do prvniho tlacitka.
-	var above: float = maxf(24.0, y0 - 6.0)
-	menu_title_px = clampi(int(minf(float(font_px) * 3.2, above * 0.34)), 22, 110)
-	menu_item_px = clampi(int(minf(float(font_px) * 1.65, float(menu_title_px) * 0.62)), 18, 56)
-	var sub_max: int = int(minf(float(font_px) * 1.05, float(menu_item_px) * 0.72))
-	menu_sub_px = clampi(fit_px(Menu.SUBTITLE, view.x * 0.92, sub_max, 12), 12, 32)
 	menu_title_y = maxf(float(menu_title_px) * 1.2,
 		y0 - float(menu_title_px) * 1.7 - float(menu_sub_px))
-	menu_note_y = y0 + total + float(menu_sub_px) * 2.0
-	menu_state_y = maxf(6.0, menu_note_y + float(menu_sub_px) * 1.6)
+	# STAV PROFILU PATRI POD PODTITULEK, ne pod tlacitka: na pet polozek uz
+	# dole neni misto a radek "Level 4 · body 120" se tam prekryval s otiskem
+	# buildu.
+	menu_state_y = menu_title_y + float(menu_title_px) * 0.5 + float(menu_sub_px) * 1.3
+	menu_note_y = y0 + total + float(menu_sub_px) * 1.5
 	return menu_rects
+
+
+# VYBER LEVELU. Pocet ODEMCENYCH levelu a aktualni stranku vi jen obrazovka
+# (profil), rozvrzeni si je prevzme - stejne jako u panelu s upgrady. Klepnuti
+# pak pocita se stejnym poctem dlazdic, jaky hrac vidi.
+#
+# POZOR: `layout_levels` STRANKU NENULUJE, jen ji oreze na pocet stranek.
+# Kdo ji tu vynuluje, ten si ji v zapeti prebije zpet na prvni - a listovani
+# prestane fungovat, i kdyz sipky vypadaji v poradku.
+func set_levels(unlocked: int, page: int) -> void:
+	lvl_unlocked = maxi(1, unlocked)
+	lvl_page = maxi(0, page)
+	if view.x >= 1.0 and view.y >= 1.0:
+		update(view)
+
+
+# DLAZDICE LEVELU: 4 sloupce x 3 radky na strance, kazda dlazdice je CELE
+# TLACITKO. Mrizka se drzi dole u ZPET a nahore u nadpisu; kdyz je na strance
+# min levelu, mrizka se svisle vycentruje, aby nezustala viset u stropu.
+# Vsechno, co se kresli, je tady - obrazovka si nic nepocita sama.
+func layout_levels() -> void:
+	lvl_tiles = []
+	lvl_prev = Rect2()
+	lvl_next = Rect2()
+	lvl_back = Rect2()
+	lvl_pages = 1
+	lvl_title_y = 0.0
+	lvl_note_y = 0.0
+	if view.x < 1.0 or view.y < 1.0:
+		lvl_page = 0
+		return
+	lvl_pages = int(ceil(float(lvl_unlocked) / float(LVL_PER_PAGE)))
+	lvl_page = clampi(lvl_page, 0, lvl_pages - 1)
+	var first: int = lvl_page * LVL_PER_PAGE
+	var count: int = clampi(lvl_unlocked - first, 1, LVL_PER_PAGE)
+	var rows: int = int(ceil(float(count) / float(LVL_COLS)))
+	var side: float = maxf(10.0, view.x * 0.05)
+	var gap: float = maxf(6.0, view.x * 0.018)
+	var btn: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.085))
+	var m: float = maxf(10.0, view.y * 0.035)
+	var stack: float = maxf(8.0, view.y * 0.016)
+	lvl_back = Rect2(0.0, view.y - m - btn, minf(view.x - 2.0 * side, 360.0), btn)
+	lvl_back.position.x = (view.x - lvl_back.size.x) * 0.5
+	var arrows_y: float = lvl_back.position.y - stack - btn
+	# NADPIS A STAZ PROFILU STOJI NAD DLAZDICEMI: kdyz se nevejdou do mista nad
+	# mrizkou, mrizka se posune dolu (a zmensi), ne nadpis.
+	# MEZI STAZEM PROFILU A PRVNI DLAZDICI MUSI ZUSTAT MEZERA: bez ni se pocita
+	# cislo na hranici a float32 v `Rect2` ho posune o zlomek pixelu - kontrola
+	# pak hlasi prekryvani, ktere hrac nevidi.
+	lvl_title_px = clampi(mini(menu_title_px, int(float(font_px) * 2.2)), 20, 110)
+	var head: float = float(lvl_title_px) * 1.05 + float(menu_sub_px) * 1.4 + float(font_px) * 0.35
+	var top: float = maxf(view.y * 0.16, float(font_px) * 2.2 + head)
+	var bottom: float = arrows_y - stack
+	var grid_w: float = minf(view.x - 2.0 * side, 620.0)
+	var cw: float = (grid_w - gap * float(LVL_COLS - 1)) / float(LVL_COLS)
+	var ch: float = minf(cw, maxf(24.0, (bottom - top - gap * float(rows - 1)) / float(rows)))
+	var x0: float = (view.x - grid_w) * 0.5
+	var y0: float = top + maxf(0.0, (bottom - top - ch * float(rows) - gap * float(rows - 1)) * 0.5)
+	for i in range(count):
+		var row: int = i / LVL_COLS
+		var col: int = i % LVL_COLS
+		lvl_tiles.append(Rect2(x0 + (cw + gap) * float(col), y0 + (ch + gap) * float(row), cw, ch))
+	# SIPKY NA STRANKY: vlevo a vpravo od prostredku, aby mezi nimi zustalo
+	# misto na "1 / 3".
+	var aw: float = minf(grid_w, 420.0) * 0.36
+	var acx: float = (view.x - minf(grid_w, 420.0)) * 0.5
+	lvl_prev = Rect2(acx, arrows_y, aw, btn)
+	lvl_next = Rect2(acx + minf(grid_w, 420.0) - aw, arrows_y, aw, btn)
+	lvl_title_y = maxf(float(font_px) * 1.2, top - head)
+	lvl_note_y = lvl_title_y + float(lvl_title_px) * 1.05
 
 
 # NASTAVENI: jeden prepinac a ZPET, svisle vycentrovane.

@@ -49,6 +49,7 @@ func _process(_delta: float) -> bool:
 	_run("odchod z bitvy se nejdriv zepta", _test_tap_leave_asks)
 	_run("panel upgradu v bitve je porad otevreny a nakup funguje", _test_tap_shop_is_permanent)
 	_run("paleta nad panelem prenastavi barvu veze", _test_tap_palette_switches_hue)
+	_run("vyber levelu: klepnuti na vyhrany level ho spusti znovu", _test_tap_level_select)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
 	_check(checks >= MIN_CHECKS,
 		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
@@ -89,7 +90,7 @@ func _test_items_and_actions() -> void:
 		"tlacitek je %d, akci %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_ACTIONS.size()])
 	_check(Menu.MENU_ITEMS.size() == Menu.MENU_SUBS.size(),
 		"tlacitek je %d, podtitulku %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_SUBS.size()])
-	var known: Array = ["battle", "upgrades", "settings", "update"]
+	var known: Array = ["battle", "levels", "upgrades", "settings", "update"]
 	var seen: Dictionary = {}
 	for act in Menu.MENU_ACTIONS:
 		_check(known.has(String(act)),
@@ -207,6 +208,64 @@ func _phone(v: Node2D) -> ScreenLayout:
 	v.call("_sync_shop_shape")
 	v.call("_sync_dialogs")
 	return l
+
+
+# VYBER LEVELU. Hrac se musi dostat ZPET k vyhranemu levelu a spustit ho znovu
+# - a hra u toho nesmi prepsat profil (postup zustava, jen se neplatí body).
+func _test_tap_level_select() -> void:
+	var v: Node2D = _screen()
+	var m: Menu = v.get("menu")
+	var l: ScreenLayout = v.get("layout")
+	var g: Game = v.get("game")
+	g.profile.level = 3
+	g.profile.best = 2
+	var idx: int = Menu.MENU_ACTIONS.find("levels")
+	_check(idx > 0, "v menu chybi polozka LEVELY")
+	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
+	_check(m.is_levels(), "klepnuti na LEVELY neotevrelo vyber levelu")
+	_check(l.lvl_tiles.size() == 3,
+		"vyber levelu nema tri dlazdice za tri odemcene levely (%d)" % l.lvl_tiles.size())
+	# ZPET VRACI DO MENU (a klepnuti na dlazdici spusti level az na konci testu -
+	# v bitve uz by klepnuti na ZPET nemelo co delat).
+	var back: ScreenLayout = _phone(v)
+	v.call("_tap", (back.lvl_back as Rect2).get_center())
+	_check(m.is_menu(), "klepnuti na ZPET nevratilo do menu")
+
+	# STRANKOVANI: 14 odemcenych levelu = dve stranky po dvanacti.
+	g.profile.level = 14
+	g.profile.best = 13
+	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
+	_check(m.is_levels(), "vyber levelu se neotevrel podruhe")
+	var lp: ScreenLayout = _phone(v)
+	_check(lp.lvl_pages == 2, "ctrnact levelu nema dve stranky (%d)" % lp.lvl_pages)
+	# VYBER SE OTEVRE NA STRANCE S NEJVYSSIM ODEMCENYM LEVELEM - tam hrac
+	# pokracuje, takze nechce listovat.
+	_check(lp.lvl_page == 1 and lp.lvl_tiles.size() == 2,
+		"vyber se neotevrel na strance s nejvyssim levelem (strana %d, %d dlazdic)"
+		% [lp.lvl_page, lp.lvl_tiles.size()])
+	v.call("_tap", (lp.lvl_prev as Rect2).get_center())
+	var l0: ScreenLayout = _phone(v)
+	_check(l0.lvl_page == 0 and l0.lvl_tiles.size() == 12,
+		"sipka PREDCHOZI neprelistovala na prvni stranku (strana %d, %d dlazdic)"
+		% [l0.lvl_page, l0.lvl_tiles.size()])
+	v.call("_tap", (l0.lvl_next as Rect2).get_center())
+	var l2: ScreenLayout = _phone(v)
+	_check(l2.lvl_page == 1, "sipka DALSI neprelistovala zpet (%d)" % l2.lvl_page)
+	# SIPKA ZA POSLEDNI STRANKOU NIC NEDELA (a nic nespusti).
+	var n_before: int = g.level
+	v.call("_tap", (l2.lvl_next as Rect2).get_center())
+	_check(_phone(v).lvl_page == 1, "sipka za posledni strankou prelistovala")
+	_check(g.level == n_before, "klepnuti za posledni stranku spustilo level")
+
+	# A TED KLEPNUTI NA VYHRANY LEVEL (druhy) NA PRVNI STRANCE - SPUSTI HO ZNOVU.
+	v.call("_tap", (_phone(v).lvl_prev as Rect2).get_center())
+	var l3: ScreenLayout = _phone(v)
+	_check(l3.lvl_page == 0, "sipka PREDCHOZI neprelistovala zpet (%d)" % l3.lvl_page)
+	v.call("_tap", (l3.lvl_tiles[1] as Rect2).get_center())
+	_check(m.is_battle(), "klepnuti na dlazdici neotevrelo bitvu")
+	_check(g.level == 2, "nezačal druhy level (je %d)" % g.level)
+	_check(g.phase == "build", "level nezacal pripravou (%s)" % g.phase)
+	_check(g.profile.best == 13 and g.profile.level == 14, "profil se klepanim poskodil")
 
 
 func _test_tap_starts_battle() -> void:

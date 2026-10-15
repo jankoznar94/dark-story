@@ -55,6 +55,10 @@ var _pressed: bool = false
 var leave_ask: bool = false
 var shop_cat: int = 0
 var upg_cat: int = 0
+# STRANKA VYBERU LEVELU. Strankuje se jen tehdy, kdyz je odemcenych levelu vic
+# nez 12; rozvrzeni si ji drzi taky (`layout.lvl_page`), aby klepnuti pocitalo
+# s tim, co je na obrazovce.
+var lvl_page: int = 0
 
 
 func _ready() -> void:
@@ -209,6 +213,9 @@ func _tap(pos: Vector2) -> void:
 	if menu.is_menu():
 		_handle_menu_tap(pos)
 		return
+	if menu.is_levels():
+		_handle_levels_tap(pos)
+		return
 	if menu.is_settings():
 		_handle_settings_tap(pos)
 		return
@@ -231,6 +238,8 @@ func _handle_menu_tap(pos: Vector2) -> void:
 		match String(Menu.MENU_ACTIONS[i]):
 			"battle":
 				start_battle()
+			"levels":
+				open_levels()
 			"upgrades":
 				upg_cat = 0
 				layout.layout_upgrades()
@@ -249,6 +258,40 @@ func start_battle() -> void:
 	game.start_level(game.profile.level)
 	_refield()
 	menu.open_battle()
+
+
+# VYBER LEVELU. Otevira se na strance s NEJVYSSIM odemcenym levelem - tam hrac
+# pokracuje, takze ho zajima prvni. Klepnuti na dlazdici spusti PRESNE ten
+# level (i vyhrany) a profil se tim nemaze.
+func open_levels() -> void:
+	lvl_page = (game.profile.level - 1) / ScreenLayout.LVL_PER_PAGE
+	layout.set_levels(game.profile.level, lvl_page)
+	lvl_page = layout.lvl_page
+	menu.open_levels()
+
+
+func _handle_levels_tap(pos: Vector2) -> void:
+	for i in range(layout.lvl_tiles.size()):
+		if not (layout.lvl_tiles[i] as Rect2).has_point(pos):
+			continue
+		var n: int = layout.lvl_page * ScreenLayout.LVL_PER_PAGE + i + 1
+		if n > game.profile.level:
+			return
+		leave_ask = false
+		game.start_level(n)
+		_refield()
+		menu.open_battle()
+		return
+	if layout.lvl_back.has_point(pos):
+		menu.open_menu()
+		return
+	if layout.lvl_prev.has_point(pos) and layout.lvl_page > 0:
+		lvl_page = layout.lvl_page - 1
+		layout.set_levels(game.profile.level, lvl_page)
+		return
+	if layout.lvl_next.has_point(pos) and layout.lvl_page < layout.lvl_pages - 1:
+		lvl_page = layout.lvl_page + 1
+		layout.set_levels(game.profile.level, lvl_page)
 
 
 func _handle_settings_tap(pos: Vector2) -> void:
@@ -370,6 +413,9 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	if menu.is_menu():
 		_draw_menu()
+		return
+	if menu.is_levels():
+		_draw_levels()
 		return
 	if menu.is_settings():
 		_draw_settings()
@@ -767,6 +813,56 @@ func _draw_menu() -> void:
 		layout.view.x, float(layout.menu_sub_px)), layout.menu_sub_px, Color(0.42, 0.40, 0.36))
 
 
+# VYBER LEVELU. Kazda dlazdice je cislo levelu; vyhrane maji zlaty ramecek a
+# popisek "vyhráno", odemcene (a jeste nevyhrane) sedy. Zamcene levely se
+# VUBEC nekresli (stranky se pocitaji z odemcenych), aby hrac nevidel neco, na
+# co nema klepnout.
+func _draw_levels() -> void:
+	_label("VÝBĚR LEVELU", Rect2(0.0, layout.lvl_title_y,
+		layout.view.x, float(layout.lvl_title_px)), layout.lvl_title_px, Color(0.90, 0.87, 0.80))
+	var won: int = mini(game.profile.best, game.profile.level)
+	_label("Vyhráno %d z %d · body %d" % [won, game.profile.level, game.profile.body],
+		Rect2(0.0, layout.lvl_note_y, layout.view.x, float(layout.menu_sub_px) * 1.4),
+		layout.menu_sub_px, MENU_EDGE)
+	var f: Font = ThemeDB.fallback_font
+	for i in range(layout.lvl_tiles.size()):
+		var r: Rect2 = layout.lvl_tiles[i]
+		var n: int = layout.lvl_page * ScreenLayout.LVL_PER_PAGE + i + 1
+		var done: bool = n <= game.profile.best
+		var accent: Color = MENU_EDGE_FIRST if done else MENU_EDGE
+		draw_rect(r, MENU_BG, true)
+		draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 2.0)
+		var npx: int = _fit_px(str(n), r.size.x - 12.0, int(r.size.y * 0.46), 14)
+		draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.56),
+			str(n), HORIZONTAL_ALIGNMENT_CENTER, r.size.x, npx, Color(0.90, 0.87, 0.80))
+		var cap: String = "vyhráno" if done else "odemčeno"
+		var cpx: int = _fit_px(cap, r.size.x - 10.0, int(r.size.y * 0.24), 9)
+		draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.88),
+			cap, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, cpx, Color(accent.r, accent.g, accent.b, 0.9))
+	# STRANKY: sipky jsou videt vzdy, ale kdyz neni kam, jsou ztlumene.
+	var pages: String = "%d / %d" % [layout.lvl_page + 1, layout.lvl_pages]
+	_label(pages, Rect2(layout.lvl_prev.end.x, layout.lvl_prev.position.y,
+		layout.lvl_next.position.x - layout.lvl_prev.end.x, layout.lvl_prev.size.y),
+		layout.menu_sub_px, MENU_EDGE)
+	_arrow(layout.lvl_prev, layout.lvl_page > 0)
+	_arrow(layout.lvl_next, layout.lvl_page < layout.lvl_pages - 1)
+	var br: Rect2 = layout.lvl_back
+	draw_rect(br, MENU_BG, true)
+	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
+	_label("ZPĚT", br, _fit_px("ZPĚT", br.size.x - 16.0, layout.menu_item_px, 13), Color(0.90, 0.87, 0.80))
+
+
+# SIPKA NA STRANKU. Kdyz neni kam listovat, je ztlumena - hrac vidi, ze tlacitko
+# existuje, ale ted nic nedela.
+func _arrow(r: Rect2, live: bool) -> void:
+	var edge: Color = MENU_EDGE if live else Color(0.34, 0.33, 0.30)
+	var text: Color = Color(0.90, 0.87, 0.80) if live else Color(0.44, 0.42, 0.38)
+	draw_rect(r, MENU_BG, true)
+	draw_rect(r, Color(edge.r, edge.g, edge.b, 0.55), false, 2.0)
+	_label("PŘEDCHOZÍ" if r.position.x < layout.view.x * 0.5 else "DALŠÍ", r,
+		_fit_px("PŘEDCHOZÍ", r.size.x - 12.0, layout.menu_item_px - 4, 11), text)
+
+
 func _draw_settings() -> void:
 	_label("NASTAVENÍ", Rect2(0.0, layout.settings_row.position.y - float(layout.menu_title_px) * 1.6,
 		layout.view.x, float(layout.menu_title_px)), layout.menu_title_px, Color(0.90, 0.87, 0.80))
@@ -820,8 +916,11 @@ func _draw_leave() -> void:
 
 func _draw_end() -> void:
 	if game.phase == "won":
-		_draw_dialog("Level %d vyhrán" % game.level,
-			"+%d bodů · další level má %d vln" % [game.body_earned, game.level + 1],
+		var sub: String = "+%d bodů · další level má %d vln" % [game.body_earned, game.level + 1]
+		if game.body_earned <= 0:
+			# OPAKOVANY LEVEL: body se davaji jen za novy level (Jan, Oct 2026).
+			sub = "Už vyhráno — body jsou jen za nový level."
+		_draw_dialog("Level %d vyhrán" % game.level, sub,
 			"DALŠÍ LEVEL", Color(0.65, 0.78, 0.60), "MENU", Color(0.72, 0.70, 0.62))
 		return
 	_draw_dialog("Konec — věž padla na levelu %d" % game.level,
