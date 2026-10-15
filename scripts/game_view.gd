@@ -30,6 +30,10 @@ const PAL_IDLE := 0.72
 const CARD_BG := Color(0.095, 0.090, 0.100)
 const CARD_ROW := Color(0.125, 0.118, 0.128)
 const CARD_EDGE := Color(0.34, 0.33, 0.36)
+# RAMEK BUNKY UPGRADU. Jan (Oct 2026): "Rámečky všechny tlačítek upgradů budou
+# tlustší. Třeba 3px." Je to CELE tlacitko upgradu (v bitve i ve VYLEPSENICH),
+# takze jeden odstavec tady meni obe obrazovky.
+const CELL_FRAME := 3.0
 # ZIVOTY VEZE: zelena dokud drzi, cervena pod tretinou. Barva NENI jediny
 # nositel - cislo je i v hornim pruhu.
 const HP_GOOD := Color(0.62, 0.76, 0.56)
@@ -1017,7 +1021,7 @@ func _draw_grid(cells: Array, stats: Array, names: Array, values: Array,
 		# TELO BUNKY JE O STUPEN SVETLEJSI NEZ PANEL (jako driv radek) - jinak by
 		# z tlačítka byl jen ramecek na stejne barve jako podklad.
 		draw_rect(c, CARD_ROW, true)
-		draw_rect(c, col, false, 2.0)
+		draw_rect(c, col, false, CELL_FRAME)
 		var pad: float = maxf(8.0, c.size.x * 0.05)
 		var inner_w: float = c.size.x - 2.0 * pad
 		var line: float = c.size.y / 2.0

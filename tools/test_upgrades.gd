@@ -43,23 +43,26 @@ func _check(cond: bool, msg: String) -> void:
 
 
 func _test_value() -> void:
-	# Attack speed: start 1,00 s, krok -0,05 s.
+	# Attack speed: start 1,00 s, krok -0,025 s (Oct 2026: "Rychlost útoku se
+	# bude upgradovat po 0.025s místo po 0.05s.").
 	_check(absf(Upgrades.value_of("as", 0, 0) - 1.0) < 0.0001, "as bez upgradu neni 1,00 s")
-	_check(absf(Upgrades.value_of("as", 0, 2) - 0.90) < 0.0001, "as po 2 krocích neni 0,90 s")
-	_check(absf(Upgrades.value_of("as", 2, 0) - 0.90) < 0.0001, "as po 2 permanentních neni 0,90 s")
+	_check(absf(Upgrades.value_of("as", 0, 2) - 0.95) < 0.0001, "as po 2 krocích neni 0,95 s")
+	_check(absf(Upgrades.value_of("as", 2, 0) - 0.95) < 0.0001, "as po 2 permanentních neni 0,95 s")
 	# PERMANENTNI ZEBRICEK STROP MA (Jan, Oct 2026: "permanentní ať mají strop
-	# dál"): 1,00 s - 8 * 0,05 s = 0,60 s, a pres to ani 99 kroku neprojde.
-	_check(absf(Upgrades.value_of("as", 8, 0) - 0.60) < 0.0001, "as na 8. permanentním neni 0,60 s")
+	# dál"): 1,00 s - 16 * 0,025 s = 0,60 s, a pres to ani 99 kroku neprojde.
+	# KROK SE ZPOLOVIL, TAKZE SE ZDVOJNASOBIL POCET STUPNU (8 -> 16) - jinak by
+	# zebricek skoncil na 0,80 s a strop tabulky by prestal platit.
+	_check(absf(Upgrades.value_of("as", 16, 0) - 0.60) < 0.0001, "as na 16. permanentním neni 0,60 s")
 	_check(absf(Upgrades.value_of("as", 99, 0) - 0.60) < 0.0001, "permanentni kadence prelezla strop")
 	# DOCASNE KROKY SHORA OMEZENE NEJSOU (Jan, Oct 2026: "já prozatím nechci
 	# žádné stropy. Žádné max."). Driv docasny zebricek koncil na 0,60 s a panel
 	# ukazal "MAX", i kdyz hrac mel jeste zlato i kde kupovat.
-	_check(Upgrades.value_of("as", 0, 14) < 0.60,
+	_check(Upgrades.value_of("as", 0, 19) < 0.60,
 		"docasny zebricek kadence konci na 0,60 s - hrac za tim vidi zed")
 	_check(Upgrades.value_of("as", 0, 19) < Upgrades.value_of("as", 0, 18),
 		"dalsi docasny krok uz kadenci nezrychli")
 	# POJISTKA, NE STROP HRACE: kadence je cas a nula by delila nulou.
-	_check(Upgrades.value_of("as", 8, 99) >= Upgrades.MIN_INTERVAL - 0.0001,
+	_check(Upgrades.value_of("as", 16, 99) >= Upgrades.MIN_INTERVAL - 0.0001,
 		"kadence spadla pod pojistku %.2f s" % Upgrades.MIN_INTERVAL)
 	# POSKOZENI RANY je parametr hrace ("Ještě musíme přidat upgrade pro Attack
 	# damage") a plati pro nej to same: permanentni strop, docasne bez stropu.
@@ -113,7 +116,7 @@ func _test_perm_shifts_start() -> void:
 		var b: float = Upgrades.value_of(id, 3, 3) - Upgrades.value_of(id, 3, 0)
 		_check(absf(a - b) < 0.0001, "%s: krok se posunul s permanentnim stupnem" % id)
 	var d: float = Upgrades.value_of("as", 0, 0) - Upgrades.value_of("as", 2, 0)
-	_check(absf(d - 0.10) < 0.0001, "dva permanentni stupne neposunuly start o 0,10 s (%.3f)" % d)
+	_check(absf(d - 0.05) < 0.0001, "dva permanentni stupne neposunuly start o 0,05 s (%.3f)" % d)
 
 
 func _test_temp_cost() -> void:
@@ -208,7 +211,7 @@ func _test_texts() -> void:
 		_check(t != "", "%s: hodnota se vytiskne prazdna" % id)
 		_check(not t.contains("."), "%s: hodnota ma tecku misto ceske carky (%s)" % [id, t])
 		_check(String(s["label"]) != "", "%s: popisek je prazdny" % id)
-	_check(Upgrades.value_text("as", 0, 2) == "0,90 s", "text kadence neni 0,90 s")
+	_check(Upgrades.value_text("as", 0, 2) == "0,95 s", "text kadence neni 0,95 s")
 	_check(Upgrades.value_text("ar", 6, 0) == "40 %", "text dostrelu neni 40 %")
 
 

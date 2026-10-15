@@ -25,23 +25,35 @@ nepoužívá.
   rozletá střela **mine** — doletí na místo dopadu, tam zmizí a nic neubírá
   (bez poškození a bez odrazu). Je to jediná barva, na kterou pravidlo
   „vystřeleno = doletí“ neplatí.
-- **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10, roste počet
-  ran za sekundu: **3 → 4,8 → 7,2 ran/s** (tj. 30 / 48 / 72 za sekundu) a od
-  3. stupně věž míří na dva cíle. V paprsku je tím vidět hustší proud teček.
+- **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10 (a roste
+  vlastním upgradem *Poškození střely*), zrychluje se **kadence**: interval
+  začíná na **1,00 s** a krok je **−0,025 s** (dřív −0,05 s), takže permanentní
+  žebříček má 16 stupňů a končí na 0,60 s. Dočasné kroky za zlato nejsou shora
+  omezené — dno drží jen pojistka 0,05 s (20 ran/s).
+- **POČET NEPŘÁTEL V JEDNOTLIVÝCH VLNÁCH JE VYŠŠÍ** (Oct 2026): první vlna
+  prvního levelu má **15 poutníků**, desátá vlna 51 a každý další **level**
+  násobí celou řadu **1,20** — na desátém levelu jde o stovky (strop 400, aby
+  se nekonečná partie nezadrhla). **Tempo vstupu se tomu přizpůsobuje:** velká
+  vlna se vysype do 55 s (`SPAWN_WAVE_S`), ne pevnou mezerou 2,5 s — jinak by
+  jedna vlna trvala desítky minut; a mezera nikdy neklesne pod 0,45 s, aby
+  měla věž na zabití čas.
 - **Poutníci vstupují na SPAWNOVACÍM KRUHU naslepo**, náhodným směrem, a jdou
-  rovně k věži. Cesta od okraje k okraji věže trvá **12 s** — poutníci jdou
-  pomalu, aby byla vidět vzdálenost, kterou mají před sebou.
+  rovně k věži. Cesta od okraje k věži trvá **10 s** (Oct 2026: „Rychlost
+  pohybu všech nepřátel se zrychlí na rychlost 1.5x. Bude to nová výchozí
+  hodnota. Nové 1.0x = staré 1.5x.“ — dřív 15 s). Zrychlili se tím všichni
+  nepřátelé; poměry mezi barvami (`Hue.speed_mult`) zůstávají.
 - **Spawnovací kruh je větší než displej a NIKDE se nekreslí** (je pomyslný):
   jeho horní i dolní okraj se dotýká okraje herního pruhu a boky vedou mimo
   obraz — poutníci proto vcházejí ze všech směrů, i z boků. Vnější kruh, který
   je vidět, je jen **kruh dostřelu**.
-- **Dosah je kruh** (kreslený na zemi): základ **42 %** poloměru plochy
-  (143 px na 390×844 — 51 px od každého boku, takže je kam upgradovat),
-  vylepšením **55 %** a **70 %**; nikdy ne celá plocha. Je to okno, ve kterém
-  hráč musí stihnout přepnout barvu: **4,6 s / 6,2 s / 8,1 s** v ohni
-  (dřív 2,5 s, což bylo málo).
-- **Levely vypadají stejně**, liší se jen složením vln (každá vlna míchá
-  všechny čtyři barvy).
+- **Dosah je kruh** (kreslený na zemi): základ **34 %** poloměru plochy
+  (0,34 na 390×844 — 79 px od každého boku, takže je kam upgradovat),
+  vylepšením **46 %** a **60 %**; nikdy ne celá plocha. Je to okno, ve kterém
+  hráč musí stihnout přepnout barvu: **3,4 s / 4,6 s / 6,0 s** v ohni
+  (0,34/0,46/0,60 × 10 s u poutníka s rychlostí 1,0; pomalejší a rychlejší
+  barvy mají okno delší, resp. kratší).
+- **Levely vypadají stejně**, liší se jen **počtem** a složením vln (každá
+  vlna míchá všechny barvy, které jsou v tom levelu ve hře).
 
 ## Upgrady a tempo hry (Oct 2026)
 
@@ -52,8 +64,8 @@ nepoužívá.
   z vyhraných levelů) — jejich konec je hodnota v tabulce `Upgrades.STATS`
   (`cap`) a v menu se na něm napíše „MAX“.
 - **Kadence má jen fyzikální pojistku** (`Upgrades.MIN_INTERVAL` = 0,05 s, tj.
-  20 ran/s): kadence je čas a nula by dělila nulou. Hráč se k ní dostane až po
-  ~19 krocích (přes 900 zlata v jednom levelu).
+  20 ran/s): kadence je čas a nula by dělila nulou. Krok je ale 0,025 s, takže
+  se k ní hráč dostane až po ~38 krocích (přes 3 700 zlata v jednom levelu).
 - **Zrychlení hry** je speciální permanentní upgrade (`gs`), ale **sám o sobě hru
   nezrychlí**: je to **klíč**, který odemkne přepínání tempa. Hra začíná **vždy
   na 1,0x** a hráč si v bitvě přepíná **1,0x / 1,5x / 2,0x / 2,5x** tlačítkem

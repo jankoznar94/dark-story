@@ -634,7 +634,7 @@ func _test_temp_buy() -> void:
 	# stala zed na 0,60 s a dal se koupit nedalo.
 	var g3: Game = _fresh()
 	g3.gold = 100000
-	var want: int = 12
+	var want: int = 24
 	var sold: int = 0
 	for i in range(want):
 		if g3.buy_temp("as"):
@@ -662,11 +662,11 @@ func _test_perm_shift() -> void:
 	g.profile.perm["as"] = 2
 	g.start_level(1)
 	_quiet(g)
-	_check(absf(g.val("as") - 0.90) < 0.001, "start po dvou permanentních neni 0,90 s (%.2f)" % g.val("as"))
+	_check(absf(g.val("as") - 0.95) < 0.001, "start po dvou permanentních neni 0,95 s (%.2f)" % g.val("as"))
 	var gold0: int = g.gold
 	_check(g.buy_temp("as"), "krok po permanentnim upgradu nejde koupit")
 	_check(gold0 - g.gold == 5, "krok po permanentnim upgradu stoJI jinak nez 5 zlata (%d)" % (gold0 - g.gold))
-	_check(absf(g.val("as") - 0.85) < 0.001, "krok se neprisel k posunutemu startu (%.2f)" % g.val("as"))
+	_check(absf(g.val("as") - 0.925) < 0.001, "krok se neprisel k posunutemu startu (%.2f)" % g.val("as"))
 
 
 func _test_level_flow() -> void:
@@ -736,11 +736,16 @@ func _test_difficulty() -> void:
 	g.start_level(2)
 	_check(g.kolo() == Game.WAVES_PER_LEVEL + 1,
 		"prvni vlna druheho levelu neni %d. kolo (%d)" % [Game.WAVES_PER_LEVEL + 1, g.kolo()])
-	# VELIKOST VLNY: v ramci levelu roste po jednom poutnikovi, kazdy dalsi
-	# LEVEL prida jednoho navic (a strop to drzi).
+	# VELIKOST VLNY: v ramci levelu roste a kazdy dalsi LEVEL ji NASOBI (Oct
+	# 2026, Jan: "Počet nepřátel v jednotlivých vlnách bude obecně vyšší. V
+	# prvních levelech bude začínat třeba na 15. Ve vyšších to budou klidně
+	# desítky až stovky."). Strop drzi nekonecnou partii hratelnou.
 	_check(g.wave_size(1, 1) < g.wave_size(2, 1), "druha vlna neni vetsi nez prvni")
-	_check(g.wave_size(1, 5) == g.wave_size(1, 1) + 4,
-		"velikost vlny neroste s levelem po jednom (%d vs %d)" % [g.wave_size(1, 5), g.wave_size(1, 1)])
+	_check(g.wave_size(1, 1) >= 15, "prvni vlna nezacina na patnacti (%d)" % g.wave_size(1, 1))
+	_check(g.wave_size(1, 5) > g.wave_size(1, 1),
+		"druhy level nema vetsi vlnu (%d vs %d)" % [g.wave_size(1, 5), g.wave_size(1, 1)])
+	_check(g.wave_size(1, 12) >= 100,
+		"ve vysokem levelu nema prvni vlna stovky (%d)" % g.wave_size(1, 12))
 	_check(g.wave_size(Game.WAVES_PER_LEVEL, 99) <= Game.WAVE_SIZES_MAX, "velikost vlny pretekla strop")
 
 

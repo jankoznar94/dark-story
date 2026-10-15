@@ -25,7 +25,13 @@ extends RefCounted
 # ma poutnik na cestu stejne dlouho, takze "jde pomalu" je vlastnost hry, ne
 # rozliseni. Jan dvakrat: "Rychlost všech nepřátel se musí snížit" (8 -> 12 s)
 # a "Celkově ještě zpomalíme pohyb nepřátel" (12 -> 15 s).
-const TRAVEL_S := 15.0
+#
+# Oct 2026 - OPACNY SMER: "Rychlost pohybu všech nepřátel se zrychlí na rychlost
+# 1.5x. Bude to nová výchozí hodnota. Nové 1.0x = staré 1.5x. Jsou teď příliš
+# pomalí." 15 / 1,5 = 10 s. POZOR: okno na reakci je `dostrel * TRAVEL_S`, takze
+# se zkratilo z 5,1 s na 3,4 s - kdo hybe timhle cislem, hybe obtiznosti a musi
+# to merit (`tools/balance_sim.gd`).
+const TRAVEL_S := 10.0
 const BASE_HP := 20.0
 # OBTIZNOST: kazdy dalsi LEVEL je o 22 % tuzsi (Jan schvalil 1,22; driv 1,15)
 # a kazda dalsi vlna v levelu o 6 %. Driv to bylo 13 % za vlnu v nekonecne
@@ -38,10 +44,21 @@ const LEVEL_HP := 1.40
 const WAVE_HP := 1.06
 const START_GOLD := 150
 const BUILD_TIME := 5.0
-# VELIKOST VLNY PODLE PORADI KOLA (kolo = pocitadlo vln pres cely pruchod hrou).
-# Prvnich deset je rucne, dal uz jen roste - levelu je nekonecne.
-const WAVE_SIZES := [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-const WAVE_SIZES_MAX := 24
+# VELIKOST VLNY (Oct 2026). Jan: "Počet nepřátel v jednotlivých vlnách bude
+# obecně vyšší. V prvních levelech bude začínat třeba na 15. Ve vyšších to budou
+# klidně desítky až stovky. Samozřejmě musí chodit v takovém tempu a pořadí, aby
+# bylo možné je zabít."
+#
+# JSOU TO DVE CISLA, NE JEDNO: tabulka je pocet poutniku v 1.-10. vlne PRVNIHO
+# levelu a kazdy dalsi level ji NASOBI (`WAVE_SIZE_PER_LEVEL`). Driv se k tabulce
+# pricitaval jeden poutnik za level, takze se stropu (24) dosahlo uz ve tretim
+# levelu a "vyssi levely" se v poctech vubec neprojevily. Nasobenim se z desítek
+# stanou stovky.
+const WAVE_SIZES := [15, 17, 19, 22, 25, 29, 33, 38, 44, 51]
+const WAVE_SIZE_PER_LEVEL := 1.20
+# STROP VELIKOSTI VLNY: hra je nekonecna, takze pocet musi nekam dojit - na 20.
+# levelu by jinak chodily tisice poutniku a hra by se zadrhla.
+const WAVE_SIZES_MAX := 400
 # ODMENA ZA VLNU. S DESETI VLNAMI NA LEVEL se zlato za level ZDVOJNASOBILO
 # (vic vln = vic zabiti i vic bonusu) a hra se tim stala lehci, i kdyz se
 # obtiznost nemenila - zmereno simulatorem. Proto je bonus za vlnu mensi:
@@ -61,14 +78,24 @@ const WAVES_PER_LEVEL := 10
 # (wave_size) - jedno pocitadlo, ne dve.
 const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 
-# DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje.
+# DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje - a u VELKE
+# vlny se zkrati jeste vic, aby se cely zastup vysypal do `SPAWN_WAVE_S`. Bez
+# toho by vlna o stovkach poutniku trvala desitky minut.
 const SPAWN_GAP_START := 2.5
-const SPAWN_GAP_MIN := 1.2
+const SPAWN_GAP_MIN := 0.45
 const SPAWN_GAP_PER_WAVE := 0.13
+# CELKOVA DOBA VYSYPANI VLNY. Neni to kosmetika: pocet poutniku je ted v destikach
+# az stovkach, takze pevna mezera by jednu vlnu natahla pres deset minut. Je to
+# ZAROVEN HRANICE OBTIZNOSTI: cim kratsi vysypani, tim vic poutniku je na plose
+# naraz a tim vic prace pro vez - hra se pak da dohrat jen s nakoupenymi upgrady.
+const SPAWN_WAVE_S := 55.0
 
 # STRELA. Rychlost je podil POLOMERU PLOCHY, polomer tecky podil MERITKA.
 const SHOT_SPEED_FRAC := 0.80
-const SHOT_R_FRAC := 0.032
+# Oct 2026 (Jan: "Projektily uděláme o trošku menší."): 0,032 -> 0,026 meritka.
+# Na telefonu je tecka ~4 px (driv 5) a porad ji drzi tmavy obrys pod sebou,
+# proto se zmenseni netyka `SHOT_RIM_FRAC`. Test hlida, ze neklesne pod 3 px.
+const SHOT_R_FRAC := 0.026
 const SHOT_RIM_FRAC := 1.55
 # POSKOZENI JEDNE RANY JE PARAMETR HRACE ("Ještě musíme přidat upgrade pro
 # Attack damage", Jan Oct 2026) - hledej `shot_dmg()` v sekci PARAMETRY.
@@ -253,14 +280,13 @@ func waves_in_level() -> int:
 	return WAVES_PER_LEVEL
 
 
-# VELIKOST VLNY. Bere se z VLNY V LEVELU (pet az ctrnact poutniku) a kazdy
-# dalsi LEVEL prida jednoho - tabulka `WAVE_SIZES` ma proto prave deset
-# polozek. Kdyby se pocitala z kola (poradi vlny pres celou partii), rostla by
-# dvakrat rychleji nez obtiznost a od tretiho levelu by chodilo porad 24
-# poutniku - "vic vln v levelu" by se tim zmenilo na "vic nepritelu".
+# VELIKOST VLNY. Bere se z VLNY V LEVELU (patnact az padesat poutniku v prvnim
+# levelu) a kazdy dalsi LEVEL ji NASOBI - viz `WAVE_SIZE_PER_LEVEL`. Strop drzi
+# nekonecnou partii hratelnou.
 func wave_size(w: int, lv: int) -> int:
 	var base: int = int(WAVE_SIZES[clampi(w, 1, WAVE_SIZES.size()) - 1])
-	return mini(WAVE_SIZES_MAX, base + maxi(0, lv - 1))
+	var grown: float = float(base) * pow(WAVE_SIZE_PER_LEVEL, float(maxi(0, lv - 1)))
+	return clampi(int(round(grown)), 1, WAVE_SIZES_MAX)
 
 
 func is_over() -> bool:
@@ -422,8 +448,15 @@ func _phase_step(dt: float) -> void:
 		_wave_clear()
 
 
+# MEZERA MEZI POUTNIKY. Dve hranice: klesajici zaklad podle vlny a strop na
+# CELKOVOU dobu vysypani - velka vlna se musi vysypat do `SPAWN_WAVE_S`, i kdyz
+# by ji zaklad nechal pomalejsi.
 func spawn_gap() -> float:
-	return maxf(SPAWN_GAP_MIN, SPAWN_GAP_START - SPAWN_GAP_PER_WAVE * float(wave))
+	var base: float = maxf(SPAWN_GAP_MIN, SPAWN_GAP_START - SPAWN_GAP_PER_WAVE * float(wave))
+	var n: int = plan.size()
+	if n > 1:
+		base = minf(base, SPAWN_WAVE_S / float(n - 1))
+	return maxf(SPAWN_GAP_MIN, base)
 
 
 func _start_wave() -> void:

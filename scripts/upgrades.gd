@@ -11,7 +11,7 @@ extends RefCounted
 #     zacina na jakekoli startovni hodnote.
 #   * PERMANENTNI stupen se kupuje v menu za BODY (ziskane za vyhrany level)
 #     a POSOUVA START o jeden krok. Attack speed s permanentem 2 zacina na
-#     0,90 s misto 1,00 s - a docasne kroky stoji porad 5, 10, 15 zlata.
+#     0,95 s misto 1,00 s - a docasne kroky stoji porad 5, 10, 15 zlata.
 #   * SPECIÁL je JEN permanentni (multishot, ricochet, jed, led) - v bitve se
 #     nekupuje, proto ma `temp_max` nula. Stejne je na tom DOSTREL (Jan, Oct
 #     2026) - v bitve se proste nenabizi.
@@ -67,8 +67,14 @@ const STATS := [
 	# kroky jsou proto NEOMEZENE (`temp_max` -1) a strop plati JEN na
 	# permanentni zebricek: `cap` je hodnota na `perm_max`, ne hodnota, za
 	# kterou hrac v bitve narazi.
+	#
+	# KROK 0,025 s (Oct 2026, Jan: "Rychlost útoku se bude upgradovat po 0.025s
+	# místo po 0.05s."): kdyz se krok zpolovi, musi se ZDVOJNASOBIT `perm_max`
+	# (8 -> 16), jinak by permanentni zebricek skoncil na 0,80 s a tabulkovy
+	# strop 0,60 s by prestal platit. Kdo hybe krokem, hybe i `perm_max` -
+	# hlida to `test_upgrades._test_table_sane`.
 	{"id": "as", "label": "Rychlost střelby", "cat": CAT_OFF, "kind": "time",
-		"start": 1.00, "step": -0.05, "cap": 0.60, "perm_max": 8, "temp_max": UNLIMITED},
+		"start": 1.00, "step": -0.025, "cap": 0.60, "perm_max": 16, "temp_max": UNLIMITED},
 	# POSKOZENI RANY (Jan, Oct 2026: "Ještě musíme přidat upgrade pro Attack
 	# damage"). Zaklad 10 je tady - `Game.SHOT_DMG` uz neexistuje, jinak by
 	# byla druha konstanta, ktera o upgradu nevi.
