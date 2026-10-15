@@ -699,6 +699,28 @@ var cat_icon_paths: Dictionary = {
 var _cat_icons: Dictionary = {}
 
 
+# BARVY KATEGORII (Jan, Oct 2026: "Meč červeny. Štít modrý. Ekonomika žlutá.
+# Speciál fialový."). Bere se PALETA HRY, ne nove barvy: cervena je cervena
+# ohne, modra modra vody a fialova fialova vzduchu - v hre nejsou dve cervene
+# (zluta uz je i barva penez, takze ekonomika sedi taky).
+var cat_icon_colors: Dictionary = {
+	Upgrades.CAT_OFF: Hue.color_of(Hue.RED),
+	Upgrades.CAT_DEF: Hue.color_of(Hue.BLUE),
+	Upgrades.CAT_ECO: Hue.color_of(Hue.YELLOW),
+	Upgrades.CAT_SPEC: Hue.color_of(Hue.VIOLET),
+}
+# ZTLUMENI ZAVRENE KATEGORIE. Barvu dostane i tab, ktery zrovna neni otevreny -
+# hrac ma videt, ktera kategorie je ktera, i kdyz se na ni zrovna nediva.
+const CAT_IDLE_A := 0.5
+
+
+func _cat_icon_color(cat_id: String, on: bool) -> Color:
+	var c: Color = cat_icon_colors.get(cat_id, TEXT)
+	if on:
+		return c
+	return Color(c.r, c.g, c.b, CAT_IDLE_A)
+
+
 func _cat_icon(cat_id: String) -> Texture2D:
 	if not _cat_icons.has(cat_id):
 		var path: String = String(cat_icon_paths.get(cat_id, ""))
@@ -728,7 +750,7 @@ func _draw_card(panel: Rect2, tabs: Array, icons: Array, active: int, cats: Arra
 		var tex: Texture2D = _cat_icon(cat)
 		if tex != null:
 			var ir: Rect2 = icons[i] if i < icons.size() else tr
-			draw_texture_rect(tex, ir, false, col)
+			draw_texture_rect(tex, ir, false, _cat_icon_color(cat, on))
 		else:
 			var lb: String = _cat_label(cat)
 			_label(lb, tr, _fit_px(lb, tr.size.x - 8.0, layout.font_px, 10), col)

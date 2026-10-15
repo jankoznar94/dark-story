@@ -596,3 +596,105 @@ func _test_tabs_are_icons() -> void:
 		var id: String = String(row["id"])
 		_check(FileAccess.file_exists("res://assets/ui/cat_%s.png" % id),
 			"chybi soubor s ikonou kategorie %s (res://assets/ui/cat_%s.png)" % [id, id])
+	# BARVY KATEGORII (Jan, Oct 2026: "Meč červeny. Štít modrý. Ekonomika žlutá.
+	# Speciál fialový."). Ocekavana barva je tady NAPSANA, ne opsana z obrazovky -
+	# jinak by test prosel i s prehozenymi barvami.
+	var gv: Node2D = (load("res://scripts/game_view.gd") as GDScript).new()
+	var want: Dictionary = {
+		Upgrades.CAT_OFF: Hue.color_of(Hue.RED),
+		Upgrades.CAT_DEF: Hue.color_of(Hue.BLUE),
+		Upgrades.CAT_ECO: Hue.color_of(Hue.YELLOW),
+		Upgrades.CAT_SPEC: Hue.color_of(Hue.VIOLET),
+	}
+	var cols: Dictionary = gv.get("cat_icon_colors")
+	var names: Dictionary = {
+		Upgrades.CAT_OFF: "mec", Upgrades.CAT_DEF: "stit",
+		Upgrades.CAT_ECO: "ekonomika", Upgrades.CAT_SPEC: "special",
+	}
+	for id in want:
+		var have: Color = cols.get(id, Color(0, 0, 0))
+		_check(have.is_equal_approx(want[id]),
+			"ikona (%s) nema predepsanou barvu (%.2f/%.2f/%.2f misto %.2f/%.2f/%.2f)"
+			% [names[id], have.r, have.g, have.b, want[id].r, want[id].g, want[id].b])
+	# IKONA MUSI VYPLNIT RAMEČEK. Mec byl tenky (26 % sirky) a hralo to jako
+	# "prilis maly" - hlida se, ze inkoust zabira aspon 55 % kazde strany.
+	# A mec je pod 45 stupnu DOPRAVA: korelace inkoustu je vyrazne zaporna
+	# (cara "/"), stojici mec ma nulu (0,02).
+	var paths: Dictionary = gv.get("cat_icon_paths")
+	for id in want:
+		var img: Image = _icon_image(String(paths.get(id, "")))
+		_check(img != null, "ikonu kategorie %s nejde precist" % names[id])
+		if img == null:
+			continue
+		var bb: Rect2i = _ink_box(img)
+		var fw: float = float(bb.size.x) / float(img.get_width())
+		var fh: float = float(bb.size.y) / float(img.get_height())
+		_check(fw >= 0.55 and fh >= 0.55,
+			"ikona (%s) nevyplnuje ramecek: %.0f%% x %.0f%%" % [names[id], fw * 100.0, fh * 100.0])
+		var corr: float = _ink_corr(img)
+		if id == Upgrades.CAT_OFF:
+			_check(corr < -0.5, "mec neni sikmo doprava (korelace %.2f, ma byt pod -0.5)" % corr)
+		else:
+			_check(absf(corr) < 0.5, "ikona (%s) je nakrivena (korelace %.2f)" % [names[id], corr])
+	gv.free()
+
+
+# OBSAH IKONY: z textury se vezme obrazek. Kdyz ho textura nevyda (u importu se
+# to muze stat), precte se soubor primo - test ma merit, ne se vymlouvat.
+func _icon_image(path: String) -> Image:
+	if path == "":
+		return null
+	var tex: Texture2D = load(path) as Texture2D
+	if tex != null:
+		var im: Image = tex.get_image()
+		if im != null:
+			return im
+	if not FileAccess.file_exists(path):
+		return null
+	return Image.load_from_file(path)
+
+
+# INKOUST = nepruhledne pixely. Vraci jejich obdelnik a korelaci (smer kresby).
+func _ink_box(img: Image) -> Rect2i:
+	var x0: int = img.get_width()
+	var y0: int = img.get_height()
+	var x1: int = -1
+	var y1: int = -1
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			if img.get_pixel(x, y).a > 0.12:
+				x0 = mini(x0, x)
+				y0 = mini(y0, y)
+				x1 = maxi(x1, x)
+				y1 = maxi(y1, y)
+	if x1 < x0 or y1 < y0:
+		return Rect2i(0, 0, 0, 0)
+	return Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+
+
+func _ink_corr(img: Image) -> float:
+	var pts: Array = []
+	var sx: float = 0.0
+	var sy: float = 0.0
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			if img.get_pixel(x, y).a > 0.12:
+				pts.append(Vector2(x, y))
+				sx += x
+				sy += y
+	if pts.size() < 8:
+		return 0.0
+	var mx: float = sx / float(pts.size())
+	var my: float = sy / float(pts.size())
+	var sxy: float = 0.0
+	var sxx: float = 0.0
+	var syy: float = 0.0
+	for p in pts:
+		var dx: float = p.x - mx
+		var dy: float = p.y - my
+		sxy += dx * dy
+		sxx += dx * dx
+		syy += dy * dy
+	if sxx <= 0.0 or syy <= 0.0:
+		return 0.0
+	return sxy / sqrt(sxx * syy)
