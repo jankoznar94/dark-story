@@ -16,12 +16,17 @@ extends SceneTree
 #   godot4 --headless --path . --script res://tools/balance_sim.gd
 #   ... -- --levels=8      (kolik levelu nejdal)
 
-# V BITVE: co koupit prvni. Kadenci a dostrel hrac vidi na prvni pohled.
-const TEMP_ORDER := ["as", "as", "ar", "hp", "as", "am", "ar", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
-# V MENU: co koupit permanentne.
-const PERM_ORDER := ["as", "ar", "hp", "am", "as", "ar", "cc", "rg", "cd", "as", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
+# V BITVE: co koupit prvni. Kadenci a poskozeni hrac vidi na prvni pohled.
+# DOSTREL TU NENI - je jen permanentni (v bitve se ani nenabizi).
+const TEMP_ORDER := ["as", "as", "ad", "hp", "as", "am", "ad", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
+# V MENU: co koupit permanentne. Dostrel je tu vzdy - v bitve jinak neni.
+const PERM_ORDER := ["as", "ar", "ad", "hp", "am", "as", "ar", "cc", "rg", "cd", "as", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
 
 var levels_limit: int = 8
+# CASOVY STROP PARTIE. Deset vln na level znamena ~5 minut na level, takze
+# strop musi byt vysoky - jinak sim skonci "DOHRANO" a nic to nerekne o tom,
+# kde se hra opravdu láme.
+var time_limit: float = 3600.0
 var _switches: int = 0
 
 
@@ -31,6 +36,8 @@ func _init() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--levels="):
 			levels_limit = int(a.split("=")[1])
+		if a.begins_with("--time="):
+			time_limit = float(a.split("=")[1])
 	_run()
 	quit()
 
@@ -48,7 +55,7 @@ func _run() -> void:
 	var last_key: String = ""
 	print("  level  vlna  zivoty  zlato  body  perm+temp")
 	var guard: int = 0
-	while g.level <= levels_limit and t < 3600.0 and guard < 400000:
+	while g.level <= levels_limit and t < time_limit and guard < 400000:
 		guard += 1
 		_play(g)
 		g.step(dt)

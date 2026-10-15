@@ -33,6 +33,7 @@ func _init() -> void:
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
 	_run("panel s upgrady je v bitve trvale otevreny", _test_panel_is_permanent)
+	_run("panel v bitve nenabizi upgrade, ktery v ni nejde koupit", _test_shop_hides_perm_only)
 	_run("bunka upgradu ma hodnotu a cenu na jednom radku", _test_cell_lines)
 	_run("taby kategorii maji ikony", _test_tabs_are_icons)
 	_run("poutnici jdou k vezi oblicejem", _test_shapes_face_the_tower)
@@ -91,6 +92,24 @@ func _test_shots_are_dots() -> void:
 		"kresleni strel neni hned za vezi (v poli se nevi, co je nad cim)")
 	_check(i_beam < i_tower and i_tower < i_shots,
 		"strely se kresli driv nez paprsek/vez - nejsou nad zamerovanim")
+
+
+# PANEL V BITVE NENABIZI UPGRADE, KTERY V NI NEJDE KOUPIT. Stat s `temp_max` 0
+# (dostrel, specialy) by zabral bunku, ukazoval cenu 0 a "MAX" - hrac by videl
+# tlacitko, ktere nic nedela a nerekne proc. Hlida se MISTO VOLANI ve zdroji:
+# kdyby se filtr vratil, testy rozvrzeni by zustaly zelene a panel by zase
+# nabizel mrtve tlacitko.
+func _test_shop_hides_perm_only() -> void:
+	var src: String = _src()
+	var at: int = src.find("func _shop_stats()")
+	_check(at >= 0, "ve zdroji obrazovky chybi _shop_stats()")
+	if at < 0:
+		return
+	var end: int = src.find("\nfunc ", at + 1)
+	var body: String = src.substr(at, (end - at) if end > at else src.length() - at)
+	_check(body.contains("temp_max"), "panel v bitve nabizi i stat bez docasnych kroku")
+	# A dostrel opravdu zadne docasne kroky nema - jinak by filtr nemel co delat.
+	_check(Upgrades.temp_max("ar") == 0, "dostrel ma docasne kroky, filtr nema co delat")
 
 
 # PALETA JE PLNÝ PUNTÍK S BORDEREM (Jan: "Žádné tvary").
@@ -280,8 +299,8 @@ func _test_resolution(v: Vector2) -> void:
 	_check(l.center.x - r1 >= 8.0 and l.center.x + r1 <= v.x - 8.0,
 		"%s: zakladni dostrel (%.0f px) dosahuje na bok displeje - neni kam upgradovat" % [tag, r1])
 	_check(r1 > l.tower_r * 2.0, "%s: zakladni dostrel je skoro u veze (%.0f px)" % [tag, r1])
-	g1.profile.perm["ar"] = 6
-	g1.temp["ar"] = 20
+	g1.profile.perm["ar"] = Upgrades.perm_max("ar")
+	g1.temp["ar"] = Upgrades.temp_max("ar")
 	var rmax: float = g1.range_px()
 	_check(rmax >= r1 * 1.5, "%s: upgrade prida jen kousek dostrelu (%.0f -> %.0f px)" % [tag, r1, rmax])
 	_check(rmax < l.field_r * 0.95, "%s: dostrel na maximu pokryva celou plochu" % tag)
@@ -434,10 +453,10 @@ func _test_resolution(v: Vector2) -> void:
 	# dostrelu zakladni veze.
 	var g := Game.new()
 	g.set_field(l.field_r, l.unit_r, l.center)
-	var palette: Array = Hue.palette_at(10)
+	var palette: Array = Hue.palette_at(99)
 	for h in [Hue.RED, Hue.YELLOW, Hue.BLUE, Hue.GREEN]:
 		_check(palette.has(h), "%s: barva %s neni v palete" % [tag, Hue.name_of(h)])
-		var ttk: float = g.hp_for(g.kolo(), 1, h) / (g.rate() * Game.SHOT_DMG)
+		var ttk: float = g.hp_for(g.kolo(), 1, h) / (g.rate() * g.shot_dmg())
 		var window: float = g.range_frac() * Game.TRAVEL_S / Hue.speed_mult(h)
 		_check(ttk < window,
 			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"

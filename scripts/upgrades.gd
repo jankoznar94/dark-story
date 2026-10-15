@@ -13,7 +13,8 @@ extends RefCounted
 #     a POSOUVA START o jeden krok. Attack speed s permanentem 2 zacina na
 #     0,90 s misto 1,00 s - a docasne kroky stoji porad 5, 10, 15 zlata.
 #   * SPECIÁL je JEN permanentni (multishot, ricochet, jed, led) - v bitve se
-#     nekupuje, proto ma `temp_max` nula.
+#     nekupuje, proto ma `temp_max` nula. Stejne je na tom DOSTREL (Jan, Oct
+#     2026) - v bitve se proste nenabizi.
 #
 # HODNOTA = start + krok * (permanentni + docasne), orezana stropem. Jedno
 # misto pro hru, obrazovku i testy - kdyby si obrazovka pocitala hodnotu sama,
@@ -49,10 +50,23 @@ const PERM_COST_STEP := 4
 #   int   - cele cislo ("180", "+7")
 #   levels- hodnota se bere z tabulky `values` (jed/led)
 const STATS := [
+	# KADENCE: "Attack speed by neměl být omezen na min střela/0,6s" (Jan, Oct
+	# 2026). 0,60 s bylo presne to, kam dosahl DOCASNY zebricek (8 kroku po
+	# 0,05 s z jednicky) - panel pak ukazal "MAX" a hrac mel za tim zed. Zed
+	# je pryc: docasnych kroku je vic, krok je stejny a strop (0,10 s) lezi az
+	# ZA koncem obou zebricku, takze "MAX" znamena "koupil jsi vsechno".
 	{"id": "as", "label": "Rychlost střelby", "cat": CAT_OFF, "kind": "time",
-		"start": 1.00, "step": -0.05, "cap": 0.30, "perm_max": 6, "temp_max": 8},
+		"start": 1.00, "step": -0.05, "cap": 0.10, "perm_max": 8, "temp_max": 10},
+	# POSKOZENI RANY (Jan, Oct 2026: "Ještě musíme přidat upgrade pro Attack
+	# damage"). Zaklad 10 je tady - `Game.SHOT_DMG` uz neexistuje, jinak by
+	# byla druha konstanta, ktera o upgradu nevi.
+	{"id": "ad", "label": "Poškození střely", "cat": CAT_OFF, "kind": "int",
+		"start": 10, "step": 2, "cap": 40, "perm_max": 7, "temp_max": 8},
+	# DOSTREL JE JEN PERMANENTNI (Jan, Oct 2026: "Rádius vyndáme z dočasných
+	# upgradů a bude jen v permanentních"). Diky `temp_max` 0 se v bitve vubec
+	# nenabizi (`game_view._shop_stats`) a cely zebricek je v menu.
 	{"id": "ar", "label": "Dostřel", "cat": CAT_OFF, "kind": "frac",
-		"start": 0.34, "step": 0.01, "cap": 0.60, "perm_max": 6, "temp_max": 20},
+		"start": 0.34, "step": 0.01, "cap": 0.60, "perm_max": 26, "temp_max": 0},
 	{"id": "cc", "label": "Kritická šance", "cat": CAT_OFF, "kind": "frac",
 		"start": 0.0, "step": 0.02, "cap": 0.40, "perm_max": 6, "temp_max": 14},
 	{"id": "cd", "label": "Kritické poškození", "cat": CAT_OFF, "kind": "mult",

@@ -46,12 +46,24 @@ func _test_value() -> void:
 	_check(absf(Upgrades.value_of("as", 0, 0) - 1.0) < 0.0001, "as bez upgradu neni 1,00 s")
 	_check(absf(Upgrades.value_of("as", 0, 2) - 0.90) < 0.0001, "as po 2 krocích neni 0,90 s")
 	_check(absf(Upgrades.value_of("as", 2, 0) - 0.90) < 0.0001, "as po 2 permanentních neni 0,90 s")
-	_check(absf(Upgrades.value_of("as", 6, 8) - 0.30) < 0.0001, "as na maximu neni 0,30 s")
+	_check(absf(Upgrades.value_of("as", 8, 10) - 0.10) < 0.0001, "as na maximu neni 0,10 s")
 	# Strop se NESMI prelezt, ani kdyz si obrazovka rekne o vic kroku.
-	_check(absf(Upgrades.value_of("as", 99, 99) - 0.30) < 0.0001, "as prelezl strop")
+	_check(absf(Upgrades.value_of("as", 99, 99) - 0.10) < 0.0001, "as prelezl strop")
+	# ZED NA 0,60 s BYLA CHYBA (Jan, Oct 2026: "Attack speed by nemel byt omezen
+	# na min střela/0,6s"): samotny docasny zebricek tam koncil a panel ukazal
+	# "MAX", i kdyz mel hrac jeste kam kupovat.
+	_check(Upgrades.value_of("as", 0, Upgrades.temp_max("as")) < 0.60,
+		"docasny zebricek kadence konci na 0,60 s - hrac za tim vidi zed")
+	# POSKOZENI RANY je parametr hrace ("Ještě musíme přidat upgrade pro Attack
+	# damage").
+	_check(absf(Upgrades.value_of("ad", 0, 0) - 10.0) < 0.0001, "zakladni poskozeni neni 10")
+	_check(absf(Upgrades.value_of("ad", 0, 1) - 12.0) < 0.0001, "krok poskozeni neni +2")
 	# Rostouci parametr: dostrel 34 % -> 40 % po sesti krocich.
-	_check(absf(Upgrades.value_of("ar", 0, 6) - 0.40) < 0.0001, "dostrel po 6 krocích neni 40 %")
+	_check(absf(Upgrades.value_of("ar", 6, 0) - 0.40) < 0.0001, "dostrel po 6 krocích neni 40 %")
 	_check(absf(Upgrades.value_of("ar", 99, 99) - 0.60) < 0.0001, "dostrel neni na stropu 60 %")
+	# DOSTREL JE JEN PERMANENTNI (Jan, Oct 2026: "Rádius vyndáme z dočasných
+	# upgradů a bude jen v permanentních").
+	_check(Upgrades.temp_max("ar") == 0, "dostrel jde koupit i za zlato v bitve")
 	# Jed/led jdou po urovnich, ne po primce.
 	_check(absf(Upgrades.value_of("ps", 0, 0)) < 0.0001, "jed bez upgradu neni nula")
 	_check(absf(Upgrades.value_of("ps", 1, 0) - 0.20) < 0.0001, "jed na 1. stupni neni 20 %")
@@ -85,7 +97,7 @@ func _test_temp_cost() -> void:
 	_check(Upgrades.temp_cost("as", 7) == 40, "osmy docasny krok nestoji 40 zlata")
 	# Cena musi byt stejna napric kategoriemi - hrac jinak nepochopi, podle
 	# ceho se cena pocita.
-	for id in ["as", "ar", "hp", "am", "gk"]:
+	for id in ["as", "ad", "hp", "am", "gk"]:
 		_check(Upgrades.temp_cost(id, 2) == 15, "%s: treti krok nestoji 15 zlata" % id)
 
 
@@ -106,11 +118,19 @@ func _test_special_is_perm_only() -> void:
 		_check(Upgrades.temp_max(id) == 0, "%s (special) jde koupit za zlato v bitve" % id)
 		_check(Upgrades.temp_cost(id, 0) == 0, "%s: special ma cenu v zlate" % id)
 		_check(Upgrades.perm_max(id) > 0, "%s: special nema permanentni stupne" % id)
-	# Naopak: vsechno ostatni MUSI jit koupit i v bitve.
+	# NAOPAK: zadna kategorie, ktera se v bitve nabizi, nesmi zustat bez
+	# docasneho kroku - svitil by v ni prazdny tab.
 	for cat in [Upgrades.CAT_OFF, Upgrades.CAT_DEF, Upgrades.CAT_ECO]:
+		var buyable: int = 0
 		for s in Upgrades.stats_in(cat):
-			var id: String = String(s["id"])
-			_check(Upgrades.temp_max(id) > 0, "%s: nema docasne kroky (v bitve se neda koupit)" % id)
+			if Upgrades.temp_max(String(s["id"])) > 0:
+				buyable += 1
+		_check(buyable > 0, "%s: celou kategorii nelze v bitve koupit" % cat)
+	# DOSTREL JE PERM-ONLY, ale NENI special: ma vlastni permanentni zebricek a
+	# v bitve se vubec nenabizi (`game_view._shop_stats`, hlida `test_layout`).
+	_check(Upgrades.temp_max("ar") == 0, "dostrel jde koupit za zlato v bitve")
+	_check(Upgrades.temp_cost("ar", 0) == 0, "dostrel ma cenu v zlate")
+	_check(Upgrades.perm_max("ar") > 0, "dostrel nema permanentni stupne")
 
 
 func _test_table_sane() -> void:
@@ -139,7 +159,7 @@ func _test_table_sane() -> void:
 			_check(v <= cap + 0.0001, "%s: na maximu preleze strop (%.3f z %.3f)" % [id, v, cap])
 			_check(absf(start + step * float(n) - cap) < 0.0001,
 				"%s: maximum neni presne strop (%.3f vs %.3f)" % [id, start + step * float(n), cap])
-	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 4, "kategorie utok nema 4 parametry")
+	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 5, "kategorie utok nema 5 parametru")
 	_check(Upgrades.stats_in(Upgrades.CAT_DEF).size() == 3, "kategorie obrana nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_ECO).size() == 3, "kategorie ekonomika nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 4, "kategorie special nema 4 parametry")
@@ -154,7 +174,7 @@ func _test_texts() -> void:
 		_check(not t.contains("."), "%s: hodnota ma tecku misto ceske carky (%s)" % [id, t])
 		_check(String(s["label"]) != "", "%s: popisek je prazdny" % id)
 	_check(Upgrades.value_text("as", 0, 2) == "0,90 s", "text kadence neni 0,90 s")
-	_check(Upgrades.value_text("ar", 0, 6) == "40 %", "text dostrelu neni 40 %")
+	_check(Upgrades.value_text("ar", 6, 0) == "40 %", "text dostrelu neni 40 %")
 
 
 func _test_profile_buy() -> void:

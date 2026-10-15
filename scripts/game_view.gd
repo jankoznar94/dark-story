@@ -108,7 +108,14 @@ func _sync_shop_shape() -> void:
 
 
 func _shop_stats() -> Array:
-	return Upgrades.stats_in(String(SHOP_CATS[clampi(shop_cat, 0, SHOP_CATS.size() - 1)]))
+	# JEN STATY, KTERE JDOU V BITVE KOUPIT. Stat s `temp_max` 0 (dostrel,
+	# specialy) by jinak zabiral bunku, ukazoval cenu 0 a "MAX" - hrac by
+	# videl tlacitko, ktere nic nedela a nerekne proc.
+	var out: Array = []
+	for s in Upgrades.stats_in(String(SHOP_CATS[clampi(shop_cat, 0, SHOP_CATS.size() - 1)])):
+		if Upgrades.temp_max(String(s["id"])) > 0:
+			out.append(s)
+	return out
 
 
 func _upg_stats() -> Array:

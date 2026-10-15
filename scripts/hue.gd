@@ -43,40 +43,44 @@ const B_SHIFT := "shift"
 #                 C/Z/M a to se plete. Barva tak NIKDY neni jediny nositel
 #                 informace - pismeno je druha cesta, jak barvu precte i hrac
 #                 s poruchou barvocitu.
-#   unlock_wave = vlna, od ktere barva do hry vstoupi (barvy pribyvaji
-#                 s obtiznosti; dokud levely nejsou, odemykaji se vlnami)
+#   unlock_level = LEVEL, od ktereho barva do hry vstoupi. Jan (Oct 2026):
+#                 "Už prvním levelu přibude modrá barva. To je špatně. Co
+#                 level, to nová barva." Vstupuje se tedy LEVELem, ne vlnou:
+#                 barva, ktera prijde uprostred bitvy, je pro hrace ticha
+#                 zmena pravidel - a v prvnim levelu navic nikdo nevi, co
+#                 modra (rozpadnuti) znamena.
 #   palette     = je barva v palete hracе? Stribrna NENI - proto na ni na
 #                 zacatku nejde mirrit a je to cely jeji smysl.
 const ROWS := [
 	{
 		"name": "Červená", "letter": "R", "color": Color(0.80, 0.22, 0.17), "shape": "square",
 		"hp": 2.2, "speed": 0.60, "gold": 18, "behaviour": B_NONE,
-		"unlock_wave": 1, "palette": true,
+		"unlock_level": 1, "palette": true,
 	},
 	{
 		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22), "shape": "triangle",
 		"hp": 0.6, "speed": 1.60, "gold": 10, "behaviour": B_NONE,
-		"unlock_wave": 1, "palette": true,
+		"unlock_level": 1, "palette": true,
 	},
 	{
 		"name": "Modrá", "letter": "B", "color": Color(0.22, 0.46, 0.80), "shape": "droplet",
 		"hp": 1.0, "speed": 1.00, "gold": 14, "behaviour": B_SPLIT,
-		"unlock_wave": 3, "palette": true,
+		"unlock_level": 2, "palette": true,
 	},
 	{
 		"name": "Zelená", "letter": "G", "color": Color(0.26, 0.62, 0.30), "shape": "cross",
 		"hp": 1.2, "speed": 1.00, "gold": 16, "behaviour": B_REGEN,
-		"unlock_wave": 5, "palette": true,
+		"unlock_level": 3, "palette": true,
 	},
 	{
 		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74), "shape": "diamond",
 		"hp": 0.7, "speed": 1.00, "gold": 14, "behaviour": B_VANISH,
-		"unlock_wave": 7, "palette": true,
+		"unlock_level": 4, "palette": true,
 	},
 	{
 		"name": "Stříbrná", "letter": "S", "color": Color(0.78, 0.80, 0.82), "shape": "circle",
 		"hp": 2.5, "speed": 0.60, "gold": 26, "behaviour": B_SHIFT,
-		"unlock_wave": 9, "palette": false,
+		"unlock_level": 5, "palette": false,
 	},
 ]
 
@@ -166,23 +170,23 @@ static func in_palette(h: int) -> bool:
 	return bool(_row(h)["palette"])
 
 
-static func unlock_wave(h: int) -> int:
-	return int(_row(h)["unlock_wave"])
+static func unlock_level(h: int) -> int:
+	return int(_row(h)["unlock_level"])
 
 
-# BARVY, KTERE V TOMTO MOMENTE VSTUPUJI DO HRY (vsechny, i nepolapitelne).
-static func active_at(wave: int) -> Array:
+# BARVY, KTERE V TOMTO LEVELU VSTUPUJI DO HRY (vsechny, i nepolapitelne).
+static func active_at(level: int) -> Array:
 	var out: Array = []
 	for h in range(COUNT):
-		if unlock_wave(h) <= wave:
+		if unlock_level(h) <= level:
 			out.append(h)
 	return out
 
 
 # CO UKAZUJE PALETA HRACE. Stribrna v ni nikdy neni.
-static func palette_at(wave: int) -> Array:
+static func palette_at(level: int) -> Array:
 	var out: Array = []
 	for h in range(COUNT):
-		if in_palette(h) and unlock_wave(h) <= wave:
+		if in_palette(h) and unlock_level(h) <= level:
 			out.append(h)
 	return out

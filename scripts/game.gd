@@ -27,29 +27,39 @@ extends RefCounted
 # a "Celkově ještě zpomalíme pohyb nepřátel" (12 -> 15 s).
 const TRAVEL_S := 15.0
 const BASE_HP := 20.0
-# OBTIZNOST: kazdy dalsi LEVEL je o 15 % tuzsi (Jan schvalil 1,15) a kazda
-# dalsi vlna v levelu o 5 %. Driv to bylo 13 % za vlnu v nekonecne partii -
-# s levelem a resetenym zlatem by to bylo nehratelne.
-const LEVEL_HP := 1.22
-const WAVE_HP := 1.15
+# OBTIZNOST: kazdy dalsi LEVEL je o 22 % tuzsi (Jan schvalil 1,22; driv 1,15)
+# a kazda dalsi vlna v levelu o 6 %. Driv to bylo 13 % za vlnu v nekonecne
+# partii - s levelem a resetenym zlatem by to bylo nehratelne.
+const LEVEL_HP := 1.40
+# Vlna v ramci levelu uz zveda obtiznost jen NECITELNE (1,06 misto 1,15):
+# deset vln po 1,06 da za level stejny rust jako pet vln po 1,15, takze delsi
+# level neznamena tezsi hru, jen vic krokku. Kdo hybe poctem vln, musi
+# premerit `tools/balance_sim.gd`.
+const WAVE_HP := 1.06
 const START_GOLD := 150
 const BUILD_TIME := 5.0
 # VELIKOST VLNY PODLE PORADI KOLA (kolo = pocitadlo vln pres cely pruchod hrou).
 # Prvnich deset je rucne, dal uz jen roste - levelu je nekonecne.
 const WAVE_SIZES := [5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 const WAVE_SIZES_MAX := 24
-const WAVE_BONUS := 30
-const WAVE_BONUS_PER_WAVE := 10
+# ODMENA ZA VLNU. S DESETI VLNAMI NA LEVEL se zlato za level ZDVOJNASOBILO
+# (vic vln = vic zabiti i vic bonusu) a hra se tim stala lehci, i kdyz se
+# obtiznost nemenila - zmereno simulatorem. Proto je bonus za vlnu mensi:
+# soucet za level zustava zhruba tam, kde byl u peti vln.
+const WAVE_BONUS := 10
+const WAVE_BONUS_PER_WAVE := 4
 # ODMENA ZA VYHRANY LEVEL V BODECH (Jan schvalil): 25 + 5 * level.
 const BODY_BASE := 25
 const BODY_PER_LEVEL := 5
-# LEVEL MA 3-5 VLN: prvni dva levely tri, treti a ctvrty ctyri, od peteho pet.
-const WAVES_EASY := 3
-const WAVES_MID := 4
-const WAVES_FULL := 5
-# KOLO SE POCITA VZDY PO PETI VLNACH, i kdyz level ma tri - jinak by se barvy
-# odemykaly podle toho, jak dlouhy level zrovna je, a hrac by je vidal nahodne.
-const KOLO_PER_LEVEL := 5
+# KAZDY LEVEL MA DESET VLN. Jan (Oct 2026): "Kol v levelu by mělo být víc."
+# Driv to bylo 3-5 vln podle poradi levelu; level tak byl kratky a barvy se
+# musely odemykat uprostred neho. Deset vln je i Janovo starsi cislo ("Levely
+# by měly mít jen 10 kol").
+const WAVES_PER_LEVEL := 10
+# KOLO SE POCITA VZDY PO DESETI VLNACH, takze "kolo" je proste poradi vlny pres
+# cely pruchod hrou. Odtud se bere obtiznost (hp_for) i velikost vlny
+# (wave_size) - jedno pocitadlo, ne dve.
+const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 
 # DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje.
 const SPAWN_GAP_START := 2.5
@@ -60,9 +70,8 @@ const SPAWN_GAP_PER_WAVE := 0.13
 const SHOT_SPEED_FRAC := 0.80
 const SHOT_R_FRAC := 0.032
 const SHOT_RIM_FRAC := 1.55
-# POSKOZENI JEDNE RANY. Kadenci a kritiku resi upgrady - tohle je zaklad,
-# ze ktereho se vsechno nasobi.
-const SHOT_DMG := 10.0
+# POSKOZENI JEDNE RANY JE PARAMETR HRACE ("Ještě musíme přidat upgrade pro
+# Attack damage", Jan Oct 2026) - hledej `shot_dmg()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.
 const POISON_S := 3.0
 const ICE_S := 2.0
@@ -154,6 +163,12 @@ func range_frac() -> float:
 	return val("ar")
 
 
+# POSKOZENI JEDNE RANY ("Attack damage"). Zaklad 10 je v `Upgrades.STATS` pod
+# id "ad" - zadna druha konstanta, ktera by o upgradu nevedela.
+func shot_dmg() -> float:
+	return maxf(1.0, val("ad"))
+
+
 func range_px() -> float:
 	return range_frac() * field_r
 
@@ -202,17 +217,17 @@ func kolo() -> int:
 
 
 func waves_in_level() -> int:
-	if level <= 2:
-		return WAVES_EASY
-	if level <= 4:
-		return WAVES_MID
-	return WAVES_FULL
+	return WAVES_PER_LEVEL
 
 
-func wave_size(k: int) -> int:
-	if k <= WAVE_SIZES.size():
-		return int(WAVE_SIZES[k - 1])
-	return mini(WAVE_SIZES_MAX, int(WAVE_SIZES[WAVE_SIZES.size() - 1]) + (k - WAVE_SIZES.size()) / 2)
+# VELIKOST VLNY. Bere se z VLNY V LEVELU (pet az ctrnact poutniku) a kazdy
+# dalsi LEVEL prida jednoho - tabulka `WAVE_SIZES` ma proto prave deset
+# polozek. Kdyby se pocitala z kola (poradi vlny pres celou partii), rostla by
+# dvakrat rychleji nez obtiznost a od tretiho levelu by chodilo porad 24
+# poutniku - "vic vln v levelu" by se tim zmenilo na "vic nepritelu".
+func wave_size(w: int, lv: int) -> int:
+	var base: int = int(WAVE_SIZES[clampi(w, 1, WAVE_SIZES.size()) - 1])
+	return mini(WAVE_SIZES_MAX, base + maxi(0, lv - 1))
 
 
 func is_over() -> bool:
@@ -373,8 +388,8 @@ func _wave_clear() -> void:
 # BARVY, KTERE NEJSOU V PALETE, SE OHLASTI ZVLAST: hrac je nemuze zvolit, takze
 # by jen videl, ze "neco" jde po plose a neslo to zabit.
 func _announce_new_enemies() -> void:
-	var prev: Array = Hue.active_at(kolo() - 1)
-	for h in Hue.active_at(kolo()):
+	var prev: Array = Hue.active_at(level - 1)
+	for h in Hue.active_at(level):
 		if prev.has(h) or Hue.in_palette(h):
 			continue
 		_note("Na ploše se objeví %s. %s" % [Hue.name_of(h), _behaviour_hint(h)])
@@ -393,12 +408,12 @@ func _behaviour_hint(h: int) -> String:
 	return ""
 
 
-# PALETA HRACE. Cte se z toho, co je v tomto kole ve hre - barvy pribyvaji
-# s obtiznosti. Kdyz se paleta rozsiri, hra to rekne: nova barva znamena nove
+# PALETA HRACE. Bere se z LEVELU, ne z kola: "Co level, to nová barva" (Jan,
+# Oct 2026). Kdyz se paleta rozsiri, hra to rekne: nova barva znamena nove
 # pravidlo a ticha zmena by nechala hrace hledat, proc se neco deje jinak.
 func refresh_palette() -> void:
 	var before: int = palette.size()
-	palette = Hue.palette_at(kolo())
+	palette = Hue.palette_at(level)
 	# VEZ SI PALETU BER Z HRY, ne naopak: tlacitka dole kresli `game_view` z
 	# `game.palette`, takze kdyby si vez drzela vlastni kopii, hrac by videl
 	# jednu paletu a `Tower.set_hue` by se rozhodoval podle druhe.
@@ -407,12 +422,12 @@ func refresh_palette() -> void:
 		tower.hue = int(palette[0])
 	if before > 0 and palette.size() > before:
 		for h in palette:
-			if not Hue.palette_at(kolo() - 1).has(h):
+			if not Hue.palette_at(level - 1).has(h):
 				_note("Přibyla barva: %s. %s" % [Hue.name_of(h), _behaviour_hint(h)])
 
 
 func spawn_pool() -> Array:
-	return Hue.active_at(kolo())
+	return Hue.active_at(level)
 
 
 func select_hue(h: int) -> bool:
@@ -422,7 +437,7 @@ func select_hue(h: int) -> bool:
 # --------------------------------------------------------------- VSTUP POUTNIKU
 
 func wave_plan(n: int) -> Array:
-	var total: int = wave_size(kolo())
+	var total: int = wave_size(wave, level)
 	var pool: Array = spawn_pool()
 	var out: Array = []
 	if pool.is_empty():
@@ -575,7 +590,7 @@ func _fire(dt: float) -> void:
 # RANA. Kriticka sance i kriticke poskozeni jsou upgradovatelne parametry,
 # takze se losuje PRES RNG HRY - hra zustava deterministicka.
 func _fire_at(p: Pilgrim) -> void:
-	var dmg: float = SHOT_DMG
+	var dmg: float = shot_dmg()
 	if rng.randf() < crit_chance():
 		dmg *= crit_dmg()
 	_fire_shot(p, dmg, ricochet(), [])
@@ -649,7 +664,10 @@ func _damage(p: Pilgrim, amount: float) -> void:
 	# JED A LED SE APLIKUJI PRI KAZDEM ZASAHU (obnovi se cas, ne poskozeni).
 	if poison_frac() > 0.0:
 		p.poison_left = POISON_S
-		p.poison_dps = SHOT_DMG * poison_frac()
+		# JED SE POCITA Z AKTUALNIHO POSKOZENI RANY, ne z mrtve zakladni
+		# konstanty: upgrade poskozeni tak posili i jed a zustava to "20 % z
+		# rany", jak to hrac v panelu vidi.
+		p.poison_dps = shot_dmg() * poison_frac()
 	if ice_frac() > 0.0:
 		p.ice_left = ICE_S
 		p.ice_frac = ice_frac()

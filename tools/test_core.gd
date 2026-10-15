@@ -4,7 +4,7 @@ extends SceneTree
 #
 # Testuje se to, co hrac opravdu pozna: ze poutnik dojde k vezi za TRAVEL_S,
 # ze vez vidi jen svou barvu, ze poskozeni dava az DOPAD strely, ze level ma
-# 3-5 vln a ze se za vyhru dostavaji BODY. Kdo hleda "kde se ubiraji zivoty",
+# DESET VLN a ze se za vyhru dostavaji BODY. Kdo hleda "kde se ubiraji zivoty",
 # hleda `Game._arrive` a `Game._damage`.
 
 var fails: Array = []
@@ -28,9 +28,10 @@ func _init() -> void:
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
 	_run("docasny krok stoji 5xN zlata a hodnota roste", _test_temp_buy)
 	_run("permanentni stupen posouva start bitvy", _test_perm_shift)
-	_run("level ma 3 vlny a za vyhru jsou body", _test_level_flow)
+	_run("level ma deset vln a za vyhru jsou body", _test_level_flow)
 	_run("dalsi level: zlato znovu, docasne kroky pryc", _test_next_level)
-	_run("obtiznost roste s levelem, barvy po kolech", _test_difficulty)
+	_run("obtiznost roste s levelem, barvy po levelech", _test_difficulty)
+	_run("nove barvy prichazeji po levelech, ne uprostred bitvy", _test_hue_unlock)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
@@ -209,7 +210,7 @@ func _test_shots_hit_on_impact() -> void:
 	while is_equal_approx(p.hp, hp0) and t < 3.0:
 		g.step(1.0 / 240.0)
 		t += 1.0 / 240.0
-	_check(absf((hp0 - p.hp) - Game.SHOT_DMG) < 0.01,
+	_check(absf((hp0 - p.hp) - g.shot_dmg()) < 0.01,
 		"dopad strely neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
 	_check(t >= 0.15, "strela doletela okamzite (let ma byt videt, je %.3f s)" % t)
 	_check(absf(t - want) < 0.06,
@@ -266,9 +267,9 @@ func _test_crit() -> void:
 		g.shots = []
 		g._fire_at(p)
 		var d: float = float(g.shots[0]["dmg"])
-		if absf(d - Game.SHOT_DMG) < 0.001:
+		if absf(d - g.shot_dmg()) < 0.001:
 			normal += 1
-		elif absf(d - Game.SHOT_DMG * 2.5) < 0.001:
+		elif absf(d - g.shot_dmg() * 2.5) < 0.001:
 			crits += 1
 	_check(normal + crits == 200,
 		"strela ma jiné poskozeni nez zaklad nebo krit (krit %d, zaklad %d)" % [crits, normal])
@@ -430,17 +431,19 @@ func _test_level_flow() -> void:
 	g.profile = Profile.new()
 	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
 	g.start_level(1)
-	_check(g.waves_in_level() == 3, "prvni level nema 3 vlny (ma %d)" % g.waves_in_level())
+	var n: int = g.waves_in_level()
+	_check(n == Game.WAVES_PER_LEVEL,
+		"prvni level nema %d vln (ma %d)" % [Game.WAVES_PER_LEVEL, n])
 	# PRAZDNA DESKA = VLNA JE ODRAZENA. Takhle se projde celym levelem, aniž by
 	# se cekalo na poutniky.
-	for i in range(3):
+	for i in range(n):
 		g.phase = "wave"
 		g.plan = []
 		g.spawned = 0
 		g.pilgrims = []
 		var w: int = g.wave
 		g.step(0.02)
-		if i < 2:
+		if i < n - 1:
 			_check(g.wave == w + 1, "%d. vlna neposunula na dalsi (wave %d)" % [w, g.wave])
 			_check(g.phase == "build", "po vlně neni priprava (faze %s)" % g.phase)
 	_check(g.phase == "won", "po posledni vlne neni level vyhrany (faze %s)" % g.phase)
@@ -474,25 +477,65 @@ func _test_difficulty() -> void:
 	var g := Game.new()
 	g.profile = Profile.new()
 	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
-	# ZIVOTY POUTNIKA ROSTOU S LEVELEM (schvaleno: 1,15 za level).
+	# ZIVOTY POUTNIKA ROSTOU S LEVELEM (schvaleno: 1,22 za level). Kolo je
+	# poradi vlny pres cely pruchod hrou, tedy level 2 zacina kolem 11.
 	var h1: float = g.hp_for(1, 1, Hue.RED)
-	var h6: float = g.hp_for(6, 1, Hue.RED)
 	var h11: float = g.hp_for(11, 1, Hue.RED)
-	_check(h6 > h1, "druhy level nema tuzsi poutniky")
-	_check(absf(h6 / h1 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,15 (%.3f)" % (h6 / h1))
-	_check(absf(h11 / h6 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,15 (%.3f)" % (h11 / h6))
-	# BARVY SE ODEMYKAJI PO KOLECH, ne po vlnach v levelu.
+	var h21: float = g.hp_for(21, 1, Hue.RED)
+	_check(h11 > h1, "druhy level nema tuzsi poutniky")
+	_check(absf(h11 / h1 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,22 (%.3f)" % (h11 / h1))
+	_check(absf(h21 / h11 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,22 (%.3f)" % (h21 / h11))
+	# KOLO SE POCITA PO DESETI VLNACH: prvni vlna druheho levelu je 11. kolo.
 	g.start_level(1)
 	_check(g.kolo() == 1, "prvni kolo prvniho levelu neni 1 (%d)" % g.kolo())
 	g.wave = 3
 	_check(g.kolo() == 3, "treti vlna prvniho levelu neni 3. kolo (%d)" % g.kolo())
 	g.start_level(2)
-	_check(g.kolo() == 6, "prvni vlna druheho levelu neni 6. kolo (%d)" % g.kolo())
-	g.refresh_palette()
-	_check(g.tower.palette.size() >= 3, "ve druhem levelu nejsou aspon tri barvy")
-	# VELIKOST VLNY ROSTE S KOLEM.
-	_check(g.wave_size(1) < g.wave_size(2), "druha vlna neni vetsi nez prvni")
-	_check(g.wave_size(30) <= Game.WAVE_SIZES_MAX, "velikost vlny pretekla strop")
+	_check(g.kolo() == Game.WAVES_PER_LEVEL + 1,
+		"prvni vlna druheho levelu neni %d. kolo (%d)" % [Game.WAVES_PER_LEVEL + 1, g.kolo()])
+	# VELIKOST VLNY: v ramci levelu roste po jednom poutnikovi, kazdy dalsi
+	# LEVEL prida jednoho navic (a strop to drzi).
+	_check(g.wave_size(1, 1) < g.wave_size(2, 1), "druha vlna neni vetsi nez prvni")
+	_check(g.wave_size(1, 5) == g.wave_size(1, 1) + 4,
+		"velikost vlny neroste s levelem po jednom (%d vs %d)" % [g.wave_size(1, 5), g.wave_size(1, 1)])
+	_check(g.wave_size(Game.WAVES_PER_LEVEL, 99) <= Game.WAVE_SIZES_MAX, "velikost vlny pretekla strop")
+
+
+# BARVY PRICHAZEJI PO LEVELECH, NE UPROSTRED BITVY. Jan (Oct 2026): "Už prvním
+# levelu přibude modrá barva. To je špatně. Co level, to nová barva." Prvni
+# level = cervena a zluta, a kazdy dalsi prida PRAVE JEDNU barvu (stribrna
+# nikdy - ta se meni na jinou barvu, proto na ni nejde mirrit).
+func _test_hue_unlock() -> void:
+	var in_pal: int = 0
+	for h in range(Hue.COUNT):
+		if Hue.in_palette(h):
+			in_pal += 1
+	var g := Game.new()
+	g.profile = Profile.new()
+	for lv in range(1, Hue.COUNT + 1):
+		g.start_level(lv)
+		_check(Hue.active_at(lv).size() == mini(lv + 1, Hue.COUNT),
+			"level %d: do hry vstoupilo %d barev, ceka se %d"
+			% [lv, Hue.active_at(lv).size(), mini(lv + 1, Hue.COUNT)])
+		_check(g.palette.size() == mini(lv + 1, in_pal),
+			"level %d: paleta ma %d barev, ceka se %d" % [lv, g.palette.size(), mini(lv + 1, in_pal)])
+		_check(not g.palette.has(Hue.SILVER), "stribrna se objevila v palete")
+		# KAZDA BARVA, KTERA CHODI PO PLOSE, MUSI BYT V PALETE - jinak by
+		# poutnik nemel cim umrit. Stribrna je vyjimka (meni barvu).
+		for h in Hue.active_at(lv):
+			if h == Hue.SILVER:
+				continue
+			_check(g.palette.has(h),
+				"level %d: %s chodi po plose, ale neni v palete" % [lv, Hue.name_of(h)])
+	# A PRESNY OPACNY PRIPAD, KTERY JAN NASEL: v prvnim levelu modra neni.
+	var first := Game.new()
+	first.profile = Profile.new()
+	first.start_level(1)
+	_check(first.palette == [Hue.RED, Hue.YELLOW],
+		"prvni level nema paletu cervena+zluta (%s)" % str(first.palette))
+	_check(not first.spawn_pool().has(Hue.BLUE), "modri poutnici chodi uz v prvnim levelu")
+	first.start_level(2)
+	_check(first.palette.has(Hue.BLUE), "ve druhem levelu modra neprisla")
 
 
 func _test_pause() -> void:
