@@ -31,9 +31,16 @@ const CARD_BG := Color(0.095, 0.090, 0.100)
 const CARD_ROW := Color(0.125, 0.118, 0.128)
 const CARD_EDGE := Color(0.34, 0.33, 0.36)
 # RAMEK BUNKY UPGRADU. Jan (Oct 2026): "Rámečky všechny tlačítek upgradů budou
-# tlustší. Třeba 3px." Je to CELE tlacitko upgradu (v bitve i ve VYLEPSENICH),
-# takze jeden odstavec tady meni obe obrazovky.
-const CELL_FRAME := 3.0
+# tlustší. Třeba 3px." Prvni pokus byl presne 3 px (zmereno v prohlizeci) a Jan
+# ho vratil: "bordery tlačítek s upgrady je stále tenký". 3 px na bunce 176x48
+# je totiz porad jen tenka linka - hranice je 4 px, kde je ramecek videt jako
+# ramecek, ne jako obrys. Kdo bude hybat, at to zmeri (`~/probes/zily2_frame_probe.py`).
+const CELL_FRAME := 4.0
+# TABY KATEGORII A RAMEK PANELU. Jsou to taky tlacitka upgradu (a ty nevybrane
+# mely 1 px, takze vypadaly rozbite) - se 4 px bunkou musi drzet krok, jinak
+# panel vypada, jako by kazda cast byla z jine hry.
+const TAB_FRAME := 3.0
+const PANEL_FRAME := 3.0
 # ZIVOTY VEZE: zelena dokud drzi, cervena pod tretinou. Barva NENI jediny
 # nositel - cislo je i v hornim pruhu.
 const HP_GOOD := Color(0.62, 0.76, 0.56)
@@ -928,7 +935,7 @@ func _label(s: String, r: Rect2, px: int, col: Color, dy: float = 0.0) -> void:
 
 func _card_frame(r: Rect2) -> void:
 	draw_rect(r, CARD_BG, true)
-	draw_rect(r, CARD_EDGE, false, 2.0)
+	draw_rect(r, CARD_EDGE, false, PANEL_FRAME)
 
 
 # IKONY KATEGORII (mec / stit / zlataky / hvezdicka). Nahrazuji text na tabu
@@ -991,7 +998,7 @@ func _draw_card(panel: Rect2, tabs: Array, icons: Array, active: int, cats: Arra
 		var on: bool = (i == active)
 		draw_rect(tr, CARD_ROW if on else CARD_BG, true)
 		var col: Color = TEXT if on else DIM
-		draw_rect(tr, col if on else CARD_EDGE, false, 2.0 if on else 1.0)
+		draw_rect(tr, col if on else CARD_EDGE, false, TAB_FRAME if on else 2.0)
 		var cat: String = String(cats[i]) if i < cats.size() else ""
 		var tex: Texture2D = _cat_icon(cat)
 		if tex != null:
