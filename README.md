@@ -21,6 +21,10 @@ nepoužívá.
   přepnutí barvy věže ani to, že se cíl přestal zaměřovat, ji nezastaví.
   Odražená střela **letí z těla předchozí oběti** k dalšímu nepříteli, takže je
   vidět, jak se mezi nimi odráží.
+- **VÝJIMKA: FIALOVÁ PO ZNEVIDITELNĚNÍ.** Když fialová po prvním zásahu zmizí,
+  rozletá střela **mine** — doletí na místo dopadu, tam zmizí a nic neubírá
+  (bez poškození a bez odrazu). Je to jediná barva, na kterou pravidlo
+  „vystřeleno = doletí“ neplatí.
 - **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10, roste počet
   ran za sekundu: **3 → 4,8 → 7,2 ran/s** (tj. 30 / 48 / 72 za sekundu) a od
   3. stupně věž míří na dva cíle. V paprsku je tím vidět hustší proud teček.

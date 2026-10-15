@@ -667,7 +667,13 @@ func _make_shot(p: Pilgrim, dmg: float, bounce: int, hit: Array, from: Vector2) 
 # vystřelí, tak musí projektil doletět do cíle a udělit poškození."). Driv
 # strela zanikla, jakmile hrac prepl barvu veze - hrac videl, jak projektil
 # zmizi a neubral nic. Strela proto zanikne JEN s MRTVYM cilem; zmena barvy
-# veze ani to, ze se cíl prestal zamerovat, ji nezastavi.
+# veze ji nezastavi.
+#
+# VYJIMKA JE FIALOVA PO ZNEVIDITELNENI (Jan, Oct 2026): "Když zmizí, projektil
+# zkrátka mine. Doletí na místo impaktu, zmizí a neudělí poškození." Neni to
+# tedy "zanikne ve vzduchu" - doleti az na misto dopadu a tam zmizi bez rany
+# (a bez odrazu). Kdo hleda pravidlo "co se stane s rozletlou strelou", najde
+# tady obe vetve: `p.alive` (cil umrel) a `p.targetable()` (fialova zmizela).
 #
 # ODRAZ VZNIKA UVNITR TOHOTO PRUCHODU, takze se nove strely sbiraji vedle
 # (`born`) a pripoji se az na konci. Kdyby se spolehlo na to, ze je smycka jeste
@@ -683,10 +689,13 @@ func _advance_shots(dt: float) -> void:
 		var d: Vector2 = p.pos - pos
 		var step_len: float = shot_speed() * dt
 		if d.length() <= step_len + shot_r():
-			_damage(p, float(s["dmg"]))
-			var next: Dictionary = _ricochet_from(p, s)
-			if not next.is_empty():
-				born.append(next)
+			if p.targetable():
+				_damage(p, float(s["dmg"]))
+				var next: Dictionary = _ricochet_from(p, s)
+				if not next.is_empty():
+					born.append(next)
+			# NETREFENO (fialova je v duchovem stavu): strela tady KONCI -
+			# nema poskozeni, nema odraz a nikam dal neleti.
 			continue
 		s["pos"] = pos + d.normalized() * step_len
 		keep.append(s)

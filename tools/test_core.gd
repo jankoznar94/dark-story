@@ -26,6 +26,7 @@ func _init() -> void:
 	_run("ricochet se odrazi na stejnou barvu a kazdy dostane nejvyse jednou", _test_ricochet)
 	_run("odrazena strela leti z tela obeti (ricochet je videt)", _test_ricochet_shot_flies)
 	_run("strela po prepsani barvy veze doleti a ubira", _test_shot_lands_after_hue_switch)
+	_run("zmizele fialove strela mine (dopadne, ale neubira)", _test_vanish_shot_misses)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
@@ -423,6 +424,32 @@ func _test_game_speed_scales_time() -> void:
 	var fast_move: float = b0.distance_to(q.pos)
 	_check(absf(fast_move / slow_move - 2.5) < 0.05,
 		"poutnik se v 2,5x tempu nepohnul 2,5x dal (%.1f vs %.1f px)" % [fast_move, slow_move])
+
+
+# FIALOVA PO ZNEVIDITELNENI JE VYJIMKA (Jan, Oct 2026): "Když zmizí, projektil
+# zkrátka mine. Doletí na místo impaktu, zmizí a neudělí poškození." Pro
+# vsechny ostatni barvy plati "vystreleno = doleti" (`_test_shot_lands_after_hue_switch`).
+func _test_vanish_shot_misses() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
+	p.speed = 0.0
+	p.hp = 1000.0
+	p.max_hp = 1000.0
+	p.behaviour = Hue.B_VANISH
+	g.step(1.0 / 240.0)
+	_check(g.shots.size() == 1, "vez pri zamereni nevystrelila (%d strel)" % g.shots.size())
+	# FIALOVA SE ZNEVIDITELNI - strela uz je ve vzduchu.
+	p.ghost_left = Hue.VANISH_S
+	var hp0: float = p.hp
+	g.step(1.0 / 240.0)
+	_check(g.shots.size() == 1, "strela po zmizeni cile zmizela hned ve vzduchu - ma doletet na misto dopadu")
+	var t: float = 0.0
+	while not g.shots.is_empty() and t < 3.0:
+		g.step(1.0 / 240.0)
+		t += 1.0 / 240.0
+	_check(g.shots.is_empty(), "strela po zmizeni cile nikdy nezanikla")
+	_check(is_equal_approx(p.hp, hp0), "zmizela fialova dostala poskozeni (ubralo %.2f)" % (hp0 - p.hp))
 
 
 func _test_poison() -> void:
