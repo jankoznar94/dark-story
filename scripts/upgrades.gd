@@ -10,9 +10,9 @@ extends RefCounted
 #     ZNOVU od nuly. Cena kroku je VZDY stejna (5, 10, 15, ... zlata), at hrac
 #     zacina na jakekoli startovni hodnote.
 #   * PERMANENTNI stupen se kupuje v menu za BODY (ziskane za vyhrany level)
-#     a POSOUVA START o jeden krok. Attack speed s permanentem 2 zacina na
-#     0,95 s misto 1,00 s - a docasne kroky stoji porad 5, 10, 15 zlata.
-#   * SPECIÁL je JEN permanentni (multishot, ricochet, jed, led) - v bitve se
+#     a POSOUVA START o jeden krok. Poskozeni s permanentem 2 zacina na 14
+#     misto 10 - a docasne kroky stoji porad 5, 10, 15 zlata.
+#   * SPECIÁL je JEN permanentni (multishot, odraz, jed, led) - v bitve se
 #     nekupuje, proto ma `temp_max` nula. Stejne je na tom DOSTREL (Jan, Oct
 #     2026) - v bitve se proste nenabizi.
 #
@@ -50,11 +50,6 @@ const PERM_COST_STEP := 4
 # utekl z ruky). `temp_max == 0` znamena neco jineho: "v bitve se vubec
 # nenabizi" (dostrel a specialy).
 const UNLIMITED := -1
-# POJISTKA KADENCE, NE STROP: kadence je cas a nula by delila nulou. 0,05 s je
-# 20 ran za sekundu a hrac se k ni dostane az po ~19 krocich (pres 900 zlata v
-# jednom levelu) - do te doby je jedinym stropem zlato.
-const MIN_INTERVAL := 0.05
-
 # kind:
 #   time  - cas v sekundach (mensi je lepsi), pise se "0,75 s"
 #   frac  - podil, pise se v procentech ("45 %")
@@ -62,23 +57,16 @@ const MIN_INTERVAL := 0.05
 #   int   - cele cislo ("180", "+7")
 #   levels- hodnota se bere z tabulky `values` (jed/led)
 const STATS := [
-	# KADENCE: "Attack speed by neměl být omezen na min střela/0,6s" (Jan, Oct
-	# 2026) a pak jeste prisneji: "nechci zadne stropy. Zadne max." Docasne
-	# kroky jsou proto NEOMEZENE (`temp_max` -1) a strop plati JEN na
-	# permanentni zebricek: `cap` je hodnota na `perm_max`, ne hodnota, za
-	# kterou hrac v bitve narazi.
-	#
-	# KROK 0,025 s (Oct 2026, Jan: "Rychlost útoku se bude upgradovat po 0.025s
-	# místo po 0.05s."): kdyz se krok zpolovi, musi se ZDVOJNASOBIT `perm_max`
-	# (8 -> 16), jinak by permanentni zebricek skoncil na 0,80 s a tabulkovy
-	# strop 0,60 s by prestal platit. Kdo hybe krokem, hybe i `perm_max` -
-	# hlida to `test_upgrades._test_table_sane`.
-	{"id": "as", "label": "Rychlost střelby", "cat": CAT_OFF, "kind": "time",
-		"start": 1.00, "step": -0.025, "cap": 0.60, "perm_max": 16, "temp_max": UNLIMITED},
-	# POSKOZENI RANY (Jan, Oct 2026: "Ještě musíme přidat upgrade pro Attack
+	# POSKOZENI LASERU (Jan, Oct 2026: "Ještě musíme přidat upgrade pro Attack
 	# damage"). Zaklad 10 je tady - `Game.SHOT_DMG` uz neexistuje, jinak by
 	# byla druha konstanta, ktera o upgradu nevi.
-	{"id": "ad", "label": "Poškození střely", "cat": CAT_OFF, "kind": "int",
+	#
+	# JE TO ZA SEKUNDU, NE ZA RANU (Jan, Oct 2026: "Vrátíme se k laseru místo
+	# projektilů. Tím pádem zrušíme úplně Attack speed upgrady. Poškození bude
+	# probíhat plynule a čím vyšší bude mít věž dmg, tím rychleji to logicky
+	# bude nepřítele zabíjet."). Cislo 10 zustalo stejne jako driv (10 za ranu
+	# pri kadenci 1,00 s = 10 za sekundu), takze se zmenil ZPUSOB, ne obtiznost.
+	{"id": "ad", "label": "Poškození laseru", "cat": CAT_OFF, "kind": "int",
 		"start": 10, "step": 2, "cap": 24, "perm_max": 7, "temp_max": UNLIMITED},
 	# DOSTREL JE JEN PERMANENTNI (Jan, Oct 2026: "Rádius vyndáme z dočasných
 	# upgradů a bude jen v permanentních"). Diky `temp_max` 0 se v bitve vubec
@@ -106,8 +94,18 @@ const STATS := [
 
 	{"id": "ms", "label": "Víc cílů", "cat": CAT_SPEC, "kind": "int",
 		"start": 1, "step": 1, "cap": 5, "perm_max": 4, "temp_max": 0, "perm_cost": 3},
-	{"id": "rc", "label": "Ricochet", "cat": CAT_SPEC, "kind": "int",
-		"start": 0, "step": 1, "cap": 3, "perm_max": 3, "temp_max": 0},
+	# ODRAZ (driv Ricochet). Jan (Oct 2026): "RICOHET přejmenujeme na Odraz a
+	# bude se takhle laser šířit na další nepřátele, podobně jako ricochet, ale
+	# bez projektilů. A každý odraz bude dávat menší poškození. S levelem
+	# upgradu se bude zvyšovat počet odrazů a bude snižovat penalizace za
+	# odraz."
+	#
+	# JEDNA POLOZKA, DVE CISLA: `values[uroven]` = [pocet odrazu, sila odrazu].
+	# Sila je podil poskozeni, ktery si odraz jeste odnese (0,50 = polovinu).
+	# Kdyby to byly dva radky, hrac by musel koupit dvakrat to same.
+	{"id": "rc", "label": "Odraz", "cat": CAT_SPEC, "kind": "chain",
+		"start": 0, "step": 1, "cap": 4, "perm_max": 4, "temp_max": 0,
+		"values": [[0, 1.00], [1, 0.50], [2, 0.60], [3, 0.70], [4, 0.80]]},
 	{"id": "ps", "label": "Jedovatý zásah", "cat": CAT_SPEC, "kind": "levels",
 		"start": 0, "step": 1, "cap": 3, "perm_max": 3, "temp_max": 0,
 		"values": [0.0, 0.20, 0.35, 0.50], "text": "%d/s"},
@@ -211,12 +209,12 @@ static func value_of(id: String, perm: int, temp: int) -> float:
 	if String(s["kind"]) == "levels":
 		var vals: Array = s["values"]
 		return float(vals[clampi(n, 0, vals.size() - 1)])
+	if String(s["kind"]) == "chain":
+		return chain_of(id, perm, temp).x
 	var start: float = float(s["start"])
 	var step: float = float(s["step"])
 	var v: float = start + step * float(n)
 	if temp_unlimited(id):
-		if String(s["kind"]) == "time":
-			return maxf(MIN_INTERVAL, v)
 		return v
 	var cap: float = float(s["cap"])
 	return clampf(v, minf(start, cap), maxf(start, cap))
@@ -228,8 +226,14 @@ static func value_text(id: String, perm: int, temp: int) -> String:
 	var s: Dictionary = stat(id)
 	var v: float = value_of(id, perm, temp)
 	match String(s["kind"]):
-		"time":
-			return _cz(v, 2) + " s"
+		"int":
+			return str(int(round(v)))
+		"chain":
+			if int(round(v)) <= 0:
+				return "—"
+			var c: Vector2 = chain_of(id, perm, temp)
+			return "%d %s · %d %% zásahu" % [int(c.x), _odraz_word(int(c.x)),
+				int(round(c.y * 100.0))]
 		"frac":
 			return str(int(round(v * 100.0))) + " %"
 		"mult":
@@ -243,6 +247,29 @@ static func value_text(id: String, perm: int, temp: int) -> String:
 				return "—"
 			return str(int(round(v * 100.0))) + " %"
 	return _cz(v, 1)
+
+
+# ODRAZ: pocet odrazu a sila odrazu (podil poskozeni) pro dany stupen.
+# `Vector2(pocet, sila)` - obrazovka z toho pise text, hra z toho pocita
+# poskozeni. Nikdo si to nepocita sam.
+static func chain_of(id: String, perm: int, temp: int) -> Vector2:
+	var s: Dictionary = stat(id)
+	var vals: Array = s.get("values", [])
+	if vals.is_empty():
+		return Vector2.ZERO
+	var n: int = clampi(level_of(id, perm, temp), 0, vals.size() - 1)
+	var pair: Array = vals[n]
+	return Vector2(float(pair[0]), float(pair[1]))
+
+
+# "1 odraz", "2 odrazy", "5 odrazu" - cesky se to sklonuje, hrac nesmi videt
+# "2 odraz".
+static func _odraz_word(n: int) -> String:
+	if n == 1:
+		return "odraz"
+	if n >= 2 and n <= 4:
+		return "odrazy"
+	return "odrazů"
 
 
 static func _cz(v: float, digits: int) -> String:

@@ -29,7 +29,7 @@ func _init() -> void:
 	_run("tlacitko pauzy je ikona (carky / trojuhelnik)", _test_pause_is_icon)
 	_run("nulova velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
-	_run("strela je tecka nad zamerovanim", _test_shots_are_dots)
+	_run("laser je cara s obrysem a kresli se nad vezi", _test_beams_are_lines)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
@@ -76,23 +76,25 @@ func _test_spawn_ring_not_drawn() -> void:
 		"kruh dostrelu se nekresli (je to jedina geometrie, kterou hrac vidi)")
 
 
-# STRELA JE TECKA S OBRYSEM A KRESLI SE NAD VSIM V POLI. Poradi v `_draw` je
+# LASER JE CARA S OBRYSEM A KRESLI SE NAD VSIM V POLI. Poradi v `_draw` je
 # zavazne - prehozeni dvou radku vypada v kodu jako kosmetika a na obrazovce
 # je to nevidet jen tak.
-func _test_shots_are_dots() -> void:
+func _test_beams_are_lines() -> void:
 	var src: String = _src()
-	_check(src.contains("for s in game.shots"), "strely se vubec nekresli")
-	_check(src.contains("game.shot_r()"), "strela se nekresli jako tecka")
-	_check(src.contains("game.shot_rim_r()"), "strela nema tmavy obrys - ztrati se")
-	_check(src.contains("draw_line(layout.center, p.pos, BEAM, 2.0)"),
-		"paprsek (zamerovani) zmizel - hrac nevidi, kam vez miri")
-	var i_beam: int = src.find("draw_line(layout.center, p.pos, BEAM")
-	var i_tower: int = src.find("\n\t_draw_tower()")
-	var i_shots: int = src.find("\n\t_draw_shots()")
-	_check(i_beam >= 0 and i_tower >= 0 and i_shots >= 0,
-		"kresleni strel neni hned za vezi (v poli se nevi, co je nad cim)")
-	_check(i_beam < i_tower and i_tower < i_shots,
-		"strely se kresli driv nez paprsek/vez - nejsou nad zamerovanim")
+	_check(src.contains("for b in game.beams"), "paprsky se vubec nekresli")
+	_check(src.contains("game.beam_w("), "paprsek se nekresli jako cara")
+	_check(src.contains("draw_line(b[\"from\"], q.pos, GLYPH"),
+		"paprsek nema tmavy obrys - na svetlem poutnikovi se ztrati")
+	# POZOR: `check_symbols.py` hlida kazdy vyskyt "game.<neco>" v obrazovkach,
+	# takze se ten nazev sklada az za behu - jinak by si nastroj myslel, ze se
+	# obrazovka porad dozaduje projektu, ktere hra uz nema.
+	_check(not src.contains("game." + "shots"),
+		"obrazovka porad kresli projektily, ktere hra uz nema")
+	var i_tower: int = src.find("\n	_draw_tower()")
+	var i_beams: int = src.find("\n	_draw_beams()")
+	_check(i_tower >= 0 and i_beams >= 0,
+		"kresleni paprsku neni hned za vezi (v poli se nevi, co je nad cim)")
+	_check(i_tower < i_beams, "paprsky se kresli driv nez vez - nejsou nad ni")
 
 
 # PANEL V BITVE NENABIZI UPGRADE, KTERY V NI NEJDE KOUPIT. Stat s `temp_max` 0
@@ -507,7 +509,8 @@ func _test_resolution(v: Vector2) -> void:
 	var palette: Array = Hue.palette_at(99)
 	for h in [Hue.RED, Hue.YELLOW, Hue.BLUE, Hue.GREEN]:
 		_check(palette.has(h), "%s: barva %s neni v palete" % [tag, Hue.name_of(h)])
-		var ttk: float = g.hp_for(g.kolo(), 1, h) / (g.rate() * g.shot_dmg())
+		# U LASERU JE TTK PROSTY: zivoty delene poskozenim za sekundu.
+		var ttk: float = g.hp_for(g.kolo(), 1, h) / g.laser_dps()
 		var window: float = g.range_frac() * Game.TRAVEL_S / Hue.speed_mult(h)
 		_check(ttk < window,
 			"%s: %s nema v dostrelu cas na zabiti (%.2f s v ohne, potreba %.2f s)"

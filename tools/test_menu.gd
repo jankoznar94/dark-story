@@ -453,7 +453,7 @@ func _test_tap_reset() -> void:
 	g.profile.body = 120
 	g.profile.best = 5
 	g.profile.level = 6
-	g.profile.perm["as"] = 3
+	g.profile.perm["ad"] = 3
 	_check(m.is_menu(), "test nezacina v menu")
 	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
 	_check(bool(v.get("reset_ask")), "klepnuti na RESET se na nic nezeptalo")
@@ -465,15 +465,15 @@ func _test_tap_reset() -> void:
 	# ZPET nic nemaze.
 	v.call("_tap", l.dlg_b.get_center())
 	_check(not bool(v.get("reset_ask")), "ZPET nezavrelo dotaz na smazani")
-	_check(g.profile.body == 120 and g.profile.perm_level("as") == 3,
-		"ZPET neco smazalo (body %d, as %d)" % [g.profile.body, g.profile.perm_level("as")])
+	_check(g.profile.body == 120 and g.profile.perm_level("ad") == 3,
+		"ZPET neco smazalo (body %d, ad %d)" % [g.profile.body, g.profile.perm_level("ad")])
 	# SMAZAT smaze profil a vrati hru na prvni level.
 	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
 	v.call("_tap", l.dlg_a.get_center())
 	_check(g.profile.body == 0, "SMAZAT nechal body (%d)" % g.profile.body)
 	_check(g.profile.best == 0 and g.profile.level == 1,
 		"SMAZAT nechal postup (level %d, best %d)" % [g.profile.level, g.profile.best])
-	_check(g.profile.perm_level("as") == 0, "SMAZAT nechal permanentni vylepseni")
+	_check(g.profile.perm_level("ad") == 0, "SMAZAT nechal permanentni vylepseni")
 	_check(g.level == 1 and g.wave == 1, "hra nezacala znovu na prvnim levelu (%d/%d)" % [g.level, g.wave])
 	_check(m.is_menu(), "po smazani se neotevrelo menu")
 	_check(str(v.get("reset_note")) != "", "po smazani se hrac nedozvi, ze se neco stalo")

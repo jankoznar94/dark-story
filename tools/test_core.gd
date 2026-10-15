@@ -18,16 +18,16 @@ func _init() -> void:
 	_run("regenerace dolici zivoty veze", _test_regen)
 	_run("nula zivotu = prohra", _test_lose)
 	_run("vez vidi jen svou barvu", _test_only_own_hue)
-	_run("strela poskozuje az v dopadu, a to prave jednou ranou", _test_shots_hit_on_impact)
-	_run("strela po smrti cile nezasahne nikoho jineho", _test_dead_target_shot_fizzles)
-	_run("strela ma dostupnost i obrys pod sebou", _test_shot_size)
-	_run("sving (kadence) se neresetuje prepnutim barvy", _test_swing_timer_independent)
+	_run("laser ubira plynule, hned a bez kadence", _test_laser_burns_continuously)
+	_run("paprsek se po smrti cile prepoji na dalsi", _test_laser_retargets_after_death)
+	_run("paprsek ma sirku a odraz je tensi", _test_beam_width)
+	_run("prepinani barvy neprida poskozeni", _test_hue_switch_does_not_double_damage)
 	_run("kriticka sance a poskozeni jsou z tabulky upgradu", _test_crit)
-	_run("multishot drzi vic cilu zaraz", _test_multishot)
-	_run("ricochet se odrazi na stejnou barvu a kazdy dostane nejvyse jednou", _test_ricochet)
-	_run("odrazena strela leti z tela obeti (ricochet je videt)", _test_ricochet_shot_flies)
-	_run("strela po prepsani barvy veze doleti a ubira", _test_shot_lands_after_hue_switch)
-	_run("zmizele fialove strela mine (dopadne, ale neubira)", _test_vanish_shot_misses)
+	_run("multishot drzi vic cilu a kazdy ma svuj paprsek", _test_multishot)
+	_run("odraz se siri na stejnou barvu, kazdy dostane nejvyse jednou a mene", _test_odraz)
+	_run("paprsek odrazu vychazi z tela predchozi obeti (odraz je videt)", _test_odraz_beam_is_visible)
+	_run("prepsani barvy paprsek utrhne (laser neni strela, ktera uz leti)", _test_hue_switch_stops_the_beam)
+	_run("zmizele fialove paprsek zhasne (duch je imunni)", _test_vanish_stops_the_beam)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
 	_run("zvukove udalosti: vystrel, zásah, smrt (a jed ne)", _test_sound_events)
 	_run("neviditelna fialova je imunni (jed ani odraz na ni nedosahnou)", _test_ghost_is_immune)
@@ -41,6 +41,7 @@ func _init() -> void:
 	_run("nove barvy prichazeji po levelech, ne uprostred bitvy", _test_hue_unlock)
 	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
+	_run("fialova je nejpomalejsi barva ve hre", _test_hue_speed_order)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -91,7 +92,7 @@ func _quiet(g: Game) -> void:
 	g.spawned = 0
 	g.pilgrims = []
 	g.locks = []
-	g.shots = []
+	g.beams = []
 
 
 func _tick(g: Game, sec: float, dt: float = 1.0 / 240.0) -> void:
@@ -202,30 +203,40 @@ func _test_only_own_hue() -> void:
 	_check(g.locks.size() == 1 and g.locks[0] == r, "vez zamirila na vic nez svoji barvu")
 
 
-func _test_shots_hit_on_impact() -> void:
+# LASER NEMA ANI LET, ANI KADENCI. Jan (Oct 2026): "Vrátíme se k laseru místo
+# projektilů. Tím pádem zrušíme úplně Attack speed upgrady. Poškození bude
+# probíhat plynule a čím vyšší bude mít věž dmg, tím rychleji to logicky bude
+# nepřítele zabíjet." Test meri presny opak toho byvaleho: poskozeni prijde v
+# PRVNIM snimku a za kazdou sekundu je ho presne tolik, kolik ma byt.
+func _test_laser_burns_continuously() -> void:
 	var g: Game = _phone()
 	g.tower.hue = Hue.RED
 	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
 	p.hp = 1000.0
 	p.max_hp = 1000.0
 	p.speed = 0.0
+	var dt: float = 1.0 / 240.0
 	var hp0: float = p.hp
-	var want: float = (p.pos.distance_to(g.center) - g.tower_r) / g.shot_speed()
-	g.step(1.0 / 240.0)
-	_check(g.shots.size() >= 1, "vez pri zamereni vubec nevystrelila")
-	_check(is_equal_approx(p.hp, hp0), "poskozeni prislo driv, nez strela doletela")
-	var t: float = 0.0
-	while is_equal_approx(p.hp, hp0) and t < 3.0:
-		g.step(1.0 / 240.0)
-		t += 1.0 / 240.0
-	_check(absf((hp0 - p.hp) - g.shot_dmg()) < 0.01,
-		"dopad strely neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
-	_check(t >= 0.15, "strela doletela okamzite (let ma byt videt, je %.3f s)" % t)
-	_check(absf(t - want) < 0.06,
-		"let strely nesedi s rychlosti (mereno %.3f s, cekano %.3f)" % [t, want])
+	g.step(dt)
+	_check(p.hp < hp0, "laser v prvnim snimku neubira - ceka na neco, co uz neexistuje")
+	_check(absf((hp0 - p.hp) - g.laser_dps() * dt) < 0.02,
+		"za snimek laser ubral %.4f, cekano %.4f" % [hp0 - p.hp, g.laser_dps() * dt])
+	_check(g.beams.size() == 1, "na zamereny cil nesviti prave jeden paprsek (%d)" % g.beams.size())
+	var a0: float = p.hp
+	_tick(g, 1.0)
+	_check(absf((a0 - p.hp) - g.laser_dps()) < 0.05,
+		"za sekundu laser ubral %.2f, cekano %.2f" % [a0 - p.hp, g.laser_dps()])
+	# A PLYNULE DAL: zadny cil nema "davky", po kterych by se dalo utect.
+	var b0: float = p.hp
+	_tick(g, 0.5)
+	_check(absf((b0 - p.hp) - g.laser_dps() * 0.5) < 0.05,
+		"za pul sekundy laser ubral %.2f, cekano %.2f" % [b0 - p.hp, g.laser_dps() * 0.5])
 
 
-func _test_dead_target_shot_fizzles() -> void:
+# PO SMRTI CILE PAPRSEK PREJDE NA DRUHY. Laser nema "svazek, ktery drzi cil,
+# dokud neumre" jako strela - pocita se kazdy snimek znovu, takze se smrt
+# pozna hned a paprsek se prepoji.
+func _test_laser_retargets_after_death() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
 	var near: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.55)
@@ -236,56 +247,41 @@ func _test_dead_target_shot_fizzles() -> void:
 	near.max_hp = 5.0
 	far.hp = 400.0
 	far.max_hp = 400.0
-	var t: float = 0.0
-	while near.alive and t < 3.0:
-		g.step(1.0 / 240.0)
-		t += 1.0 / 240.0
+	_check(is_equal_approx(far.hp, 400.0), "smycka zacina uz poskozenym dalekym poutnikem")
+	_tick(g, 1.0)
 	_check(not near.alive, "blizky poutnik neumrel")
-	_check(is_equal_approx(far.hp, 400.0),
-		"poskozeni dostal poutnik, na ktereho vez nemirila")
-	# OKNO MUSI POJMOUT JEDNU RANU: doba do dalsi rany je 1/rate (zaklad 1 s po
-	# upgradu na 5 krocích 0,75 s) plus let strely. Kratky tik by meril jen to,
-	# ze vez jeste nenabili - a to neni chyba hry.
-	_tick(g, 3.0)
-	_check(far.hp < 400.0, "svazek se po smrti cile neprepjal na druhy")
+	_check(far.hp < 400.0, "paprsek se po smrti cile neprepjal na druhy")
 
 
-func _test_shot_size() -> void:
+func _test_beam_width() -> void:
 	var g: Game = _phone()
-	_check(g.shot_r() > 3.0, "tecka strely je prilis mala (%.2f px)" % g.shot_r())
-	_check(g.shot_rim_r() > g.shot_r(), "tecka strely nema obrys pod sebou")
+	_check(g.beam_w(0) > 3.0, "paprsek je prilis tenky (%.2f px)" % g.beam_w(0))
+	_check(g.beam_w(3) < g.beam_w(0),
+		"odraz je stejne silny jako hlavni paprsek - hrac nevidi, ktery cil je hlavni")
+	_check(g.beam_w(3) > 0.5, "odraz se zuzil na nulu (%.2f px)" % g.beam_w(3))
 
 
-# SVING (KADENCE) NESMI ZAVISET NA BARVE (Jan, Oct 2026): "Když přepnu na jinou
-# barvu, tak se resetuje Attack timer. Když tedy rychle přepínám mezi barvami,
-# tak Věž útočí rychleji než má. Věž by měla mít zabudovaný 'swing timer' bez
-# ohledu na přepínání barev. Jen zkontroluje jaká barva je aktivní ve chvíli,
-# kdy timer doběhne, ale nesmíš se timer resetovat při přepnutí barvy."
-#
-# Puvodne `_fire` vynuloval `fire_left`, kdyz vez nemela cil ("kdo nema cil, je
-# pripraveny"), takze si hrac prepnutim barvy a zpet vyrabel pripravenou ranu.
-# Zmereno na krok 1/60 s a okno 5 s (prepinani kazdy 4. snimek):
-#   stara hra 6 ran bez prepinani, 38 s prepinanim,
-#   nova hra  6 ran bez prepinani,  2 s prepinanim (promarnene svingy).
-# Pri prepinani kazdy snimek to bylo 150 proti 6 (25x rychleji) - proto test
-# meri OBE varianty a porovnava je: kdyby se vynulovani timeru vratilo, druhe
-# cislo vystreli.
-func _test_swing_timer_independent() -> void:
-	var plain: int = _shots_in_5s(false)
-	var flick: int = _shots_in_5s(true)
-	_check(plain >= 4, "vez za 5 s vubec nevystrelila (%d ran)" % plain)
-	_check(flick <= plain + 1,
-		"prepinani barvy zrychlilo strelbu: %d ran proti %d" % [flick, plain])
+# PREPINANI BARVY NESMI VYROBIT POSKOZENI NAVIC. U strely to byl "swing timer"
+# (Jan, Oct 2026: "Když přepnu na jinou barvu, tak se resetuje Attack timer...
+# Věž útočí rychleji než má"). U laseru je to jeste prisnejsi, protoze paprsek
+# sviti jen na to, co vez zrovna vidi: prepnuti barvy ho UTRHNE a prepnuti zpet
+# ho znovu rozsviti. Za cele okno proto NIKDY nesmi dat vic nez bez prepinani.
+func _test_hue_switch_does_not_double_damage() -> void:
+	var plain: float = _damage_in_5s(false)
+	var flick: float = _damage_in_5s(true)
+	_check(plain > 1.0, "laser za 5 s vubec neubral (%f)" % plain)
+	_check(flick <= plain + 0.01,
+		"prepinani barvy pridalo poskozeni: %.2f proti %.2f" % [flick, plain])
 
 
-func _shots_in_5s(flicker: bool) -> int:
+func _damage_in_5s(flicker: bool) -> float:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
 	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.7)
 	p.speed = 0.0
 	p.hp = 100000.0
 	p.max_hp = 100000.0
-	g.fired_reset()
+	var hp0: float = p.hp
 	var dt: float = 1.0 / 60.0
 	var i: int = 0
 	var t: float = 0.0
@@ -297,7 +293,7 @@ func _shots_in_5s(flicker: bool) -> int:
 		g.step(dt)
 		i += 1
 		t += dt
-	return g.shots_fired
+	return hp0 - p.hp
 
 
 func _test_crit() -> void:
@@ -309,24 +305,21 @@ func _test_crit() -> void:
 	g.temp["cd"] = 4
 	_check(absf(g.crit_chance() - 0.40) < 0.001, "kriticka sance neni 40 %% (%.2f)" % g.crit_chance())
 	_check(absf(g.crit_dmg() - 2.5) < 0.001, "kriticke poskozeni neni 2,5x (%.2f)" % g.crit_dmg())
-	var p: Pilgrim = _place(g, Hue.RED, 0.5)
+	# U PLYNULEHO PAPRSKU SE KRITIKA ZAPOCITAVA DO PRUMERU (losovat kazdy
+	# snimek by znamenalo cisla, ktera hrac nikde nevidi). Stredni hodnota je
+	# stejna, jako kdyby se losovalo: 10 * (1 + 0,40 * (2,5 - 1)) = 16/s.
+	var want: float = 10.0 * (1.0 + 0.40 * 1.5)
+	_check(absf(g.laser_dps() - want) < 0.01,
+		"stredni poskozeni s kritikou neni %.1f (je %.2f)" % [want, g.laser_dps()])
+	# A JE TO VIDET VE HRE: za sekundu paprsek ubere presne tolik.
+	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.7)
 	p.speed = 0.0
 	p.hp = 100000.0
 	p.max_hp = 100000.0
-	var crits: int = 0
-	var normal: int = 0
-	for i in range(200):
-		g.shots = []
-		g._fire_at(p)
-		var d: float = float(g.shots[0]["dmg"])
-		if absf(d - g.shot_dmg()) < 0.001:
-			normal += 1
-		elif absf(d - g.shot_dmg() * 2.5) < 0.001:
-			crits += 1
-	_check(normal + crits == 200,
-		"strela ma jiné poskozeni nez zaklad nebo krit (krit %d, zaklad %d)" % [crits, normal])
-	_check(crits > 40 and crits < 160,
-		"kriticka sance 40 %% dala %d kritu z 200 - losovani nefunguje" % crits)
+	var hp0: float = p.hp
+	_tick(g, 1.0)
+	_check(absf((hp0 - p.hp) - want) < 0.2,
+		"za sekundu paprsek ubral %.2f, cekano %.2f" % [hp0 - p.hp, want])
 
 
 func _test_multishot() -> void:
@@ -341,13 +334,19 @@ func _test_multishot() -> void:
 		_place(g, Hue.RED, g.range_frac() * (0.4 + 0.1 * float(i)), float(i) * 0.4)
 	g.step(1.0 / 240.0)
 	_check(g.locks.size() == 3, "svazek nedrzi tri cile, i kdyz na to ma (drzi %d)" % g.locks.size())
+	_check(g.beams.size() == 3, "na tri cile nesviti tri paprsky (%d)" % g.beams.size())
 
 
-func _test_ricochet() -> void:
+# ODRAZ (driv Ricochet). Jan (Oct 2026): "RICOHET přejmenujeme na Odraz a bude
+# se takhle laser šířit na další nepřátele, podobně jako ricochet, ale bez
+# projektilů. A každý odraz bude dávat menší poškození." Test meri OBE cisla:
+# kolik poskozeni dostane prvni cil a kolik druhy (a ze treti barva nedostane
+# nic, protoze ji vez nevidi).
+func _test_odraz() -> void:
 	# BEZ ODRAZU: druhy poutnik stejne barvy nedostane nic.
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
-	_check(g.ricochet() == 0, "zakladni vez uz ma odraz")
+	_check(g.odraz() == 0, "zakladni vez uz ma odraz")
 	var inside: float = g.range_frac() * 0.8
 	var a: Pilgrim = _place(g, Hue.RED, inside)
 	var b: Pilgrim = _place(g, Hue.RED, inside * 0.92, 0.35)
@@ -357,44 +356,57 @@ func _test_ricochet() -> void:
 	a.max_hp = 100000.0
 	b.hp = 100000.0
 	b.max_hp = 100000.0
-	_tick(g, 1.5)
-	var b0: float = b.hp
-	# DAL UZ VEZ NESTRILI (docasne vypnuta kadence) - meri se jen odraz.
-	g.fire_left = 999.0
 	_tick(g, 1.0)
-	_check(is_equal_approx(b.hp, b0), "bez odrazu dostal poskozeni druhy poutnik")
-	# S ODRAZEM: stejna barva, jeden odraz, kazdy nejvyse jednou.
+	# VEZ MIRI NA BLIZSIHO (b), ne na vzdalenejsiho - proto se druhy poutnik
+	# bez odrazu vubec nema jak dostat k raně.
+	_check(b.hp < 100000.0, "na blizsiho poutnika laser vubec neubira")
+	_check(is_equal_approx(a.hp, 100000.0), "bez odrazu dostal poskozeni druhy poutnik")
+
+	# S ODRAZEM: kazdy dostane mene a kazdy nejvyse jednou.
 	var g2: Game = _fresh()
 	g2.tower.hue = Hue.RED
 	g2.profile.perm["rc"] = 1
-	_check(g2.ricochet() == 1, "odraz se neda koupit")
-	var c: Pilgrim = _place(g2, Hue.RED, inside)
-	var d: Pilgrim = _place(g2, Hue.RED, inside * 0.92, 0.35)
-	var other: Pilgrim = _place(g2, Hue.YELLOW, inside * 0.90, -0.35)
+	_check(g2.odraz() == 1, "odraz se neda koupit")
+	_check(absf(g2.odraz_strength() - 0.50) < 0.001,
+		"sila prvniho odrazu neni 50 %% (%.2f)" % g2.odraz_strength())
+	# PRVNI CIL JE TEN BLIZSI (c) - na nem se meri plne poskozeni, na odrazu (d)
+	# polovina. Kdyby byly oba ve stejne dalku, nepoznalo by se, kdo je kdo.
+	var c: Pilgrim = _place(g2, Hue.RED, 0.24, 0.0)
+	var d: Pilgrim = _place(g2, Hue.RED, 0.26, 0.35)
+	var other: Pilgrim = _place(g2, Hue.YELLOW, 0.25, -0.35)
 	for q in [c, d, other]:
 		q.speed = 0.0
 		q.hp = 100000.0
 		q.max_hp = 100000.0
-	_tick(g2, 1.5)
-	_check(c.hp < c.max_hp, "prvni poutnik nedostal ranu")
-	_check(d.hp < d.max_hp, "odraz nezasahl druheho poutnika stejne barvy")
-	_check(is_equal_approx(other.hp, other.max_hp), "odraz zasahl i jinou barvu")
-	# KAZDY NEJVYSE JEDNOU: prvni poutnik nema druhou ranu od odrazu (po
-	# prvnim zásahu uz vez nestrili - kadence je vypnuta).
-	g2.fire_left = 999.0
-	var c_hp: float = c.hp
-	var d_hp: float = d.hp
-	_tick(g2, 2.0)
-	_check(absf(c.hp - c_hp) < 0.01 and absf(d.hp - d_hp) < 0.01,
-		"odraz zasahl stejneho poutnika vickrat")
+	var dt: float = 1.0 / 240.0
+	var c0: float = c.hp
+	var d0: float = d.hp
+	var o0: float = other.hp
+	g2.step(dt)
+	var drop_c: float = c0 - c.hp
+	var drop_d: float = d0 - d.hp
+	_check(absf(drop_c - g2.laser_dps() * dt) < 0.02,
+		"prvni cil nedostal plne poskozeni (%.4f, cekano %.4f)" % [drop_c, g2.laser_dps() * dt])
+	_check(drop_d > 0.0, "odraz nezasahl druheho poutnika stejne barvy")
+	_check(absf(drop_d - g2.laser_dps() * 0.5 * dt) < 0.02,
+		"odraz nedava polovinu poskozeni (%.4f, cekano %.4f)" % [drop_d, g2.laser_dps() * 0.5 * dt])
+	_check(is_equal_approx(other.hp, o0), "odraz zasahl i jinou barvu")
+	_check(g2.beams.size() == 2, "na dva cile v retezu nesviti dva paprsky (%d)" % g2.beams.size())
+
+	# DRUHY STUPEN: vic odrazu, mensi penalizace (Jan: "S levelem upgradu se bude
+	# zvyšovat počet odrazů a bude snižovat penalizace za odraz").
+	var g3: Game = _fresh()
+	g3.profile.perm["rc"] = 2
+	_check(g3.odraz() == 2, "druhy stupen nepridal druhy odraz (%d)" % g3.odraz())
+	_check(g3.odraz_strength() > 0.50,
+		"druhy stupen nezlepsil silu odrazu (%.2f)" % g3.odraz_strength())
 
 
-# ODRAZ JE VIDET (Jan, Oct 2026: "Ricochet musí mít nějakou animaci pro
-# projektil, který se odráží mezi nepřáteli. Teď uděluje poškození, ale není nic
-# vidět."). Odrazena strela musi VZNIKNOUT V TELE predchozi obeti a odtud letět
-# - driv si "odkud" spocitala sama a vysla z NOVEHO cile, takze doletela v tom
-# samem snimku, ubrala zivoty a nebylo ji videt.
-func _test_ricochet_shot_flies() -> void:
+# ODRAZ JE VIDET (Jan, Oct 2026: "Ricochet musí mít nějakou animaci... Teď
+# uděluje poškození, ale není nic vidět."). Paprsek odrazu musi VZNIKNOUT
+# V TELE predchozi obeti, ne v novem cili - jinak by to byl druhy paprsek
+# z veze a hrac by nevidel, ze se svetlo siri.
+func _test_odraz_beam_is_visible() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
 	g.profile.perm["rc"] = 1
@@ -405,49 +417,41 @@ func _test_ricochet_shot_flies() -> void:
 		q.speed = 0.0
 		q.hp = 100000.0
 		q.max_hp = 100000.0
-	var t: float = 0.0
-	var seen: bool = false
-	var bad_spawn: bool = false
-	while t < 1.2 and not seen:
-		g.step(1.0 / 240.0)
-		t += 1.0 / 240.0
-		for s in g.shots:
-			if s["target"] != b:
-				continue
-			seen = true
-			if (s["pos"] as Vector2).distance_to(a.pos) > 1.0:
-				bad_spawn = true
-	_check(seen, "odrazena strela vubec nevznikla - neni co videt")
-	_check(not bad_spawn, "odrazena strela vznikla uz ve svem cili (nema let)")
-	var t2: float = 0.0
-	while b.hp >= 100000.0 and t2 < 1.5:
-		g.step(1.0 / 240.0)
-		t2 += 1.0 / 240.0
-	_check(b.hp < 100000.0, "odrazena strela druheho poutnika nezasahl")
+	g.step(1.0 / 240.0)
+	var first: Dictionary = {}
+	var second: Dictionary = {}
+	for bm in g.beams:
+		if int(bm["hop"]) == 0:
+			first = bm
+		elif int(bm["hop"]) == 1:
+			second = bm
+	_check(not first.is_empty(), "hlavni paprsek vubec nevznikl - neni co kreslit")
+	_check(not second.is_empty(), "odraz vubec nevznikl - hrac nevidi, ze se paprsek siri")
+	_check((first["from"] as Vector2).distance_to(g.center) <= g.tower_r + 1.0,
+		"hlavni paprsek nevychazi z veze")
+	_check((second["from"] as Vector2).distance_to((first["target"] as Pilgrim).pos) < 1.0,
+		"odraz nevychazi z tela predchozi obeti (nema se od ceho odrazit)")
 
 
-# JEDNOU VYSTRELENA STRELA DOZENE SVUJ CIL (Jan, Oct 2026: "Když už věž
-# vystřelí, tak musí projektil doletět do cíle a udělit poškození."). Driv
-# strela v okamziku prepsani barvy zmizela a cil nedostal nic.
-func _test_shot_lands_after_hue_switch() -> void:
+# LASER NENI STRELA, KTERA UZ LETI. Jan (Oct 2026): "Barva laseru bude podle
+# barvy věže." Prepnuti barvy paprsek UTRHNE (vez jinou barvu nevidi) a na
+# puvodni cil prestane ubirat - to je spravne, ne chyba jako driv u projektilu
+# ("vystřeleno = doletí" uz neexistuje, neni co doletovat).
+func _test_hue_switch_stops_the_beam() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
 	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
 	p.speed = 0.0
 	p.hp = 1000.0
 	p.max_hp = 1000.0
-	var hp0: float = p.hp
-	g.step(1.0 / 240.0)
-	_check(g.shots.size() == 1, "vez pri zamereni nevystrelila (%d strel)" % g.shots.size())
-	# PREPNUTI BARVY BEHEM LETU: vez uz cervenou nevidi, ale strela uz leti.
+	_tick(g, 0.5)
+	_check(p.hp < 1000.0, "laser na svoji barvu vubec neubira")
 	_check(g.select_hue(Hue.YELLOW), "barva veze se neprepla")
-	var t: float = 0.0
-	while is_equal_approx(p.hp, hp0) and t < 3.0:
-		g.step(1.0 / 240.0)
-		t += 1.0 / 240.0
-	_check(p.hp < hp0, "strela po prepsani barvy zmizela - cil nedostal poskozeni")
-	_check(absf((hp0 - p.hp) - g.shot_dmg()) < 0.01,
-		"dopad po prepsani barvy neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
+	var hp1: float = p.hp
+	_tick(g, 1.0)
+	_check(is_equal_approx(p.hp, hp1),
+		"po prepsani barvy paprsek ubira dal (o %.2f) - vez by videla jinou barvu" % (hp1 - p.hp))
+	_check(g.beams.is_empty(), "paprsek po prepsani barvy sviti dal (%d)" % g.beams.size())
 
 
 # ZRYCHLENI HRY (Jan, Oct 2026: "Veškerý čas ve hře se zrychlí. Pohyb, rychlost
@@ -509,8 +513,16 @@ func _test_sound_events() -> void:
 	g.take_events()
 	_tick(g, 2.0)
 	var ev: Array = g.take_events()
-	_check(ev.has("shot"), "vystrel neposlal zvukovou udalost (%s)" % str(ev))
-	_check(ev.has("hit"), "dopad strely neposlal zvukovou udalost (%s)" % str(ev))
+	_check(ev.has("shot"), "zazehnuti paprsku neposlalo zvukovou udalost (%s)" % str(ev))
+	# PAPRSEK NESMI TIKAT: kdyz sviti na cil dve sekundy, zvuk zazehnuti se smi
+	# ozvat JEDNOU. (Driv to byl dopad strely; dnes je to okamzik, kdy paprsek
+	# rozsvitil novy cil.)
+	var lit: int = 0
+	for e in ev:
+		if String(e) == "shot":
+			lit += 1
+	_check(lit == 1, "paprsek tika: %d zvuku zazehnuti za 2 s" % lit)
+	_check(g.beams_lit == 1, "pocitadlo zazehnuti paprsku neni 1 (%d)" % g.beams_lit)
 	_check(g.take_events().is_empty(), "udalosti se po vybrani nevymazaly")
 	# SMRT POUTNIKA. Vlastni hra: vez DRZI CIL, dokud neumre, takze v predchozi
 	# hre by se porad strelilo do poutnika s 100000 zivoty a druhy by nikdy
@@ -537,7 +549,7 @@ func _test_sound_events() -> void:
 	w.poison_dps = 5.0
 	g2.take_events()
 	_tick(g2, 1.0)
-	_check(not g2.take_events().has("hit"), "jed posila zvuk zasahu kazdy snimek")
+	_check(g2.take_events().is_empty(), "jed posila zvukovou udalost kazdy snimek")
 	# STROP UDALOSTI: kdo hru kroka bez obrazovky (simulator), nesmi si
 	# pamatovat tisice udalosti.
 	var g3: Game = _fresh()
@@ -559,7 +571,7 @@ func _test_ghost_is_immune() -> void:
 	var p: Pilgrim = _place(g, Hue.VIOLET, 0.9)
 	p.speed = 0.0
 	p.behaviour = Hue.B_VANISH
-	g._damage(p, 10.0)                # prvni zasah: rozjede jed a fialova zmizi
+	g._burn(p, 10.0)                 # prvni zasah: rozjede jed a fialova zmizi
 	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
 	_check(p.poison_left > 0.0, "jed se pri zasahu vubec nerozjel")
 	var hp0: float = p.hp
@@ -583,15 +595,14 @@ func _test_ghost_is_immune() -> void:
 		w.hp = 100000.0
 		w.max_hp = 100000.0
 	ghost.ghost_left = Hue.VANISH_S
-	var shot: Dictionary = {"bounce": 1, "hit": [a], "dmg": 10.0}
-	_check(g2._ricochet_from(a, shot).is_empty(),
+	_check(not g2._chain(a).has(ghost),
 		"odraz si vybral neviditelnou fialovou (dostala by ranu od nikud)")
 
 
 # FIALOVA PO ZNEVIDITELNENI JE VYJIMKA (Jan, Oct 2026): "Když zmizí, projektil
 # zkrátka mine. Doletí na místo impaktu, zmizí a neudělí poškození." Pro
 # vsechny ostatni barvy plati "vystreleno = doleti" (`_test_shot_lands_after_hue_switch`).
-func _test_vanish_shot_misses() -> void:
+func _test_vanish_stops_the_beam() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
 	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
@@ -600,18 +611,12 @@ func _test_vanish_shot_misses() -> void:
 	p.max_hp = 1000.0
 	p.behaviour = Hue.B_VANISH
 	g.step(1.0 / 240.0)
-	_check(g.shots.size() == 1, "vez pri zamereni nevystrelila (%d strel)" % g.shots.size())
-	# FIALOVA SE ZNEVIDITELNI - strela uz je ve vzduchu.
-	p.ghost_left = Hue.VANISH_S
+	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
+	_check(g.beams.size() == 1, "na cervenou fialovou nesviti paprsek (%d)" % g.beams.size())
 	var hp0: float = p.hp
-	g.step(1.0 / 240.0)
-	_check(g.shots.size() == 1, "strela po zmizeni cile zmizela hned ve vzduchu - ma doletet na misto dopadu")
-	var t: float = 0.0
-	while not g.shots.is_empty() and t < 3.0:
-		g.step(1.0 / 240.0)
-		t += 1.0 / 240.0
-	_check(g.shots.is_empty(), "strela po zmizeni cile nikdy nezanikla")
-	_check(is_equal_approx(p.hp, hp0), "zmizela fialova dostala poskozeni (ubralo %.2f)" % (hp0 - p.hp))
+	_tick(g, 1.0)
+	_check(is_equal_approx(p.hp, hp0), "zmizele fialove paprsek ubiral dal (o %.2f)" % (hp0 - p.hp))
+	_check(g.beams.is_empty(), "paprsek sviti na ducha - ten je pritom imunni")
 
 
 func _test_poison() -> void:
@@ -624,7 +629,7 @@ func _test_poison() -> void:
 	p.speed = 0.0
 	p.hp = 1000.0
 	p.max_hp = 1000.0
-	g._damage(p, 10.0)
+	g._burn(p, 10.0)
 	_check(absf(p.poison_dps - 2.0) < 0.001, "poskozeni jedu za sekundu neni 2 (%.2f)" % p.poison_dps)
 	var hp0: float = p.hp
 	_tick(g, 1.0)
@@ -642,7 +647,7 @@ func _test_ice() -> void:
 	g.profile.perm["ic"] = 2        # 35 % zpomaleni
 	var p: Pilgrim = _place(g, Hue.RED, 0.9)
 	p.speed = 0.0
-	g._damage(p, 1.0)
+	g._burn(p, 1.0)
 	_check(p.slow_mult() < 0.99, "led nezpomalil pohyb (%.2f)" % p.slow_mult())
 	_check(absf(p.slow_mult() - 0.65) < 0.001, "zpomaleni neni 35 %% (%.2f)" % p.slow_mult())
 	# PUSTIME HO: musi jit pomaleji nez zdrava cervena.
@@ -661,36 +666,37 @@ func _test_ice() -> void:
 
 
 func _test_temp_buy() -> void:
+	# MERI SE NA POSKOZENI ("ad"): kadenci ("as") hra od Oct 2026 vubec nema -
+	# vez sviti laserem a poskozeni je za sekundu, ne za ranu.
 	var g: Game = _fresh()
 	g.gold = 100
-	var v0: float = g.val("as")
-	_check(g.buy_temp("as"), "prvni krok se neda koupit")
+	var v0: float = g.val("ad")
+	_check(g.buy_temp("ad"), "prvni krok se neda koupit")
 	_check(g.gold == 95, "prvni krok nestal 5 zlata (zbyva %d)" % g.gold)
-	_check(g.val("as") < v0, "krok nezmenil hodnotu parametru")
-	_check(g.buy_temp("as"), "druhy krok se neda koupit")
+	_check(g.val("ad") > v0, "krok nezmenil hodnotu parametru")
+	_check(g.buy_temp("ad"), "druhy krok se neda koupit")
 	_check(g.gold == 85, "druhy krok nestal 10 zlata (zbyva %d)" % g.gold)
 	# BEZ ZLATA SE NEKUPUJE.
 	var g2: Game = _fresh()
 	g2.gold = 4
-	_check(not g2.buy_temp("as"), "krok se koupil bez zlata")
+	_check(not g2.buy_temp("ad"), "krok se koupil bez zlata")
 	_check(g2.gold == 4, "zlato se ubralo, i kdyz se nekoupilo")
 	# BEZ STROPU: docasny zebricek uz "MAX" nema (Jan, Oct 2026: "já prozatím
-	# nechci žádné stropy"). Kupuje se tak dlouho, dokud je zlato - driv tu
-	# stala zed na 0,60 s a dal se koupit nedalo.
+	# nechci žádné stropy"). Kupuje se tak dlouho, dokud je zlato.
 	var g3: Game = _fresh()
 	g3.gold = 100000
 	var want: int = 24
 	var sold: int = 0
 	for i in range(want):
-		if g3.buy_temp("as"):
+		if g3.buy_temp("ad"):
 			sold += 1
-	_check(sold == want, "docasnych kroku kadence se koupilo %d z %d" % [sold, want])
-	_check(absf(g3.val("as") - 0.40) < 0.0001,
-		"po %d docasnych krocich neni kadence 0,40 s (je %.2f s)" % [want, g3.val("as")])
-	_check(g3.val("as") < 0.60, "docasny zebricek porad konci na 0,60 s")
+	_check(sold == want, "docasnych kroku poskozeni se koupilo %d z %d" % [sold, want])
+	_check(absf(g3.val("ad") - 58.0) < 0.0001,
+		"po %d docasnych krocich neni poskozeni 58/s (je %.2f)" % [want, g3.val("ad")])
+	_check(g3.val("ad") > 24.0, "docasny zebricek porad konci na stropu 24")
 	var paid: int = 100000 - g3.gold
 	_check(paid == 5 * (want * (want + 1) / 2), "cena %d docasnych kroku neni %d zlata (%d)" % [want, 5 * (want * (want + 1) / 2), paid])
-	_check(g3.buy_temp("as"), "posledni krok se nedal koupit, i kdyz je zlato")
+	_check(g3.buy_temp("ad"), "posledni krok se nedal koupit, i kdyz je zlato")
 	# ZIVOTY SE DOSTANOU HNAD, ne az v dalsim levelu.
 	var g4: Game = _fresh()
 	g4.gold = 5
@@ -704,14 +710,14 @@ func _test_perm_shift() -> void:
 	# PERMANENTNI STUPEN POSOUVA START (Jan: "Když bude permanentní upgrade lvl 2,
 	# tak budu začínat na střela/0.9s. Cena dočasných upgradů ale zůstává.")
 	var g: Game = _fresh()
-	g.profile.perm["as"] = 2
+	g.profile.perm["ad"] = 2
 	g.start_level(1)
 	_quiet(g)
-	_check(absf(g.val("as") - 0.95) < 0.001, "start po dvou permanentních neni 0,95 s (%.2f)" % g.val("as"))
+	_check(absf(g.val("ad") - 14.0) < 0.001, "start po dvou permanentních neni 14/s (%.2f)" % g.val("ad"))
 	var gold0: int = g.gold
-	_check(g.buy_temp("as"), "krok po permanentnim upgradu nejde koupit")
+	_check(g.buy_temp("ad"), "krok po permanentnim upgradu nejde koupit")
 	_check(gold0 - g.gold == 5, "krok po permanentnim upgradu stoJI jinak nez 5 zlata (%d)" % (gold0 - g.gold))
-	_check(absf(g.val("as") - 0.925) < 0.001, "krok se neprisel k posunutemu startu (%.2f)" % g.val("as"))
+	_check(absf(g.val("ad") - 16.0) < 0.001, "krok se neprisel k posunutemu startu (%.2f)" % g.val("ad"))
 
 
 func _test_level_flow() -> void:
@@ -746,7 +752,7 @@ func _test_next_level() -> void:
 	g.profile = Profile.new()
 	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
 	g.start_level(1)
-	g.buy_temp("as")
+	g.buy_temp("ad")
 	g.buy_temp("ar")
 	var temp_before: int = g.temp.size()
 	_check(temp_before > 0, "kroky se vubec nekoupily")
@@ -889,3 +895,29 @@ func _test_pause() -> void:
 	_check(not g.is_paused(), "druhy toggle_pause hru nespustil")
 	_tick(g, 0.5)
 	_check(not p.pos.is_equal_approx(held), "po druhem toggle_pause se poutnik nepohnul")
+
+
+# FIALOVA JE NEJPOMALEJSI. Jan (Oct 2026): "Upravime rychlost fialovych
+# nepratel. Budou ze vsech nejpomalejsi." Test meri SKUTECNE ujete pixely
+# vsech sesti barev za stejnou dobu - kdyby `Game` nasobek barvy prestal
+# pouzivat, tabulka by lhala dal a test na ni samotnou by to nepoznal.
+# Zivoty jsou zamerne obrovske: vez ma merit POHYB, ne to, kdo umre drive.
+func _test_hue_speed_order() -> void:
+	var g: Game = _fresh()
+	var live: Array = []
+	var from: Array = []
+	for h in range(Hue.COUNT):
+		var p: Pilgrim = _place(g, h, 0.75, float(h) * PI / 3.0)
+		p.hp = 1.0e9
+		live.append(p)
+		from.append(p.pos)
+	_tick(g, 2.0)
+	var moved: Array = []
+	for i in range(live.size()):
+		moved.append(live[i].pos.distance_to(from[i]))
+	_check(moved[Hue.VIOLET] > 1.0, "fialova se vubec nepohnula (%f px)" % moved[Hue.VIOLET])
+	for h in range(Hue.COUNT):
+		if h == Hue.VIOLET:
+			continue
+		_check(moved[Hue.VIOLET] < moved[h],
+			"fialova (%f px) neni pomalejsi nez barva %d (%f px)" % [moved[Hue.VIOLET], h, moved[h]])

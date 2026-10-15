@@ -73,8 +73,15 @@ const ROWS := [
 		"unlock_level": 3, "palette": true,
 	},
 	{
+		# NEJPOMALEJSI BARVA VE HRE (0,50 < 0,60 cervene i stribrne). Jan (Oct
+		# 2026): "Upravime rychlost fialovych nepratel. Budou ze vsech
+		# nejpomalejsi." Pomer 0,50/1,00 znamena, ze fialovy poutnik jde po
+		# stejne ceste dvakrat tak dlouho nez modry - a protoze po prvnim
+		# zasahu na 3 s zmizi, ma hrac vic casu ho vubec najit. Kdo hybe timhle
+		# cislem, hybe obtiznosti; hlida to `tools/test_core.gd`
+		# (`_test_hue_speed_order`).
 		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74), "shape": "diamond",
-		"hp": 0.7, "speed": 1.00, "gold": 14, "behaviour": B_VANISH,
+		"hp": 0.7, "speed": 0.50, "gold": 14, "behaviour": B_VANISH,
 		"unlock_level": 4, "palette": true,
 	},
 	{

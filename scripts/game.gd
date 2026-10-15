@@ -10,7 +10,11 @@ extends RefCounted
 #     kupuji ZNOVU (zlato zacina na kazdem levelu znovu),
 #   * v menu se za BODY (za vyhrany level) kupuji PERMANENTNI stupne, ktere
 #     posouvaji START kazdeho parametru,
-#   * SPECIÁL (multishot, ricochet, jed, led) je jen permanentni,
+#   * SPECIÁL (multishot, odraz, jed, led) je jen permanentni,
+#   * VEZ STRIli LASEREM, ne projektily (Jan, Oct 2026: "Vrátíme se k laseru
+#     místo projektilů... Poškození bude probíhat plynule"). Dostrel je konec
+#     paprsku, poskozeni tece kazdy snimek (`laser_dps`) a odraz paprsek
+#     rozvetvi na dalsi poutniky (`odraz`), kazdy dalsi za mene,
 #   * vez ma ZIVOTY: poutnik, ktery dojde, ubere tolik, kolik mu zbylo zivotu,
 #     zbroj to zredukuje a regenerace doléčí,
 #   * prohra vraci hrace do menu; zlato z rozehraneho levelu propada, upgrady
@@ -90,21 +94,20 @@ const SPAWN_GAP_PER_WAVE := 0.13
 # naraz a tim vic prace pro vez - hra se pak da dohrat jen s nakoupenymi upgrady.
 const SPAWN_WAVE_S := 55.0
 
-# STRELA. Rychlost je podil POLOMERU PLOCHY, polomer tecky podil MERITKA.
-const SHOT_SPEED_FRAC := 0.80
-# Oct 2026 (Jan: "Projektily uděláme o trošku menší."): 0,032 -> 0,026 meritka.
-# Na telefonu je tecka ~4 px (driv 5) a porad ji drzi tmavy obrys pod sebou,
-# proto se zmenseni netyka `SHOT_RIM_FRAC`. Test hlida, ze neklesne pod 3 px.
-const SHOT_R_FRAC := 0.026
-const SHOT_RIM_FRAC := 1.55
-# POSKOZENI JEDNE RANY JE PARAMETR HRACE ("Ještě musíme přidat upgrade pro
-# Attack damage", Jan Oct 2026) - hledej `shot_dmg()` v sekci PARAMETRY.
+# LASER. Neni to strela, co leti - je to paprsek, ktery sviti, dokud je cil
+# v dostrelu a vez ho vidi. Sirka je podil MERITKA a s kazdym odrazem se
+# zužuje, aby hrac na prvni pohled videl, ktery cil je hlavni.
+const BEAM_W_FRAC := 0.026
+const BEAM_TAPER := 0.72
+# POSKOZENI LASERU (za sekundu) JE PARAMETR HRACE ("Ještě musíme přidat upgrade
+# pro Attack damage", Jan Oct 2026) - hledej `laser_dps()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.
 const POISON_S := 3.0
 const ICE_S := 2.0
-# RICOCHET: na kazdeho poutnika se v jednom odrazu dostane nejvyse jednou
-# (Jan: "vždy jen jeden odraz za každého unikátního nepřítele").
-const RICOCHET_RANGE_FRAC := 0.55
+# ODRAZ: jak daleko od sebe mohou byt dva poutnici, aby paprsek preskocil.
+# Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
+# odraz za každého unikátního nepřítele").
+const ODRAZ_RANGE_FRAC := 0.55
 
 # ------------------------------------------------------------------ ROZVRZENI
 
@@ -148,12 +151,14 @@ var log: Array = []
 var paused: bool = false
 
 var pilgrims: Array = []
+# ZAMERENE CILE (multishot): vez jich drzi tolik, kolik ma koupeno.
 var locks: Array = []
-# STRELY: {pos, target, dmg, bounce, hit} - viz `_advance_shots`.
-var shots: Array = []
-var shots_fired: int = 0
-var fire_left: float = 0.0
-var fire_i: int = 0
+# PAPRSKY PRO OBRAZOVKU: [{from, target, hop}]. Hra je pocita kazdy snimek
+# znovu (cile se hybou), obrazovka z nich jen kresli - nic si nepocita sama.
+var beams: Array = []
+# KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
+# merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
+var beams_lit: int = 0
 var rng := RandomNumberGenerator.new()
 
 
@@ -212,21 +217,34 @@ func cycle_speed() -> bool:
 	return true
 
 
-# KADENCE VEZE (rany za sekundu). Parametr je INTERVAL, takze se prepocitava.
-# Podlaha je stejna jako v tabulce (`Upgrades.MIN_INTERVAL`) - kadence je cas
-# a nula by delila nulou.
-func rate() -> float:
-	return 1.0 / maxf(Upgrades.MIN_INTERVAL, val("as"))
-
-
 func range_frac() -> float:
 	return val("ar")
 
 
-# POSKOZENI JEDNE RANY ("Attack damage"). Zaklad 10 je v `Upgrades.STATS` pod
-# id "ad" - zadna druha konstanta, ktera by o upgradu nevedela.
-func shot_dmg() -> float:
-	return maxf(1.0, val("ad"))
+# POSKOZENI LASERU ZA SEKUNDU. Zaklad 10 je v `Upgrades.STATS` pod id "ad" -
+# zadna druha konstanta, ktera by o upgradu nevedela.
+#
+# KRITIKA SE ROZPOCITAVA DO PRUMERU: u plynuleho paprsku nema smysl losovat
+# kazdy snimek (a hrac by videl skakat cisla, ktera nikde nejsou). Stredni
+# hodnota je stejna, jako kdyby se losovalo: dps * (1 + sance * (nasobek - 1)).
+func laser_dps() -> float:
+	var base: float = maxf(1.0, val("ad"))
+	return base * (1.0 + crit_chance() * (crit_dmg() - 1.0))
+
+
+# ODRAZ: kolik skoku paprsek udela a kolik si kazdy jeste odnese. Obe cisla
+# jsou v JEDNE polozce tabulky (`Upgrades.chain_of`), aby se nedala koupit
+# polovina upgradu.
+func odraz() -> int:
+	return int(round(_chain_pair().x))
+
+
+func odraz_strength() -> float:
+	return clampf(_chain_pair().y, 0.0, 1.0)
+
+
+func _chain_pair() -> Vector2:
+	return Upgrades.chain_of("rc", profile.perm_level("rc"), int(temp.get("rc", 0)))
 
 
 func range_px() -> float:
@@ -304,8 +322,8 @@ func start_level(n: int) -> void:
 	body_earned = 0
 	pilgrims = []
 	locks = []
-	shots = []
-	fired_reset()
+	beams = []
+	beams_lit = 0
 	# TEMPO ZACINA VZDY NA 1,0x (Jan, Oct 2026: "Výchozí vždy 1.0x."). Upgrade
 	# jen otevira moznost si ho v bitve prepnout - hrac si ma kazdou partii
 	# zvolit, jak rychle ji chce hrat.
@@ -317,12 +335,6 @@ func start_level(n: int) -> void:
 	spawned = 0
 	refresh_palette()
 	_note("Level %d — %d vln." % [level, waves_in_level()])
-
-
-func fired_reset() -> void:
-	shots_fired = 0
-	fire_left = 0.0
-	fire_i = 0
 
 
 # VYHRANY LEVEL: body za level, odemkne se dalsi. Hra dal nekrokuje, dokud se
@@ -425,8 +437,7 @@ func step(dt: float) -> void:
 	_regen(dt)
 	_move(dt)
 	_aim()
-	_fire(dt)
-	_advance_shots(dt)
+	_laser(dt)
 	_advance_effects(dt)
 	_prune()
 
@@ -689,8 +700,9 @@ func take_events() -> Array:
 	return out
 
 
-# SVAZEK DRZI CIL, DOKUD NEUMRE. SAM POSKOZENI NEDAVA: paprsek je jen ukazatel,
-# na koho vez miri. Pocet cilu zaraz je upgradovatelny parametr (multishot).
+# SVAZEK DRZI CIL, DOKUD JEJ VEZ VIDI A JE V DOSTRELU. Pocet cilu zaraz je
+# upgradovatelny parametr (multishot) a KAZDY cil ma svuj paprsek (a svuj
+# retez odrazu) - "vic cilu" tedy od teď znamena vic paprsku naraz.
 func _aim() -> void:
 	var r: float = range_px()
 	var keep: Array = []
@@ -708,165 +720,97 @@ func _aim() -> void:
 			locks.append(pool.pop_front())
 
 
-# SVING (KADENCE) BEZI PORAD - NEZAVISI NA BARVE ANI NA TOM, JESTLI VEZE NEKDO
-# MIRI. Jan (Oct 2026): "Když přepnu na jinou barvu, tak se resetuje Attack
-# timer. Když tedy rychle přepínám mezi barvami, tak Věž útočí rychleji než má.
-# Věž by měla mít zabudovaný 'swing timer' bez ohledu na přepínání barev. Jen
-# zkontroluje jaká barva je aktivní ve chvíli, kdy timer doběhne, ale nesmíš se
-# timer resetovat při přepnutí barvy."
+# ------------------------------------------------------------------- LASER
 #
-# DRIV tu bylo `if locks.is_empty(): fire_left = 0.0` - "kdo nema cil, je
-# pripraveny". Hrac to obchazel: prepl na barvu, ktera na plose neni (vez ztrati
-# cile), a zpet - a rana byla pripravena okamzite, takze strilel nekolikanasobne
-# rychleji, nez je kadence.
+# Jan (Oct 2026): "Vrátíme se k laseru místo projektilů. Tím pádem zrušíme
+# úplně Attack speed upgrady. Poškození bude probíhat plynule a čím vyšší bude
+# mít věž dmg, tím rychleji to logicky bude nepřítele zabíjet. Barva laseru
+# bude podle barvy věže. RICOHET přejmenujeme na Odraz a bude se takhle laser
+# šířit na další nepřátele, podobně jako ricochet, ale bez projektilů. A každý
+# odraz bude dávat menší poškození. S levelem upgradu se bude zvyšovat počet
+# odrazů a bude snižovat penalizace za odraz."
 #
-# Ted hodiny bezi VZDY: kdyz vyprsi a vez zrovna zadny cil nema, vystrel se
-# proste nestane (je to promarnuty sving) a interval se presto rozjede znovu -
-# "dluh" se tim nikdy nekupí, takze nema co vybuchnout ve chvili, kdy hrac
-# prepne barvu. Barva se cte AZ VE CHVILI VYPRSENI (`locks`, ktere plni `_aim`).
-func _fire(dt: float) -> void:
-	fire_left -= dt
-	var guard: int = 0
-	while fire_left <= 0.0 and guard < 8:
-		guard += 1
-		if not locks.is_empty():
-			_fire_at(locks[fire_i % locks.size()])
-			fire_i += 1
-		fire_left += 1.0 / rate()
-
-
-# RANA. Kriticka sance i kriticke poskozeni jsou upgradovatelne parametry,
-# takze se losuje PRES RNG HRY - hra zustava deterministicka.
-func _fire_at(p: Pilgrim) -> void:
-	var dmg: float = shot_dmg()
-	if rng.randf() < crit_chance():
-		dmg *= crit_dmg()
-	shots.append(_make_shot(p, dmg, ricochet(), [], muzzle(p)))
-	_event("shot")
-
-
-# USTI HLAVNE. Strela vychazi z OKRAJE veze, ne ze stredu - hrac vidi, kterym
-# smerem leti.
-func muzzle(p: Pilgrim) -> Vector2:
-	return center + (p.pos - center).normalized() * tower_r
-
-
-# STRELA. `bounce` = kolik odrazu jeste zbyva, `hit` = na koho uz se v tomto
-# odrazu dostalo (kazdy poutnik nejvyse jednou), `from` = ODKUD leti.
-#
-# `from` JE PARAMETR, ne pocitana hodnota: hlavni strela vychazi z veze, ale
-# ODRAZ vychazi z TELA predchozi obeti. Kdyz si odraz spocital "odkud" sam
-# (`from = p.pos`, kde `p` je NOVY cil), strela vznikla uz VE svem cili -
-# v tom samem snimku doletela, ubrala zivoty a nebylo ji videt. Presne to Jan
-# nasel: "Ricochet ... teď uděluje poškození, ale není nic vidět."
-#
-# BARVA SE DRZI PRI STRELE, ne u veze: hrac muze behem letu prebit vez na
-# jinou barvu a tecka ve vzduchu nesmi zmenit barvu - leti porad ta, ktera
-# vystrelila (a proto i po prepnuti doleti, viz `_advance_shots`).
-func _make_shot(p: Pilgrim, dmg: float, bounce: int, hit: Array, from: Vector2) -> Dictionary:
-	var already: Array = hit.duplicate()
-	already.append(p)
-	shots_fired += 1
-	return {"pos": from, "target": p, "dmg": dmg, "bounce": bounce,
-		"hit": already, "hue": tower.hue}
-
-
-# LET STRELY A DOPAD. Poskozeni udeli az ve chvili, kdy do cile doleti.
-#
-# JEDNOU VYSTRELENA STRELA DOZENE SVUJ CIL (Jan, Oct 2026: "Když už věž
-# vystřelí, tak musí projektil doletět do cíle a udělit poškození."). Driv
-# strela zanikla, jakmile hrac prepl barvu veze - hrac videl, jak projektil
-# zmizi a neubral nic. Strela proto zanikne JEN s MRTVYM cilem; zmena barvy
-# veze ji nezastavi.
-#
-# VYJIMKA JE FIALOVA PO ZNEVIDITELNENI (Jan, Oct 2026): "Když zmizí, projektil
-# zkrátka mine. Doletí na místo impaktu, zmizí a neudělí poškození." Neni to
-# tedy "zanikne ve vzduchu" - doleti az na misto dopadu a tam zmizi bez rany
-# (a bez odrazu). Kdo hleda pravidlo "co se stane s rozletlou strelou", najde
-# tady obe vetve: `p.alive` (cil umrel) a `p.targetable()` (fialova zmizela).
-#
-# ODRAZ VZNIKA UVNITR TOHOTO PRUCHODU, takze se nove strely sbiraji vedle
-# (`born`) a pripoji se az na konci. Kdyby se spolehlo na to, ze je smycka jeste
-# stihne projit, prisly by o ne `shots = keep` a odraz by nebylo videt.
-func _advance_shots(dt: float) -> void:
-	var keep: Array = []
-	var born: Array = []
-	for s in shots:
-		var p: Pilgrim = s["target"]
-		if not p.alive:
+# Z TOHO PLYNE CELY MODEL - a je to zamerne JEDNA funkce, proto:
+#   * zadny projektil, zadna kadence a zadny "swing timer": dokud vez na
+#     neco vidi, paprsek sviti a `laser_dps()` tece kazdy snimek,
+#   * barva paprsku je BARVA VEZE (kresli ji obrazovka z `beams`),
+#   * odraz je druhy, treti... cil paprsku se snizujicim se poskozenim,
+#   * "vystreleno = doleti" uz neexistuje - neni co doletovat. Paprsek proste
+#     prestane svitit ve chvili, kdy cil zmizi z dostrelu nebo zustane sam
+#     (`tower.sees`), a to same plati pro fialovou v duchovem stavu.
+func _laser(dt: float) -> void:
+	beams = []
+	for p in pilgrims:
+		p.burning_now = false
+	var r: float = range_px()
+	var dps: float = laser_dps()
+	var strength: float = odraz_strength()
+	for p in locks:
+		if not p.alive or not tower.sees(p) or not in_range(p, r):
 			continue
-		var pos: Vector2 = s["pos"]
-		var d: Vector2 = p.pos - pos
-		var step_len: float = shot_speed() * dt
-		if d.length() <= step_len + shot_r():
-			if p.targetable():
-				_damage(p, float(s["dmg"]))
-				var next: Dictionary = _ricochet_from(p, s)
-				if not next.is_empty():
-					born.append(next)
-			# NETREFENO (fialova je v duchovem stavu): strela tady KONCI -
-			# nema poskozeni, nema odraz a nikam dal neleti.
-			continue
-		s["pos"] = pos + d.normalized() * step_len
-		keep.append(s)
-	for s in born:
-		keep.append(s)
-	shots = keep
+		var chain: Array = _chain(p)
+		var from: Vector2 = center + (p.pos - center).normalized() * tower_r
+		for i in range(chain.size()):
+			var q: Pilgrim = chain[i]
+			beams.append({"from": from, "target": q, "hop": i})
+			_burn(q, dps * pow(strength, float(i)) * dt)
+			from = q.pos
+	# `burning` = svitil paprsek na tohohle poutnika i v PREDCHOZIM snimku.
+	# Prelozi se az tady, kdyz je hotove cely paprsek - kdyby se to delalo za
+	# pochodu, zvuk zazehnuti by se ozval u kazdeho odrazu zvlast.
+	for p in pilgrims:
+		p.burning = p.burning_now
 
 
-# ODRAZ (RICOCHET). Strela se odrazi na dalsiho poutnika STEJNE BARVY, na
-# ktereho se v tomto odrazu jeste nedostalo - a to i kdyz uz je mimo dostrel
-# (je to odraz, ne zamereni). Kazdy poutnik dostane nejvyce jednu ranu.
+# ODRAZ. Paprsek preskoci na nejblizsiho dalsiho poutnika, na ktereho se v tom
+# samem paprsku jeste nedostalo - a to i mimo dostrel (je to odraz, ne
+# zamereni). "Stejna barva" neni zvlast podminka: vez jinou barvu nevidi
+# (`tower.sees`), takze by ji ani nezamirila.
+func _chain(p: Pilgrim) -> Array:
+	var out: Array = [p]
+	var reach: float = ODRAZ_RANGE_FRAC * field_r
+	var cur: Pilgrim = p
+	for i in range(odraz()):
+		var best: Pilgrim = null
+		var best_d: float = reach
+		for q in pilgrims:
+			if not q.alive or not tower.sees(q) or out.has(q):
+				continue
+			var d: float = q.pos.distance_to(cur.pos)
+			if d <= best_d:
+				best_d = d
+				best = q
+		if best == null:
+			break
+		out.append(best)
+		cur = best
+	return out
+
+
+# HORI CIL PAPRSKEM - vcetne jedn a ledu, ktere plati, dokud paprsek sviti.
+# Odraz je porad zasah tou samou zbrani, takze si veze i jed (jen slabsi, proto
+# `laser_dps` v sile, ne v poskozeni - jed se pocita z plne rany veze).
 #
-# NEVIDITELNA FIALOVA SE NESMI VYBRAT: duch dostane od odrazu strelu, kterou
-# hrac nikdy nevidel vystrelit (a kdyby se stihl objevit, dostal by ránu "od
-# nikud"). Plati stejne pravidlo jako u vseho ostatniho: dokud je duch, neda se
-# mu ublizit.
-#
-# Vraci NOVOU strelu (nebo prazdny slovnik), aby si ji `_advance_shots` mohl
-# pridat do sveho seznamu - do `shots` se sahat nesmi, prave se pres ni jde.
-func _ricochet_from(p: Pilgrim, s: Dictionary) -> Dictionary:
-	var bounce: int = int(s["bounce"])
-	if bounce <= 0:
-		return {}
-	var hit: Array = s["hit"]
-	var best: Pilgrim = null
-	var best_d: float = RICOCHET_RANGE_FRAC * field_r
-	for q in pilgrims:
-		if not q.alive or not q.targetable() or q.hue != p.hue or hit.has(q):
-			continue
-		var d: float = q.pos.distance_to(p.pos)
-		if d <= best_d:
-			best_d = d
-			best = q
-	if best == null:
-		return {}
-	return _make_shot(best, float(s["dmg"]), bounce - 1, hit, p.pos)
-
-
-# ------------------------------------------------------------------ POSKOZENI
-
-# POSKOZENI POUTNIKA DOPADEM STRELY. Tady se take aplikuje jed a led - a proto
-# to musi byt ODDELENE od "ubrat zivoty" (`_hurt`): kdyby jed skodil pres tuhle
-# funkci, OBNAVOVAL by si sam sebe na kazdem snimku a nikdy by nevyprsel.
-func _damage(p: Pilgrim, amount: float) -> void:
-	if not p.alive:
+# ZVUK ZAZEHNUTI ("shot") PATRI SEM: paprsek, ktery sviti na cil pet sekund,
+# nesmi pet sekund tikat. Hra si drzi `burning` a ozve se jen prechod
+# "nesvitil -> sviti" (`beams_lit` je toho pocitadlo, testy si ho ctou).
+func _burn(p: Pilgrim, amount: float) -> void:
+	if not p.alive or amount <= 0.0:
 		return
-	# JED A LED SE APLIKUJI PRI KAZDEM ZASAHU (obnovi se cas, ne poskozeni).
+	p.burning_now = true
+	if not p.burning:
+		beams_lit += 1
+		_event("shot")
 	if poison_frac() > 0.0:
 		p.poison_left = POISON_S
-		# JED SE POCITA Z AKTUALNIHO POSKOZENI RANY, ne z mrtve zakladni
-		# konstanty: upgrade poskozeni tak posili i jed a zustava to "20 % z
-		# rany", jak to hrac v panelu vidi.
-		p.poison_dps = shot_dmg() * poison_frac()
+		p.poison_dps = laser_dps() * poison_frac()
 	if ice_frac() > 0.0:
 		p.ice_left = ICE_S
 		p.ice_frac = ice_frac()
-	# ZVUK ZASahu patri SEM (dopad strely), ne do `_hurt`: jed skodi pres
-	# `_hurt` kazdy snimek a hrac by poslouchal tikani jedu misto ran.
-	_event("hit")
 	_hurt(p, amount)
 
+
+# ------------------------------------------------------------------ POSKOZENI
 
 # UBRAT ZIVOTY. Jedno misto pro kazdy zdroj poskozeni (dopad strely, jed) -
 # hra se nikdy nesmi dostat pod nulu a smrt je taky jen tady.
@@ -923,16 +867,11 @@ func pilgrim_r() -> float:
 	return unit_r * 0.05
 
 
-func shot_speed() -> float:
-	return field_r * SHOT_SPEED_FRAC
-
-
-func shot_r() -> float:
-	return unit_r * SHOT_R_FRAC
-
-
-func shot_rim_r() -> float:
-	return shot_r() * SHOT_RIM_FRAC
+# SIRKA PAPRSKU. S kazdym odrazem se zuzi, ale nikdy nezmizi - hrac musi
+# videt i to, kam az odraz dosahl. Kresli to obrazovka, proto to hra jen
+# pocita (a obrazovka si to nepocita sama).
+func beam_w(hop: int) -> float:
+	return unit_r * BEAM_W_FRAC * pow(BEAM_TAPER, float(maxi(0, hop)))
 
 
 # ------------------------------------------------------------------ HLASKY

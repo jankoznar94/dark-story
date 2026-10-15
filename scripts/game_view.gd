@@ -664,16 +664,15 @@ func _draw_battle() -> void:
 		return
 	draw_arc(layout.center, game.range_px(), 0.0, TAU, 96, _range_color(),
 		maxf(2.0, layout.unit_r * 0.014))
-	for p in game.locks:
-		draw_line(layout.center, p.pos, BEAM, 2.0)
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
 	if game.is_paused() and not game.is_over() and not leave_ask:
 		_draw_pause_hint()
-	# STRELY SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
-	# a musí být z indexem nad zaměřováním").
-	_draw_shots()
+	# LASER SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
+	# a musí být z indexem nad zaměřováním"). Paprsek je od Oct 2026 zbran
+	# sama - zadne zaměřování pod nim uz neni.
+	_draw_beams()
 	_draw_bar()
 	_draw_palette()
 	# PANEL S NAKUPEM JE V BITVE PORAD - kresli se vzdy, ne "kdyz je otevreny".
@@ -753,15 +752,21 @@ func _range_color() -> Color:
 	return Color(col.r, col.g, col.b, 0.62)
 
 
-# STRELA SE KRESLI SVOU VLASTNI BARVOU (`s["hue"]`), ne barvou veze: hrac muze
-# behem letu prebit vez na jinou barvu a tecka ve vzduchu nesmi zmenit barvu -
-# leti porad ta, ktera vystrelila (a proto i doleti, viz `Game._advance_shots`).
-func _draw_shots() -> void:
-	for s in game.shots:
-		var sp: Vector2 = s["pos"]
-		var col: Color = Hue.color_of(int(s.get("hue", game.tower.hue)))
-		draw_circle(sp, game.shot_rim_r(), GLYPH)
-		draw_circle(sp, game.shot_r(), col)
+# LASER. Barva paprsku je BARVA VEZE (Jan, Oct 2026: "Barva laseru bude podle
+# barvy věže") - a proto se barva prebitim veze zmeni i paprsku, ktery prave
+# sviti: neni to strela, ktera uz leti, je to zbran, kterou hrac drzi v ruce.
+#
+# TM AVY OBRYS POD PAPRSKEM je stejny trik jako u byvalych tecek strel: na
+# svetlem poutnikovi nebo na karte by se barevna cara ztratila.
+func _draw_beams() -> void:
+	var col: Color = Hue.color_of(game.tower.hue)
+	for b in game.beams:
+		var q: Pilgrim = b["target"]
+		if q == null or not q.alive:
+			continue
+		var w: float = maxf(1.0, game.beam_w(int(b["hop"])))
+		draw_line(b["from"], q.pos, GLYPH, w * 2.2)
+		draw_line(b["from"], q.pos, col, w)
 
 
 # VEZ. Misto stupnu ma ZIVOTY: tlusty oblouk kolem tela, barva podle toho,

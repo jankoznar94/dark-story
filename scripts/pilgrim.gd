@@ -36,6 +36,11 @@ var poison_dps: float = 0.0
 # LED (ice shot): o kolik je poutnik zpomaleny a jak dlouho to jeste potrva.
 var ice_left: float = 0.0
 var ice_frac: float = 0.0
+# SVITI NA NEJ PAPRSEK? Dve policka, protoze hra potrebuje PRECHOD: zvuk
+# zazehnuti se smi ozvat jen ve chvili "nesvitil -> sviti", ne kazdy snimek.
+# `burning` = svitil i minuly snimek, `burning_now` = sviti ted.
+var burning: bool = false
+var burning_now: bool = false
 
 
 func hp_frac() -> float:

@@ -11,32 +11,33 @@ nepoužívá.
   („jako by je vůbec neviděla“).
 - **Přepnutí barvy = klepnutí na věž.** Přesně na výsek vence kolem věže,
   nebo na tělo věže (otočí barvu na další).
-- **Paprsek je jen ZAMĚŘOVÁNÍ** — ukazuje, na koho věž míří, ale sám
-  neubírá životy. Poškození přijde **až dopadem střely**: od věže letí tečka
-  **v barvě věže** (přes základní dostřel ~0,33 s), takže to vypadá jako
-  stabilní paprsek, kterým rytmicky proudí střely.
-- **Svazek drží cíle, dokud jsou naživu, a JEDNOU VYSTŘELENÁ STŘELA SVŮJ CÍL
-  DOSTIHNE** (Jan, Oct 2026: „Když už věž vystřelí, tak musí projektil doletět
-  do cíle a udělit poškození.“). Střela proto zanikne jen s mrtvým cílem —
-  přepnutí barvy věže ani to, že se cíl přestal zaměřovat, ji nezastaví.
-  Odražená střela **letí z těla předchozí oběti** k dalšímu nepříteli, takže je
-  vidět, jak se mezi nimi odráží.
+- **VĚŽ SVÍTÍ LASEREM, NE STŘÍLÍ PROJEKTILY** (Jan, Oct 2026): „Vrátíme se
+  k laseru místo projektilů. Tím pádem zrušíme úplně Attack speed upgrady.
+  Poškození bude probíhat plynule a čím vyšší bude mít věž dmg, tím rychleji to
+  logicky bude nepřítele zabíjet. Barva laseru bude podle barvy věže.“ Paprsek
+  je **zbraň sama**: vede od věže k cíli, barvu má podle věže a ubírá **každý
+  snímek**, dokud svítí. Žádné projektily, žádná kadence, žádný „swing timer“.
+- **Dostřel je konec paprsku, ne doba letu.** Věž svítí jen na to, co má
+  v kruhu dostřelu a co vidí (`Tower.sees`). Přepnutí barvy paprsek **utrhne** —
+  pravidlo „vystřeleno = doletí“ už neexistuje, protože není co doletovat.
+- **Poškození je ZA SEKUNDU** (`Game.laser_dps`). Základ 10/s je stejné číslo
+  jako dřív (10 za ránu při kadenci 1/s), takže se změnil způsob, ne obtížnost;
+  roste upgradem *Poškození laseru*. **Kritická šance se rozpočítává do
+  průměru** (`× (1 + šance × (násobek − 1))`) — u plynulého paprsku nemá smysl
+  losovat každý snímek.
+- **ODRAZ** (dřív Ricochet, Jan: „RICOHET přejmenujeme na Odraz a bude se takhle
+  laser šířit na další nepřátele, podobně jako ricochet, ale bez projektilů.
+  A každý odraz bude dávat menší poškození. S levelem upgradu se bude zvyšovat
+  počet odrazů a bude snižovat penalizace za odraz.“). Paprsek přeskočí na
+  nejbližšího dalšího poutníka **ve stejné barvě** (jinou věž nevidí), a to
+  i mimo dostřel — je to odraz, ne zaměření. Každý dostane nejvýš jednou a
+  **každý další odraz je slabší** (1. stupeň 1 odraz na 50 %, 2. dva na 60 %,
+  3. tři na 70 %, 4. čtyři na 80 % — obě čísla drží jedna položka tabulky
+  `Upgrades.chain_of`). Paprsek odrazu je **tenčí** a vychází **z těla předchozí
+  oběti**, takže je vidět, kam až se světlo rozšířilo.
 - **VÝJIMKA: FIALOVÁ PO ZNEVIDITELNĚNÍ.** Když fialová po prvním zásahu zmizí,
-  rozletá střela **mine** — doletí na místo dopadu, tam zmizí a nic neubírá
-  (bez poškození a bez odrazu). Je to jediná barva, na kterou pravidlo
-  „vystřeleno = doletí“ neplatí.
-- **Upgrade = rychlost střelby.** Poškození jedné rány zůstává 10 (a roste
-  vlastním upgradem *Poškození střely*), zrychluje se **kadence**: interval
-  začíná na **1,00 s** a krok je **−0,025 s** (dřív −0,05 s), takže permanentní
-  žebříček má 16 stupňů a končí na 0,60 s. Dočasné kroky za zlato nejsou shora
-  omezené — dno drží jen pojistka 0,05 s (20 ran/s).
-- **Kadence je „swing timer", nezávislý na barvě.** Věž má vlastní hodiny, které
-  běží pořád: když vyprší, podívá se, **jaká barva je právě aktivní**, a vystřelí
-  na cíl v dosahu; když žádný není, je to promarnutý sving a interval se rozjede
-  znovu (dluh se nikdy nekupí). Přepnutím barvy se hodiny **NERESETUJÍ** — jinak
-  si hráč rychlým přepínáním „vyrobí" připravenou ránu a střílí rychleji, než je
-  kadence (změřeno: 6 ran za 5 s bez přepínání, ale 150 ran s přepínáním každý
-  snímek). Hlídá to `test_core._test_swing_timer_independent`.
+  paprsek na ni **přestane svítit** (a odraz si ji nevybere) — dokud je duch,
+  nedá se jí ublížit. Po objevení platí normální pravidla dál.
 - **POČET NEPŘÁTEL V JEDNOTLIVÝCH VLNÁCH JE VYŠŠÍ** (Oct 2026): první vlna
   prvního levelu má **15 poutníků**, desátá vlna 51 a každý další **level**
   násobí celou řadu **1,20** — na desátém levelu jde o stovky (strop 400, aby
@@ -70,15 +71,12 @@ nepoužívá.
   nikdy neobjeví „MAX“. **Permanentní upgrady strop mají dál** (platí se body
   z vyhraných levelů) — jejich konec je hodnota v tabulce `Upgrades.STATS`
   (`cap`) a v menu se na něm napíše „MAX“.
-- **Kadence má jen fyzikální pojistku** (`Upgrades.MIN_INTERVAL` = 0,05 s, tj.
-  20 ran/s): kadence je čas a nula by dělila nulou. Krok je ale 0,025 s, takže
-  se k ní hráč dostane až po ~38 krocích (přes 3 700 zlata v jednom levelu).
 - **Zrychlení hry** je speciální permanentní upgrade (`gs`), ale **sám o sobě hru
   nezrychlí**: je to **klíč**, který odemkne přepínání tempa. Hra začíná **vždy
   na 1,0x** a hráč si v bitvě přepíná **1,0x / 1,5x / 2,0x / 2,5x** tlačítkem
   v horním pruhu (je vidět jen s koupeným speciálem; `Game.speed_options()`).
   Násobí se **celý krok hry** (`Game.step`), takže se zrychlí všechno, co je na
-  čase — pohyb poutníků, kadence, let střely, jed i led, regenerace i časy vln.
+  čase — pohyb poutníků, paprsek, jed i led, regenerace i časy vln.
   Kdyby se zrychloval jen pohyb, změnila by se obtížnost.
 
 ## Tiché poškození a imunita (Oct 2026)
@@ -90,7 +88,7 @@ Dvě cesty, které to dřív obcházely, jsou zavřené:
   tak v tichosti dokončil přesně ve chvíli, kdy se fialová znovu objevila a
   hráč viděl „umřela sama, aniž by do ní věž střílela“ (`Game._advance_effects`).
 - **Odraz** si mohl vybrat ducha za další oběť a poslat na něj střelu, kterou
-  hráč nikdy neviděl vystřelit (`Game._ricochet_from`).
+  hráč nikdy neviděl vystřelit. Dnes to hlídá `Game._chain`, který ducha přeskočí.
 
 Platí pravidlo: **zmizení = čas, kdy na poutníka nikdo nedosáhne**. Po objevení
 platí normální pravidla dál (jed i odraz zase fungují).
@@ -149,12 +147,15 @@ Jan: „A střelba a zásah by samozřejmě měly mít také zvukové efekty."
 
 - **Tři zvuky** (`tools/make_sfx.py`, ~4 kB každý): `shot.ogg` (výstřel),
   `hit.ogg` (dopad), `kill.ogg` (smrt poutníka).
-- **Hra posílá UDÁLOSTI, ne zvuky.** `Game.events` plní `_fire_at` („shot"),
-  `_damage` („hit", tedy *dopad střely* — ne `_hurt`, jinak by jed tikal 60×/s)
-  a `_kill` („kill"). Obrazovka si je jednou za snímek vybere
-  (`take_events()` = výběr i smazání) a zahraje. Hra tak zůstává hratelná
-  a měřitelná bez obrazovky a zvuk je jen doplněk.
-- **Odpěť mezi zvuky** (`SFX_GAP_S`: výstřel 75 ms) — při plné kadenci 20 ran/s
+- **Hra posílá UDÁLOSTI, ne zvuky.** `Game.events` plní `_burn` („shot", tedy
+  *zážeh paprsku na novém cíli*) a `_kill` („kill"). Obrazovka si je jednou za
+  snímek vybere (`take_events()` = výběr i smazání) a zahraje. Hra tak zůstává
+  hratelná a měřitelná bez obrazovky a zvuk je jen doplněk.
+- **PAPRSEK NESMI TIKAT.** Laser svítí na cíl pořád, takže by se zvuk „výstřelu"
+  ozval 60× za sekundu; hra si proto drží `Pilgrim.burning` a ozve se jen
+  přechod *nesvítil → svítí* (`Game.beams_lit` je toho počítadlo). `hit.ogg`
+  zůstává v tabulce zvuků, ale laser ho neposílá.
+- **Odpěť mezi zvuky** (`SFX_GAP_S`: výstřel 75 ms) — při více paprscích naráz
   by se jinak zvuk slil do hučení. Měří se hodinami, ne snímky.
 - **Čtyři hlasy** (`AudioStreamPlayer`): jeden přehrávač se sám přerušuje, takže
   by druhý výstřel utnul první.

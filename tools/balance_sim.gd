@@ -16,11 +16,13 @@ extends SceneTree
 #   godot4 --headless --path . --script res://tools/balance_sim.gd
 #   ... -- --levels=8      (kolik levelu nejdal)
 
-# V BITVE: co koupit prvni. Kadenci a poskozeni hrac vidi na prvni pohled.
+# V BITVE: co koupit prvni. Poskozeni hrac vidi na prvni pohled.
 # DOSTREL TU NENI - je jen permanentni (v bitve se ani nenabizi).
-const TEMP_ORDER := ["as", "as", "ad", "hp", "as", "am", "ad", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
+# KADENCE TU NENI TAKY: od Oct 2026 vez sviti laserem a zadny Attack speed
+# upgrade neexistuje (Jan: "Tim padem zrusime uplne Attack speed upgrady").
+const TEMP_ORDER := ["ad", "ad", "ad", "hp", "am", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
 # V MENU: co koupit permanentne. Dostrel je tu vzdy - v bitve jinak neni.
-const PERM_ORDER := ["as", "ar", "ad", "hp", "am", "as", "ar", "cc", "rg", "cd", "as", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
+const PERM_ORDER := ["ad", "ar", "ad", "hp", "am", "ar", "cc", "rg", "cd", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
 
 var levels_limit: int = 8
 # CASOVY STROP PARTIE. Deset vln na level znamena ~5 minut na level, takze
