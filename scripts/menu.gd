@@ -24,12 +24,17 @@ const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
 # (jmena tady, cisla v obrazovce) uz jednou vedly k tomu, ze klepnuti na
 # "EDITOR" otevrelo navod: akce se vybirala podle poradi, ne podle jmena.
 #
-# UPRAVY jsou permanentni upgrady za BODY - bez te obrazovky by hrac nemel
-# jak utratit body za vyhrane levely.
-const MENU_ITEMS := ["HRÁT", "LEVELY", "UPRAVY", "SETTINGS", "UPDATE"]
-const MENU_SUBS := ["partie od nejvyššího levelu", "vrátit se i k vyhraným", "permanentní vylepšení", "jakost vykreslování", "stáhnout novou verzi"]
+# VYLEPSENI (driv "UPRAVY", prejmenovano dle Jana, Oct 2026) jsou permanentni
+# upgrady za BODY - bez te obrazovky by hrac nemel jak utratit body za vyhrane
+# levely.
+#
+# RESET je JEDINE tlacitko, ktere maze - proto stoji az pred UPDATE (na kraji,
+# kam se neklika omylem) a vzdycky se na nej ptá dialogem. UPDATE nic nemaze:
+# jen stahne novou verzi hry (`request_update`).
+const MENU_ITEMS := ["HRÁT", "LEVELY", "VYLEPŠENÍ", "SETTINGS", "RESET", "UPDATE"]
+const MENU_SUBS := ["partie od nejvyššího levelu", "vrátit se i k vyhraným", "permanentní vylepšení", "jakost vykreslování", "smazat celý postup", "stáhnout novou verzi"]
 # Akce se vyhodnocuji PRES JMENO, ne podle poradi.
-const MENU_ACTIONS := ["battle", "levels", "upgrades", "settings", "update"]
+const MENU_ACTIONS := ["battle", "levels", "upgrades", "settings", "reset", "update"]
 
 # GLOBALNI PROMENNE, KTERYMI PROHLIZEC MLUVI S HROU. Hra si je sama VYCTE
 # (`pull_js_state`) - viz poznamka u te funkce, proc to neni callback.

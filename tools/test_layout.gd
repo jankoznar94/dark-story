@@ -26,7 +26,8 @@ var checks: int = 0
 func _init() -> void:
 	Upgrades.STATS.size()
 	Profile.allow_save = false
-	_run("neznama velikost okna nic nerozbije", _test_zero_size)
+	_run("tlacitko pauzy je ikona (carky / trojuhelnik)", _test_pause_is_icon)
+	_run("nulova velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	_run("strela je tecka nad zamerovanim", _test_shots_are_dots)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
@@ -216,8 +217,12 @@ func _test_panel_is_permanent() -> void:
 	var i_halt: int = src.find("func is_halted")
 	var end: int = src.find("\nfunc ", i_halt + 1)
 	var halt_body: String = src.substr(i_halt, (end - i_halt) if end > i_halt else 120)
-	_check(halt_body.contains("leave_ask or game.is_over()"),
+	# POZOR: `is_halted` se od Oct 2026 ptá i na `reset_ask` (dialog na smazani
+	# postupu), takze se hlida jen to podstatne - ze v nem NENI panel s upgrady.
+	_check(halt_body.contains("leave_ask") and halt_body.contains("game.is_over()"),
 		"hra se pod trvale otevrenym panelem zastavuje (is_halted)")
+	_check(not halt_body.contains("shop"),
+		"panel s upgrady je v is_halted - pod panelem by se partie zastavila")
 
 
 # HODNOTA A CENA JSOU NA JEDNOM RADKU (Jan, Oct 2026: "Hodnota a cena budou na
@@ -235,6 +240,23 @@ func _test_cell_lines() -> void:
 	_check(not body.contains("line * 2.0"), "cena je porad na tretim radku bunky")
 	_check(body.contains("layout.measure_px(pr, pr_px)"),
 		"cena si nebere misto vedle hodnoty - hodnota a cena se mohou prekryt")
+
+
+# PAUZA JE IKONA, NE TEXT (Jan, Oct 2026: "Tlačítko Pause nebude mít text ale
+# velkou ikonu. Ikonu pauzy, po kliknutí ikonu resume."). Hlida se ZDROJ:
+# kdyby se vratil popisek, test to rekne - a zaroven se overi, ze ikona ma OBE
+# podoby (carky = stoji, trojuhelnik = bezi).
+func _test_pause_is_icon() -> void:
+	var src: String = _src()
+	_check(src.contains("_draw_pause_icon("), "tlacitko PAUZA se nekresli jako ikona")
+	_check(not src.contains("\"POKRAČOVAT\" if"),
+		"tlacitko PAUZA ma porad textovy popisek")
+	var start: int = src.find("func _draw_pause_icon")
+	_check(start >= 0, "chybi kresleni ikony pauzy")
+	var end: int = src.find("\nfunc ", start + 1)
+	var body: String = src.substr(start, (end - start) if end > start else 900)
+	_check(body.contains("draw_rect("), "ikona pauzy nema dve carky")
+	_check(body.contains("draw_colored_polygon("), "ikona resume nema trojuhelnik")
 
 
 func _test_zero_size() -> void:
@@ -320,9 +342,14 @@ func _test_resolution(v: Vector2) -> void:
 	_check(l.hud_pause.position.x >= -0.5 and l.hud_pause.end.x <= l.hud_menu.position.x + 0.5,
 		"%s: tlacitka PAUZA a MENU se prekryvaji (nebo pauza preleza displej)" % tag)
 	_check(l.hud_pause.end.y <= l.bar_h + 0.5, "%s: tlacitko PAUZA preleza do plochy" % tag)
-	_check(l.measure_px("POKRAČOVAT", l.font_px) <= l.hud_pause.size.x - 8.0
-		or l.hud_pause.size.x >= 132.0 - 0.5,
-		"%s: sirka tlacitka PAUZA se nemeri z delsiho popisku" % tag)
+	# PAUZA JE CTVEREC S IKONOU (Jan, Oct 2026: "Tlačítko Pause nebude mít text
+	# ale velkou ikonu."). Hlida se TVAR. Na nizkych (na lezato) se do pruhu
+	# nevejde ctverec 44 px, tak se drzi aspon PRSTENI MINIMUM - proto se
+	# pripousti 11 px rozdil; zaklad je ale vzdy vyska, nikdy popisek.
+	_check(absf(l.hud_pause.size.x - l.hud_pause.size.y) < 11.0,
+		"%s: tlacitko PAUZA neni ctverec (%.0fx%.0f px)" % [tag, l.hud_pause.size.x, l.hud_pause.size.y])
+	_check(l.hud_pause.size.x < l.measure_px("POKRAČOVAT", l.font_px),
+		"%s: sirka tlacitka PAUZA se porad meri z popisku" % tag)
 	_check(l.bar_text_w > 0.0, "%s: stavovemu textu nezustalo v pruhu misto" % tag)
 	var l1: String = ScreenLayout.HUD_LINE1_FMT % [12, 5, 5]
 	var l2: String = ScreenLayout.HUD_LINE2_FMT % [300, 300, 9999]
@@ -402,6 +429,19 @@ func _test_resolution(v: Vector2) -> void:
 	var vl_room: float = maxf(10.0, text_w - _font_w("+1000 zl.", cpx) - 8.0)
 	_check(_fit_px("1,00 s", vl_room, l.font_px) >= 10,
 		"%s: hodnota parametru se do bunky nevejde" % tag)
+
+	# 3b) ZRYCHLENI HRY: tlacitko je v pruhu JEN kdyz si hrac koupil special.
+	# Kdyz neni, jeho misto dostane stavovy text (proto se to hlida i tady).
+	l.set_speed_visible(true)
+	_check(l.hud_speed.size.x >= 44.0 and l.hud_speed.size.y >= 30.0,
+		"%s: tlacitko tempa je male %.0fx%.0f px" % [tag, l.hud_speed.size.x, l.hud_speed.size.y])
+	_check(l.hud_speed.position.x >= -0.5 and l.hud_speed.end.x <= l.hud_pause.position.x + 0.5,
+		"%s: tlacitko tempa preleza displej nebo se prekryva s pauzou" % tag)
+	_check(l.hud_speed.end.y <= l.bar_h + 0.5, "%s: tlacitko tempa preleza do plochy" % tag)
+	_check(l.bar_text_w > 0.0, "%s: po pridani tlacitka tempa nezustalo misto na stavovy text" % tag)
+	l.set_speed_visible(false)
+	_check(l.hud_speed.size.x <= 0.0,
+		"%s: tlacitko tempa je v pruhu, i kdyz si hrac special nekoupil" % tag)
 
 	# 6) OBRAZOVKA UPRAVY V MENU: ctyri kategorie + mrizka + ZPET.
 	_check(l.upg_tabs.size() == Upgrades.CATEGORIES.size(),
@@ -569,6 +609,13 @@ func _check_icons(tabs: Array, icons: Array, tag: String, kde: String) -> void:
 			"%s: ikona kategorie v %s neni ctverec (%.0fx%.0f)" % [tag, kde, ir.size.x, ir.size.y])
 		_check(ir.size.x >= 18.0 and ir.size.x <= tr.size.x - 8.0,
 			"%s: ikona kategorie v %s je moc velka nebo moc mala (%.0f px)" % [tag, kde, ir.size.x])
+		# IKONA MA BYT VIDET, NE HADAT (Jan, Oct 2026: "Ikony tlačítek
+		# kategorií upgradu jsou stále příliš malé."). Bere 90 % vysky tabu,
+		# takze se hlida, ze ji nikdo zase nezmensi pod 85 %.
+		_check(ir.size.x >= 44.0,
+			"%s: ikona kategorie v %s je mala (%.0f px) - Jan ji chce velkou" % [tag, kde, ir.size.x])
+		_check(ir.size.x >= tr.size.y * 0.85,
+			"%s: ikona kategorie v %s nevyplnuje tab (%.0f z %.0f px)" % [tag, kde, ir.size.x, tr.size.y])
 		_check(tr.encloses(ir), "%s: ikona kategorie v %s preleza tab" % [tag, kde])
 		_check((ir.get_center() - tr.get_center()).length() < 1.0,
 			"%s: ikona kategorie v %s neni uprostred tabu" % [tag, kde])

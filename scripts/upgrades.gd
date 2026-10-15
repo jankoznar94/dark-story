@@ -164,6 +164,21 @@ static func temp_buyable(id: String) -> bool:
 	return int(stat(id)["temp_max"]) != 0
 
 
+# RYCHLOST HRY (special "gs"). Upgrade nema hodnotu, ktera by se rovnou
+# pouzila: je to KLIC, ktery hracovi odemkne PREPINANI tempa v bitve. Hodnota
+# na jeho stupni je NEJVYSSI rychlost, kterou si smi zapnout; hra zacina VZDY
+# na 1,0x (Jan, Oct 2026: "Výchozí vždy 1.0x. Upgrade jen otevírá možnost to
+# přepínat."). Pocet prepinacich poloh = perm_max + 1 (zaklad + kazdy stupen).
+static func speed_at(step: int) -> float:
+	var s: Dictionary = stat("gs")
+	var n: int = clampi(step, 0, int(s["perm_max"]))
+	return float(s["start"]) + float(s["step"]) * float(n)
+
+
+static func speed_steps() -> int:
+	return int(stat("gs")["perm_max"]) + 1
+
+
 static func label_of(id: String) -> String:
 	return String(stat(id)["label"])
 

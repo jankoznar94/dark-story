@@ -28,6 +28,7 @@ func _init() -> void:
 	_run("strela po prepsani barvy veze doleti a ubira", _test_shot_lands_after_hue_switch)
 	_run("zmizele fialove strela mine (dopadne, ale neubira)", _test_vanish_shot_misses)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
+	_run("neviditelna fialova je imunni (jed ani odraz na ni nedosahnou)", _test_ghost_is_immune)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
 	_run("docasny krok stoji 5xN zlata a hodnota roste", _test_temp_buy)
@@ -403,27 +404,91 @@ func _test_shot_lands_after_hue_switch() -> void:
 		"dopad po prepsani barvy neubral prave poskozeni jedne rany (ubral %.2f)" % (hp0 - p.hp))
 
 
-# ZRYCHLENI HRY (Jan, Oct 2026: "Veškerý čas ve hře se zrychlí. Pohyb,
-# rychlost palby, rychlost animací, vše."). Nasobi se CELY krok hry, takze se
-# vsechno, co je na case, zrychli stejne - kdo by zrychloval jen pohyb, zmenil
-# by tim obtiznost.
+# ZRYCHLENI HRY (Jan, Oct 2026: "Veškerý čas ve hře se zrychlí. Pohyb, rychlost
+# palby, rychlost animací, vše." + "Zrychlení hry by mělo být volitelně
+# přepínatelné během souboje. Výchozí vždy 1.0x. Upgrade jen otevírá možnost to
+# přepínat."). Upgrade je tedy KLIC: nasobi se CELY krok hry, ale teprve kdyz
+# si hrac tempo v bitve prepne.
 func _test_game_speed_scales_time() -> void:
 	var g: Game = _fresh()
-	_check(absf(g.time_scale() - 1.0) < 0.001, "zakladni hra nema tempo 1,0x")
-	var slow: Pilgrim = g.spawn_at_angle(0.0, Hue.BLUE)
-	var a0: Vector2 = slow.pos
-	_tick(g, 1.0)
-	var slow_move: float = a0.distance_to(slow.pos)
+	_check(absf(g.time_scale() - 1.0) < 0.001, "hra nezacina na 1,0x")
+	# KDO SI SPECIAL NEKOUPIL, NEMA CO PREPINAT.
+	_check(g.speed_options() == 1, "bez upgradu je vic poloh tempa (%d)" % g.speed_options())
+	_check(not g.cycle_speed(), "tempo se da prepnout bez upgradu")
+	# UPGRADE SAM O SOBE HRU NEZRYCHLI.
+	g.profile.perm["gs"] = 3
+	_check(g.speed_options() == 4, "se tremi stupni nejsou ctyri polohy tempa (%d)" % g.speed_options())
+	_check(absf(g.time_scale() - 1.0) < 0.001,
+		"koupe tempa hru zrychli, i kdyz ma byt do prepnuti 1,0x (%.2f)" % g.time_scale())
+	# PREPINANI: 1,0 -> 1,5 -> 2,0 -> 2,5 -> zpatky na 1,0.
+	var want: Array = [1.5, 2.0, 2.5, 1.0]
+	for i in range(4):
+		_check(g.cycle_speed(), "tempo se neda prepnout")
+		_check(absf(g.time_scale() - float(want[i])) < 0.001,
+			"%d. prepnuti tempa neni %.1fx (je %.2fx)" % [i + 1, float(want[i]), g.time_scale()])
+	# POMER POHYBU: v 2,5x tempu musi poutnik ujit 2,5x vic za stejny cas.
+	var slow: Game = _fresh()
+	var a: Pilgrim = slow.spawn_at_angle(0.0, Hue.BLUE)
+	var a0: Vector2 = a.pos
+	_tick(slow, 1.0)
+	var slow_move: float = a0.distance_to(a.pos)
 	_check(slow_move > 1.0, "poutnik se vubec nepohnul")
 	var fast: Game = _fresh()
 	fast.profile.perm["gs"] = 3
-	_check(absf(fast.time_scale() - 2.5) < 0.001, "tempo na 3. stupni neni 2,5x (%.2f)" % fast.time_scale())
+	fast.cycle_speed()
+	fast.cycle_speed()
+	fast.cycle_speed()
+	_check(absf(fast.time_scale() - 2.5) < 0.001, "treti prepnuti neni 2,5x (%.2f)" % fast.time_scale())
 	var q: Pilgrim = fast.spawn_at_angle(0.0, Hue.BLUE)
 	var b0: Vector2 = q.pos
 	_tick(fast, 1.0)
 	var fast_move: float = b0.distance_to(q.pos)
 	_check(absf(fast_move / slow_move - 2.5) < 0.05,
 		"poutnik se v 2,5x tempu nepohnul 2,5x dal (%.1f vs %.1f px)" % [fast_move, slow_move])
+	# KAZDA PARTIE ZACINA NA 1,0x - hrac si ma kazdou partii zvolit sve tempo.
+	fast.start_level(2)
+	_check(absf(fast.time_scale() - 1.0) < 0.001, "nova partie nezacina na 1,0x")
+
+
+# NEVIDITELNA FIALOVA JE IMUNNI VUCI VSEMU. Jan (Oct 2026): "Fialoví nepřátelé
+# teď po prvním zásahu sice zmizí, ale po objevení automaticky samo zemřou.
+# Aniž by do nich věž znovu střílela." Byly to dve TICHE cesty, obe bez
+# projektilu: JED (ticka dal, i kdyz je poutnik duch) a ODRAZ (vybral si ducha
+# za dalsi obet). Zmizeni je pritom cas, kdy na poutnika NEMÁ NIKDO DOSÁHNOUT.
+func _test_ghost_is_immune() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.YELLOW          # vez do poutnika nestrili
+	g.profile.perm["ps"] = 3          # jed 50 % poskozeni rany za sekundu
+	var p: Pilgrim = _place(g, Hue.VIOLET, 0.9)
+	p.speed = 0.0
+	p.behaviour = Hue.B_VANISH
+	g._damage(p, 10.0)                # prvni zasah: rozjede jed a fialova zmizi
+	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
+	_check(p.poison_left > 0.0, "jed se pri zasahu vubec nerozjel")
+	var hp0: float = p.hp
+	_tick(g, 1.5)
+	_check(is_equal_approx(p.hp, hp0),
+		"neviditelna fialova ztratila zivoty (o %.2f) - ubira ji jed, i kdyz je duch" % (hp0 - p.hp))
+	# PO OBJEVENI uz ji jed ubirat smi - je zase videt.
+	p.ghost_left = 0.0
+	var hp1: float = p.hp
+	_tick(g, 1.0)
+	_check(p.hp < hp1, "po objeveni fialove ji jed neubira (%.1f)" % p.hp)
+	# ODRAZ SI DUCHE NESMI VYBRAT: dostal by strelu, kterou hrac nikdy nevidel.
+	var g2: Game = _fresh()
+	g2.tower.hue = Hue.RED
+	g2.profile.perm["rc"] = 1
+	var a: Pilgrim = _place(g2, Hue.RED, g2.range_frac() * 0.7)
+	var ghost: Pilgrim = _place(g2, Hue.RED, g2.range_frac() * 0.7)
+	ghost.pos = a.pos + Vector2(50.0, 0.0)
+	for w in [a, ghost]:
+		w.speed = 0.0
+		w.hp = 100000.0
+		w.max_hp = 100000.0
+	ghost.ghost_left = Hue.VANISH_S
+	var shot: Dictionary = {"bounce": 1, "hit": [a], "dmg": 10.0}
+	_check(g2._ricochet_from(a, shot).is_empty(),
+		"odraz si vybral neviditelnou fialovou (dostala by ranu od nikud)")
 
 
 # FIALOVA PO ZNEVIDITELNENI JE VYJIMKA (Jan, Oct 2026): "Když zmizí, projektil

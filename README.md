@@ -54,11 +54,38 @@ nepoužívá.
 - **Kadence má jen fyzikální pojistku** (`Upgrades.MIN_INTERVAL` = 0,05 s, tj.
   20 ran/s): kadence je čas a nula by dělila nulou. Hráč se k ní dostane až po
   ~19 krocích (přes 900 zlata v jednom levelu).
-- **Zrychlení hry** je nový speciální permanentní upgrade (`gs`): **1,0x /
-  1,5x / 2,0x / 2,5x** za body. Násobí se **celý krok hry** (`Game.step`), takže
-  se zrychlí všechno, co je na čase — pohyb poutníků, kadence, let střely, jed
-  i led, regenerace i časy vln. Kdyby se zrychloval jen pohyb, změnila by se
-  obtížnost.
+- **Zrychlení hry** je speciální permanentní upgrade (`gs`), ale **sám o sobě hru
+  nezrychlí**: je to **klíč**, který odemkne přepínání tempa. Hra začíná **vždy
+  na 1,0x** a hráč si v bitvě přepíná **1,0x / 1,5x / 2,0x / 2,5x** tlačítkem
+  v horním pruhu (je vidět jen s koupeným speciálem; `Game.speed_options()`).
+  Násobí se **celý krok hry** (`Game.step`), takže se zrychlí všechno, co je na
+  čase — pohyb poutníků, kadence, let střely, jed i led, regenerace i časy vln.
+  Kdyby se zrychloval jen pohyb, změnila by se obtížnost.
+
+## Tiché poškození a imunita (Oct 2026)
+
+**Dokud je poutník duch (fialová po prvním zásahu), nedá se mu ublížit ničím.**
+Dvě cesty, které to dřív obcházely, jsou zavřené:
+
+- **Jed** tickal i na neviditelného poutníka — první zásah (jed + zmizení) se
+  tak v tichosti dokončil přesně ve chvíli, kdy se fialová znovu objevila a
+  hráč viděl „umřela sama, aniž by do ní věž střílela“ (`Game._advance_effects`).
+- **Odraz** si mohl vybrat ducha za další oběť a poslat na něj střelu, kterou
+  hráč nikdy neviděl vystřelit (`Game._ricochet_from`).
+
+Platí pravidlo: **zmizení = čas, kdy na poutníka nikdo nedosáhne**. Po objevení
+platí normální pravidla dál (jed i odraz zase fungují).
+
+## Menu a ovládání (Oct 2026)
+
+- **Šest tlačítek**: HRÁT / LEVELY / **VYLEPŠENÍ** (dřív „UPRAVY“) / NASTAVENÍ /
+  **RESET** / UPDATE.
+- **RESET** maže **celý postup** (body, permanentní vylepšení, nejvyšší level)
+  a **vždy se na to ptá** dialogem. **UPDATE nic nemazá** — ten jen stahuje
+  novou verzi hry (jinak by si hráč smazal postup, když si chtěl jen
+  aktualizovat).
+- **PAUZA je ikona, ne text**: čtvercové tlačítko s **dvěma čárkami** (hra stojí)
+  a po kliknutí s **trojúhelníkem** (běží). Stav nese tvar i barva.
 
 ## Rozvržení
 
@@ -83,8 +110,8 @@ Barvu vždy nese i **tvar** (runa) — u poutníka je runa přímo tvarem těla:
 oheň trojúhelník, voda kapka, země čtverec, vzduch prstenec. Barva nikdy
 nesmí být jediný nositel informace.
 
-**Menu je velké a texty jsou větší**: čtyři tlačítka (HRÁT / UPRAVY / SETTINGS /
-UPDATE) berou 78 % šířky displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí
+**Menu je velké a texty jsou větší**: šest tlačítek (HRÁT / LEVELY / VYLEPŠENÍ /
+NASTAVENÍ / RESET / UPDATE) bere 78 % šířky displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí
 mířit prstem; titul má 54 px, popisek 28 px. Větší je i hláška pod pruhem
 (kreslí se základním písmem, ne zmenšeným stavovým), obrazovka NASTAVENÍ
 a dotaz při odchodu z boje. Titul i podtitulek se na nízkém/úzkém displeji

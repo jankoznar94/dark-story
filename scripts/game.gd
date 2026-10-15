@@ -154,13 +154,35 @@ func temp_level(id: String) -> int:
 	return int(temp.get(id, 0))
 
 
-# ZRYCHLENI HRY (specialni permanentni upgrade "gs"): nasobek, kterym se
-# prepocte KAZDY krok hry. Je to na JEDNOM miste (`step`), takze se zrychli
-# vsechno, co je na case - pohyb poutniku, kadence, let strely, jed i led,
-# regenerace i casy vln. Kdo by nasobil jen nekde (treba jen pohyb), ten by
-# tise zmenil obtiznost.
+# ZRYCHLENI HRY (specialni permanentni upgrade "gs"). Upgrade je KLIC, ne
+# hodnota: hra zacina VZDY na 1,0x a hrac si tempo prepina v bitve tlacitkem v
+# pruhu (Jan, Oct 2026: "Výchozí vždy 1.0x. Upgrade jen otevírá možnost to
+# přepínat."). Kdo si special nekoupil, nema co prepinat - tlacitko v pruhu
+# vubec neni (`speed_options() == 1`).
+var speed_step: int = 0
+
+
+# KOLIK POLOH TEMPA MA HRAC ODEMCENYCH (1 = jen zakladni 1,0x).
+func speed_options() -> int:
+	return 1 + profile.perm_level("gs")
+
+
+# PRAVE ZVOLENE TEMPO. Nikdy neni vyssi, nez co ma hrac koupene.
 func time_scale() -> float:
-	return maxf(0.25, val("gs"))
+	return Upgrades.speed_at(mini(speed_step, speed_options() - 1))
+
+
+# PREPNUTI TEMPA (tlacitko v pruhu). Vraci true, kdyz se neco zmenilo -
+# obrazovka se na to ptá, ne na to, "co se asi stalo".
+func cycle_speed() -> bool:
+	var n: int = speed_options()
+	if n <= 1:
+		return false
+	speed_step = (speed_step + 1) % n
+	# HLASKA: hrac ma videt, co si prave zapnul. Cislo je i na tlacitku, ale
+	# hlaska rekne, ze se zmenil CAS CELE HRY (pohyb, kadence, vsechno).
+	_note("Tempo hry: %s." % Upgrades.value_text("gs", speed_step, 0))
+	return true
 
 
 # KADENCE VEZE (rany za sekundu). Parametr je INTERVAL, takze se prepocitava.
@@ -258,6 +280,10 @@ func start_level(n: int) -> void:
 	locks = []
 	shots = []
 	fired_reset()
+	# TEMPO ZACINA VZDY NA 1,0x (Jan, Oct 2026: "Výchozí vždy 1.0x."). Upgrade
+	# jen otevira moznost si ho v bitve prepnout - hrac si ma kazdou partii
+	# zvolit, jak rychle ji chce hrat.
+	speed_step = 0
 	max_hp = val("hp")
 	hp = max_hp
 	gold = START_GOLD + int(round(val("gl")))
@@ -567,6 +593,14 @@ func _advance_behaviour(p: Pilgrim, dt: float) -> void:
 
 # JED A LED SE ODPOCITAVAJI ZVLAST: plati i na poutnika, ktery uz je z dosahu
 # (jed je jed) - jinak by upgrady "po zasahu" nic nedelaly.
+#
+# NEVIDITELNA FIALOVA JE VSAK IMUNNI VUCI VSEMU (Jan, Oct 2026: "Fialoví
+# nepřátelé teď po prvním zásahu sice zmizí, ale po objevení automaticky samo
+# zemřou. Aniž by do nich věž znovu střílela."). Kdyz je poutnik pro vez
+# neviditelny, nesmi ho zabít ani jed: byl to prave jed, ktery tise (bez
+# projektilu) dokoncil prvni zásah presne ve chvili, kdy se poutnik znovu
+# objevil - hrac videl "umrela sama". Zmizeni je TIM ZA NEPRITELNY, co ma
+# znamenat: dokud je duch, neda se mu ublizit.
 func _advance_effects(dt: float) -> void:
 	for p in pilgrims:
 		if not p.alive:
@@ -575,7 +609,8 @@ func _advance_effects(dt: float) -> void:
 			p.ice_left = maxf(0.0, p.ice_left - dt)
 		if p.poison_left > 0.0:
 			p.poison_left = maxf(0.0, p.poison_left - dt)
-			_hurt(p, p.poison_dps * dt)
+			if p.targetable():
+				_hurt(p, p.poison_dps * dt)
 
 
 func _random_other_hue(cur: int) -> int:
@@ -707,6 +742,12 @@ func _advance_shots(dt: float) -> void:
 # ODRAZ (RICOCHET). Strela se odrazi na dalsiho poutnika STEJNE BARVY, na
 # ktereho se v tomto odrazu jeste nedostalo - a to i kdyz uz je mimo dostrel
 # (je to odraz, ne zamereni). Kazdy poutnik dostane nejvyce jednu ranu.
+#
+# NEVIDITELNA FIALOVA SE NESMI VYBRAT: duch dostane od odrazu strelu, kterou
+# hrac nikdy nevidel vystrelit (a kdyby se stihl objevit, dostal by ránu "od
+# nikud"). Plati stejne pravidlo jako u vseho ostatniho: dokud je duch, neda se
+# mu ublizit.
+#
 # Vraci NOVOU strelu (nebo prazdny slovnik), aby si ji `_advance_shots` mohl
 # pridat do sveho seznamu - do `shots` se sahat nesmi, prave se pres ni jde.
 func _ricochet_from(p: Pilgrim, s: Dictionary) -> Dictionary:
@@ -717,7 +758,7 @@ func _ricochet_from(p: Pilgrim, s: Dictionary) -> Dictionary:
 	var best: Pilgrim = null
 	var best_d: float = RICOCHET_RANGE_FRAC * field_r
 	for q in pilgrims:
-		if not q.alive or q.hue != p.hue or hit.has(q):
+		if not q.alive or not q.targetable() or q.hue != p.hue or hit.has(q):
 			continue
 		var d: float = q.pos.distance_to(p.pos)
 		if d <= best_d:

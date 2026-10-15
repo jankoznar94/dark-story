@@ -51,6 +51,7 @@ func _process(_delta: float) -> bool:
 	_run("pauza v bitve zastavi hru a deska pod ni nereaguje", _test_tap_pause)
 	_run("paleta nad panelem prenastavi barvu veze", _test_tap_palette_switches_hue)
 	_run("vyber levelu: klepnuti na vyhrany level ho spusti znovu", _test_tap_level_select)
+	_run("klepnuti na RESET se vzdy zepta a maze cely postup", _test_tap_reset)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
 	_check(checks >= MIN_CHECKS,
 		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
@@ -91,7 +92,7 @@ func _test_items_and_actions() -> void:
 		"tlacitek je %d, akci %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_ACTIONS.size()])
 	_check(Menu.MENU_ITEMS.size() == Menu.MENU_SUBS.size(),
 		"tlacitek je %d, podtitulku %d" % [Menu.MENU_ITEMS.size(), Menu.MENU_SUBS.size()])
-	var known: Array = ["battle", "levels", "upgrades", "settings", "update"]
+	var known: Array = ["battle", "levels", "upgrades", "settings", "reset", "update"]
 	var seen: Dictionary = {}
 	for act in Menu.MENU_ACTIONS:
 		_check(known.has(String(act)),
@@ -100,8 +101,9 @@ func _test_items_and_actions() -> void:
 		seen[String(act)] = true
 	# KAZDA OBRAZOVKA, KTERA V MENU JE, MUSI MIT AKCI - jinak je to tlacitko,
 	# ktere nic nedela.
-	_check(seen.has("battle") and seen.has("upgrades") and seen.has("settings") and seen.has("update"),
-		"v menu chybi nektera z akci (hrani / upravy / nastaveni / aktualizace)")
+	_check(seen.has("battle") and seen.has("upgrades") and seen.has("settings")
+		and seen.has("reset") and seen.has("update"),
+		"v menu chybi nektera z akci (hrani / vylepseni / nastaveni / reset / aktualizace)")
 
 
 func _test_views() -> void:
@@ -429,6 +431,50 @@ func _test_tap_palette_switches_hue() -> void:
 	v.call("_tap", (l.pal_rects[first] as Rect2).get_center())
 	_check(g.tower.hue == int(g.palette[first]),
 		"druhe klepnuti na paletu nic nezmenilo (%s)" % Hue.name_of(g.tower.hue))
+	v.queue_free()
+
+
+# RESET MAZE CELY POSTUP A VZDY SE NA TO ZEPTÁ. (Jan, Oct 2026: "Přidáme do menu
+# tlačítko Reset, které resetuje celý progres hry. Nebo to už dělá tlačítko
+# Update?" - UPDATE nic nemaze, ten jen stahuje novou verzi.)
+func _test_tap_reset() -> void:
+	var v: Node2D = _screen()
+	var g: Game = v.get("game")
+	var m: Menu = v.get("menu")
+	var l: ScreenLayout = v.get("layout")
+	var idx: int = Menu.MENU_ACTIONS.find("reset")
+	_check(idx >= 0, "v menu chybi tlacitko RESET")
+	if idx < 0:
+		v.queue_free()
+		return
+	# NASILNEJ POSTUP: neco, co ma reset smazat.
+	g.profile.body = 120
+	g.profile.best = 5
+	g.profile.level = 6
+	g.profile.perm["as"] = 3
+	_check(m.is_menu(), "test nezacina v menu")
+	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
+	_check(bool(v.get("reset_ask")), "klepnuti na RESET se na nic nezeptalo")
+	_check(l.dlg_b.size.x > 0.0, "dotaz na smazani nema tlacitko ZPET")
+	# KLEPNUTI MIMO ODPOVED NIC NEDELA (na tohle se neodpovida mimochodem).
+	v.call("_tap", Vector2(2.0, 2.0))
+	_check(bool(v.get("reset_ask")), "klepnuti mimo dotaz ho zavrelo")
+	_check(g.profile.body == 120, "dotaz uz neco smazal (%d bodu)" % g.profile.body)
+	# ZPET nic nemaze.
+	v.call("_tap", l.dlg_b.get_center())
+	_check(not bool(v.get("reset_ask")), "ZPET nezavrelo dotaz na smazani")
+	_check(g.profile.body == 120 and g.profile.perm_level("as") == 3,
+		"ZPET neco smazalo (body %d, as %d)" % [g.profile.body, g.profile.perm_level("as")])
+	# SMAZAT smaze profil a vrati hru na prvni level.
+	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
+	v.call("_tap", l.dlg_a.get_center())
+	_check(g.profile.body == 0, "SMAZAT nechal body (%d)" % g.profile.body)
+	_check(g.profile.best == 0 and g.profile.level == 1,
+		"SMAZAT nechal postup (level %d, best %d)" % [g.profile.level, g.profile.best])
+	_check(g.profile.perm_level("as") == 0, "SMAZAT nechal permanentni vylepseni")
+	_check(g.level == 1 and g.wave == 1, "hra nezacala znovu na prvnim levelu (%d/%d)" % [g.level, g.wave])
+	_check(m.is_menu(), "po smazani se neotevrelo menu")
+	_check(str(v.get("reset_note")) != "", "po smazani se hrac nedozvi, ze se neco stalo")
 	v.queue_free()
 
 

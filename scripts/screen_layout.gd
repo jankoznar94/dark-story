@@ -40,11 +40,11 @@ const MENU_BTN_MAX := 120.0
 # prepnuti neměnilo velikost (a aby se na uzkem displeji veslo).
 const PAUSE_BTN_MIN := 56.0
 const PAUSE_BTN_MAX := 132.0
-# TAB KATEGORIE A BUNKA UPGRADU. Tab musi jit zmacknout prstem (44 px) a IKONA
-# KATEGORIE V NEM MUSI BYT VIDET (Jan, Oct 2026: "Zvětšíme ikony kategorií
-# upgradu. Jak v menu tak v levelu.") - tab je proto vyssi nez driv, ikona
-# bere 84 % jeho vysky.
-const TAB_MIN := 44.0
+# TAB KATEGORIE A BUNKA UPGRADU. Tab musi jit zmacknout prstem (52 px) a IKONA
+# KATEGORIE V NEM MUSI BYT VIDET (Jan, Oct 2026: "Ikony tlačítek kategorií
+# upgradu jsou stále příliš malé.") - tab je proto jeste vyssi nez v prvnim
+# kole a ikona bere 90 % jeho vysky.
+const TAB_MIN := 52.0
 # MRIZKA UPGRADU: DVE BUNKY NA RADEK a kazda bunka je CELE TLACITKO - nazev,
 # aktualni hodnota a cena jsou UVNITR (Jan, Oct 2026: "Bude to grid. Dvě
 # obdélníková tlačítka na řádek. Každé tlačítko obsahuje název, cenu a aktuální
@@ -87,8 +87,13 @@ var pilgrim_r: float = 0.0
 # s nakupem je v bitve TRVALE OTEVRENY, takze nebylo co prepinat.
 var hud_menu: Rect2 = Rect2()
 # PAUZA / POKRAČOVAT - druhe tlacitko pruhu, VLEVO od MENU (odchod stoji
-# na kraji, kde ho hrac nehleda omylem).
+# na kraji, kde ho hrac nehleda omylem). Je to CTVEREC s IKONOU.
 var hud_pause: Rect2 = Rect2()
+# ZRYCHLENI HRY - treti tlacitko pruhu, vlevo od pauzy. Je VIDET jen kdyz si
+# hrac koupil special `gs` (`speed_visible`); jinak je prazdny obdelnik a jeho
+# misto dostane stavovy text.
+var hud_speed: Rect2 = Rect2()
+var speed_visible: bool = false
 var bar_text_w: float = 0.0
 var font_px: int = 16
 # DVOURADKOVY STAV: prvni radek je level/vlna, druhy zivoty a zlato. Dvakrat
@@ -168,6 +173,7 @@ func update(v: Vector2) -> void:
 		pilgrim_r = 0.0
 		hud_menu = Rect2()
 		hud_pause = Rect2()
+		hud_speed = Rect2()
 		bar_text_w = 0.0
 		shop_panel = Rect2()
 		shop_tabs = []
@@ -234,18 +240,32 @@ func fit_px(s: String, max_w: float, max_px: int, min_px: int = 10) -> int:
 	return px
 
 
-# HORNI PRUH: [stavovy text] [PAUZA] [MENU]. Sirka tlacitek se MERI (stejne jako
-# driv u "Vylepsit"), text dostane zbytek - jinak by se na uzkem displeji utnul.
+# HORNI PRUH: [stavovy text] [ZRYCHLENI] [PAUZA] [MENU]. Sirka tlacitek se MERI
+# (stejne jako driv u "Vylepsit"), text dostane zbytek - jinak by se na uzkem
+# displeji utnul.
+#
+# PAUZA JE IKONA, NE TEXT (Jan, Oct 2026: "Tlačítko Pause nebude mít text ale
+# velkou ikonu."). Nemerí se tedy z popisku: je to CTVEREC z vysky tlacitka,
+# takze je stejne velka jako ostatni a ikona se do ni vejde.
+#
+# ZRYCHLENI HRY (`hud_speed`) je v pruhu JEN kdyz si hrac koupil special -
+# dokud ho nema, neni co prepinat a prazdne tlacitko by bylo lez. Jeho misto
+# dostane stavovy text (`bar_text_w`).
 func _hud() -> void:
 	var pad: float = maxf(4.0, bar_h * 0.10)
 	var h: float = maxf(30.0, bar_h - 2.0 * pad)
 	var mw: float = clampf(measure_px("MENU", font_px) + 12.0, MENU_BTN_MIN, MENU_BTN_MAX)
 	hud_menu = Rect2(view.x - mw - pad, pad, mw, h)
-	# PAUZA / POKRAČOVAT: jedno tlacitko, dva vyznamy. Sirka je z DELSIHO
-	# popisku ("POKRAČOVAT"), takze se pri prepnuti stavu nic neposune.
-	var pw: float = clampf(measure_px("POKRAČOVAT", font_px) + 12.0, PAUSE_BTN_MIN, PAUSE_BTN_MAX)
+	var pw: float = maxf(BTN_MIN, h)
 	hud_pause = Rect2(hud_menu.position.x - pad - pw, pad, pw, h)
-	bar_text_w = maxf(0.0, hud_pause.position.x - 2.0 * pad)
+	var left: float = hud_pause.position.x
+	if speed_visible:
+		var sw: float = clampf(measure_px("2,5x", font_px) + 16.0, PAUSE_BTN_MIN, PAUSE_BTN_MAX)
+		hud_speed = Rect2(left - pad - sw, pad, sw, h)
+		left = hud_speed.position.x
+	else:
+		hud_speed = Rect2()
+	bar_text_w = maxf(0.0, left - 2.0 * pad)
 
 
 # --------------------------------------------------------------- PANEL S MRIZKOU
@@ -265,10 +285,11 @@ func grid_rows(cell_count: int) -> int:
 	return int(ceil(float(maxi(1, cell_count)) / float(GRID_COLS)))
 
 
-# VYSKA TABU KATEGORIE. Je to NOSNIK IKONY (ikona bere 84 % z ni), takze se
-# pocita z pisma a je vyssi nez driv - vetsi ikona je to, co Jan chtel videt.
+# VYSKA TABU KATEGORIE. Je to NOSNIK IKONY (ikona bere 90 % z ni), takze se
+# pocita z pisma a je vyssi nez driv - vetsi ikona je to, co Jan chtel videt
+# ("Ikony tlačítek kategorií upgradu jsou stále příliš malé.").
 func card_tabs_h() -> float:
-	return maxf(TAB_MIN, minf(62.0, float(font_px) * 2.7))
+	return maxf(60.0, minf(84.0, float(font_px) * 4.0))
 
 
 # VELIKOST PANELU PRO DANY POCET UPGRADU. Pocita se Z MRIZKY, ne naopak -
@@ -292,8 +313,10 @@ func layout_grid(r: Rect2, tab_count: int, cell_count: int, shrink: float = 1.0)
 		return out
 	var pad: float = maxf(8.0, r.size.x * 0.022)
 	var gap: float = maxf(6.0, r.size.x * 0.016)
-	# TABY MAJI PRIORITU: kdyz je panel nizky, zmensi se bunka, ne tab.
-	var tabs_h: float = minf(card_tabs_h(), maxf(TAB_MIN, r.size.y * 0.30))
+	# TABY MAJI PRIORITU: kdyz je panel nizky, zmensi se bunka, ne tab. Podil je
+	# 0,36 (driv 0,30) - tab je nosnik IKONY, ktera ma byt videt, a bunky maji
+	# vlastni podlahu (`CELL_MIN_H`), takze se nikdy nezmensi pod ni.
+	var tabs_h: float = minf(card_tabs_h(), maxf(TAB_MIN, r.size.y * 0.36))
 	var inner: float = r.size.x - 2.0 * pad
 	var tw: float = maxf(BTN_MIN, (inner - gap * float(tab_count - 1)) / float(tab_count))
 	var t: float = r.position.y + pad
@@ -324,11 +347,12 @@ func layout_grid(r: Rect2, tab_count: int, cell_count: int, shrink: float = 1.0)
 # (bile na pruhlednem), takze se do nej vejdou bez orezani a maji stejnou
 # velikost ve vsech tabech. Text popisku se do tabu uz nekresli.
 #
-# IKONA ZABIRA 84 % VYSKY TABU (Jan, Oct 2026: "Zvětšíme ikony kategorií
-# upgradu."): driv to bylo 66 %, takze ikona byla skoro polovicni. Sirku
-# orezava jen okraj tabu (`- 8 px`), aby ikona nikdy neprelezla ramecek.
+# IKONA ZABIRA 90 % VYSKY TABU (Jan, Oct 2026: "Ikony tlačítek kategorií
+# upgradu jsou stále příliš malé."): driv 66 %, pak 84 % - tab je nosnik ikony
+# a hrac ji ma cist, ne hadat. Sirku orezava jen okraj tabu, aby ikona nikdy
+# neprelezla ramecek.
 func tab_icon_rect(tr: Rect2) -> Rect2:
-	var side: float = minf(maxf(18.0, tr.size.y * 0.84), maxf(18.0, tr.size.x - 8.0))
+	var side: float = minf(maxf(18.0, tr.size.y * 0.90), maxf(18.0, tr.size.x - 8.0))
 	return Rect2(tr.position + (tr.size - Vector2(side, side)) * 0.5, Vector2(side, side))
 
 
@@ -349,6 +373,18 @@ func set_shop_shape(tabs: int, cells: int) -> void:
 # s jinym poctem, nez je radku.
 func set_upg_shape(cells: int) -> void:
 	upg_cell_count = maxi(1, cells)
+	if view.x >= 1.0 and view.y >= 1.0:
+		update(view)
+
+
+# ZRYCHLENI HRY: ma se v pruhu ukazat tlacitko? Vi to jen obrazovka (podle
+# toho, jestli si hrac koupil special), ale MISTO v pruhu pocita rozvrzeni -
+# tak si to musi predat. Kdyby si to obrazovka kreslila po svem, sedelo by
+# tlacitko jinde, nez se klika.
+func set_speed_visible(on: bool) -> void:
+	if speed_visible == on:
+		return
+	speed_visible = on
 	if view.x >= 1.0 and view.y >= 1.0:
 		update(view)
 

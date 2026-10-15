@@ -57,6 +57,12 @@ var _pressed: bool = false
 # DOTAZ PRI ODCHODU Z BOJE. Dokud je otevreny, partie se NEKROKUJE - hrac se
 # nema rozhodovat, zatimco mu umiraji poutnici.
 var leave_ask: bool = false
+# DOTAZ NA SMAZANI POSTUPU (tlacitko RESET v menu). Je to jedina akce, ktera
+# maze, takze se na ni VZDY ptá - a stejne jako odchod z boje partii zastavi.
+var reset_ask: bool = false
+# HLASKA PO SMAZANI POSTUPU (kresli se v menu; jinak by hrac nevidel, ze se
+# neco opravdu stalo).
+var reset_note: String = ""
 var shop_cat: int = 0
 var upg_cat: int = 0
 # STRANKA VYBERU LEVELU. Strankuje se jen tehdy, kdyz je odemcenych levelu vic
@@ -83,7 +89,7 @@ func _ready() -> void:
 # ktery dialog je prave otevreny. Bez toho by "ZPET DO HRY" u dotazu na
 # ukonceni neexistovalo (a klepnuti by nikam nevedlo).
 func _sync_dialogs() -> void:
-	layout.dialog_panel(leave_ask or (menu.is_battle() and game.phase == "won"))
+	layout.dialog_panel(leave_ask or reset_ask or (menu.is_battle() and game.phase == "won"))
 
 
 func _refield() -> void:
@@ -137,7 +143,7 @@ func _upg_stats() -> Array:
 # PANEL S UPGRADY TU NENI: stoji mimo herni plochu a hrac pod nim nakupuje ZA
 # POCHODU (Jan, Oct 2026).
 func is_halted() -> bool:
-	return leave_ask or game.is_over()
+	return leave_ask or reset_ask or game.is_over()
 
 
 func _process(dt: float) -> void:
@@ -146,6 +152,10 @@ func _process(dt: float) -> void:
 	_pull_js_state()
 	if layout.pal_rects.size() != game.palette.size():
 		layout.layout_palette(game.palette.size())
+	# ZRYCHLENI HRY: tlacitko v pruhu je jen kdyz si hrac koupil special.
+	# Rozvrzeni si to musi vzit z obrazovky (pocita to MISTO v pruhu).
+	if layout.speed_visible != (game.speed_options() > 1):
+		layout.set_speed_visible(game.speed_options() > 1)
 	_sync_shop_shape()
 	_sync_dialogs()
 	queue_redraw()
@@ -209,6 +219,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 # PORADI JE ZAVAZNE: to, co stoji NAD VSIM (dialog), je prvni. Hrac na dotaz
 # ma odpovedet, ne ho odklepnout necim jinym.
 func _tap(pos: Vector2) -> void:
+	if reset_ask:
+		_handle_reset_tap(pos)
+		return
 	if leave_ask:
 		_handle_leave_tap(pos)
 		return
@@ -235,6 +248,7 @@ func _tap(pos: Vector2) -> void:
 # =========================================================================
 
 func _handle_menu_tap(pos: Vector2) -> void:
+	reset_note = ""
 	for i in range(layout.menu_rects.size()):
 		if not (layout.menu_rects[i] as Rect2).has_point(pos):
 			continue
@@ -251,6 +265,11 @@ func _handle_menu_tap(pos: Vector2) -> void:
 				menu.open_upgrades()
 			"settings":
 				menu.open_settings()
+			"reset":
+				# MAZANI SE VZDY PTÁ: tlacitko je na kraji, ale i tak - hrac
+				# ma videt, o co prijde, nez se neco smaze.
+				reset_ask = true
+				_sync_dialogs()
 			"update":
 				menu.request_update()
 		return
@@ -361,6 +380,48 @@ func _do_leave() -> void:
 
 
 # =========================================================================
+# SMAZANI POSTUPU (RESET)
+#
+# Jedina akce, ktera maze. Neni to "restart partie" (to je tlacitko HRAT) ani
+# "stahni novou verzi" (UPDATE nic nemaze): maze se CELY PROFIL - body,
+# permanentni vylepseni, nejvyssi level i vyhrane levely. Proto se na ni vzdy
+# ptá dialogem a podtitul rekne, o co hrac prijde.
+# =========================================================================
+
+func _handle_reset_tap(pos: Vector2) -> void:
+	if layout.dlg_a.has_point(pos):
+		_do_reset()
+		return
+	if layout.dlg_b.has_point(pos):
+		reset_ask = false
+		return
+	# KLEPNUTI MIMO ODPOVED NIC NEDELA - na tohle se neodpovida mimochodem.
+
+
+func _do_reset() -> void:
+	var lost: int = game.profile.body
+	var lvl: int = game.profile.level
+	game.profile.reset()
+	game.start_level(1)
+	_refield()
+	reset_ask = false
+	menu.open_menu()
+	reset_note = "Postup smazán (bylo %d bodů, level %d)." % [lost, lvl]
+
+
+func _draw_reset() -> void:
+	var p: Profile = game.profile
+	var sub: String = "Přijdeš o %d bodů, permanentní vylepšení a postup do levelu %d." % [p.body, p.level]
+	var perm_total: int = 0
+	for k in p.perm.keys():
+		perm_total += p.perm_level(String(k))
+	if p.body <= 0 and p.best <= 1 and perm_total == 0:
+		sub = "Zatím není co smazat."
+	_draw_dialog("Smazat celý postup?", sub,
+		"SMAZAT", HP_LOW, "ZPĚT", Color(0.65, 0.78, 0.60))
+
+
+# =========================================================================
 # KONEC LEVELU: VYHRA A PROHRA
 #
 # Vyhra NENI konec hry: hrac si v klidu nakoupi permanentni upgrady a jde na
@@ -394,6 +455,11 @@ func _handle_battle_tap(pos: Vector2) -> void:
 		return
 	if layout.hud_menu.has_point(pos):
 		ask_leave()
+		return
+	# ZRYCHLENI HRY: prepne tempo. Je to ovladani HRY (jako pauza), takze funguje
+	# i pod pauzou - hrac si muze rozmyslet, jak rychle bude pokracovat.
+	if layout.hud_speed.size.x > 0.0 and layout.hud_speed.has_point(pos):
+		game.cycle_speed()
 		return
 	# POD PAUZOU DESKA NEREAGUJE NA NIC (krome pauzy a MENU vys): hrac ma cas
 	# premyslet, ne menit stav. Kdyby se pod pauzou dalo stavet a nakupovat,
@@ -431,6 +497,8 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, layout.view), BG)
 	if menu.is_menu():
 		_draw_menu()
+		if reset_ask:
+			_draw_reset()
 		return
 	if menu.is_levels():
 		_draw_levels()
@@ -624,22 +692,51 @@ func _draw_bar() -> void:
 	draw_rect(mr, TOWER_BODY, true)
 	draw_rect(mr, DIM, false, 2.0)
 	_label("MENU", mr, _fit_px("MENU", mr.size.x - 8.0, layout.font_px, 10), TEXT)
-	# PAUZA / POKRAČOVAT: jedno tlacitko, dva vyznamy. Hra bezi -> "PAUZA",
-	# hra stoji -> "POKRAČOVAT" a tlacitko se prebarvi na zlatou, takze stav
-	# nese barva i slovo (barva nikdy nesmi byt jedina znacka stavu). Sirka je
-	# z delsiho popisku, takze se pri prepnuti nic neposune.
+	# PAUZA / POKRAČOVAT: jedno tlacitko, dva vyznamy. NENI NA NEM TEXT, ale
+	# IKONA (Jan, Oct 2026: "Tlačítko Pause nebude mít text ale velkou ikonu.
+	# Ikonu pauzy, po kliknutí ikonu resume."). Stav nese TVAR (dve carky =
+	# stoji, trojuhelnik = bezi) i BARVA tlacitka (zlata = stoji), takze barva
+	# nikdy neni jediny nositel informace.
 	var pr: Rect2 = layout.hud_pause
 	var hold: bool = game.is_paused()
 	draw_rect(pr, MENU_EDGE_FIRST if hold else TOWER_BODY, true)
 	draw_rect(pr, MENU_EDGE_FIRST if hold else DIM, false, 2.0)
-	_label("POKRAČOVAT" if hold else "PAUZA", pr,
-		_fit_px("POKRAČOVAT", pr.size.x - 8.0, layout.font_px, 10),
-		GLYPH if hold else TEXT)
+	_draw_pause_icon(pr, hold)
+	# ZRYCHLENI HRY: tlacitko je v pruhu JEN kdyz si hrac koupil special
+	# (`layout.speed_visible`). Nese NAPSANOU hodnotu ("1,5x") - cislo je
+	# nositel stavu, barva jen doplnek.
+	if layout.hud_speed.size.x > 0.0:
+		var sr: Rect2 = layout.hud_speed
+		var fast: bool = game.time_scale() > 1.001
+		draw_rect(sr, MENU_EDGE_FIRST if fast else TOWER_BODY, true)
+		draw_rect(sr, MENU_EDGE_FIRST if fast else DIM, false, 2.0)
+		_label(Upgrades.value_text("gs", game.speed_step, 0), sr,
+			_fit_px("2,5x", sr.size.x - 8.0, layout.font_px, 10), GLYPH if fast else TEXT)
 	var note: String = game.last_note()
 	if note != "":
 		var npx: int = _fit_px(note, layout.view.x - 2.0 * pad, layout.font_px)
 		draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h + float(npx) * 1.6), note,
 			HORIZONTAL_ALIGNMENT_LEFT, layout.view.x - 2.0 * pad, npx, DIM)
+
+
+# IKONA PAUZY / POKRACOVAT. Dve tlusty carky = hra stoji, trojuhelnik (play) =
+# hra bezi - znak, ktery hrac zna z kazdeho prehravace. Kresli se do stredu
+# tlacitka, velikost z jeho strany (tlacitko je ctverec), takze je "velka" na
+# kazdem displeji. Barvu dostava zvenci: tmava na svetlem, tmava i na zlate.
+func _draw_pause_icon(r: Rect2, hold: bool) -> void:
+	var icon: Color = GLYPH
+	var c: Vector2 = r.get_center()
+	var s: float = minf(r.size.x, r.size.y) * 0.26
+	if hold:
+		# TROJUHELNIK DOPRAVA (play / pokracovat).
+		var tri := PackedVector2Array([
+			c + Vector2(-s * 0.66, -s), c + Vector2(-s * 0.66, s), c + Vector2(s * 0.98, 0.0)])
+		draw_colored_polygon(tri, icon)
+		return
+	# DVE CARKY (pause).
+	var w: float = maxf(3.0, s * 0.44)
+	draw_rect(Rect2(c.x - s * 0.78, c.y - s, w, 2.0 * s), icon, true)
+	draw_rect(Rect2(c.x + s * 0.78 - w, c.y - s, w, 2.0 * s), icon, true)
 
 
 # PALETA BAREV NAD PANELEM S UPGRADY. Tlacitko je PLNÝ KRUH v barve s rameckem
@@ -824,9 +921,9 @@ func _draw_shop() -> void:
 	_draw_grid(layout.shop_cells, stats, names, values, prices, afford)
 
 
-# OBRAZOVKA UPRAVY V MENU: permanentni stupne za body.
+# OBRAZOVKA VYLEPSENI V MENU (driv "UPRAVY"): permanentni stupne za body.
 func _draw_upgrades() -> void:
-	_label("UPRAVY", Rect2(0.0, upg_title_y(), layout.view.x, float(layout.menu_title_px)),
+	_label("VYLEPŠENÍ", Rect2(0.0, upg_title_y(), layout.view.x, float(layout.menu_title_px)),
 		layout.menu_title_px, Color(0.90, 0.87, 0.80))
 	_label(game.profile.menu_note(), Rect2(0.0, layout.upg_note_y, layout.view.x, float(layout.font_px) * 1.4),
 		layout.menu_sub_px, MENU_EDGE)
@@ -894,6 +991,12 @@ func _draw_menu() -> void:
 	# nevidel, ze se neco za vyhrane levely nasbiralo.
 	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_state_y, layout.view.x,
 		float(layout.menu_sub_px) * 1.4), layout.menu_sub_px, MENU_EDGE)
+	# HLASKA PO SMAZANI POSTUPU: jinak by hrac nevidel, ze reset opravdu
+	# probehl (a myslel by si, ze tlacitko nic nedela).
+	if reset_note != "":
+		_label(reset_note, Rect2(layout.view.x * 0.05, layout.menu_note_y,
+			layout.view.x * 0.9, float(layout.menu_sub_px) * 1.4),
+			layout.menu_sub_px, HP_LOW)
 	if not menu.update_note.is_empty():
 		_label(menu.update_note, Rect2(layout.view.x * 0.05, layout.menu_note_y,
 			layout.view.x * 0.9, float(layout.menu_sub_px) * 1.4),
