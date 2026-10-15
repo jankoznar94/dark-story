@@ -20,11 +20,33 @@ nepoužívá.
 - **Dostřel je konec paprsku, ne doba letu.** Věž svítí jen na to, co má
   v kruhu dostřelu a co vidí (`Tower.sees`). Přepnutí barvy paprsek **utrhne** —
   pravidlo „vystřeleno = doletí“ už neexistuje, protože není co doletovat.
+- **PAPRSEK KONČÍ NA PRSTENCI, NE VE STŘEDU TĚLA** (Jan, Oct 2026: „Laser končí
+  ve středu nepřítele, s hranatým zakončením. Stejně tak začíná i odraz. Je to
+  jak dva obdélníky vedle sebe.“). Každý poutník má **kruh své barvy**
+  (`Game.pilgrim_ring_r`, 1,30 × poloměr kresby) a paprsek se na jeho plášti
+  zastaví; odraz z něj na té straně, která je blíž k dalšímu cíli. Segmenty na
+  sebe přesně navazují, konce jsou **kulaté** (Godot hranaté konce neumí, obrazovka
+  je dokresluje kolečkem) a paprsek je **tenčí** než dřív (0,015 meritka místo
+  0,026 — na telefonu 2,3 px místo 4,1 px).
 - **Poškození je ZA SEKUNDU** (`Game.laser_dps`). Základ 10/s je stejné číslo
-  jako dřív (10 za ránu při kadenci 1/s), takže se změnil způsob, ne obtížnost;
-  roste upgradem *Poškození laseru*. **Kritická šance se rozpočítává do
-  průměru** (`× (1 + šance × (násobek − 1))`) — u plynulého paprsku nemá smysl
-  losovat každý snímek.
+  jako dřív (10 za ránu při kadenci 1/s), takže se změnil způsob, ne obtížnost.
+  **DPS jsou TŘI OSY, každá z tabulky upgradu:** *Poškození laseru* („ad“,
+  přičítá), *Síla paprsku* („ap“, **násobí** — chybějící modifikátor po zrušení
+  kadence) a kritika. **Síla paprsku** jde v menu 1,0× → 1,5× za body a v bitvě
+  za zlato **bez stropu** (každý krok +0,10), takže se hráč má čím držet kroku
+  s růstem životů.
+- **KRITICKÁ ŠANCE = PODÍL ČASU.** U plynulého paprsku nemá smysl losovat každý
+  snímek (hráč by viděl skákat čísla, která nikde nejsou), ale ani se nedá
+  „zamlčet“: paprsek proto **blikne** (`CRIT_FLASH_S` = 0,22 s) a během záblesku
+  bere `crit_dmg()` násobek. Průměr je přesně stejný jako u losování
+  (`× (1 + šance × (násobek − 1))`), jen je vidět — a čím větší šanci si hráč
+  koupí, tím častěji bliká (poměr svícení/pauza drží šanci). Záblesk je **plochý
+  zbělený tón**, ne světlo kolem světla.
+- **ZLATO ROSTE S OBTÍŽNOSTÍ** (`GOLD_LEVEL` 1,30 za level, od Oct 2026): životy
+  poutníků rostou 1,40× za level, takže kdyby zlato stálo, hráč by za stejné
+  peníze kupoval pořád slabší věž. Změřeno simulatorem: i hráč, který sype
+  **všechno** do poškození, padal na 6. levelu v první vlně — permanentní
+  žebříčky měl vykoupené a zlato se mu na startu levelu vrátilo na 150.
 - **ODRAZ** (dřív Ricochet, Jan: „RICOHET přejmenujeme na Odraz a bude se takhle
   laser šířit na další nepřátele, podobně jako ricochet, ale bez projektilů.
   A každý odraz bude dávat menší poškození. S levelem upgradu se bude zvyšovat
@@ -33,8 +55,8 @@ nepoužívá.
   i mimo dostřel — je to odraz, ne zaměření. Každý dostane nejvýš jednou a
   **každý další odraz je slabší** (1. stupeň 1 odraz na 50 %, 2. dva na 60 %,
   3. tři na 70 %, 4. čtyři na 80 % — obě čísla drží jedna položka tabulky
-  `Upgrades.chain_of`). Paprsek odrazu je **tenčí** a vychází **z těla předchozí
-  oběti**, takže je vidět, kam až se světlo rozšířilo.
+  `Upgrades.chain_of`). Paprsek odrazu je **tenčí** a vychází **z prstence
+  předchozí oběti**, takže je vidět, kam až se světlo rozšířilo.
 - **VÝJIMKA: FIALOVÁ PO ZNEVIDITELNĚNÍ.** Když fialová po prvním zásahu zmizí,
   paprsek na ni **přestane svítit** (a odraz si ji nevybere) — dokud je duch,
   nedá se jí ublížit. Po objevení platí normální pravidla dál.

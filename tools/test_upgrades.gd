@@ -16,6 +16,7 @@ func _init() -> void:
 	_run("hodnota je start + (permanentni + docasne) kroky, orezana stropem", _test_value)
 	_run("permanentni stupen posouva start, cena docasneho kroku se NEMENI", _test_perm_shifts_start)
 	_run("docasna cena je 5x N a je stejna pro kazdou kategorii", _test_temp_cost)
+	_run("sila paprsku je nasobici osa (1,0x - 1,5x a v bitve dal)", _test_beam_power)
 	_run("permanentni cena roste a specialy jsou drazsi", _test_perm_cost)
 	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
 	_run("soucty: kazdy stat ma start, krok, strop a stropy dava smysl", _test_table_sane)
@@ -123,6 +124,25 @@ func _test_perm_shifts_start() -> void:
 	_check(absf(d - 4.0) < 0.0001, "dva permanentni stupne neposunuly start o 4/s (%.3f)" % d)
 
 
+# SILA PAPRSKU ("ap") JE NASOBICI OSA - jediny parametr, ktery nasobi paprsek
+# jako celek. Vznikl proto, ze s projektily skoncila i kadence a hrac nemel
+# cim drzet krok s rustem zivotu (Jan, Oct 2026: "...vlastně chybí jeden
+# modifikátor a hráč nestíhá věž vylepšovat...").
+func _test_beam_power() -> void:
+	# V MENU JE MALY ZEBRICEK: 1,0x az 1,5x za body.
+	_check(absf(Upgrades.value_of("ap", 0, 0) - 1.0) < 0.0001, "zakladni sila paprsku neni 1,0x")
+	_check(absf(Upgrades.value_of("ap", 5, 0) - 1.5) < 0.0001,
+		"sila paprsku na poslednim permanentním neni 1,5x (%.2f)" % Upgrades.value_of("ap", 5, 0))
+	_check(Upgrades.perm_max("ap") == 5, "sila paprsku nema pet permanentnich stupnu")
+	# A V BITVE POKRACUJE DAL: kazdy dalsi krok za zlato prida 0,10 na nasobek.
+	_check(absf(Upgrades.value_of("ap", 5, 4) - 1.9) < 0.0001,
+		"docasne kroky nepokracuji v nasobeni (%.2f)" % Upgrades.value_of("ap", 5, 4))
+	_check(Upgrades.temp_buyable("ap"), "sila paprsku se v bitve neda koupit")
+	_check(Upgrades.temp_cost("ap", 0) == 5, "prvni krok sily paprsku nestoji 5 zlata")
+	_check(Upgrades.value_text("ap", 5, 0) == "1,5x",
+		"text sily paprsku neni 1,5x (%s)" % Upgrades.value_text("ap", 5, 0))
+
+
 func _test_temp_cost() -> void:
 	_check(Upgrades.temp_cost("ad", 0) == 5, "prvni docasny krok nestoji 5 zlata")
 	_check(Upgrades.temp_cost("ad", 1) == 10, "druhy docasny krok nestoji 10 zlata")
@@ -201,7 +221,7 @@ func _test_table_sane() -> void:
 			_check(Upgrades.temp_buyable(id), "%s: neomezeny zebricek se v bitve nenabizi" % id)
 		else:
 			_check(int(Upgrades.temp_max(id)) == 0, "%s: docasny zebricek neni ani neomezeny, ani perm-only" % id)
-	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 4, "kategorie utok nema 4 parametry")
+	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 5, "kategorie utok nema 5 parametru")
 	_check(Upgrades.stats_in(Upgrades.CAT_DEF).size() == 3, "kategorie obrana nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_ECO).size() == 3, "kategorie ekonomika nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 5, "kategorie special nema 5 parametru")

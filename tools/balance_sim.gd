@@ -20,11 +20,19 @@ extends SceneTree
 # DOSTREL TU NENI - je jen permanentni (v bitve se ani nenabizi).
 # KADENCE TU NENI TAKY: od Oct 2026 vez sviti laserem a zadny Attack speed
 # upgrade neexistuje (Jan: "Tim padem zrusime uplne Attack speed upgrady").
-const TEMP_ORDER := ["ad", "ad", "ad", "hp", "am", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
+const TEMP_ORDER := ["ad", "ap", "ad", "ap", "hp", "am", "cc", "hp", "rg", "cd", "gk", "gw", "gl"]
+# HRAC, KTERY SYPE VSECHNO DO POSKOZENI (Jan, Oct 2026: "...a hráč nestíhá věž
+# vylepšovat tak, aby stíhala zabíjet všechny nepřátele, i když investuje
+# všechny peníze do poškození."). Tohle je merko teho, jestli se hra da dohrat
+# silou: kdyz i tenhle hrac padne, neni to o hracovi, ale o tabulce.
+# `--order=damage`
+const ALLIN_ORDER := ["ad", "ap", "ad", "ap", "ad", "ap", "ad", "ap", "hp", "hp"]
 # V MENU: co koupit permanentne. Dostrel je tu vzdy - v bitve jinak neni.
-const PERM_ORDER := ["ad", "ar", "ad", "hp", "am", "ar", "cc", "rg", "cd", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
+const PERM_ORDER := ["ad", "ar", "ap", "ad", "hp", "am", "ar", "cc", "rg", "cd", "hp", "gk", "ps", "ic", "ms", "gw", "gl", "rc"]
 
 var levels_limit: int = 8
+# KTERY HRAC SE HRAJE (viz `ALLIN_ORDER`).
+var temp_order: Array = TEMP_ORDER
 # CASOVY STROP PARTIE. Deset vln na level znamena ~5 minut na level, takze
 # strop musi byt vysoky - jinak sim skonci "DOHRANO" a nic to nerekne o tom,
 # kde se hra opravdu láme.
@@ -40,6 +48,8 @@ func _init() -> void:
 			levels_limit = int(a.split("=")[1])
 		if a.begins_with("--time="):
 			time_limit = float(a.split("=")[1])
+		if a.begins_with("--order="):
+			temp_order = ALLIN_ORDER if a.split("=")[1] == "damage" else TEMP_ORDER
 	_run()
 	quit()
 
@@ -83,7 +93,7 @@ func _run() -> void:
 
 # NAKUPOVANI V BITVE: kazdy snimek zkusi koupit nejblizsi krok z priority.
 func _play(g: Game) -> void:
-	for id in TEMP_ORDER:
+	for id in temp_order:
 		var have: int = g.temp_level(id)
 		# DOCASNE ZEBRICKY JSOU NEOMEZENE - ptáme se na cenu, ne na strop.
 		if Upgrades.temp_is_maxed(id, have):

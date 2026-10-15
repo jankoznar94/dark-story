@@ -83,8 +83,17 @@ func _test_beams_are_lines() -> void:
 	var src: String = _src()
 	_check(src.contains("for b in game.beams"), "paprsky se vubec nekresli")
 	_check(src.contains("game.beam_w("), "paprsek se nekresli jako cara")
-	_check(src.contains("draw_line(b[\"from\"], q.pos, GLYPH"),
+	_check(src.contains("_beam_line(b[\"from\"], b[\"to\"], GLYPH"),
 		"paprsek nema tmavy obrys - na svetlem poutnikovi se ztrati")
+	# KULATE ZAKONCENI. Godot kresli caru s hranatym koncem; kdyby se kazdy
+	# konec nedokreslil koleckem, hrac vidi "dva obdelniky vedle sebe" (Jan,
+	# Oct 2026).
+	_check(src.contains("draw_circle(a, w * 0.5, c)") and src.contains("draw_circle(b, w * 0.5, c)"),
+		"paprsek ma hranate konce - v prstenci poutnika je videt svar")
+	# PRSTENEC KOLEM POUTNIKA. Je to hranice, na ktere paprsek konci; kdyby se
+	# nekreslil, hrac vidi caru, ktera se z niceho nic zastavi ve vzduchu.
+	_check(src.contains("game.pilgrim_ring_r(p)"),
+		"prstenec kolem poutnika se nekresli - paprsek konci ve prazdnu")
 	# POZOR: `check_symbols.py` hlida kazdy vyskyt "game.<neco>" v obrazovkach,
 	# takze se ten nazev sklada az za behu - jinak by si nastroj myslel, ze se
 	# obrazovka porad dozaduje projektu, ktere hra uz nema.

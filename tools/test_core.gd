@@ -23,9 +23,10 @@ func _init() -> void:
 	_run("paprsek ma sirku a odraz je tensi", _test_beam_width)
 	_run("prepinani barvy neprida poskozeni", _test_hue_switch_does_not_double_damage)
 	_run("kriticka sance a poskozeni jsou z tabulky upgradu", _test_crit)
+	_run("bez sance na krit paprsek neblika", _test_crit_flash_needs_chance)
 	_run("multishot drzi vic cilu a kazdy ma svuj paprsek", _test_multishot)
 	_run("odraz se siri na stejnou barvu, kazdy dostane nejvyse jednou a mene", _test_odraz)
-	_run("paprsek odrazu vychazi z tela predchozi obeti (odraz je videt)", _test_odraz_beam_is_visible)
+	_run("paprsek odrazu vychazi z prstence predchozi obeti (odraz je videt)", _test_odraz_beam_is_visible)
 	_run("prepsani barvy paprsek utrhne (laser neni strela, ktera uz leti)", _test_hue_switch_stops_the_beam)
 	_run("zmizele fialove paprsek zhasne (duch je imunni)", _test_vanish_stops_the_beam)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
@@ -38,6 +39,7 @@ func _init() -> void:
 	_run("level ma deset vln a za vyhru jsou body", _test_level_flow)
 	_run("dalsi level: zlato znovu, docasne kroky pryc", _test_next_level)
 	_run("obtiznost roste s levelem, barvy po levelech", _test_difficulty)
+	_run("zlato roste s obtiznosti (start i za zabiti)", _test_gold_scales_with_level)
 	_run("nove barvy prichazeji po levelech, ne uprostred bitvy", _test_hue_unlock)
 	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
@@ -255,7 +257,10 @@ func _test_laser_retargets_after_death() -> void:
 
 func _test_beam_width() -> void:
 	var g: Game = _phone()
-	_check(g.beam_w(0) > 3.0, "paprsek je prilis tenky (%.2f px)" % g.beam_w(0))
+	# PAPRSEK JE TENSI (Jan, Oct 2026: "Laser je teď příliš tlustý."). Driv
+	# 0,026 z meritka = 4,05 px na telefonu; ted 0,015 = 2,34 px. Hranice
+	# v testu je proto 2 px, ne 3 - hlida jen to, ze paprsek nezmizi.
+	_check(g.beam_w(0) > 2.0, "paprsek je prilis tenky (%.2f px)" % g.beam_w(0))
 	_check(g.beam_w(3) < g.beam_w(0),
 		"odraz je stejne silny jako hlavni paprsek - hrac nevidi, ktery cil je hlavni")
 	_check(g.beam_w(3) > 0.5, "odraz se zuzil na nulu (%.2f px)" % g.beam_w(3))
@@ -311,15 +316,52 @@ func _test_crit() -> void:
 	var want: float = 10.0 * (1.0 + 0.40 * 1.5)
 	_check(absf(g.laser_dps() - want) < 0.01,
 		"stredni poskozeni s kritikou neni %.1f (je %.2f)" % [want, g.laser_dps()])
-	# A JE TO VIDET VE HRE: za sekundu paprsek ubere presne tolik.
+	# KRIT JE VIDET JAKO ZABLESK, ne jako skakani cisel: sanci jsme prevedli na
+	# PODIL CASU. Meri se proto dve veci - ze prumer za deset sekund sedi na
+	# `laser_dps()` a ze kazdy snimek je presne bud zaklad, nebo zaklad x krit.
 	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.7)
 	p.speed = 0.0
-	p.hp = 100000.0
-	p.max_hp = 100000.0
-	var hp0: float = p.hp
-	_tick(g, 1.0)
-	_check(absf((hp0 - p.hp) - want) < 0.2,
-		"za sekundu paprsek ubral %.2f, cekano %.2f" % [hp0 - p.hp, want])
+	var dt: float = 1.0 / 240.0
+	var steps: int = 2400
+	var lit: int = 0
+	var total: float = 0.0
+	var off_scale: bool = false
+	for i in range(steps):
+		p.hp = 1000000.0
+		p.max_hp = 1000000.0
+		var before: float = p.hp
+		g.step(dt)
+		var drop: float = before - p.hp
+		total += drop
+		if g.crit_active():
+			lit += 1
+		var base: float = g.laser_base() * dt
+		if absf(drop - base) > 0.001 and absf(drop - base * g.crit_dmg()) > 0.001:
+			off_scale = true
+	var want10: float = want * float(steps) * dt
+	_check(not off_scale, "snimek neni ani zaklad, ani nasobek kritiky - hrac vidi cisla, ktera nikde nejsou")
+	_check(absf(total - want10) < want10 * 0.02,
+		"za 10 s paprsek ubral %.1f, cekano %.1f" % [total, want10])
+	var duty: float = float(lit) / float(steps)
+	_check(absf(duty - 0.40) < 0.02,
+		"sance na krit se nepromitla do podilu casu (sviti %.3f, sance je 0,40)" % duty)
+
+
+# SANCE 0 = ZADNY ZABLESK. Kdyby zablesk svitil i bez koupene kritiky, hrac by
+# videl ucinek, ktery si nezaplatil (a cisla v tabulce by lhala).
+func _test_crit_flash_needs_chance() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	_check(g.crit_chance() <= 0.0, "novy profil uz ma sanci na krit")
+	_place(g, Hue.RED, g.range_frac() * 0.7).speed = 0.0
+	var flashed: int = 0
+	for i in range(1200):
+		g.step(1.0 / 240.0)
+		if g.crit_active():
+			flashed += 1
+	_check(flashed == 0, "krit blika i bez sance na krit (%d snimku)" % flashed)
+	_check(absf(g.laser_now_dps() - g.laser_base()) < 0.001,
+		"okamzity vykon neni zakladni, i kdyz krit nemuze nastat")
 
 
 func _test_multishot() -> void:
@@ -391,7 +433,8 @@ func _test_odraz() -> void:
 	_check(absf(drop_d - g2.laser_dps() * 0.5 * dt) < 0.02,
 		"odraz nedava polovinu poskozeni (%.4f, cekano %.4f)" % [drop_d, g2.laser_dps() * 0.5 * dt])
 	_check(is_equal_approx(other.hp, o0), "odraz zasahl i jinou barvu")
-	_check(g2.beams.size() == 2, "na dva cile v retezu nesviti dva paprsky (%d)" % g2.beams.size())
+	_check(g2.beams.size() == 3,
+		"na dva cile v retezu nesviti tri segmenty (%d)" % g2.beams.size())
 
 	# DRUHY STUPEN: vic odrazu, mensi penalizace (Jan: "S levelem upgradu se bude
 	# zvyšovat počet odrazů a bude snižovat penalizace za odraz").
@@ -404,8 +447,9 @@ func _test_odraz() -> void:
 
 # ODRAZ JE VIDET (Jan, Oct 2026: "Ricochet musí mít nějakou animaci... Teď
 # uděluje poškození, ale není nic vidět."). Paprsek odrazu musi VZNIKNOUT
-# V TELE predchozi obeti, ne v novem cili - jinak by to byl druhy paprsek
-# z veze a hrac by nevidel, ze se svetlo siri.
+# NA PRSTENCI predchozi obeti, ne v novem cili - jinak by to byl druhy paprsek
+# z veze a hrac by nevidel, ze se svetlo siri. Jan (Oct 2026): "Laser by mohl
+# končit (a odraz začínat) na plášti toho kruhu."
 func _test_odraz_beam_is_visible() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
@@ -421,7 +465,7 @@ func _test_odraz_beam_is_visible() -> void:
 	var first: Dictionary = {}
 	var second: Dictionary = {}
 	for bm in g.beams:
-		if int(bm["hop"]) == 0:
+		if int(bm["hop"]) == 0 and first.is_empty():
 			first = bm
 		elif int(bm["hop"]) == 1:
 			second = bm
@@ -429,8 +473,16 @@ func _test_odraz_beam_is_visible() -> void:
 	_check(not second.is_empty(), "odraz vubec nevznikl - hrac nevidi, ze se paprsek siri")
 	_check((first["from"] as Vector2).distance_to(g.center) <= g.tower_r + 1.0,
 		"hlavni paprsek nevychazi z veze")
-	_check((second["from"] as Vector2).distance_to((first["target"] as Pilgrim).pos) < 1.0,
-		"odraz nevychazi z tela predchozi obeti (nema se od ceho odrazit)")
+	var victim: Pilgrim = first["target"]
+	var want_r: float = g.pilgrim_ring_r(victim)
+	_check(absf((second["from"] as Vector2).distance_to(victim.pos) - want_r) < 0.5,
+		"odraz nevychazi z prstence predchozi obeti (je %.2f od stredu, prstenec je %.2f)"
+		% [(second["from"] as Vector2).distance_to(victim.pos), want_r])
+	# A KONEC PAPRSKU JE NA PLASHTI, NE VE STREDU TELA (Jan: "Laser končí ve
+	# středu nepřítele, s hranatým zakončením... Je to jak dva obdélníky.").
+	var last: Dictionary = g.beams[g.beams.size() - 1]
+	_check(absf((last["to"] as Vector2).distance_to((last["target"] as Pilgrim).pos) - want_r) < 0.5,
+		"paprsek nekonci na prstenci cile, ale ve stredu tela")
 
 
 # LASER NENI STRELA, KTERA UZ LETI. Jan (Oct 2026): "Barva laseru bude podle
@@ -761,7 +813,9 @@ func _test_next_level() -> void:
 	_check(g.level == 2, "dalsi level neni druhy (%d)" % g.level)
 	_check(g.wave == 1, "dalsi level nezacina prvni vlnou (%d)" % g.wave)
 	_check(g.temp.is_empty(), "docasne kroky prezily do dalsiho levelu (%s)" % str(g.temp))
-	_check(g.gold == Game.START_GOLD + int(round(g.val("gl"))),
+	# ZLATO ZACINA ZNOVU, ALE S NASOBILEM LEVELU (viz `Game.GOLD_LEVEL`): hrac
+	# nedostane vzdy 150, ale tolik, kolik si zadá obtiznost levelu.
+	_check(g.gold == int(round(float(Game.START_GOLD) * g.gold_mult())) + int(round(g.val("gl"))),
 		"zlato nezacalo znovu (%d)" % g.gold)
 	_check(g.phase == "build", "dalsi level nezacina pripravou (%s)" % g.phase)
 	_check(absf(g.hp - g.max_hp) < 0.01, "vez nezacina s plnými zivoty")
@@ -895,6 +949,40 @@ func _test_pause() -> void:
 	_check(not g.is_paused(), "druhy toggle_pause hru nespustil")
 	_tick(g, 0.5)
 	_check(not p.pos.is_equal_approx(held), "po druhem toggle_pause se poutnik nepohnul")
+
+
+# ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku jdou 1,40x za level; kdyby zlato
+# stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
+# zlomila na startu levelu. Meri se OBÉ strany: zlato za zabiti i zlato na startu.
+func _test_gold_scales_with_level() -> void:
+	var a: Game = _fresh()
+	a.tower.hue = Hue.RED
+	var p1: Pilgrim = _place(a, Hue.RED, a.range_frac() * 0.5)
+	p1.speed = 0.0
+	p1.hp = 1.0
+	p1.max_hp = 1.0
+	var a0: int = a.gold
+	_tick(a, 0.5)
+	var drop1: int = a.gold - a0
+	_check(drop1 == Hue.gold_of(Hue.RED),
+		"zabiti na prvnim levelu neda zakladni zlato (%d, cekano %d)" % [drop1, Hue.gold_of(Hue.RED)])
+
+	var b: Game = _fresh()
+	b.tower.hue = Hue.RED
+	b.start_level(4)
+	_check(b.gold_mult() > 1.0, "nasobek zlata na 4. levelu je porad 1,0")
+	_check(b.gold > Game.START_GOLD,
+		"start 4. levelu neni bohatsi nez prvni (%d)" % b.gold)
+	var want: float = float(Hue.gold_of(Hue.RED)) * b.gold_mult()
+	var p2: Pilgrim = _place(b, Hue.RED, b.range_frac() * 0.5)
+	p2.speed = 0.0
+	p2.hp = 1.0
+	p2.max_hp = 1.0
+	var b0: int = b.gold
+	_tick(b, 0.5)
+	var drop2: int = b.gold - b0
+	_check(absf(float(drop2) - want) <= 1.0,
+		"zabiti na 4. levelu neda vetsi zlato (%d, cekano %.1f)" % [drop2, want])
 
 
 # FIALOVA JE NEJPOMALEJSI. Jan (Oct 2026): "Upravime rychlost fialovych

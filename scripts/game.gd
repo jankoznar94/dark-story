@@ -47,6 +47,14 @@ const LEVEL_HP := 1.40
 # premerit `tools/balance_sim.gd`.
 const WAVE_HP := 1.06
 const START_GOLD := 150
+# ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku rostou 1,40x za level; kdyby zlato
+# stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
+# zlomila - zmereno simulatorem (`tools/balance_sim.gd --order=damage`): hrac,
+# ktery sype VSECHNO do poskozeni, padl na 6. levelu v prvni vlne, protoze
+# permanentni zebricky uz mel vykoupené a zlato se mu na kazdem levelu vratilo
+# na 150. Zlato za zabiti, za vlnu i na startu levelu proto roste stejnym
+# krokem jako obtiznost.
+const GOLD_LEVEL := 1.30
 const BUILD_TIME := 5.0
 # VELIKOST VLNY (Oct 2026). Jan: "Počet nepřátel v jednotlivých vlnách bude
 # obecně vyšší. V prvních levelech bude začínat třeba na 15. Ve vyšších to budou
@@ -97,8 +105,16 @@ const SPAWN_WAVE_S := 55.0
 # LASER. Neni to strela, co leti - je to paprsek, ktery sviti, dokud je cil
 # v dostrelu a vez ho vidi. Sirka je podil MERITKA a s kazdym odrazem se
 # zužuje, aby hrac na prvni pohled videl, ktery cil je hlavni.
-const BEAM_W_FRAC := 0.026
+const BEAM_W_FRAC := 0.015
 const BEAM_TAPER := 0.72
+# PRSTENEC KOLEM POUTNIKA. Paprsek se na nem zastavi - konci na jeho PLASHTI,
+# ne ve stredu tela (Jan, Oct 2026: "Laser končí ve středu nepřítele, s hranatým
+# zakončením. Stejně tak začíná i odraz. Je to jak dva obdélníky vedle sebe.
+# Možná by bylo dobré, kdyby každý nepřítel byl v malém kruhu (své barvy). Laser
+# by mohl končit (a odraz začínat) na plášti toho kruhu."). Je to podil polomeru
+# kresby poutnika; kruh je i VIDET (kresli ho obrazovka), aby hrac videl, kde
+# paprsek konci, a aby to nebyla jen neviditelna hranice ve vzduchu.
+const RING_FRAC := 1.30
 # POSKOZENI LASERU (za sekundu) JE PARAMETR HRACE ("Ještě musíme přidat upgrade
 # pro Attack damage", Jan Oct 2026) - hledej `laser_dps()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.
@@ -159,6 +175,16 @@ var beams: Array = []
 # KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
 # merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
 var beams_lit: int = 0
+# KRITICKY ZASAH JAKO ZABLESK. U spojiteho paprsku se neda losovat kazdy
+# snimek - hrac by videl skakat cisla, ktera nikde nejsou. Sance se proto
+# prevede na PODIL CASU: paprsek blika ostrym svetlem kratce po sobe
+# (`CRIT_FLASH_S`) a behem zabliknuti bere `crit_dmg()` nasobek. Stredni
+# poskozeni je presne stejne jako driv (`laser_dps()`), ale hrac ho VIDI -
+# a kdyz si koupi vetsi sanci, blika to casteji, ne "vic do prazdna".
+const CRIT_FLASH_S := 0.22
+# Kolik jeste bude zablesk svitit / kolik se ma cekat na dalsi.
+var crit_left: float = 0.0
+var crit_wait: float = 0.0
 var rng := RandomNumberGenerator.new()
 
 
@@ -224,12 +250,54 @@ func range_frac() -> float:
 # POSKOZENI LASERU ZA SEKUNDU. Zaklad 10 je v `Upgrades.STATS` pod id "ad" -
 # zadna druha konstanta, ktera by o upgradu nevedela.
 #
+# JSOU TO TRI OSY, KAZDA Z TABULKY UPGRADU:
+#   * "ad" - pevne poskozeni (start + krok za kazdou koupenou uroven),
+#   * "ap" - SÍLA PAPRSKU, nasobici osa (1,0x - a v bitve za zlato dal),
+#   * kritika - nasobic prumeru.
+#
 # KRITIKA SE ROZPOCITAVA DO PRUMERU: u plynuleho paprsku nema smysl losovat
 # kazdy snimek (a hrac by videl skakat cisla, ktera nikde nejsou). Stredni
 # hodnota je stejna, jako kdyby se losovalo: dps * (1 + sance * (nasobek - 1)).
+# TO CISLO JE "CO HRAC DOSTANE V PRUMERU" - okamzity vykon behem zablesku je
+# `laser_now_dps()` a obrazovka ho kresli svetlejsim paprskem.
+func laser_base() -> float:
+	return maxf(1.0, val("ad")) * maxf(0.05, val("ap"))
+
+
 func laser_dps() -> float:
-	var base: float = maxf(1.0, val("ad"))
-	return base * (1.0 + crit_chance() * (crit_dmg() - 1.0))
+	return laser_base() * (1.0 + crit_chance() * (crit_dmg() - 1.0))
+
+
+# SVITI PRAVE TED ZABLESK KRITIKY?
+func crit_active() -> bool:
+	return crit_left > 0.0
+
+
+# OKAMZITY VYKON PAPRSKU (behem zablesku nasobek kritiky). Hra ubira TOHLE,
+# obrazovka to i tak kresli - kdyby hra brala prumer a obrazek ukazoval
+# zablesk, hrac by videl neco jineho, nez co se deje.
+func laser_now_dps() -> float:
+	return laser_base() * (crit_dmg() if crit_active() else 1.0)
+
+
+# ZABLESK KRITIKY. Sance na krit = podil casu, kdy paprsek sviti ostře:
+# zablesk trva `CRIT_FLASH_S` a pauza mezi zablesky je `CRIT_FLASH_S * (1-sance)/sance`.
+# Soucet je porad presne 1 - proto se stredni poskozeni nezmeni, jen je videt.
+# Sance >= 1 znamena, ze paprsek sviti ostře porad (a dalsi kroky uz nic nepridaji).
+func _tick_crit(dt: float) -> void:
+	var cc: float = clampf(crit_chance(), 0.0, 1.0)
+	if cc <= 0.0:
+		crit_left = 0.0
+		crit_wait = 0.0
+		return
+	if crit_left > 0.0:
+		crit_left = maxf(0.0, crit_left - dt)
+		if crit_left <= 0.0:
+			crit_wait = CRIT_FLASH_S * (1.0 - cc) / cc
+		return
+	crit_wait = maxf(0.0, crit_wait - dt)
+	if crit_wait <= 0.0:
+		crit_left = CRIT_FLASH_S
 
 
 # ODRAZ: kolik skoku paprsek udela a kolik si kazdy jeste odnese. Obe cisla
@@ -324,13 +392,15 @@ func start_level(n: int) -> void:
 	locks = []
 	beams = []
 	beams_lit = 0
+	crit_left = 0.0
+	crit_wait = 0.0
 	# TEMPO ZACINA VZDY NA 1,0x (Jan, Oct 2026: "Výchozí vždy 1.0x."). Upgrade
 	# jen otevira moznost si ho v bitve prepnout - hrac si ma kazdou partii
 	# zvolit, jak rychle ji chce hrat.
 	speed_step = 0
 	max_hp = val("hp")
 	hp = max_hp
-	gold = START_GOLD + int(round(val("gl")))
+	gold = int(round(float(START_GOLD) * gold_mult())) + int(round(val("gl")))
 	plan = []
 	spawned = 0
 	refresh_palette()
@@ -437,6 +507,7 @@ func step(dt: float) -> void:
 	_regen(dt)
 	_move(dt)
 	_aim()
+	_tick_crit(dt)
 	_laser(dt)
 	_advance_effects(dt)
 	_prune()
@@ -483,7 +554,7 @@ func _start_wave() -> void:
 # KONEC VLNY. Kdyz to byla posledni vlna levelu, level je vyhrany - a to je
 # jedine misto, kde hrac dostane body.
 func _wave_clear() -> void:
-	gold += WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave + int(round(val("gw")))
+	gold += int(round(float(WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave) * gold_mult())) + int(round(val("gw")))
 	_note("Vlna %d odražena." % wave)
 	if wave >= waves_in_level():
 		_level_won()
@@ -560,6 +631,12 @@ func wave_plan(n: int) -> Array:
 		out[i] = out[j]
 		out[j] = t
 	return out
+
+
+# NASOBEK ZLATA PRO TENTO LEVEL. Jedno misto, odkud se bere - kdyby si to
+# kazde misto pocitalo samo, jedna cast hry by rostla a druha ne.
+func gold_mult() -> float:
+	return pow(GOLD_LEVEL, float(maxi(0, level - 1)))
 
 
 # ZIVOTY POUTNIKA. Obtiznost roste s levelem (a malo i s vlnou v levelu).
@@ -743,19 +820,34 @@ func _laser(dt: float) -> void:
 	for p in pilgrims:
 		p.burning_now = false
 	var r: float = range_px()
-	var dps: float = laser_dps()
+	var dps: float = laser_now_dps()
 	var strength: float = odraz_strength()
+	var crit: bool = crit_active()
 	for p in locks:
 		if not p.alive or not tower.sees(p) or not in_range(p, r):
 			continue
 		var chain: Array = _chain(p)
-		var from: Vector2 = center + (p.pos - center).normalized() * tower_r
+		# PAPRSEK ZACINA NA PLASHTI VEZE a konci na prstenci cile - ne na
+		# stredu tela. Kdyz paprsek sviti pres poutnika (odraz na dalsi),
+		# projde skrz nej: vstoupi na blizsi strane prstence a vystoupi na
+		# te, ktera je bliz k dalsimu cili. Diky tomu na sebe segmenty
+		# Presne navazuji a nikde neni "svar" (Jan: "Je to jak dva obdelniky
+		# vedle sebe.").
+		var from_pt: Vector2 = center + (chain[0].pos - center).normalized() * tower_r
 		for i in range(chain.size()):
 			var q: Pilgrim = chain[i]
-			beams.append({"from": from, "target": q, "hop": i})
+			var rr: float = pilgrim_ring_r(q)
+			var entry: Vector2 = q.pos - (q.pos - from_pt).normalized() * rr
+			beams.append({"from": from_pt, "to": entry, "target": q, "hop": i,
+				"crit": crit})
 			_burn(q, dps * pow(strength, float(i)) * dt)
-			from = q.pos
-	# `burning` = svitil paprsek na tohohle poutnika i v PREDCHOZIM snimku.
+			if i + 1 < chain.size():
+				var nxt: Pilgrim = chain[i + 1]
+				var exit: Vector2 = q.pos + (nxt.pos - q.pos).normalized() * rr
+				beams.append({"from": entry, "to": exit, "target": q, "hop": i,
+					"crit": crit})
+				from_pt = exit
+	# `burning` = svitil paprsek na tohle poutnika i v PREDCHOZIM snimku.
 	# Prelozi se az tady, kdyz je hotove cely paprsek - kdyby se to delalo za
 	# pochodu, zvuk zazehnuti by se ozval u kazdeho odrazu zvlast.
 	for p in pilgrims:
@@ -832,7 +924,7 @@ func _hurt(p: Pilgrim, amount: float) -> void:
 func _kill(p: Pilgrim) -> void:
 	p.alive = false
 	_event("kill")
-	gold += Hue.gold_of(p.hue) + int(round(val("gk")))
+	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult())) + int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.
 	if p.behaviour == Hue.B_SPLIT and p.can_split:
@@ -865,6 +957,13 @@ func _prune() -> void:
 
 func pilgrim_r() -> float:
 	return unit_r * 0.05
+
+
+# POLOMER PRSTENCE, NA KTEREM PAPRSEK KONCI. Je to ta VIDITELNA kruzna hranice
+# kolem poutnika (kresli ji obrazovka). Vetsi poutnik (rozpadly kus modre) ma
+# vetsi i prstenec - jinak by mu paprsek koncil uvnitr tela.
+func pilgrim_ring_r(p: Pilgrim) -> float:
+	return pilgrim_r() * maxf(0.1, p.size) * RING_FRAC
 
 
 # SIRKA PAPRSKU. S kazdym odrazem se zuzi, ale nikdy nezmizi - hrac musi

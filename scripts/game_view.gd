@@ -25,6 +25,14 @@ const MENU_BG := Color(0.135, 0.125, 0.11)
 const MENU_EDGE := Color(0.72, 0.70, 0.62)
 const MENU_EDGE_FIRST := Color(0.78, 0.62, 0.30)
 const PAL_IDLE := 0.72
+# PRSTENEC KOLEM POUTNIKA (na jehoz plasti konci paprsek) a ZABLESK KRITIKY.
+# Kriticky paprsek zbela - PLOCHY tón, ne svetlo kolem svetla (Jan ma
+# astigmatismus).
+const RING_ALPHA := 0.80
+const CRIT_TINT := 0.45
+# OBVOD PAPRSKU. Drzi se jako PRIDAVEK k sirce paprsku, ne jako nasobek:
+# u tlustsiho paprsku by se nasobenim obrys rozlezl do dvojite cary.
+const BEAM_EDGE := 1.7
 # PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
 # od sebe poznat tri vrstvy (pole, panel, tab).
 const CARD_BG := Color(0.095, 0.090, 0.100)
@@ -701,6 +709,16 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026). Smer bere z `p.dir`, ktery
 	# je smer chuze - kdyz se zmeni chuze, tvary se otoci samy.
 	_shape(p.hue, p.pos, r, col, p.is_ghost(), Shapes.facing(p.dir))
+	# PRSTENEC: kruh barev poutnika, na jehoz PLASHTI konci paprsek (a odrazi se
+	# z neho dal). Kresli se i proto, ze hranice, kterou hrac nevidi, vypada
+	# jako chyba. Duch ho nema - je pruhledny a neda se na nej mirrit.
+	if not p.is_ghost():
+		var rr: float = game.pilgrim_ring_r(p)
+		# 20 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
+		# muze byt naraz i nekolik stovek poutniku, tak se pocet usecek drzi
+		# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
+		draw_arc(p.pos, rr, 0.0, TAU, 20, Color(col.r, col.g, col.b, RING_ALPHA),
+			maxf(1.2, r * 0.16))
 	if p.hp_frac() < 0.999:
 		draw_arc(p.pos, r * 1.55, -PI * 0.5, -PI * 0.5 + TAU * p.hp_frac(), 24, TEXT, 2.0)
 	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji.
@@ -760,13 +778,30 @@ func _range_color() -> Color:
 # svetlem poutnikovi nebo na karte by se barevna cara ztratila.
 func _draw_beams() -> void:
 	var col: Color = Hue.color_of(game.tower.hue)
+	# ZABLESK KRITIKY: paprsek zbela (PLOCHY tón, zadny glow - Jan ma
+	# astigmatismus a svetla kolem svetla je pro nej to nejhorsi).
+	if game.crit_active():
+		col = col.lerp(Color(1.0, 1.0, 1.0), CRIT_TINT)
 	for b in game.beams:
 		var q: Pilgrim = b["target"]
 		if q == null or not q.alive:
 			continue
 		var w: float = maxf(1.0, game.beam_w(int(b["hop"])))
-		draw_line(b["from"], q.pos, GLYPH, w * 2.2)
-		draw_line(b["from"], q.pos, col, w)
+		# TM AVY OBRYS POD PAPRSKEM: na svetlem poutnikovi nebo na karte by se
+		# barevna cara ztratila. Je to obrys, ne druha cara - paprsek zustava
+		# barevny, obrys ho jen oddeluje od podkladu.
+		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE)
+		_beam_line(b["from"], b["to"], col, w)
+
+
+# JEDEN SEGMENT PAPRSKU S KULATYMI KONCI. Godot kresli caru s hranatym koncem
+# a nic jineho neumi - hrac to videl jako "dva obdelniky vedle sebe" (Jan,
+# Oct 2026), proto se kazdy konec dokresli koleckem o polomeru sirky paprsku.
+# Diky tomu na sebe segmenty v prstenci poutnika plynule navazuji.
+func _beam_line(a: Vector2, b: Vector2, c: Color, w: float) -> void:
+	draw_line(a, b, c, w)
+	draw_circle(a, w * 0.5, c)
+	draw_circle(b, w * 0.5, c)
 
 
 # VEZ. Misto stupnu ma ZIVOTY: tlusty oblouk kolem tela, barva podle toho,

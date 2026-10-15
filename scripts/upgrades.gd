@@ -68,6 +68,19 @@ const STATS := [
 	# pri kadenci 1,00 s = 10 za sekundu), takze se zmenil ZPUSOB, ne obtiznost.
 	{"id": "ad", "label": "Poškození laseru", "cat": CAT_OFF, "kind": "int",
 		"start": 10, "step": 2, "cap": 24, "perm_max": 7, "temp_max": UNLIMITED},
+	# SÍLA PAPRSKU = chybějící modifikátor (Jan, Oct 2026: "Jak zbylo jen dmg,
+	# bez attack speed, tak vlastně chybí jeden modifikátor a hráč nestíhá věž
+	# vylepšovat tak, aby stíhala zabíjet všechny nepřátele, i když investuje
+	# všechny peníze do poškození.").
+	#
+	# JE TO NÁSOBICÍ OSA, ne druhé "poškození". Kadence za zlato skončila
+	# s projektily; tady se místo ní násobí CELÝ paprsek. Proto se hra musí
+	# ptát na tuhle hodnotu úplně stejně jako na "ad" - `laser_dps()` je
+	# součin: (základ + krok za poškození) x síla paprsku x kritika.
+	# Permanentní žebříček je malý (1,0x - 1,5x) a zdražuje se po bodech;
+	# v bitvě za zlato není strop - a právě tam se ta osa rozjede.
+	{"id": "ap", "label": "Síla paprsku", "cat": CAT_OFF, "kind": "mult",
+		"start": 1.0, "step": 0.10, "cap": 1.50, "perm_max": 5, "temp_max": UNLIMITED},
 	# DOSTREL JE JEN PERMANENTNI (Jan, Oct 2026: "Rádius vyndáme z dočasných
 	# upgradů a bude jen v permanentních"). Diky `temp_max` 0 se v bitve vubec
 	# nenabizi (`game_view._shop_stats`) a cely zebricek je v menu.
