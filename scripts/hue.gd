@@ -36,38 +36,45 @@ const B_SHIFT := "shift"
 
 # JEDNA TABULKA PRO VSE, CO O BARVE NEKDO VI. Kdo chce jinou obtiznost barev,
 # meni tady - nikdy v obrazovce ani v pravidlech.
+#   letter      = PISMENO BARVY ve stredu puntiku palety. Je to POCATECNI
+#                 PISMENO ANGLICKEHO NAZVU (Jan, Oct 2026: "Kazda barva bude mit
+#                 ve stredu kruhu pismeno podle nazvu barvy. Cervena - R jako
+#                 Red"). Anglicky proto, ze ceske "cervena/zluta/modra" dava
+#                 C/Z/M a to se plete. Barva tak NIKDY neni jediny nositel
+#                 informace - pismeno je druha cesta, jak barvu precte i hrac
+#                 s poruchou barvocitu.
 #   unlock_wave = vlna, od ktere barva do hry vstoupi (barvy pribyvaji
 #                 s obtiznosti; dokud levely nejsou, odemykaji se vlnami)
 #   palette     = je barva v palete hracе? Stribrna NENI - proto na ni na
 #                 zacatku nejde mirrit a je to cely jeji smysl.
 const ROWS := [
 	{
-		"name": "Červená", "color": Color(0.80, 0.22, 0.17), "shape": "square",
+		"name": "Červená", "letter": "R", "color": Color(0.80, 0.22, 0.17), "shape": "square",
 		"hp": 2.2, "speed": 0.60, "gold": 18, "behaviour": B_NONE,
 		"unlock_wave": 1, "palette": true,
 	},
 	{
-		"name": "Žlutá", "color": Color(0.90, 0.78, 0.22), "shape": "triangle",
+		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22), "shape": "triangle",
 		"hp": 0.6, "speed": 1.60, "gold": 10, "behaviour": B_NONE,
 		"unlock_wave": 1, "palette": true,
 	},
 	{
-		"name": "Modrá", "color": Color(0.22, 0.46, 0.80), "shape": "droplet",
+		"name": "Modrá", "letter": "B", "color": Color(0.22, 0.46, 0.80), "shape": "droplet",
 		"hp": 1.0, "speed": 1.00, "gold": 14, "behaviour": B_SPLIT,
 		"unlock_wave": 3, "palette": true,
 	},
 	{
-		"name": "Zelená", "color": Color(0.26, 0.62, 0.30), "shape": "cross",
+		"name": "Zelená", "letter": "G", "color": Color(0.26, 0.62, 0.30), "shape": "cross",
 		"hp": 1.2, "speed": 1.00, "gold": 16, "behaviour": B_REGEN,
 		"unlock_wave": 5, "palette": true,
 	},
 	{
-		"name": "Fialová", "color": Color(0.58, 0.34, 0.74), "shape": "diamond",
+		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74), "shape": "diamond",
 		"hp": 0.7, "speed": 1.00, "gold": 14, "behaviour": B_VANISH,
 		"unlock_wave": 7, "palette": true,
 	},
 	{
-		"name": "Stříbrná", "color": Color(0.78, 0.80, 0.82), "shape": "circle",
+		"name": "Stříbrná", "letter": "S", "color": Color(0.78, 0.80, 0.82), "shape": "circle",
 		"hp": 2.5, "speed": 0.60, "gold": 26, "behaviour": B_SHIFT,
 		"unlock_wave": 9, "palette": false,
 	},
@@ -117,6 +124,23 @@ static func shape_of(h: int) -> String:
 	if not is_valid(h):
 		return "square"
 	return String(_row(h)["shape"])
+
+
+# PISMENO BARVY: pocatecni pismeno anglickeho nazvu ("R" jako Red) - viz ROWS.
+static func letter_of(h: int) -> String:
+	if not is_valid(h):
+		return "?"
+	return String(_row(h)["letter"])
+
+
+# PISMENO SMESI DVOU BAREV ("RY" = Red + Yellow). Poradi pismen je dane poradim
+# barev v tabulce (0..5), takze cervena+zluta je VZDY "RY" a nikdy "YR" - jinak
+# by jedna barva mela dve jmena. Aby se to nemuselo hlídat ve obrazovce, je
+# jedina cesta k pismenu smesi tady.
+static func letter_of_pair(a: int, b: int) -> String:
+	if not is_valid(a) or not is_valid(b) or a == b:
+		return letter_of(a)
+	return letter_of(mini(a, b)) + letter_of(maxi(a, b))
 
 
 static func hp_mult(h: int) -> float:

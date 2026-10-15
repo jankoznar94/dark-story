@@ -30,10 +30,12 @@ func _init() -> void:
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	_run("strela je tecka nad zamerovanim", _test_shots_are_dots)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
+	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
 	_run("panel s upgrady je v bitve trvale otevreny", _test_panel_is_permanent)
 	_run("bunka upgradu ma hodnotu a cenu na jednom radku", _test_cell_lines)
 	_run("taby kategorii maji ikony", _test_tabs_are_icons)
+	_run("poutnici jdou k vezi oblicejem", _test_shapes_face_the_tower)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -102,6 +104,60 @@ func _test_palette_is_dot() -> void:
 	var body: String = src.substr(start, (end - start) if end > start else src.length() - start)
 	_check(body.contains("draw_circle("), "paleta neni plny puntik (chybi draw_circle)")
 	_check(not body.contains("_shape("), "paleta kresli tvary, i kdyz ma byt jen puntik")
+	# PISMENO BARVY VE STREDU (Jan, Oct 2026). Bez nej je barva jediny nositel
+	# informace - presne to, co u sesti barev nefunguje.
+	_check(body.contains("Hue.letter_of("), "puntik palety nema pismeno barvy")
+
+
+# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026: "všichni nepřátelé by měli k věži
+# směřovat 'obličejem'. Trojúhelník jedno z vrcholů, ne stěnou. Kapka bříškem, ne
+# stranou."). Trojuhelnik ma k vezi VRCHOL, kapka BRISKO, kosostverec vrchol, kriz
+# rameno. Ctverec a kruh se NEOTACI - ctverec otoceny o 45 stupnu je kosostverec
+# fialove, a to je jina barva.
+func _test_shapes_face_the_tower() -> void:
+	var c := Vector2(100.0, 100.0)
+	var r := 10.0
+	var right := Vector2(1.0, 0.0)
+	var tri: PackedVector2Array = Shapes.pts("triangle", c, r, right)
+	_check(tri.size() == 3, "trojuhelnik nema tri vrcholy")
+	var tip: float = -99999.0
+	for v in tri:
+		tip = maxf(tip, v.x)
+	_check(absf(tip - (c.x + r)) < 0.01,
+		"trojuhelnik nedrzi vrcholem k vezi (spicka %.2f, ma byt %.2f)" % [tip, c.x + r])
+	var dr: PackedVector2Array = Shapes.pts("droplet", c, r, right)
+	var belly: float = -99999.0
+	for v in dr:
+		belly = maxf(belly, v.x)
+	_check(absf(belly - (c.x + 0.95 * r)) < 0.01, "kapka nedrzi brisko k vezi")
+	_check(not Shapes.pts("diamond", c, r, right).is_empty(), "kosostverec se neotaci")
+	_check(not Shapes.pts("cross", c, r, right).is_empty(), "kriz se neotaci")
+	_check(Shapes.pts("square", c, r, right).is_empty(), "ctverec se otaci (byl by z nej kosostverec)")
+	_check(Shapes.pts("circle", c, r, right).is_empty(), "kruh se otaci, i kdyz je to jedno")
+	var still: PackedVector2Array = Shapes.pts("triangle", c, r, Vector2.ZERO)
+	_check(absf(still[0].y - (c.y - r)) < 0.01, "bez smeru se tvar prece jen otocil")
+	_check(_src().contains("Shapes.facing(p.dir)"),
+		"obrazovka neposila do tvaru smer chuze - poutnici by chodili bokem")
+
+
+# PISMENO MA KAZDA BARVA JINE, JEDNOPISMENNOVE A NIKDY PRAZDNE. Dve barvy se
+# stejnym pismenem by hrac nerozlisil a prazdny puntik by nechal barvu jako
+# jediny nositel informace. Poradi pismen ve smesi je dane poradim barev, takze
+# cervena+zluta je VZDY "RY" - jinak by jedna barva mela dve jmena.
+func _test_letters() -> void:
+	var used: Dictionary = {}
+	for h in range(Hue.COUNT):
+		var l: String = Hue.letter_of(h)
+		_check(l.length() == 1, "barva %s nema jednopismennove oznaceni (%s)" % [Hue.name_of(h), l])
+		_check(not used.has(l), "pismeno %s maji dve barvy (%s a %s)"
+			% [l, used.get(l, "?"), Hue.name_of(h)])
+		used[l] = Hue.name_of(h)
+	_check(Hue.letter_of_pair(Hue.RED, Hue.YELLOW) == "RY",
+		"smes cervene a zlute se nejmenuje RY (%s)" % Hue.letter_of_pair(Hue.RED, Hue.YELLOW))
+	_check(Hue.letter_of_pair(Hue.YELLOW, Hue.RED) == "RY",
+		"smes ma jine pismeno podle poradi, jak se barvy vybraly")
+	_check(Hue.letter_of_pair(Hue.RED, Hue.RED) == "R",
+		"jedna barva sama se sebou nedostala jednopismennove jmeno")
 
 
 # KRUH DOSTRELU MA BARVU ZVOLENE BARVY VEZE.

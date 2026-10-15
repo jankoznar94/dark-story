@@ -1,0 +1,85 @@
+class_name Shapes
+extends RefCounted
+
+# GEOMETRIE TVARU POUTNIKU. Jsou tu jen BODY tvaru, kresleni je v `game_view` -
+# diky tomu se da tvar OTESTOVAT bez prohlizece. Barvocit nestoji na tom, ze si
+# hrac rozdilu vsimne az ve hre (cervena se zelenou je nejcastejsi porucha).
+#
+# TVAR MA "OBLICEJ": vsechno je nakreslene tak, ze NAHORU (0,-1) je vrchol /
+# rameno / brisko. `toward` je smer, kterym ma tvar hledet - u poutniku je to
+# smer k vezi (Jan, Oct 2026: "všichni nepřátelé by měli k věži směřovat
+# 'obličejem'. Trojúhelník jedno z vrcholů, ne stěnou. Kapka bříškem, ne
+# stranou.").
+#
+# CTVEREC A KRUH SE NEOTACI a vraceji PRAZDNE pole - kresli je obrazovka
+# z geometrie (obdelnik, kruh). Ctverec otoceny o 45 stupnu vypada jako
+# kosoctverec fialove, a to je jina barva, ne orientace.
+
+static func pts(shape: String, c: Vector2, r: float,
+		toward: Vector2 = Vector2.ZERO) -> PackedVector2Array:
+	var raw: PackedVector2Array = _canonical(shape, r)
+	if raw.is_empty():
+		return PackedVector2Array()
+	var face: Vector2 = _face_dir(shape, toward)
+	var out := PackedVector2Array()
+	for v in raw:
+		out.append(c + _turn(v, face))
+	return out
+
+
+# KAM MA TVAR HLEDET. Kapka ma brisko DOLE, takze aby se brisko dotklo veze,
+# otaci se OBRACENE nez ostatni tvary (vrchol/rameno maji nahoru).
+static func _face_dir(shape: String, toward: Vector2) -> Vector2:
+	if toward == Vector2.ZERO:
+		return Vector2.ZERO
+	if shape == "droplet":
+		return -toward.normalized()
+	return toward.normalized()
+
+
+# OTOCENI BODU: (0,-1) tvaru se prevede na smer `face`, (1,0) na kolmici k nemu.
+# Kdo otaci jinak nez tudy, otaci tvary kazdy jinam - proto je tu jedina cesta.
+static func _turn(v: Vector2, face: Vector2) -> Vector2:
+	if face == Vector2.ZERO:
+		return v
+	return Vector2(-face.y, face.x) * v.x - face * v.y
+
+
+static func _canonical(shape: String, r: float) -> PackedVector2Array:
+	match shape:
+		"triangle":
+			return PackedVector2Array([
+				Vector2(0.0, -1.00 * r),
+				Vector2(-0.95 * r, 0.70 * r),
+				Vector2(0.95 * r, 0.70 * r)])
+		"droplet":
+			return PackedVector2Array([
+				Vector2(0.0, -1.15 * r),
+				Vector2(-0.68 * r, -0.20 * r),
+				Vector2(-0.80 * r, 0.35 * r),
+				Vector2(0.0, 0.95 * r),
+				Vector2(0.80 * r, 0.35 * r),
+				Vector2(0.68 * r, -0.20 * r)])
+		"diamond":
+			return PackedVector2Array([
+				Vector2(0.0, -0.95 * r),
+				Vector2(0.95 * r, 0.0),
+				Vector2(0.0, 0.95 * r),
+				Vector2(-0.95 * r, 0.0)])
+		"cross":
+			# 12 bodu: dve ramena jako JEDEN polygon. Driv se krize kreslila
+			# dvema obdelniky a u ducha (obrysu) se jedno rameno vyplnovalo
+			# podkladem - v obrysu po nem zustala dira.
+			var a: float = 0.28 * r
+			var b: float = 1.00 * r
+			return PackedVector2Array([
+				Vector2(-a, -b), Vector2(a, -b), Vector2(a, -a), Vector2(b, -a),
+				Vector2(b, a), Vector2(a, a), Vector2(a, b), Vector2(-a, b),
+				Vector2(-a, a), Vector2(-b, a), Vector2(-b, -a), Vector2(-a, -a)])
+	return PackedVector2Array()
+
+
+# KAM POUTNIK HLEDI - pro obrazovku i pro testy, aby se smer neopisoval zvlast.
+# Poutnik jde porad PRIMO k vezi, takze jeho smer je i smer, kterym se otaci.
+static func facing(dir: Vector2) -> Vector2:
+	return dir.normalized()

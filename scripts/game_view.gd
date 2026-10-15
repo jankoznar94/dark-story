@@ -411,7 +411,9 @@ func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 func _draw_pilgrim(p: Pilgrim) -> void:
 	var col: Color = Hue.color_of(p.hue)
 	var r: float = layout.pilgrim_r * p.size
-	_shape(p.hue, p.pos, r, col, p.is_ghost())
+	# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026). Smer bere z `p.dir`, ktery
+	# je smer chuze - kdyz se zmeni chuze, tvary se otoci samy.
+	_shape(p.hue, p.pos, r, col, p.is_ghost(), Shapes.facing(p.dir))
 	if p.hp_frac() < 0.999:
 		draw_arc(p.pos, r * 1.55, -PI * 0.5, -PI * 0.5 + TAU * p.hp_frac(), 24, TEXT, 2.0)
 	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji.
@@ -423,61 +425,31 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 
 # TVAR BAREV. Barva nikdy neni jediny nositel informace - u sesti barev to
 # plati dvojnasob (cervena se zelenou je nejcastejsi porucha barvocitu).
-func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> void:
+# `toward` = smer, kterym ma tvar hledet (u poutnika k vezi); kdyz je nulovy,
+# tvary stoji rovne (runa veze, puntik v palete). Otaceni je v `Shapes`.
+func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false,
+		toward: Vector2 = Vector2.ZERO) -> void:
 	var w: float = maxf(1.6, r * 0.26)
-	match Hue.shape_of(h):
-		"square":
-			var rect := Rect2(p - Vector2(0.80 * r, 0.80 * r), Vector2(1.60 * r, 1.60 * r))
-			if hollow:
-				draw_rect(rect, col, false, w)
-			else:
-				draw_rect(rect, col, true)
-		"triangle":
-			var tri := PackedVector2Array([
-				p + Vector2(0.0, -1.00 * r),
-				p + Vector2(-0.95 * r, 0.70 * r),
-				p + Vector2(0.95 * r, 0.70 * r)])
-			if hollow:
-				draw_polyline(_closed(tri), col, w)
-			else:
-				draw_colored_polygon(tri, col)
-		"droplet":
-			var body := PackedVector2Array([
-				p + Vector2(0.0, -1.15 * r),
-				p + Vector2(-0.68 * r, -0.20 * r),
-				p + Vector2(-0.80 * r, 0.35 * r),
-				p + Vector2(0.0, 0.95 * r),
-				p + Vector2(0.80 * r, 0.35 * r),
-				p + Vector2(0.68 * r, -0.20 * r)])
-			if hollow:
-				draw_polyline(_closed(body), col, w)
-			else:
-				draw_colored_polygon(body, col)
-		"cross":
-			var a := Rect2(p - Vector2(0.28 * r, 1.00 * r), Vector2(0.56 * r, 2.00 * r))
-			var b := Rect2(p - Vector2(1.00 * r, 0.28 * r), Vector2(2.00 * r, 0.56 * r))
-			if hollow:
-				draw_rect(a, col, false, w)
-				draw_rect(b, col, true)
-				draw_rect(a, BG, true)
-			else:
-				draw_rect(a, col, true)
-				draw_rect(b, col, true)
-		"diamond":
-			var d := PackedVector2Array([
-				p + Vector2(0.0, -0.95 * r),
-				p + Vector2(0.95 * r, 0.0),
-				p + Vector2(0.0, 0.95 * r),
-				p + Vector2(-0.95 * r, 0.0)])
-			if hollow:
-				draw_polyline(_closed(d), col, w)
-			else:
-				draw_colored_polygon(d, col)
-		_:
-			if hollow:
-				draw_arc(p, 0.85 * r, 0.0, TAU, 28, col, w)
-			else:
-				draw_circle(p, 0.92 * r, col)
+	var shape: String = Hue.shape_of(h)
+	if shape == "square":
+		var rect := Rect2(p - Vector2(0.80 * r, 0.80 * r), Vector2(1.60 * r, 1.60 * r))
+		if hollow:
+			draw_rect(rect, col, false, w)
+		else:
+			draw_rect(rect, col, true)
+		return
+	var pts: PackedVector2Array = Shapes.pts(shape, p, r, toward)
+	if pts.is_empty():
+		# KRUH (a cokoli neznaneho): nema se co otacet.
+		if hollow:
+			draw_arc(p, 0.85 * r, 0.0, TAU, 28, col, w)
+		else:
+			draw_circle(p, 0.92 * r, col)
+		return
+	if hollow:
+		draw_polyline(_closed(pts), col, w)
+	else:
+		draw_colored_polygon(pts, col)
 
 
 func _closed(pts: PackedVector2Array) -> PackedVector2Array:
@@ -550,8 +522,12 @@ func _draw_bar() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, layout.view.x - 2.0 * pad, npx, DIM)
 
 
-# PALETA BAREV DOLE. Tlacitko je PLNÝ KRUH v barve s rameckem (Jan: "jen
-# barevný plný puntík s borderem. Žádné tvary.").
+# PALETA BAREV NAD PANELEM S UPGRADY. Tlacitko je PLNÝ KRUH v barve s rameckem
+# (Jan: "jen barevný plný puntík s borderem. Žádné tvary.") a VE STREDU JE
+# PISMENO BARVY (Jan, Oct 2026: "Každá barva bude mít ve středu kruhu písmeno
+# podle názvu barvy... Kombinované barvy budou mít dvě písmena"). Pismeno je
+# tmave (GLYPH) - na sytou barvu je to jedina barva, ktera ma vsude kontrast, a
+# je to stejny jazyk jako tmavy obrys tecky strely.
 func _draw_palette() -> void:
 	for i in range(layout.pal_rects.size()):
 		if i >= game.palette.size():
@@ -568,6 +544,9 @@ func _draw_palette() -> void:
 		else:
 			draw_circle(c, rad * 0.86, Color(col.r, col.g, col.b, PAL_IDLE))
 			draw_arc(c, rad * 0.86, 0.0, TAU, 64, Color(col.r, col.g, col.b, 0.9), maxf(2.0, rad * 0.10))
+		var lip: String = Hue.letter_of(h)
+		if lip != "":
+			_label(lip, r, maxi(10, int(rad * 0.94)), GLYPH)
 
 
 # =========================================================================
