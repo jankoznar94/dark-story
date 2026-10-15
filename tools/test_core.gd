@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("strela poskozuje az v dopadu, a to prave jednou ranou", _test_shots_hit_on_impact)
 	_run("strela po smrti cile nezasahne nikoho jineho", _test_dead_target_shot_fizzles)
 	_run("strela ma dostupnost i obrys pod sebou", _test_shot_size)
+	_run("sving (kadence) se neresetuje prepnutim barvy", _test_swing_timer_independent)
 	_run("kriticka sance a poskozeni jsou z tabulky upgradu", _test_crit)
 	_run("multishot drzi vic cilu zaraz", _test_multishot)
 	_run("ricochet se odrazi na stejnou barvu a kazdy dostane nejvyse jednou", _test_ricochet)
@@ -253,6 +254,50 @@ func _test_shot_size() -> void:
 	var g: Game = _phone()
 	_check(g.shot_r() > 3.0, "tecka strely je prilis mala (%.2f px)" % g.shot_r())
 	_check(g.shot_rim_r() > g.shot_r(), "tecka strely nema obrys pod sebou")
+
+
+# SVING (KADENCE) NESMI ZAVISET NA BARVE (Jan, Oct 2026): "Když přepnu na jinou
+# barvu, tak se resetuje Attack timer. Když tedy rychle přepínám mezi barvami,
+# tak Věž útočí rychleji než má. Věž by měla mít zabudovaný 'swing timer' bez
+# ohledu na přepínání barev. Jen zkontroluje jaká barva je aktivní ve chvíli,
+# kdy timer doběhne, ale nesmíš se timer resetovat při přepnutí barvy."
+#
+# Puvodne `_fire` vynuloval `fire_left`, kdyz vez nemela cil ("kdo nema cil, je
+# pripraveny"), takze si hrac prepnutim barvy a zpet vyrabel pripravenou ranu.
+# Zmereno na krok 1/60 s a okno 5 s (prepinani kazdy 4. snimek):
+#   stara hra 6 ran bez prepinani, 38 s prepinanim,
+#   nova hra  6 ran bez prepinani,  2 s prepinanim (promarnene svingy).
+# Pri prepinani kazdy snimek to bylo 150 proti 6 (25x rychleji) - proto test
+# meri OBE varianty a porovnava je: kdyby se vynulovani timeru vratilo, druhe
+# cislo vystreli.
+func _test_swing_timer_independent() -> void:
+	var plain: int = _shots_in_5s(false)
+	var flick: int = _shots_in_5s(true)
+	_check(plain >= 4, "vez za 5 s vubec nevystrelila (%d ran)" % plain)
+	_check(flick <= plain + 1,
+		"prepinani barvy zrychlilo strelbu: %d ran proti %d" % [flick, plain])
+
+
+func _shots_in_5s(flicker: bool) -> int:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.7)
+	p.speed = 0.0
+	p.hp = 100000.0
+	p.max_hp = 100000.0
+	g.fired_reset()
+	var dt: float = 1.0 / 60.0
+	var i: int = 0
+	var t: float = 0.0
+	while t < 5.0:
+		# PRESNE TO, CO DELAL HRAC: prepni na barvu, ktera na plose neni
+		# (vez ztrati cile), a hned zpet.
+		if flicker and (i % 4) == 0:
+			g.select_hue(Hue.YELLOW if g.tower.hue == Hue.RED else Hue.RED)
+		g.step(dt)
+		i += 1
+		t += dt
+	return g.shots_fired
 
 
 func _test_crit() -> void:

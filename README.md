@@ -30,6 +30,13 @@ nepoužívá.
   začíná na **1,00 s** a krok je **−0,025 s** (dřív −0,05 s), takže permanentní
   žebříček má 16 stupňů a končí na 0,60 s. Dočasné kroky za zlato nejsou shora
   omezené — dno drží jen pojistka 0,05 s (20 ran/s).
+- **Kadence je „swing timer", nezávislý na barvě.** Věž má vlastní hodiny, které
+  běží pořád: když vyprší, podívá se, **jaká barva je právě aktivní**, a vystřelí
+  na cíl v dosahu; když žádný není, je to promarnutý sving a interval se rozjede
+  znovu (dluh se nikdy nekupí). Přepnutím barvy se hodiny **NERESETUJÍ** — jinak
+  si hráč rychlým přepínáním „vyrobí" připravenou ránu a střílí rychleji, než je
+  kadence (změřeno: 6 ran za 5 s bez přepínání, ale 150 ran s přepínáním každý
+  snímek). Hlídá to `test_core._test_swing_timer_independent`.
 - **POČET NEPŘÁTEL V JEDNOTLIVÝCH VLNÁCH JE VYŠŠÍ** (Oct 2026): první vlna
   prvního levelu má **15 poutníků**, desátá vlna 51 a každý další **level**
   násobí celou řadu **1,20** — na desátém levelu jde o stovky (strop 400, aby

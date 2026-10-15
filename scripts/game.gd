@@ -708,16 +708,30 @@ func _aim() -> void:
 			locks.append(pool.pop_front())
 
 
+# SVING (KADENCE) BEZI PORAD - NEZAVISI NA BARVE ANI NA TOM, JESTLI VEZE NEKDO
+# MIRI. Jan (Oct 2026): "Když přepnu na jinou barvu, tak se resetuje Attack
+# timer. Když tedy rychle přepínám mezi barvami, tak Věž útočí rychleji než má.
+# Věž by měla mít zabudovaný 'swing timer' bez ohledu na přepínání barev. Jen
+# zkontroluje jaká barva je aktivní ve chvíli, kdy timer doběhne, ale nesmíš se
+# timer resetovat při přepnutí barvy."
+#
+# DRIV tu bylo `if locks.is_empty(): fire_left = 0.0` - "kdo nema cil, je
+# pripraveny". Hrac to obchazel: prepl na barvu, ktera na plose neni (vez ztrati
+# cile), a zpet - a rana byla pripravena okamzite, takze strilel nekolikanasobne
+# rychleji, nez je kadence.
+#
+# Ted hodiny bezi VZDY: kdyz vyprsi a vez zrovna zadny cil nema, vystrel se
+# proste nestane (je to promarnuty sving) a interval se presto rozjede znovu -
+# "dluh" se tim nikdy nekupí, takze nema co vybuchnout ve chvili, kdy hrac
+# prepne barvu. Barva se cte AZ VE CHVILI VYPRSENI (`locks`, ktere plni `_aim`).
 func _fire(dt: float) -> void:
-	if locks.is_empty():
-		fire_left = 0.0
-		return
 	fire_left -= dt
 	var guard: int = 0
 	while fire_left <= 0.0 and guard < 8:
 		guard += 1
-		_fire_at(locks[fire_i % locks.size()])
-		fire_i += 1
+		if not locks.is_empty():
+			_fire_at(locks[fire_i % locks.size()])
+			fire_i += 1
 		fire_left += 1.0 / rate()
 
 
