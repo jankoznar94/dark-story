@@ -43,17 +43,24 @@ Hra je na **výšku**. **Plocha a zoom jsou dvě různá čísla:**
   herního pruhu — přesně jako dřív, takže velikosti zůstávají stejné (na
   390×844 věž 22 px, poutník 9 px) a nic se „nepřibližuje“.
 - **Spawnovací kruh** je polovina **výšky** herního pruhu: dotýká se horního
-  i spodního okraje pruhu a na výšku vede boky **147 px mimo obraz** (na 390×844),
+  i spodního okraje pruhu a na výšku vede boky **55 px mimo obraz** (na 390×844),
   takže poutníci vcházejí ze všech směrů. Nikdy není menší než zoom.
-  Na šířku je pruh širší než vyšší, kruh se tedy vejde do šířky a hra jen řekne
-  „otoč telefon“.
+  Na širokém pruhu (velký tablet) se kruh vepíše do šířky; na šířku displeje
+  hra řekne „otoč telefon“.
+
+**Dole jsou dvě lišty:** barevná paleta a pod ní **panel s upgrady, který je
+v levelu otevřený pořád** (dá se v něm nakupovat za pochodu — hra se pod ním
+nezastavuje). Herní pruh proto končí **nad paletou**: poutníci nikdy nechodí pod
+panel. Buňka upgradu má **dva řádky textu** — nahoře název, pod ním hodnota
+(zlatě) a vedle ní cena; v levelu jsou buňky o 12 % nižší než v menu, protože
+jsou na obrazovce trvale.
 
 Barvu vždy nese i **tvar** (runa) — u poutníka je runa přímo tvarem těla:
 oheň trojúhelník, voda kapka, země čtverec, vzduch prstenec. Barva nikdy
 nesmí být jediný nositel informace.
 
-**Menu je velké a texty jsou větší**: tři tlačítka (HRÁT / SETTINGS / UPDATE)
-berou 78 % šířky displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí
+**Menu je velké a texty jsou větší**: čtyři tlačítka (HRÁT / UPRAVY / SETTINGS /
+UPDATE) berou 78 % šířky displeje a na 390×844 mají 304 × 108 px — hráč na ně nemusí
 mířit prstem; titul má 54 px, popisek 28 px. Větší je i hláška pod pruhem
 (kreslí se základním písmem, ne zmenšeným stavovým), obrazovka NASTAVENÍ
 a dotaz při odchodu z boje. Titul i podtitulek se na nízkém/úzkém displeji

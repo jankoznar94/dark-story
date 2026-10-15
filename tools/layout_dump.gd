@@ -30,9 +30,10 @@ func _init() -> void:
 	var lay := ScreenLayout.new()
 	lay.update(Vector2(w, h))
 
-	# Pocet radku v panelu v bitve odpovida kategorii "utok" (prvni tab).
-	var shop_rows: int = Upgrades.stats_in(Upgrades.CAT_OFF).size()
-	lay.set_shop_shape(3, maxi(1, shop_rows))
+	# Pocet bunek v panelu v bitve odpovida kategorii "utok" (prvni tab).
+	var shop_cells: int = Upgrades.stats_in(Upgrades.CAT_OFF).size()
+	lay.set_shop_shape(3, maxi(1, shop_cells))
+	lay.set_upg_shape(maxi(1, shop_cells))
 	lay.layout_palette(pal)
 
 	var out: Dictionary = {
@@ -47,19 +48,20 @@ func _init() -> void:
 		"menu_rects": _rects(lay.menu_rects),
 		"pal": _centers(lay.pal_rects),
 		"pal_rects": _rects(lay.pal_rects),
-		"hud_upgrades": _p(lay.hud_upgrades.get_center()),
+		"pal_top": lay.pal_top,
 		"hud_menu": _p(lay.hud_menu.get_center()),
 		"upg_panel": _r(lay.upg_panel),
 		"upg_tabs": _centers(lay.upg_tabs),
-		"upg_rows": _centers(lay.upg_rows),
-		"upg_buttons": _centers(lay.upg_buttons),
+		"upg_tab_rects": _rects(lay.upg_tabs),
+		"upg_tab_icons": _rects(lay.upg_tab_icons),
+		"upg_cells": _rects(lay.upg_cells),
 		"upg_back": _p(lay.upg_back.get_center()),
 		"upg_title_y": lay.upg_note_y,
 		"shop_panel": _r(lay.shop_panel),
 		"shop_tabs": _centers(lay.shop_tabs),
-		"shop_rows": _centers(lay.shop_rows),
-		"shop_buttons": _centers(lay.shop_buttons),
-		"shop_close": _p(lay.shop_close.get_center()),
+		"shop_tab_rects": _rects(lay.shop_tabs),
+		"shop_tab_icons": _rects(lay.shop_tab_icons),
+		"shop_cells": _rects(lay.shop_cells),
 		"shop_cats": Upgrades.CATEGORIES,
 		"shop_row_labels": _labels(Upgrades.stats_in(Upgrades.CAT_OFF)),
 		"perm_labels": _labels(Upgrades.stats_in(Upgrades.CAT_OFF)),

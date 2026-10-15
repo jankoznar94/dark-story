@@ -47,8 +47,8 @@ func _process(_delta: float) -> bool:
 	_ran = true
 	_run("klepnuti na HRAT otevre bitvu", _test_tap_starts_battle)
 	_run("odchod z bitvy se nejdriv zepta", _test_tap_leave_asks)
-	_run("panel upgradu v bitve zastavi partii a nakup funguje", _test_tap_shop_pauses)
-	_run("paleta dole prenastavi barvu veze", _test_tap_palette_switches_hue)
+	_run("panel upgradu v bitve je porad otevreny a nakup funguje", _test_tap_shop_is_permanent)
+	_run("paleta nad panelem prenastavi barvu veze", _test_tap_palette_switches_hue)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
 	_check(checks >= MIN_CHECKS,
 		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
@@ -260,31 +260,30 @@ func _test_tap_leave_asks() -> void:
 	v.queue_free()
 
 
-# PANEL UPGRADU V BITVE: otevre se, PARTII ZASTAVI a nakup ji zase pustí.
-func _test_tap_shop_pauses() -> void:
+# PANEL UPGRADU V BITVE: JE OTEVRENY PORAD (Jan, Oct 2026) a PARTII NEZASTAVUJE -
+# stoji mimo herni plochu, takze hrac nakupuje za pochodu. Krizek na zavreni
+# neexistuje, klepnuti mimo panel nic nedela.
+func _test_tap_shop_is_permanent() -> void:
 	var v: Node2D = _screen()
 	var m: Menu = v.get("menu")
 	var l: ScreenLayout = v.get("layout")
 	v.call("_tap", (l.menu_rects[0] as Rect2).get_center())
 	_check(m.is_battle(), "klepnuti na HRAT neotevrelo bitvu")
 	l = _phone(v)
-	v.call("_tap", l.hud_upgrades.get_center())
-	_check(bool(v.get("shop_open")), "tlacitko UPGRADY neotevrelo panel")
+	# NENI CO OTEVIRAT: panel je soucasti bitvy, hra pod nim bezi dal.
+	_check(not bool(v.call("is_halted")), "s panelem upgradu hra stoji - panel je pritom trvale otevreny")
 	var t: float = v.get("game").build_left
 	v.call("_process", 1.0)
-	_check(is_equal_approx(v.get("game").build_left, t), "pod panelem partie bezi dal")
-	# KLEPNUTI MIMO PANEL HO ZAVRE (na telefonu je to nejrychlejsi cesta).
+	_check(v.get("game").build_left < t, "pod panelem se partie nekteruje")
+	# KLEPNUTI MIMO PANEL (do pole, do pruhu) NIC NEDELA: panel se nezavre.
 	v.call("_tap", Vector2(2.0, l.bar_h + 2.0))
-	_check(not bool(v.get("shop_open")), "klepnuti mimo panel ho nezavrelo")
-	# NAKUP: klepnuti na "+" v prvnim radku opravdu koupi krok.
-	v.call("_tap", l.hud_upgrades.get_center())
-	var id: String = String((Upgrades.stats_in(String(v.call("_shop_stats")[0]))[0])["id"]) if false else ""
+	_check(not bool(v.call("is_halted")), "klepnuti mimo panel hru zastavilo")
 	var stats: Array = Upgrades.stats_in(String(v.get("SHOP_CATS")[0]))
 	var first_id: String = String(stats[0]["id"])
 	v.get("game").gold = 500
-	v.call("_tap", (l.shop_buttons[0] as Rect2).get_center())
+	v.call("_tap", (l.shop_cells[0] as Rect2).get_center())
 	_check(v.get("game").temp_level(first_id) == 1,
-		"klepnuti na '+' v panelu nekouplo krok (%s)" % first_id)
+		"klepnuti na bunku v panelu nekouplo krok (%s)" % first_id)
 	# KATEGORIE: klepnuti na druhy tab prepne radek (a rozvrzeni se prelozi).
 	v.call("_tap", (l.shop_tabs[1] as Rect2).get_center())
 	_check(int(v.get("shop_cat")) == 1, "klepnuti na tab nezmenilo kategorii")

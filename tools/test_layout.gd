@@ -31,6 +31,9 @@ func _init() -> void:
 	_run("strela je tecka nad zamerovanim", _test_shots_are_dots)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
+	_run("panel s upgrady je v bitve trvale otevreny", _test_panel_is_permanent)
+	_run("bunka upgradu ma hodnotu a cenu na jednom radku", _test_cell_lines)
+	_run("taby kategorii maji ikony", _test_tabs_are_icons)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -111,11 +114,59 @@ func _test_range_is_colored() -> void:
 	_check(body.contains("Hue.color_of(game.tower.hue)"), "barva kruhu neni barva veze")
 
 
+# PANEL S UPGRADY JE V BITVE TRVALE OTEVRENY (Jan, Oct 2026: "Tlacitka v levelu
+# ... budou tam totiz permanentne" + "Krizek pro zavreni upgradu v levelu tedy
+# smazeme"). Hlida se MISTO VOLANI ve zdroji, protoze obrazovka se v headless
+# testu nevykresluje: kdyby se vratilo `if shop_open`, panel by zase mizel
+# a testy rozvrzeni by byly zelene.
+func _test_panel_is_permanent() -> void:
+	var src: String = _src()
+	_check(src != "", "nectu game_view.gd")
+	_check(not src.contains("shop_open"),
+		"obrazovka ma porad prepinac panelu (shop_open) - panel ma byt otevreny porad")
+	_check(not src.contains("hud_upgrades"),
+		"tlacitko UPGRADY v hornim pruhu existuje, i kdyz je panel otevreny porad")
+	_check(not src.contains("_draw_close") and not src.contains("shop_close"),
+		"krizek na zavreni panelu v levelu existuje, i kdyz se smazal")
+	var i_battle: int = src.find("func _draw_battle")
+	_check(i_battle >= 0, "kresleni bitvy (func _draw_battle) ve zdroji neexistuje")
+	var battle_body: String = ""
+	if i_battle >= 0:
+		var i_next: int = src.find("\nfunc ", i_battle + 1)
+		battle_body = src.substr(i_battle, (i_next - i_battle) if i_next > i_battle else 400)
+	_check(battle_body.contains("_draw_shop()"),
+		"panel s nakupem se v bitve vubec nekresli")
+	# HRA POD PANELEM BEZI: kdyby byl panel v `is_halted`, partie by se zastavila
+	# hned po vstupu do bitvy a hrac by si ani neskrtl.
+	var i_halt: int = src.find("func is_halted")
+	var end: int = src.find("\nfunc ", i_halt + 1)
+	var halt_body: String = src.substr(i_halt, (end - i_halt) if end > i_halt else 120)
+	_check(halt_body.contains("leave_ask or game.is_over()"),
+		"hra se pod trvale otevrenym panelem zastavuje (is_halted)")
+
+
+# HODNOTA A CENA JSOU NA JEDNOM RADKU (Jan, Oct 2026: "Hodnota a cena budou na
+# stejném řádku"). Hlida se MISTO VOLANI ve zdroji obrazovky: kdyby se cena
+# vratila na treti radek, bunka by zase narostla a testy rozvrzeni to nepoznaji.
+func _test_cell_lines() -> void:
+	var src: String = _src()
+	var start: int = src.find("func _draw_grid")
+	_check(start >= 0, "kresleni bunky upgradu (_draw_grid) ve zdroji neexistuje")
+	if start < 0:
+		return
+	var end: int = src.find("\nfunc ", start + 1)
+	var body: String = src.substr(start, (end - start) if end > start else 900)
+	_check(body.contains("c.size.y / 2.0"), "bunka upgradu nema dva radky textu")
+	_check(not body.contains("line * 2.0"), "cena je porad na tretim radku bunky")
+	_check(body.contains("layout.measure_px(pr, pr_px)"),
+		"cena si nebere misto vedle hodnoty - hodnota a cena se mohou prekryt")
+
+
 func _test_zero_size() -> void:
 	var l := ScreenLayout.new()
 	l.update(Vector2.ZERO)
 	_check(l.arena.size.x >= 0.0 and l.arena.size.y >= 0.0, "nulova velikost dela zaporny obdelnik")
-	_check(l.hud_menu.size.x >= 0.0 and l.hud_upgrades.size.x >= 0.0, "nulova velikost dela zaporne tlacitko")
+	_check(l.hud_menu.size.x >= 0.0, "nulova velikost dela zaporne tlacitko")
 	_check(l.field_r == 0.0, "nulova velikost okna dela plochu")
 	_check(l.layout_palette(5).is_empty(), "nulova velikost okna dela tlacitka palety")
 	_check(l.layout_menu(4).is_empty(), "nulova velikost okna dela tlacitka menu")
@@ -136,15 +187,23 @@ func _test_resolution(v: Vector2) -> void:
 		% [tag, (l.center.y - l.field_r) - l.arena.position.y])
 	_check(absf((l.center.y + l.field_r) - l.arena.end.y) < 0.5,
 		"%s: spawnovaci kruh nedosahuje na spodek herniho pruhu" % tag)
-	if v.y > v.x:
+	# Rozhoduje TVAR HERNIHO PRUHU, ne tvar displeje: kruh se vzdy vepise do vysky
+	# pruhu, takze kdyz je pruh vyssi nez siroky, vede na vysku boky mimo obraz
+	# (a poutnici vchazeji ze vsech stran). Na sirokem pruhu se kruh vepise
+	# do sirky - to je pripad velkeho tabletu, kde panel s upgrady pruh zkrati.
+	if l.arena.size.y >= l.arena.size.x:
 		_check(l.center.x - l.field_r <= 0.0 and l.center.x + l.field_r >= v.x - 0.5,
 			"%s: spawnovaci kruh neni vetsi nez displej (boky maji vest mimo obraz)" % tag)
 	else:
 		_check(l.field_r <= l.arena.size.x * 0.5 + 0.5, "%s: na sirku spawnovaci kruh preleza displej" % tag)
 
 	# 2) POUTNIK JE CITELNY a vsechno se pocita Z MERITKA (UNIT_SHRINK).
-	_check(l.pilgrim_r >= 6.0, "%s: poutnik ma polomer %.1f px" % [tag, l.pilgrim_r])
-	_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
+	# NA SIRKU SE VELIKOST NEHLIDA: hra je na vysku ("otoc telefon") a trvale
+	# otevreny panel s upgrady tam z herniho pruhu ubere skoro vsechno - jednotky
+	# vyjdou male, i kdyz je rozvrzeni v poradku.
+	if v.y > v.x:
+		_check(l.pilgrim_r >= 6.0, "%s: poutnik ma polomer %.1f px" % [tag, l.pilgrim_r])
+		_check(l.tower_r >= 12.0, "%s: vez je prilis mala (%.1f px)" % [tag, l.tower_r])
 	var short_side: float = minf(l.arena.size.x, l.arena.size.y)
 	var want_unit: float = (short_side * 0.5 - short_side * ScreenLayout.MARGIN_FRAC) * ScreenLayout.UNIT_SHRINK
 	_check(absf(l.unit_r - want_unit) < 0.5,
@@ -171,14 +230,13 @@ func _test_resolution(v: Vector2) -> void:
 	_check(rmax >= r1 * 1.5, "%s: upgrade prida jen kousek dostrelu (%.0f -> %.0f px)" % [tag, r1, rmax])
 	_check(rmax < l.field_r * 0.95, "%s: dostrel na maximu pokryva celou plochu" % tag)
 
-	# 3) HORNI PRUH: dve tlacitka a stavovy text VEDLE SEBE.
-	_check(l.hud_upgrades.size.x >= 44.0 and l.hud_upgrades.size.y >= 30.0,
-		"%s: tlacitko UPGRADY v pruhu je male %.0fx%.0f px" % [tag, l.hud_upgrades.size.x, l.hud_upgrades.size.y])
+	# 3) HORNI PRUH: stavovy text a tlacitko MENU. Tlacitko UPGRADY zmizelo -
+	# panel s nakupem je v bitve otevreny porad (`_test_panel_is_permanent`).
 	_check(l.hud_menu.size.x >= 44.0 and l.hud_menu.size.y >= 30.0,
 		"%s: tlacitko MENU v pruhu je male %.0fx%.0f px" % [tag, l.hud_menu.size.x, l.hud_menu.size.y])
-	_check(l.hud_upgrades.end.x <= v.x + 0.5 and l.hud_menu.position.x >= -0.5,
-		"%s: tlacitka v pruhu prelezaji displej" % tag)
-	_check(not l.hud_upgrades.intersects(l.hud_menu), "%s: tlacitka v pruhu se prekryvaji" % tag)
+	_check(l.hud_menu.end.x <= v.x + 0.5 and l.hud_menu.position.x >= -0.5,
+		"%s: tlacitko v pruhu preleza displej" % tag)
+	_check(l.hud_menu.end.y <= l.bar_h + 0.5, "%s: tlacitko v pruhu preleza do plochy" % tag)
 	_check(l.bar_text_w > 0.0, "%s: stavovemu textu nezustalo v pruhu misto" % tag)
 	var l1: String = ScreenLayout.HUD_LINE1_FMT % [12, 5, 5]
 	var l2: String = ScreenLayout.HUD_LINE2_FMT % [300, 300, 9999]
@@ -186,14 +244,17 @@ func _test_resolution(v: Vector2) -> void:
 	var px2: int = _fit_px(l2, l.bar_text_w, l.font_px)
 	_check(px1 >= 11 and px2 >= 11, "%s: stavovy text v pruhu ma jen %d/%d px" % [tag, px1, px2])
 
-	# 4) PALETA: kazdy pocet barev, ktery muze nastat (2..5).
+	# 4) PALETA: kazdy pocet barev, ktery muze nastat (2..5). Pruh palety uz NENI
+	# u spodniho okraje - je NAD panelem s upgrady (`pal_top`).
 	for count in range(2, 6):
 		var rects: Array = l.layout_palette(count)
 		_check(rects.size() == count, "%s: paleta pro %d barev nema %d tlacitek" % [tag, count, count])
 		for r in rects:
 			var rr: Rect2 = r
-			_check(rr.position.y >= v.y - l.pal_h - 0.5 and rr.end.y <= v.y + 0.5,
-				"%s: tlacitko barvy (%d) preleza mimo spodni pruh" % [tag, count])
+			_check(rr.position.y >= l.pal_top - 0.5 and rr.end.y <= l.pal_top + l.pal_h + 0.5,
+				"%s: tlacitko barvy (%d) neni v pruhu palety" % [tag, count])
+			_check(rr.end.y <= l.shop_panel.position.y - 0.5,
+				"%s: tlacitko barvy (%d) leze pod panel s upgrady" % [tag, count])
 			_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5,
 				"%s: tlacitko barvy (%d) preleza displej" % [tag, count])
 			_check(rr.size.x >= 44.0 and rr.size.y >= 44.0,
@@ -205,58 +266,86 @@ func _test_resolution(v: Vector2) -> void:
 				_check(not (rects[i] as Rect2).intersects(rects[j] as Rect2),
 					"%s: tlacitka barvy (%d) se prekryvaji" % [tag, count])
 
-	# 5) PANEL S UPGRADY V BITVE: cely na displeji, NAD paletou, taby i tlacitka
-	# zmacknutelna. Kdyby prekryl paletu, hrac by nemohl prepnout barvu.
+	# 5) PANEL S UPGRADY V BITVE: MRIZKA DVOU BUNEK NA RADEK, TRVALE OTEVRENY
+	# U SPODNIHO OKRAJE. Paleta je nad nim a HERNI PLOCHA KONCI NAD PALETOU -
+	# poutnici nikdy nechodi pod panel (hrac by je nevidel).
 	l.set_shop_shape(3, 4)
-	_check(l.shop_panel.end.y <= v.y - l.pal_h + 0.5,
-		"%s: panel upgradu prekryva paletu barev (%.0f > %.0f)" % [tag, l.shop_panel.end.y, v.y - l.pal_h])
-	_check(l.shop_panel.position.y >= l.bar_h - 0.5 and l.shop_panel.end.y <= v.y + 0.5,
-		"%s: panel upgradu preleza displej" % tag)
+	_check(l.shop_panel.end.y <= v.y - 0.5, "%s: panel upgradu nedrzi spodni okraj" % tag)
+	_check(v.y - l.shop_panel.end.y <= maxf(8.0, v.y * 0.012) + 0.5,
+		"%s: mezi panelem a spodnim okrajem zustala dira %.0f px" % [tag, v.y - l.shop_panel.end.y])
+	_check(l.shop_panel.position.y >= l.bar_h - 0.5, "%s: panel upradu preleza displej" % tag)
+	_check(l.pal_top <= l.shop_panel.position.y - 0.5,
+		"%s: paleta neni nad panelem s upgrady" % tag)
+	_check(l.arena.end.y <= l.pal_top + 0.5,
+		"%s: herni plocha leze do palety nebo pod panel (%.0f > %.0f)" % [tag, l.arena.end.y, l.pal_top])
+	_check(l.arena.position.y >= l.bar_h - 0.5, "%s: herni plocha leze do horniho pruhu" % tag)
 	_check(l.shop_tabs.size() == 3, "%s: v bitve nejsou tri kategorie (%d)" % [tag, l.shop_tabs.size()])
-	_check(l.shop_rows.size() == 4 and l.shop_buttons.size() == 4,
-		"%s: panel nema ctyri radky s tlacitky" % tag)
+	_check(l.shop_cells.size() == 4, "%s: panel nema ctyri bunky (%d)" % [tag, l.shop_cells.size()])
 	for t in l.shop_tabs:
 		var tr: Rect2 = t
 		_check(tr.size.y >= ScreenLayout.TAB_MIN - 0.5 and tr.size.x >= 44.0,
 			"%s: tab kategorie je maly %.0fx%.0f" % [tag, tr.size.x, tr.size.y])
 		_check(l.shop_panel.encloses(tr), "%s: tab kategorie neni v panelu" % tag)
-	for i in range(l.shop_buttons.size()):
-		var br: Rect2 = l.shop_buttons[i]
-		_check(br.size.x >= 56.0 and br.size.y >= ScreenLayout.ROW_MIN - 0.5,
-			"%s: tlacitko '+' je male %.0fx%.0f px" % [tag, br.size.x, br.size.y])
-		_check(l.shop_rows[i].encloses(br), "%s: tlacitko '+' neni v radku" % tag)
-		_check((l.shop_rows[i] as Rect2).size.y >= ScreenLayout.ROW_MIN - 0.5,
-			"%s: radek parametru je nizky %.0f px" % [tag, (l.shop_rows[i] as Rect2).size.y])
-	for i in range(l.shop_rows.size()):
-		for j in range(i + 1, l.shop_rows.size()):
-			_check(not (l.shop_rows[i] as Rect2).intersects(l.shop_rows[j] as Rect2),
-				"%s: radky panelu se prekryvaji" % tag)
+	_check_icons(l.shop_tabs, l.shop_tab_icons, tag, "bitve")
+	for i in range(l.shop_cells.size()):
+		var br: Rect2 = l.shop_cells[i]
+		_check(br.size.x >= 56.0 and br.size.y >= ScreenLayout.CELL_MIN_H - 0.5,
+			"%s: bunka upgradu je mala %.0fx%.0f px" % [tag, br.size.x, br.size.y])
+		_check(l.shop_panel.encloses(br), "%s: bunka upgradu neni v panelu" % tag)
 		for t in l.shop_tabs:
-			_check(not (l.shop_rows[i] as Rect2).intersects(t as Rect2),
-				"%s: radek panelu prekryva taby" % tag)
-	# Popisek a hodnota se musi vejit do radku VEDLE tlacitka.
-	var br0: Rect2 = l.shop_buttons[0]
-	var label_w: float = maxf(40.0, (l.shop_rows[0] as Rect2).size.x - br0.size.x - 3.0 * maxf(6.0, (l.shop_rows[0] as Rect2).size.x * 0.02))
+			_check(not br.intersects(t as Rect2), "%s: bunka upgradu prekryva taby" % tag)
+	for i in range(l.shop_cells.size()):
+		for j in range(i + 1, l.shop_cells.size()):
+			_check(not (l.shop_cells[i] as Rect2).intersects(l.shop_cells[j] as Rect2),
+				"%s: bunky upgradu se prekryvaji" % tag)
+	# DVE BUNKY NA RADEK: prvni dve museji byt na stejne vysce vedle sebe.
+	var c0: Rect2 = l.shop_cells[0]
+	var c1: Rect2 = l.shop_cells[1]
+	_check(absf(c0.position.y - c1.position.y) < 0.5 and c1.position.x > c0.end.x - 0.5,
+		"%s: prvni dve bunky nejsou dve na radku" % tag)
+	_check(absf(c0.size.x - c1.size.x) < 0.5, "%s: bunky v rade nemaji stejnou sirku" % tag)
+	# TEXT SE MUSI VEJIT DO BUNKY: nazev nahore, pod nim hodnota a cena na TOM
+	# SAMEM radku (cena ma 45 % vnitrni sirky, hodnota zbytek).
+	var text_w: float = c0.size.x - 2.0 * maxf(8.0, c0.size.x * 0.05)
 	var longest: String = "Kritické poškození"
-	var lpx: int = _fit_px(longest, label_w * 0.52, l.font_px)
-	_check(lpx >= 10, "%s: popisek parametru ma jen %d px" % [tag, lpx])
-	var cost_px: int = _fit_px("+1000 zl.", br0.size.x - 6.0, l.font_px)
-	_check(cost_px >= 9, "%s: cena v tlacitku ma jen %d px" % [tag, cost_px])
+	var lpx: int = _fit_px(longest, text_w, l.font_px)
+	_check(lpx >= 10, "%s: nazev parametru ma v bunce jen %d px" % [tag, lpx])
+	var pr_room: float = maxf(24.0, text_w * 0.45)
+	var cpx: int = _fit_px("+1000 zl.", pr_room, l.font_px)
+	_check(cpx >= 9, "%s: cena v bunce ma jen %d px" % [tag, cpx])
+	var vl_room: float = maxf(10.0, text_w - _font_w("+1000 zl.", cpx) - 8.0)
+	_check(_fit_px("1,00 s", vl_room, l.font_px) >= 10,
+		"%s: hodnota parametru se do bunky nevejde" % tag)
 
-	# 6) OBRAZOVKA UPRAVY V MENU: ctyri kategorie + ctyri radky + ZPET.
+	# 6) OBRAZOVKA UPRAVY V MENU: ctyri kategorie + mrizka + ZPET.
 	_check(l.upg_tabs.size() == Upgrades.CATEGORIES.size(),
 		"%s: v menu neni %d kategorii (%d)" % [tag, Upgrades.CATEGORIES.size(), l.upg_tabs.size()])
-	_check(l.upg_rows.size() == 4, "%s: obrazovka uprav nema ctyri radky" % tag)
+	l.set_upg_shape(4)
+	_check(l.upg_cells.size() == 4, "%s: obrazovka uprav nema ctyri bunky (%d)" % [tag, l.upg_cells.size()])
 	_check(l.upg_back.size.x >= 44.0 and l.upg_back.size.y >= 44.0,
 		"%s: tlacitko ZPET je male" % tag)
 	_check(l.upg_panel.position.y >= -0.5 and l.upg_back.end.y <= v.y + 0.5,
 		"%s: obrazovka uprav preleza displej" % tag)
-	for r in l.upg_rows:
-		_check(l.upg_panel.encloses(r as Rect2), "%s: radek uprav neni v panelu" % tag)
-	for b in l.upg_buttons:
+	_check_icons(l.upg_tabs, l.upg_tab_icons, tag, "upravach")
+	# NADPIS I POZNAMKA MUSI ZUSTAT NAD PANELEM - jinak je mrizka prekryje.
+	_check(l.upg_note_y >= -0.5 and l.upg_note_y <= l.upg_panel.position.y,
+		"%s: poznamka profilu leze do panelu uprav (%.0f > %.0f)"
+		% [tag, l.upg_note_y, l.upg_panel.position.y])
+	for b in l.upg_cells:
 		var bb: Rect2 = b
-		_check(bb.size.x >= 56.0 and bb.size.y >= ScreenLayout.ROW_MIN - 0.5,
-			"%s: tlacitko '+' v upravach je male %.0fx%.0f" % [tag, bb.size.x, bb.size.y])
+		_check(bb.size.x >= 56.0 and bb.size.y >= ScreenLayout.CELL_MIN_H - 0.5,
+			"%s: bunka v upravach je mala %.0fx%.0f" % [tag, bb.size.x, bb.size.y])
+		_check(l.upg_panel.encloses(bb), "%s: bunka uprav neni v panelu" % tag)
+	# TLACITKA V LEVELU JSOU NIZSI NEZ V MENU: v levelu stoji na obrazovce PORAD,
+	# takze kazdy pixel vysky ubere hraci plose (Jan, Oct 2026). V menu je mista
+	# dost a zmenseni by tam bylo jen na skodu.
+	_check(l.shop_cells.size() > 0 and l.upg_cells.size() > 0,
+		"%s: chybi bunky pro srovnani vysky" % tag)
+	if l.shop_cells.size() > 0 and l.upg_cells.size() > 0:
+		var lvl_h: float = (l.shop_cells[0] as Rect2).size.y
+		var menu_h: float = (l.upg_cells[0] as Rect2).size.y
+		_check(lvl_h < menu_h - 1.0,
+			"%s: tlacitka v levelu nejsou nizsi nez v menu (%.0f vs %.0f px)" % [tag, lvl_h, menu_h])
 
 	# 7) DIALOGY: cely na displeji a odpovedi zmacknutelne.
 	for two in [true, false]:
@@ -309,3 +398,52 @@ func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 	while px > min_px and not _fits(s, width, px):
 		px -= 1
 	return px
+
+
+func _font_w(s: String, px: int) -> float:
+	return ThemeDB.fallback_font.get_string_size(
+		s, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x
+
+
+# IKONA KATEGORIE SEDI VE SVEM TABU: ctverec, uprostred, dost velky na precteni
+# a stejne velky ve vsech tabech (jinak by sada vypadala rozhozeně).
+func _check_icons(tabs: Array, icons: Array, tag: String, kde: String) -> void:
+	_check(icons.size() == tabs.size(),
+		"%s: v %s chybi ikony kategorii (%d z %d)" % [tag, kde, icons.size(), tabs.size()])
+	if icons.size() != tabs.size() or tabs.is_empty():
+		return
+	var side: float = -1.0
+	for i in range(tabs.size()):
+		var ir: Rect2 = icons[i]
+		var tr: Rect2 = tabs[i]
+		_check(absf(ir.size.x - ir.size.y) < 0.5,
+			"%s: ikona kategorie v %s neni ctverec (%.0fx%.0f)" % [tag, kde, ir.size.x, ir.size.y])
+		_check(ir.size.x >= 18.0 and ir.size.x <= tr.size.x - 8.0,
+			"%s: ikona kategorie v %s je moc velka nebo moc mala (%.0f px)" % [tag, kde, ir.size.x])
+		_check(tr.encloses(ir), "%s: ikona kategorie v %s preleza tab" % [tag, kde])
+		_check((ir.get_center() - tr.get_center()).length() < 1.0,
+			"%s: ikona kategorie v %s neni uprostred tabu" % [tag, kde])
+		if side < 0.0:
+			side = ir.size.x
+		_check(absf(ir.size.x - side) < 0.5,
+			"%s: ikony kategorii v %s nemaji stejnou velikost" % [tag, kde])
+
+
+# TABY KATEGORII MAJI IKONY A VSECHNY CTYRI SOUBORY EXISTUJI (Jan, Oct 2026:
+# "tlacitka kategorii nahradit obrázky. Ikonami"). Hlida se MISTO VOLANI ve
+# zdroji: kdyby se kresleni ikony zahodilo, v testech rozvrzeni to nepoznas -
+# obdelnik tabu zustane stejny a jen se do nej prestane neco kreslit.
+func _test_tabs_are_icons() -> void:
+	var src: String = _src()
+	var start: int = src.find("func _draw_card")
+	_check(start >= 0, "kresleni tabu (_draw_card) ve zdroji neexistuje")
+	if start >= 0:
+		var end: int = src.find("\nfunc ", start + 1)
+		var body: String = src.substr(start, (end - start) if end > start else 1500)
+		_check(body.contains("_cat_icon("), "taby kategorii nekresli ikony")
+		_check(body.contains("draw_texture_rect(tex"), "ikona kategorie se nekresli jako textura")
+		_check(src.contains("cat_icon_paths"), "v obrazovce chybi tabulka ikon kategorii")
+	for row in Upgrades.CATEGORIES:
+		var id: String = String(row["id"])
+		_check(FileAccess.file_exists("res://assets/ui/cat_%s.png" % id),
+			"chybi soubor s ikonou kategorie %s (res://assets/ui/cat_%s.png)" % [id, id])

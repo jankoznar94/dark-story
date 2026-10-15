@@ -8,9 +8,10 @@ extends Node2D
 # a podle toho se kresli i vyhodnocuje vstup.
 #
 # DVE MISTA, KDE SE NAKUPUJE:
-#   * V BITVE (panel "UPGRADY") - docasne kroky za ZLATO, kazdy level znovu,
+#   * V BITVE (panel u spodniho okraje) - docasne kroky za ZLATO, kazdy level
+#     znovu. Panel je otevreny PORAD a hra se pod nim NEZASTAVUJE.
 #   * V MENU (obrazovka "UPRAVY") - permanentni stupne za BODY.
-# Oba panely kresli STEJNY predpis (`_draw_card` + `_draw_row`), takze se
+# Oba panely kresli STEJNY predpis (`_draw_card` + `_draw_grid`), takze se
 # nemohou rozejit ani popiskem, ani cenou.
 
 const BG := Color(0.055, 0.052, 0.062)
@@ -52,9 +53,6 @@ var _pressed: bool = false
 # DOTAZ PRI ODCHODU Z BOJE. Dokud je otevreny, partie se NEKROKUJE - hrac se
 # nema rozhodovat, zatimco mu umiraji poutnici.
 var leave_ask: bool = false
-# PANEL S NAKUPEM V BITVE. Taky PARTII ZASTAVI: prekryva spodni tretinu pole,
-# takze by hrac nevedel, co se mu pod nim deje.
-var shop_open: bool = false
 var shop_cat: int = 0
 var upg_cat: int = 0
 
@@ -93,9 +91,20 @@ func _refield() -> void:
 # kategorie (a klepalo by se na neco jineho, nez hrac vidi).
 func _sync_shop_shape() -> void:
 	var want_tabs: int = SHOP_CATS.size()
-	var want_rows: int = _shop_stats().size()
-	if layout.shop_tab_count != want_tabs or layout.shop_row_count != want_rows:
-		layout.set_shop_shape(want_tabs, maxi(1, want_rows))
+	var want_cells: int = _shop_stats().size()
+	var moved: bool = false
+	if layout.shop_tab_count != want_tabs or layout.shop_cell_count != want_cells:
+		layout.set_shop_shape(want_tabs, maxi(1, want_cells))
+		moved = true
+	# MENU - UPRAVY: kategorie ma 4, 3, 3 nebo 4 parametry, takze i mrizka se
+	# musi prelozit pri kazdem prepnuti tabu.
+	var want_upg: int = _upg_stats().size()
+	if layout.upg_cell_count != want_upg:
+		layout.set_upg_shape(maxi(1, want_upg))
+	# PANEL SE PRELOZIL = HERNI PLOCHA SE MOHLA POHNOUT. Hra si ji musi vzit
+	# znovu, jinak by stavela poutniky podle starych cisel.
+	if moved:
+		game.set_field(layout.field_r, layout.unit_r, layout.center)
 
 
 func _shop_stats() -> Array:
@@ -109,8 +118,10 @@ func _upg_stats() -> Array:
 
 # PODLE CEHO SE ROZHODUJE, JESTLI HRA STOJI. Jedno misto - kdyby si to hlídalo
 # vic funkci, stacilo by jedno opomenute volani a hra by pod panelem bezela.
+# PANEL S UPGRADY TU NENI: stoji mimo herni plochu a hrac pod nim nakupuje ZA
+# POCHODU (Jan, Oct 2026).
 func is_halted() -> bool:
-	return leave_ask or shop_open or game.is_over()
+	return leave_ask or game.is_over()
 
 
 func _process(dt: float) -> void:
@@ -228,7 +239,6 @@ func _handle_menu_tap(pos: Vector2) -> void:
 # i permanentni upgrady) zustava - to je cely smysl permanentnich bonusu.
 func start_battle() -> void:
 	leave_ask = false
-	shop_open = false
 	game.start_level(game.profile.level)
 	_refield()
 	menu.open_battle()
@@ -251,13 +261,13 @@ func _handle_settings_tap(pos: Vector2) -> void:
 func _handle_upgrades_tap(pos: Vector2) -> void:
 	for i in range(layout.upg_tabs.size()):
 		if (layout.upg_tabs[i] as Rect2).has_point(pos):
-			# Kategorie se prekresli HNAD: pocet radku se lisi, takze by
-			# tlacitka "+" zustala na radcich te predchozi.
+			# Kategorie se prekresli HNAD: kazda ma jiny pocet parametru
+			# (4, 3, 3, 4), takze by bunky zustaly rozvrzene pro tu predchozi.
 			upg_cat = i
-			layout.layout_upgrades()
+			_sync_shop_shape()
 			return
-	for i in range(layout.upg_buttons.size()):
-		if (layout.upg_buttons[i] as Rect2).has_point(pos):
+	for i in range(layout.upg_cells.size()):
+		if (layout.upg_cells[i] as Rect2).has_point(pos):
 			var stats: Array = _upg_stats()
 			if i < stats.size():
 				game.buy_perm(String(stats[i]["id"]))
@@ -292,7 +302,6 @@ func _handle_leave_tap(pos: Vector2) -> void:
 
 func _do_leave() -> void:
 	leave_ask = false
-	shop_open = false
 	menu.open_menu()
 
 
@@ -308,7 +317,6 @@ func _handle_end_tap(pos: Vector2) -> void:
 	if game.phase == "won":
 		if layout.dlg_a.has_point(pos):
 			game.next_level()
-			shop_open = false
 			_refield()
 			return
 		if layout.dlg_b.has_point(pos):
@@ -332,21 +340,15 @@ func _handle_battle_tap(pos: Vector2) -> void:
 	if layout.hud_menu.has_point(pos):
 		ask_leave()
 		return
-	if layout.hud_upgrades.has_point(pos):
-		shop_open = not shop_open
-		return
-	if not shop_open:
-		return
-	if layout.shop_close.has_point(pos) or not layout.shop_panel.has_point(pos):
-		shop_open = false
-		return
+	# PANEL S UPGRADY NENI CO OTEVIRAT ANI ZAVIRAT: stoji tam porad a klepnuti
+	# mimo nej (do pole, do pruhu) nedela nic - hra bezi dal.
 	for i in range(layout.shop_tabs.size()):
 		if (layout.shop_tabs[i] as Rect2).has_point(pos):
 			shop_cat = i
 			_sync_shop_shape()
 			return
-	for i in range(layout.shop_buttons.size()):
-		if (layout.shop_buttons[i] as Rect2).has_point(pos):
+	for i in range(layout.shop_cells.size()):
+		if (layout.shop_cells[i] as Rect2).has_point(pos):
 			var stats: Array = _shop_stats()
 			if i < stats.size():
 				game.buy_temp(String(stats[i]["id"]))
@@ -386,8 +388,8 @@ func _draw_battle() -> void:
 	_draw_shots()
 	_draw_bar()
 	_draw_palette()
-	if shop_open:
-		_draw_shop()
+	# PANEL S NAKUPEM JE V BITVE PORAD - kresli se vzdy, ne "kdyz je otevreny".
+	_draw_shop()
 	if game.is_over():
 		_draw_end()
 	if leave_ask:
@@ -535,12 +537,8 @@ func _draw_bar() -> void:
 		l1, HORIZONTAL_ALIGNMENT_LEFT, layout.bar_text_w, px1, TEXT)
 	draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h * 0.78 + float(px2) * 0.36),
 		l2, HORIZONTAL_ALIGNMENT_LEFT, layout.bar_text_w, px2, DIM)
-	# TLACITKO UPGRADY (panel s nakupem) - kresli se VZDY, i po dohrani.
-	var ur: Rect2 = layout.hud_upgrades
-	draw_rect(ur, CARD_ROW if not shop_open else TOWER_BODY, true)
-	draw_rect(ur, TEXT if not shop_open else DIM, false, 2.0)
-	_label("UPGRADY", ur, _fit_px("UPGRADY", ur.size.x - 8.0, layout.font_px, 10), TEXT)
-	# TLACITKO MENU (odchod z partie).
+	# TLACITKO MENU (odchod z partie). Tlacitko UPGRADY tady NENI: panel
+	# s nakupem je v bitve otevreny porad, takze nebylo co prepinat.
 	var mr: Rect2 = layout.hud_menu
 	draw_rect(mr, TOWER_BODY, true)
 	draw_rect(mr, DIM, false, 2.0)
@@ -592,47 +590,38 @@ func _card_frame(r: Rect2) -> void:
 	draw_rect(r, CARD_EDGE, false, 2.0)
 
 
-func _draw_close(r: Rect2) -> void:
-	draw_rect(r, TOWER_BODY, true)
-	draw_rect(r, DIM, false, 2.0)
-	_label("×", r, layout.font_px, TEXT)
+# IKONY KATEGORII (mec / stit / zlataky / hvezdicka). Nahrazuji text na tabu
+# (Jan, Oct 2026: "tlacitka kategorii nahradit obrázky. Ikonami ... jednoduché,
+# ale výstižné"). Soubory jsou BILE MASKY s pruhlednym pozadim - barvu dostanou
+# az tady (`modulate`), takze sedi do palety jako zbytek obrazovky. Kdyz soubor
+# chybi, kresli se misto ikony popisek: tab nesmi zustat prazdny.
+var cat_icon_paths: Dictionary = {
+	Upgrades.CAT_OFF: "res://assets/ui/cat_off.png",
+	Upgrades.CAT_DEF: "res://assets/ui/cat_def.png",
+	Upgrades.CAT_ECO: "res://assets/ui/cat_eco.png",
+	Upgrades.CAT_SPEC: "res://assets/ui/cat_spec.png",
+}
+var _cat_icons: Dictionary = {}
 
 
-# RADKY PARAMETRU. `costs` je text ceny, `afford` je seznam, jestli na to hrac
-# ma (nema = ztlumene, ale porad videt, KOLIK to stoji - jinak by hrac nevedel,
-# na co setri).
-func _draw_rows(rows: Array, buttons: Array, stats: Array, costs: Array,
-		values: Array, levels: Array) -> void:
-	for i in range(rows.size()):
-		var r: Rect2 = rows[i]
-		draw_rect(r, CARD_ROW, true)
-		if i >= stats.size():
-			continue
-		var s: Dictionary = stats[i]
-		var id: String = String(s["id"])
-		var br: Rect2 = buttons[i]
-		var label_w: float = maxf(40.0, r.size.x - br.size.x - 3.0 * maxf(6.0, r.size.x * 0.02))
-		var lr := Rect2(r.position.x + 8.0, r.position.y, label_w * 0.52, r.size.y)
-		var vr := Rect2(r.position.x + label_w * 0.52, r.position.y, label_w * 0.48, r.size.y)
-		_text(String(s["label"]), lr, _fit_px(String(s["label"]), lr.size.x, layout.font_px, 10), TEXT,
-			HORIZONTAL_ALIGNMENT_LEFT)
-		_text(String(values[i]), vr, _fit_px(String(values[i]), vr.size.x, layout.font_px, 10),
-			MENU_EDGE_FIRST, HORIZONTAL_ALIGNMENT_RIGHT)
-		draw_rect(br, CARD_BG, true)
-		var col: Color = TEXT if bool(costs[i][1]) else DIM
-		draw_rect(br, col, false, 2.0)
-		var ct: String = String(costs[i][0])
-		_label(ct, br, _fit_px(ct, br.size.x - 6.0, layout.font_px, 10), col)
-		# STUPEN "3/6+2" = kolik ma permanentne + kolik koupil v tomto levelu.
-		# Cislo je u radku vzdy - hrac musi videt, jak daleko je.
-		var lv: String = String(levels[i])
-		if lv != "" and r.size.x > 220.0:
-			var lvr := Rect2(vr.end.x - 54.0, r.position.y + r.size.y * 0.55, 54.0, r.size.y * 0.45)
-			_text(lv, lvr, maxi(9, layout.font_px - 5), DIM, HORIZONTAL_ALIGNMENT_RIGHT)
+func _cat_icon(cat_id: String) -> Texture2D:
+	if not _cat_icons.has(cat_id):
+		var path: String = String(cat_icon_paths.get(cat_id, ""))
+		var tex: Texture2D = null
+		if path != "" and ResourceLoader.exists(path):
+			tex = load(path) as Texture2D
+		_cat_icons[cat_id] = tex
+	return _cat_icons[cat_id]
 
 
-func _draw_card(panel: Rect2, tabs: Array, active: int, labels: Array, close: Rect2,
-		show_close: bool) -> void:
+func _cat_label(cat_id: String) -> String:
+	for row in Upgrades.CATEGORIES:
+		if String(row["id"]) == cat_id:
+			return String(row["label"])
+	return cat_id
+
+
+func _draw_card(panel: Rect2, tabs: Array, icons: Array, active: int, cats: Array) -> void:
 	_card_frame(panel)
 	for i in range(tabs.size()):
 		var tr: Rect2 = tabs[i]
@@ -640,33 +629,78 @@ func _draw_card(panel: Rect2, tabs: Array, active: int, labels: Array, close: Re
 		draw_rect(tr, CARD_ROW if on else CARD_BG, true)
 		var col: Color = TEXT if on else DIM
 		draw_rect(tr, col if on else CARD_EDGE, false, 2.0 if on else 1.0)
-		var lb: String = String(labels[i])
-		_label(lb, tr, _fit_px(lb, tr.size.x - 8.0, layout.font_px, 10), col)
-	if show_close:
-		_draw_close(close)
+		var cat: String = String(cats[i]) if i < cats.size() else ""
+		var tex: Texture2D = _cat_icon(cat)
+		if tex != null:
+			var ir: Rect2 = icons[i] if i < icons.size() else tr
+			draw_texture_rect(tex, ir, false, col)
+		else:
+			var lb: String = _cat_label(cat)
+			_label(lb, tr, _fit_px(lb, tr.size.x - 8.0, layout.font_px, 10), col)
 
 
-# PANEL V BITVE: docasne kroky za zlato. Hra je pod nim ZASTAVENA.
+# BUNKA UPGRADU JE CELE TLACITKO. Uvnitr jsou DVA RADKY TEXTU: nahore nazev,
+# pod nim AKTUALNI HODNOTA (zlute - to je to, co se koupi zmeni) a na TOM SAMEM
+# radku vpravo cena (kdyz uz je na maximu, stoji tam "MAX"). Po koupi se preepise
+# jen hodnota a cena - zadna tabulka s tlacitkem na konci radku.
+#
+# `afford` = jestli na to hrac ma; kdyz ne, je ramecek i cena ztlumeny, ale
+# castka zustava videt (jinak by hrac nevedel, na co setri).
+func _draw_grid(cells: Array, stats: Array, names: Array, values: Array,
+		prices: Array, afford: Array) -> void:
+	for i in range(cells.size()):
+		var c: Rect2 = cells[i]
+		if i >= stats.size():
+			# Prazdna bunka (kategorie ma lichy pocet) zustava jen jako podklad.
+			draw_rect(c, CARD_BG, true)
+			continue
+		var col: Color = TEXT if bool(afford[i]) else DIM
+		# TELO BUNKY JE O STUPEN SVETLEJSI NEZ PANEL (jako driv radek) - jinak by
+		# z tlačítka byl jen ramecek na stejne barve jako podklad.
+		draw_rect(c, CARD_ROW, true)
+		draw_rect(c, col, false, 2.0)
+		var pad: float = maxf(8.0, c.size.x * 0.05)
+		var inner_w: float = c.size.x - 2.0 * pad
+		var line: float = c.size.y / 2.0
+		var nm: String = String(names[i])
+		_text(nm, Rect2(c.position.x + pad, c.position.y, inner_w, line),
+			_fit_px(nm, inner_w, layout.font_px, 10), TEXT, HORIZONTAL_ALIGNMENT_LEFT)
+		# DRUHY RADEK: hodnota vlevo, cena vpravo. Cena si vezme jen tolik mista,
+		# kolik opravdu potrebuje - hodnota dostane zbytek a nikdy se neprekryji.
+		var pr: String = String(prices[i])
+		var pr_room: float = maxf(24.0, inner_w * 0.45)
+		var pr_px: int = _fit_px(pr, pr_room, layout.font_px, 10)
+		var pr_w: float = layout.measure_px(pr, pr_px)
+		var vl: String = String(values[i])
+		var vl_w: float = maxf(10.0, inner_w - pr_w - 8.0)
+		_text(vl, Rect2(c.position.x + pad, c.position.y + line, vl_w, line),
+			_fit_px(vl, vl_w, layout.font_px, 10), MENU_EDGE_FIRST,
+			HORIZONTAL_ALIGNMENT_LEFT)
+		_text(pr, Rect2(c.position.x + pad + inner_w - pr_w, c.position.y + line, pr_w, line),
+			pr_px, col, HORIZONTAL_ALIGNMENT_RIGHT)
+
+
+# PANEL V BITVE: docasne kroky za zlato. Stoji porad u spodniho okraje, hra
+# pod nim BEZI - proto tu neni zadny krizek na zavreni (Jan, Oct 2026).
 func _draw_shop() -> void:
-	var labels: Array = []
-	for c in SHOP_CATS:
-		for row in Upgrades.CATEGORIES:
-			if String(row["id"]) == String(c):
-				labels.append(String(row["label"]))
-	_draw_card(layout.shop_panel, layout.shop_tabs, shop_cat, labels, layout.shop_close, true)
+	# Kategorie se predavaji jako ID (ikony, ne text) - popisek se pouzije jen
+	# jako zaloha, kdyby soubor s ikonou chybel.
+	_draw_card(layout.shop_panel, layout.shop_tabs, layout.shop_tab_icons, shop_cat, SHOP_CATS)
 	var stats: Array = _shop_stats()
-	var costs: Array = []
+	var names: Array = []
+	var prices: Array = []
 	var values: Array = []
-	var levels: Array = []
+	var afford: Array = []
 	for s in stats:
 		var id: String = String(s["id"])
 		var have: int = game.temp_level(id)
-		var c: int = Upgrades.temp_cost(id, have)
 		var maxed: bool = have >= Upgrades.temp_max(id)
-		costs.append(["MAX" if maxed else "+%d zl." % c, (not maxed) and game.gold >= c])
+		var c: int = Upgrades.temp_cost(id, have)
+		names.append(Upgrades.label_of(id))
 		values.append(Upgrades.value_text(id, game.profile.perm_level(id), have))
-		levels.append("%d/%d" % [have, Upgrades.temp_max(id)])
-	_draw_rows(layout.shop_rows, layout.shop_buttons, stats, costs, values, levels)
+		prices.append("MAX" if maxed else "+%d zl." % c)
+		afford.append((not maxed) and game.gold >= c)
+	_draw_grid(layout.shop_cells, stats, names, values, prices, afford)
 
 
 # OBRAZOVKA UPRAVY V MENU: permanentni stupne za body.
@@ -675,23 +709,25 @@ func _draw_upgrades() -> void:
 		layout.menu_title_px, Color(0.90, 0.87, 0.80))
 	_label(game.profile.menu_note(), Rect2(0.0, layout.upg_note_y, layout.view.x, float(layout.font_px) * 1.4),
 		layout.menu_sub_px, MENU_EDGE)
-	var labels: Array = []
+	var cats: Array = []
 	for row in Upgrades.CATEGORIES:
-		labels.append(String(row["label"]))
-	_draw_card(layout.upg_panel, layout.upg_tabs, upg_cat, labels, Rect2(), false)
+		cats.append(String(row["id"]))
+	_draw_card(layout.upg_panel, layout.upg_tabs, layout.upg_tab_icons, upg_cat, cats)
 	var stats: Array = _upg_stats()
-	var costs: Array = []
+	var names: Array = []
+	var prices: Array = []
 	var values: Array = []
-	var levels: Array = []
+	var afford: Array = []
 	for s in stats:
 		var id: String = String(s["id"])
 		var have: int = game.profile.perm_level(id)
-		var c: int = Upgrades.perm_cost(id, have)
 		var maxed: bool = have >= Upgrades.perm_max(id)
-		costs.append(["MAX" if maxed else "+%d b." % c, (not maxed) and game.profile.body >= c])
+		var c: int = Upgrades.perm_cost(id, have)
+		names.append(Upgrades.label_of(id))
 		values.append(Upgrades.value_text(id, have, 0))
-		levels.append("%d/%d" % [have, Upgrades.perm_max(id)])
-	_draw_rows(layout.upg_rows, layout.upg_buttons, stats, costs, values, levels)
+		prices.append("MAX" if maxed else "+%d b." % c)
+		afford.append((not maxed) and game.profile.body >= c)
+	_draw_grid(layout.upg_cells, stats, names, values, prices, afford)
 	var br: Rect2 = layout.upg_back
 	draw_rect(br, MENU_BG, true)
 	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
