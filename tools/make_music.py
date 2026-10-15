@@ -43,11 +43,14 @@ def tone(freq, dur, shape="square", amp=1.0, decay=4.0):
 
 
 def kick(dur=0.15):
+    # Jan (Oct 2026): "údery na první a třetí dobu jsou příliš výrazné. To bych
+    # lehce ztlumil." - kopak je proto tichy (0,26 misto 0,5); zbytek smycky se
+    # tim pri normalizaci lehce zvedne, takze se zmeni POMER, ne jen hlasitost.
     n = max(1, int(dur * SR))
     t = np.arange(n) / SR
     f = 120.0 * np.exp(-t * 22.0) + 42.0
     phase = 2.0 * np.pi * np.cumsum(f) / SR
-    return 0.5 * np.sin(phase) * np.exp(-t * 14.0)
+    return 0.26 * np.sin(phase) * np.exp(-t * 14.0)
 
 
 def hat(dur=0.04):

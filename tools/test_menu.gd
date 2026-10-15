@@ -31,6 +31,8 @@ const MIN_CHECKS := 80
 # Klepaci testy proto bezi az v PRVNIM SNIMKU (`_process`), kdy strom stoji.
 # Kdyby se nekdy presunuly zpatky do `_init`, testy projdou a meri nic.
 func _init() -> void:
+	Profile.allow_save = false
+	Settings.allow_save = false
 	_run("menu zacina v menu", _test_starts_in_menu)
 	_run("seznam tlacitek a akci sedi", _test_items_and_actions)
 	_run("obrazovky se prepinaji", _test_views)
@@ -493,8 +495,13 @@ func _test_tap_settings_and_update() -> void:
 	s.music = true
 	v.call("_tap", (l.settings_rows[0] as Rect2).get_center())
 	_check(s.lowres != before, "radek jakosti vykreslovani nic neprepnul")
-	# DRUHY RADEK = HUDBA (Jan, Oct 2026: "A dáme do hry nějakou primitivní
-	# hudbu."). Klepnuti na nej musi hudbu vypnout a hra to musi vzit na vedomi.
+	# DRUHY RADEK = HUDBA, TRETI = ZVUKY (Jan, Oct 2026: "A střelba a zásah by
+	# samozřejmě měly mít také zvukové efekty."). Pocet radku musi sedet s tim,
+	# co si obrazovka kresli - jinak by posledni volba nikam nevedla.
+	_check(l.settings_rows.size() == Settings.ROWS,
+		"nastaveni ma %d radku, rozvrzeni %d" % [Settings.ROWS, l.settings_rows.size()])
+	_check((v.call("_settings_rows") as Array).size() == Settings.ROWS,
+		"obrazovka kresli jiny pocet radku, nez je voleb")
 	var mbefore: bool = s.music
 	v.call("_tap", (l.settings_rows[1] as Rect2).get_center())
 	_check(s.music != mbefore, "radek hudby hudbu neprepnul")
@@ -512,6 +519,22 @@ func _test_tap_settings_and_update() -> void:
 	s.music = true
 	v.call("_sync_music")
 	_check(pl == null or pl.playing, "zapnuta hudba po klepnuti nehraje")
+	# ZVUKY: treti radek je vypne a `_play_sfx` to musi respektovat.
+	var voices: Array = v.get("sfx_voices")
+	_check(voices.size() > 0, "hra si nevytvorila hlasy pro zvukove efekty")
+	_check((v.get("sfx_streams") as Dictionary).size() >= 3,
+		"nenacetly se vsechny zvukove efekty (%d)" % (v.get("sfx_streams") as Dictionary).size())
+	v.set("touched", true)
+	_check(s.sfx, "nastaveni nezacina se zvuky zapnutymi")
+	v.call("_tap", (l.settings_rows[2] as Rect2).get_center())
+	_check(not s.sfx, "radek zvuku zvuky nevypnul")
+	v.call("_play_sfx", "shot")
+	_check(voices.is_empty() or not (voices[0] as AudioStreamPlayer).playing,
+		"vypnute zvuky presto hraji")
+	s.sfx = true
+	v.call("_play_sfx", "shot")
+	_check(voices.is_empty() or (voices[0] as AudioStreamPlayer).playing,
+		"zapnuty vystrel se neprehraje")
 	v.call("_tap", l.settings_back.get_center())
 	_check(m.is_menu(), "ZPET z nastaveni nevrátilo do menu")
 	# UPDATE: mimo web se jen oznami, ze neni co aktualizovat.

@@ -28,6 +28,7 @@ func _init() -> void:
 	_run("strela po prepsani barvy veze doleti a ubira", _test_shot_lands_after_hue_switch)
 	_run("zmizele fialove strela mine (dopadne, ale neubira)", _test_vanish_shot_misses)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
+	_run("zvukove udalosti: vystrel, zásah, smrt (a jed ne)", _test_sound_events)
 	_run("neviditelna fialova je imunni (jed ani odraz na ni nedosahnou)", _test_ghost_is_immune)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
@@ -448,6 +449,57 @@ func _test_game_speed_scales_time() -> void:
 	# KAZDA PARTIE ZACINA NA 1,0x - hrac si ma kazdou partii zvolit sve tempo.
 	fast.start_level(2)
 	_check(absf(fast.time_scale() - 1.0) < 0.001, "nova partie nezacina na 1,0x")
+
+
+# ZVUKOVE UDALOSTI. Hra musi rict, CO se stalo (obrazovka z toho dela zvuk);
+# kdyby je neposilala, hra by hrala tise a nikdo by nepoznal proc. A kdyby je
+# nezmazala pri vybrani, zvuk by se opakoval dokola.
+func _test_sound_events() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.7)
+	p.speed = 0.0
+	p.hp = 100000.0
+	p.max_hp = 100000.0
+	g.take_events()
+	_tick(g, 2.0)
+	var ev: Array = g.take_events()
+	_check(ev.has("shot"), "vystrel neposlal zvukovou udalost (%s)" % str(ev))
+	_check(ev.has("hit"), "dopad strely neposlal zvukovou udalost (%s)" % str(ev))
+	_check(g.take_events().is_empty(), "udalosti se po vybrani nevymazaly")
+	# SMRT POUTNIKA. Vlastni hra: vez DRZI CIL, dokud neumre, takze v predchozi
+	# hre by se porad strelilo do poutnika s 100000 zivoty a druhy by nikdy
+	# neprisel na radu (a test by hlasil chybejici zvuk smrti).
+	var gk: Game = _fresh()
+	gk.tower.hue = Hue.RED
+	var q: Pilgrim = _place(gk, Hue.RED, gk.range_frac() * 0.7)
+	q.speed = 0.0
+	q.hp = 1.0
+	q.max_hp = 1.0
+	gk.take_events()
+	_tick(gk, 2.0)
+	_check(gk.take_events().has("kill"), "smrt poutnika neposlala zvukovou udalost")
+	# JED NESMI TIKAT: jed skodi pres `_hurt` kazdy snimek, takze zvuk zasahu
+	# patri k DOPADU strely - jinak by hrac poslouchal tikani 60x za sekundu.
+	var g2: Game = _fresh()
+	g2.tower.hue = Hue.YELLOW
+	g2.profile.perm["ps"] = 3
+	var w: Pilgrim = _place(g2, Hue.RED, 0.9)
+	w.speed = 0.0
+	w.hp = 100000.0
+	w.max_hp = 100000.0
+	w.poison_left = 3.0
+	w.poison_dps = 5.0
+	g2.take_events()
+	_tick(g2, 1.0)
+	_check(not g2.take_events().has("hit"), "jed posila zvuk zasahu kazdy snimek")
+	# STROP UDALOSTI: kdo hru kroka bez obrazovky (simulator), nesmi si
+	# pamatovat tisice udalosti.
+	var g3: Game = _fresh()
+	for i in range(200):
+		g3._event("shot")
+	_check(g3.events.size() <= Game.MAX_EVENTS,
+		"seznam zvukovych udalosti roste bez stropu (%d)" % g3.events.size())
 
 
 # NEVIDITELNA FIALOVA JE IMUNNI VUCI VSEMU. Jan (Oct 2026): "Fialoví nepřátelé

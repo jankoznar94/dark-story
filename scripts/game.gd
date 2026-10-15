@@ -629,6 +629,33 @@ func in_range(p: Pilgrim, r: float) -> bool:
 
 # --------------------------------------------------------------- ZAMEROVANI
 
+# ------------------------------------------------------------------ ZVUKOVE UDALOSTI
+#
+# HRA NEREKNE "prehraj zvuk" (nevi, jestli je vubec nejaky prehravac, a v
+# testech by nic nehrala): zapisuje, CO se stalo. Obrazovka si z toho zvuky
+# udela (`Game.take_events`) - a je to zaroven jedine misto, kde se da overit,
+# ze vystrel opravdu vystrelil a dopad opravdu ubral.
+#
+# STROP: zvuk je doplnek, ne zaznam. Kdo hru kroka bez obrazovky (simulátor),
+# by si jinak pamatoval tisice udalosti.
+const MAX_EVENTS := 24
+var events: Array = []
+
+
+func _event(kind: String) -> void:
+	if events.size() >= MAX_EVENTS:
+		events.remove_at(0)
+	events.append(kind)
+
+
+# VYBRANI UDALOSTI = JEJICH SMAZANI. Kdo je precte bez vybrani, prehraje je
+# znovu (a zvuk by se opakoval).
+func take_events() -> Array:
+	var out: Array = events
+	events = []
+	return out
+
+
 # SVAZEK DRZI CIL, DOKUD NEUMRE. SAM POSKOZENI NEDAVA: paprsek je jen ukazatel,
 # na koho vez miri. Pocet cilu zaraz je upgradovatelny parametr (multishot).
 func _aim() -> void:
@@ -668,6 +695,7 @@ func _fire_at(p: Pilgrim) -> void:
 	if rng.randf() < crit_chance():
 		dmg *= crit_dmg()
 	shots.append(_make_shot(p, dmg, ricochet(), [], muzzle(p)))
+	_event("shot")
 
 
 # USTI HLAVNE. Strela vychazi z OKRAJE veze, ne ze stredu - hrac vidi, kterym
@@ -787,6 +815,9 @@ func _damage(p: Pilgrim, amount: float) -> void:
 	if ice_frac() > 0.0:
 		p.ice_left = ICE_S
 		p.ice_frac = ice_frac()
+	# ZVUK ZASahu patri SEM (dopad strely), ne do `_hurt`: jed skodi pres
+	# `_hurt` kazdy snimek a hrac by poslouchal tikani jedu misto ran.
+	_event("hit")
 	_hurt(p, amount)
 
 
@@ -809,6 +840,7 @@ func _hurt(p: Pilgrim, amount: float) -> void:
 
 func _kill(p: Pilgrim) -> void:
 	p.alive = false
+	_event("kill")
 	gold += Hue.gold_of(p.hue) + int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.

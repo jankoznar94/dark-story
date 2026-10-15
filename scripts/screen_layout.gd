@@ -608,13 +608,10 @@ func layout_levels() -> void:
 	lvl_note_y = lvl_title_y + float(lvl_title_px) * 1.05
 
 
-# NASTAVENI: radky voleb (jakost vykreslovani, hudba) a ZPET, svisle
-# vycentrovane. Pocet radku je jeden zdroj pravdy (`SETTINGS_ROWS`) - kdo
-# prida volbu, zmeni ho TADY a obrazovka si radek uz jen vykresli a obslouzi
-# podle INDEXU.
-const SETTINGS_ROWS := 2
-
-
+# NASTAVENI: radky voleb (jakost vykreslovani, hudba, zvuky) a ZPET, svisle
+# vycentrovane. POCET RADKU JE JEDEN ZDROJ PRAVDY (`Settings.ROWS`) - kdo
+# prida volbu, zmeni ho tam a obrazovka si radek uz jen vykresli a obslouzi
+# podle INDEXU. Dve nezavisla cisla by se rozejit musela.
 func layout_settings() -> void:
 	if view.x < 1.0 or view.y < 1.0:
 		settings_rows = []
@@ -623,10 +620,10 @@ func layout_settings() -> void:
 	var w: float = clampf(view.x * 0.78, 260.0, 560.0)
 	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.09))
 	var gap: float = maxf(10.0, view.y * 0.03)
-	var total: float = h * float(SETTINGS_ROWS + 1) + gap * float(SETTINGS_ROWS)
+	var total: float = h * float(Settings.ROWS + 1) + gap * float(Settings.ROWS)
 	var y0: float = (view.y - total) * 0.5
 	var x: float = (view.x - w) * 0.5
 	settings_rows = []
-	for i in range(SETTINGS_ROWS):
+	for i in range(Settings.ROWS):
 		settings_rows.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
-	settings_back = Rect2(x, y0 + (h + gap) * float(SETTINGS_ROWS), w, h)
+	settings_back = Rect2(x, y0 + (h + gap) * float(Settings.ROWS), w, h)

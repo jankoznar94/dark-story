@@ -83,6 +83,7 @@ func _ready() -> void:
 	_apply_render_scale()
 	_refield()
 	_make_music()
+	_make_sfx()
 	get_viewport().size_changed.connect(_refield)
 
 
@@ -157,6 +158,10 @@ func _process(dt: float) -> void:
 	# Rozvrzeni si to musi vzit z obrazovky (pocita to MISTO v pruhu).
 	if layout.speed_visible != (game.speed_options() > 1):
 		layout.set_speed_visible(game.speed_options() > 1)
+	# ZVUKOVE EFEKTY: hra rekla, co se stalo; obrazovka z toho udela zvuk. Bere
+	# se to JEDNOU za snimek (vyber = smazani), takze se zvuk nezopakuje.
+	for ev in game.take_events():
+		_play_sfx(String(ev))
 	_sync_music()
 	_sync_shop_shape()
 	_sync_dialogs()
@@ -336,6 +341,8 @@ func _handle_settings_tap(pos: Vector2) -> void:
 			1:
 				settings.toggle_music()
 				_sync_music()
+			2:
+				settings.toggle_sfx()
 		return
 	if layout.settings_back.has_point(pos):
 		menu.open_menu()
@@ -348,6 +355,7 @@ func _settings_rows() -> Array:
 	return [
 		["Jakost vykreslování", settings.lowres_text()],
 		["Hudba", settings.music_text()],
+		["Zvuky", settings.sfx_text()],
 	]
 
 
@@ -378,6 +386,69 @@ func _make_music() -> void:
 	music.stream = s
 	music.volume_db = MUSIC_DB
 	add_child(music)
+
+
+# =========================================================================
+# ZVUKOVE EFEKTY (Jan, Oct 2026: "A střelba a zásah by samozřejmě měly mít
+# také zvukové efekty.")
+#
+# Hra posila UDALOSTI ("shot", "hit", "kill") a obrazovka si z nich dela zvuk.
+#
+# DVE VECI, bez kterych by to hrac nesnesl:
+#   1. ODPOCET MEZI ZVUKY. Pri plne kadenci (20 ran/s) by zvuk vystrelu sel
+#      20x za sekundu a slil se do huceni - `SFX_GAP_S` drzi odstup.
+#   2. BAZEN PREHRAVACU. Jeden prehravac prerusuje sam sebe (druhy vystrel by
+#      utnul prvni). Ctyri staci.
+# =========================================================================
+
+const SFX_DB := {"shot": -14.0, "hit": -10.0, "kill": -8.0}
+const SFX_GAP_S := {"shot": 0.075, "hit": 0.045, "kill": 0.0}
+const SFX_VOICES := 4
+var sfx_streams: Dictionary = {}
+var sfx_voices: Array = []
+var sfx_at: Dictionary = {}
+
+
+func _make_sfx() -> void:
+	for kind in SFX_DB.keys():
+		var s: AudioStream = load("res://assets/audio/%s.ogg" % String(kind))
+		if s != null:
+			sfx_streams[String(kind)] = s
+	for i in range(SFX_VOICES):
+		var pl := AudioStreamPlayer.new()
+		pl.volume_db = 0.0
+		add_child(pl)
+		sfx_voices.append(pl)
+
+
+# ZVUK SE PREHRAJE JEN KDYZ MA SMYSL: hrac chce zvuky (nastaveni), uz neco
+# udelal (prohlizec bez gesta nic nepustí) a od posledniho stejneho zvuku
+# uplynul odstup. Jinak se udalost zahodi - zvuk je doplnek, ne fronta.
+#
+# Odstup se meri HODINAMI, ne snimky: kdyby se scital `dt`, posunul by se cas
+# jen o snimky, ve kterych neco priletlo, a po pauze by se zdravy zvuk zahodil.
+func _play_sfx(kind: String) -> void:
+	if not settings.sfx or not touched:
+		return
+	if not sfx_streams.has(kind):
+		return
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now - float(sfx_at.get(kind, -999.0)) < float(SFX_GAP_S.get(kind, 0.0)):
+		return
+	sfx_at[kind] = now
+	for pl in sfx_voices:
+		var p: AudioStreamPlayer = pl
+		if not p.playing:
+			p.stream = sfx_streams[kind]
+			p.volume_db = float(SFX_DB.get(kind, -12.0))
+			p.play()
+			return
+	# VSECHNY HLASY HRAJI: prerusi se PRVNI (rajcsi utaty stary zvuk nez
+	# zahodit novy - novy je ten, ktery hrac prave vidi).
+	var p0: AudioStreamPlayer = sfx_voices[0]
+	p0.stream = sfx_streams[kind]
+	p0.volume_db = float(SFX_DB.get(kind, -12.0))
+	p0.play()
 
 
 # HUDBA SE SROVNAVA SE STAVEM, ne s udalosti: kdo ji vypne v nastaveni, ten

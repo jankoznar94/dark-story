@@ -104,26 +104,60 @@ Jan: „A dáme do hry nějakou primitivní hudbu."
   `tools/make_music.py` (numpy → wav → ffmpeg → ogg, pevný seed, takže soubor je
   při každém běhu stejný). Noty jsou záměrně kratší než takt, aby na konci
   smyčky nezbyl dozvuk a **smyčka neklikala**.
+- **Kopák je tichý** (0,26 místo 0,5, tj. −5,7 dB): Jan: „údery na první a třetí
+  dobu jsou příliš výrazné. To bych lehce ztlumil." Změřeno: doby s kopákem jsou
+  teď 9,7 dB nad dobami bez něj (dřív ~15 dB).
 - **Hraje se až po prvním klepnutí** (`touched`): prohlížeč nespustí zvuk bez
   gesta hráče. `_sync_music()` srovnává stav (ne událost), takže vypnutí
-  v nastavení hudbu opravdu zastaví a `AudioStreamPlayer` se nemusí hlídat na
-  deseti místech.
+  v nastavení hudbu opravdu zastaví.
 - Smyčka se nastavuje v kódu (`AudioStreamOggVorbis.loop`), ne až v importu —
   jinak by se po prvním přehrátí zastavila.
+
+## Zvukové efekty (Oct 2026)
+
+Jan: „A střelba a zásah by samozřejmě měly mít také zvukové efekty."
+
+- **Tři zvuky** (`tools/make_sfx.py`, ~4 kB každý): `shot.ogg` (výstřel),
+  `hit.ogg` (dopad), `kill.ogg` (smrt poutníka).
+- **Hra posílá UDÁLOSTI, ne zvuky.** `Game.events` plní `_fire_at` („shot"),
+  `_damage` („hit", tedy *dopad střely* — ne `_hurt`, jinak by jed tikal 60×/s)
+  a `_kill` („kill"). Obrazovka si je jednou za snímek vybere
+  (`take_events()` = výběr i smazání) a zahraje. Hra tak zůstává hratelná
+  a měřitelná bez obrazovky a zvuk je jen doplněk.
+- **Odpěť mezi zvuky** (`SFX_GAP_S`: výstřel 75 ms) — při plné kadenci 20 ran/s
+  by se jinak zvuk slil do hučení. Měří se hodinami, ne snímky.
+- **Čtyři hlasy** (`AudioStreamPlayer`): jeden přehrávač se sám přerušuje, takže
+  by druhý výstřel utnul první.
+- V **NASTAVENÍ** je třetí řádek *Zvuky* (Zapnuté/Vypnuté) — kdo chce ticho kvůli
+  okolí, nemusí přijít o hudbu.
+- **POZOR: testy nesmí ukládat nastavení** (`Settings.allow_save`). Test, který
+  přepne volbu, ji jinak zapíše hráči na disk — přesně to se stalo a hra pak
+  lokálně hrála bez zvuků (a hledalo se to ve zvukových událostech a v kreslení).
 
 ## Ikony kategorií (Oct 2026)
 
 Jan: „upravíme ikonu meče a štítu. Tyto verze zkrátka nefungují. Štít musí mít
 jiné proporce. Teď je moc tenký a dlouhý. Musí působit masivnějším dojmem.
-Stejně tak meč."
+Stejně tak meč." + „Ikona meče je podivně oříznutá. Bez špičky. A štít má teď
+příliš hranatý design."
 
 - **Meč a štít se kreslí výpočtem** (`tools/make_icons.py`, PIL), ne modelem:
   proporce se u modelu nedaří trefit dvakrát za sebou. Měří se přitom
-  **poměr stran a výplň** rámečku: štít 0,69 → **1,04** (široký, taper začíná až
-  v polovině), meč 20 % → **39 %** inkoustu (široká čepel 28 px z 128).
+  **poměr stran a výplň** rámečku: štít 0,69 → **1,05**, meč 20 % → **44 %**
+  inkoustu (čepel 28 px ze 128).
+- **HROT MEČE MÍŘÍ OD JÍLCE.** První verze měla hrot dole a schoval se v kříži —
+  meč vypadal jako uražená tyč. Kdo bude měnit geometrii, ať si pohlídá, že hrot
+  leží na opačné straně než jílec, a změří šířku inkoustu nahoře (23 px) proti
+  prostředku (69 px).
+- **Štít je OBLÝ, ne hranatý** (`arc` + kubická `bezier`): rovná široká horní
+  hrana se zaoblenými rohy, boky se v 42 % výšky stáčejí hladkou křivkou do
+  tupého hrotu; vnitřní lem jde po stejné křivce. Rovné čáry vypadaly jako
+  pentagon.
 - Mince a hvězdička zůstávají z modelu (`lemonade-image-gen`).
 - **Po přepsání PNG je nutný `--import`**, jinak Godot kreslí starou texturu
   z cache a měření lže.
+- Náhled se dá složit PILem v **reálné velikosti tabu** (61 px) a poslat modelu
+  k posouzení — teprve pak se importuje do hry.
 
 ## Rozvržení
 
