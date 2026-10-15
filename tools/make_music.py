@@ -86,11 +86,21 @@ def main() -> None:
     ]
     for b, (root, tones) in enumerate(plan):
         t0 = b * 4 * BEAT
-        add(buf, tone(root, 4 * BEAT * 0.44, "square", 0.22, 3.0), t0)
-        add(buf, tone(root, 4 * BEAT * 0.30, "square", 0.16, 5.0), t0 + 2 * BEAT)
+        # BAS. Jan (Oct 2026): "Ty basy v hudbě jsou stále moc silné. ...
+        # Krátké melodické noty jsou v pohodě, dlouhé harmonické ne." Proto:
+        #   * TROJUHELNIK misto obdelniku - obdelnik ma v basu silne liche
+        #     harmonicke a na malem reproduktoru bzuci,
+        #   * kratke noty (0,50 s = 1,2 doby) s rychlym dozvanenim, ne
+        #     podrzene tony pres cely takt,
+        #   * tisi (0,12 / 0,09 misto 0,22 / 0,16).
+        # Zmereno spektrem: bas byl +5,6 dB nad melodii, po zmene viz README.
+        # KRATKA nota s plnou silou uderu: doznevani resi DELKA a DOZVNENI,
+        # ne amplituda - kdo utlumi amplitudu, utlumi i uder (a bas zmizi cely).
+        add(buf, tone(root, 0.30, "tri", 0.090, 8.0), t0)
+        add(buf, tone(root, 0.20, "tri", 0.070, 10.0), t0 + 2 * BEAT)
         for i in range(8):
             f = tones[i % 3] * (2.0 if i % 6 >= 3 else 1.0)
-            add(buf, tone(f, BEAT * 0.42, "tri", 0.10, 6.0), t0 + i * BEAT * 0.5)
+            add(buf, tone(f, BEAT * 0.42, "tri", 0.13, 6.0), t0 + i * BEAT * 0.5)
         add(buf, kick(), t0)
         add(buf, kick(), t0 + 2 * BEAT)
         for i in range(4):

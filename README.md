@@ -105,8 +105,19 @@ Jan: „A dáme do hry nějakou primitivní hudbu."
   při každém běhu stejný). Noty jsou záměrně kratší než takt, aby na konci
   smyčky nezbyl dozvuk a **smyčka neklikala**.
 - **Kopák je tichý** (0,26 místo 0,5, tj. −5,7 dB): Jan: „údery na první a třetí
-  dobu jsou příliš výrazné. To bych lehce ztlumil." Změřeno: doby s kopákem jsou
-  teď 9,7 dB nad dobami bez něj (dřív ~15 dB).
+  dobu jsou příliš výrazné. To bych lehce ztlumil."
+- **BAS JE KRÁTKÝ ÚDER, NE PODRŽENÝ TÓN.** Jan: „Ty basy v hudbě jsou stále moc
+  silné… Krátké melodické noty jsou v pohodě, dlouhé harmonické ne." Proto:
+  basová nota se **zkrátila** (0,30 s na první a 0,20 s na třetí dobu, dřív
+  1,06/0,72 s přes skoro celý takt) a přešla z **obdélníku na trojúhelník**
+  (obdélník má v basu silné liché harmonické a na malém reproduktoru bzučí).
+  **Amplituda zůstala** (0,09/0,07): doznívání se řeší DÉLKOU a DOZVUKEM, ne
+  amplitudou — kdo utlumí amplitudu, utlumí i úder a bas zmizí celý.
+  Změřeno spektrem (okno, kde dřív zněl jen doznívající bas): **úder −3 dB,
+  doznívání −12,5 dB** (proti melodii −19 dB, dřív −2 dB), celý mix −1 dB.
+- **POZOR NA MĚŘENÍ:** pásmo 60–250 Hz je z většiny KOPÁK, ne basové noty —
+  kdo podle něj soudí „basy", měří údery. Doznívání se musí měřit v okně mezi
+  notami (0,5–1,0 s po první době), kde dřív zněl už jen dlouhý bas.
 - **Hraje se až po prvním klepnutí** (`touched`): prohlížeč nespustí zvuk bez
   gesta hráče. `_sync_music()` srovnává stav (ne událost), takže vypnutí
   v nastavení hudbu opravdu zastaví.
