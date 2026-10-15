@@ -33,6 +33,10 @@ const BTN_MIN := 44.0
 const PAL_BTN_MAX := 132.0
 const MENU_BTN_MIN := 56.0
 const MENU_BTN_MAX := 120.0
+# PAUZA / POKRAČOVAT: sirka se MERI z delsiho popisku, aby tlacitko pri
+# prepnuti neměnilo velikost (a aby se na uzkem displeji veslo).
+const PAUSE_BTN_MIN := 56.0
+const PAUSE_BTN_MAX := 132.0
 # TAB KATEGORIE A BUNKA UPGRADU. Tab musi jit zmacknout prstem (44 px).
 const TAB_MIN := 40.0
 # MRIZKA UPGRADU: DVE BUNKY NA RADEK a kazda bunka je CELE TLACITKO - nazev,
@@ -76,6 +80,9 @@ var pilgrim_r: float = 0.0
 # HORNI PRUH: stavovy text a MENU (odchod). Tlacitko UPGRADY zmizelo - panel
 # s nakupem je v bitve TRVALE OTEVRENY, takze nebylo co prepinat.
 var hud_menu: Rect2 = Rect2()
+# PAUZA / POKRAČOVAT - druhe tlacitko pruhu, VLEVO od MENU (odchod stoji
+# na kraji, kde ho hrac nehleda omylem).
+var hud_pause: Rect2 = Rect2()
 var bar_text_w: float = 0.0
 var font_px: int = 16
 # DVOURADKOVY STAV: prvni radek je level/vlna, druhy zivoty a zlato. Dvakrat
@@ -154,6 +161,7 @@ func update(v: Vector2) -> void:
 		tower_r = 0.0
 		pilgrim_r = 0.0
 		hud_menu = Rect2()
+		hud_pause = Rect2()
 		bar_text_w = 0.0
 		shop_panel = Rect2()
 		shop_tabs = []
@@ -220,14 +228,18 @@ func fit_px(s: String, max_w: float, max_px: int, min_px: int = 10) -> int:
 	return px
 
 
-# HORNI PRUH: [stavovy text] [MENU]. Sirka tlacitka se MERI (stejne jako driv
-# u "Vylepsit"), text dostane zbytek - jinak by se na uzkem displeji utnul.
+# HORNI PRUH: [stavovy text] [PAUZA] [MENU]. Sirka tlacitek se MERI (stejne jako
+# driv u "Vylepsit"), text dostane zbytek - jinak by se na uzkem displeji utnul.
 func _hud() -> void:
 	var pad: float = maxf(4.0, bar_h * 0.10)
 	var h: float = maxf(30.0, bar_h - 2.0 * pad)
-	var mw: float = clampf(measure_px("MENU", font_px) + 12.0, BTN_MIN, 120.0)
+	var mw: float = clampf(measure_px("MENU", font_px) + 12.0, MENU_BTN_MIN, MENU_BTN_MAX)
 	hud_menu = Rect2(view.x - mw - pad, pad, mw, h)
-	bar_text_w = maxf(0.0, hud_menu.position.x - 2.0 * pad)
+	# PAUZA / POKRAČOVAT: jedno tlacitko, dva vyznamy. Sirka je z DELSIHO
+	# popisku ("POKRAČOVAT"), takze se pri prepnuti stavu nic neposune.
+	var pw: float = clampf(measure_px("POKRAČOVAT", font_px) + 12.0, PAUSE_BTN_MIN, PAUSE_BTN_MAX)
+	hud_pause = Rect2(hud_menu.position.x - pad - pw, pad, pw, h)
+	bar_text_w = maxf(0.0, hud_pause.position.x - 2.0 * pad)
 
 
 # --------------------------------------------------------------- PANEL S MRIZKOU

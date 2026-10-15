@@ -58,6 +58,8 @@ func _init() -> void:
 		"pal_rects": _rects(lay.pal_rects),
 		"pal_top": lay.pal_top,
 		"hud_menu": _p(lay.hud_menu.get_center()),
+		"hud_pause": _p(lay.hud_pause.get_center()),
+		"hud_pause_rect": _r(lay.hud_pause),
 		"upg_panel": _r(lay.upg_panel),
 		"upg_tabs": _centers(lay.upg_tabs),
 		"upg_tab_rects": _rects(lay.upg_tabs),

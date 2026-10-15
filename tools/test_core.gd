@@ -585,3 +585,15 @@ func _test_pause() -> void:
 	g.paused = false
 	_tick(g, 0.5)
 	_check(not p.pos.is_equal_approx(before), "po zruseni pauzy se poutnik nepohnul")
+	# PREPINANI: jedno tlacitko, dva stavy. Stav je na HRE, ne na obrazovce -
+	# kdyby si ho drzela obrazovka, rozjel by hru kdokoli, kdo zavola `step`.
+	g.toggle_pause()
+	_check(g.is_paused(), "toggle_pause hru nezastavilo")
+	_tick(g, 1.0)
+	var held: Vector2 = p.pos
+	_tick(g, 1.0)
+	_check(p.pos.is_equal_approx(held), "po toggle_pause se poutnik pohnul")
+	g.toggle_pause()
+	_check(not g.is_paused(), "druhy toggle_pause hru nespustil")
+	_tick(g, 0.5)
+	_check(not p.pos.is_equal_approx(held), "po druhem toggle_pause se poutnik nepohnul")

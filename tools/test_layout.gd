@@ -312,6 +312,17 @@ func _test_resolution(v: Vector2) -> void:
 	_check(l.hud_menu.end.x <= v.x + 0.5 and l.hud_menu.position.x >= -0.5,
 		"%s: tlacitko v pruhu preleza displej" % tag)
 	_check(l.hud_menu.end.y <= l.bar_h + 0.5, "%s: tlacitko v pruhu preleza do plochy" % tag)
+	# PAUZA / POKRAČOVAT stoji VLEVO od MENU (odchod je na kraji, kde ho hrac
+	# nehleda omylem) a meri se z DELSIHO popisku, takze se pri prepnuti stavu
+	# nic neposune. Na uzkem displeji musi zbytek pruhu jeste uzivit stavovy text.
+	_check(l.hud_pause.size.x >= 44.0 and l.hud_pause.size.y >= 30.0,
+		"%s: tlacitko PAUZA v pruhu je male %.0fx%.0f px" % [tag, l.hud_pause.size.x, l.hud_pause.size.y])
+	_check(l.hud_pause.position.x >= -0.5 and l.hud_pause.end.x <= l.hud_menu.position.x + 0.5,
+		"%s: tlacitka PAUZA a MENU se prekryvaji (nebo pauza preleza displej)" % tag)
+	_check(l.hud_pause.end.y <= l.bar_h + 0.5, "%s: tlacitko PAUZA preleza do plochy" % tag)
+	_check(l.measure_px("POKRAČOVAT", l.font_px) <= l.hud_pause.size.x - 8.0
+		or l.hud_pause.size.x >= 132.0 - 0.5,
+		"%s: sirka tlacitka PAUZA se nemeri z delsiho popisku" % tag)
 	_check(l.bar_text_w > 0.0, "%s: stavovemu textu nezustalo v pruhu misto" % tag)
 	var l1: String = ScreenLayout.HUD_LINE1_FMT % [12, 5, 5]
 	var l2: String = ScreenLayout.HUD_LINE2_FMT % [300, 300, 9999]

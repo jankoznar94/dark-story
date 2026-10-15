@@ -382,6 +382,19 @@ func _handle_end_tap(pos: Vector2) -> void:
 # =========================================================================
 
 func _handle_battle_tap(pos: Vector2) -> void:
+	# PAUZA / POKRAČOVAT. Je to prvni cil, na ktery klepnuti v bitve muze
+	# dosahnout - kdo chce zastavit, nesmi minout.
+	if layout.hud_pause.has_point(pos):
+		game.toggle_pause()
+		return
+	if layout.hud_menu.has_point(pos):
+		ask_leave()
+		return
+	# POD PAUZOU DESKA NEREAGUJE NA NIC (krome pauzy a MENU vys): hrac ma cas
+	# premyslet, ne menit stav. Kdyby se pod pauzou dalo stavet a nakupovat,
+	# hrac by si "rozmyslel" veci, ktere uz jsou davno rozhodnute.
+	if game.is_paused():
+		return
 	for i in range(layout.pal_rects.size()):
 		if (layout.pal_rects[i] as Rect2).has_point(pos):
 			if i < game.palette.size():
@@ -436,6 +449,8 @@ func _draw_battle() -> void:
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
+	if game.is_paused() and not game.is_over() and not leave_ask:
+		_draw_pause_hint()
 	# STRELY SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
 	# a musí být z indexem nad zaměřováním").
 	_draw_shots()
@@ -552,6 +567,16 @@ func _hp_color(frac: float) -> Color:
 # HORNI PRUH A PALETA
 # =========================================================================
 
+# PAUZA PRES POLE. Hrac se diva na srdce, ne do pruhu - kdyz se hra zastavi,
+# musi to videt tam, kam se diva. Text stoji NAD srdcem, ne na nem (zakryte
+# srdce by hrac videl jako chybu kresleni) a je stejne zluty jako tlacitko.
+func _draw_pause_hint() -> void:
+	var px: int = clampi(int(layout.field_r * 0.26), 16, 52)
+	var w: float = layout.field_r * 1.4
+	var y: float = layout.center.y - layout.field_r * 0.80 - float(px) * 0.8
+	_label("PAUZA", Rect2(layout.center.x - w * 0.5, y, w, float(px) * 1.6), px, MENU_EDGE_FIRST)
+
+
 func _draw_bar() -> void:
 	var pad: float = maxf(8.0, layout.bar_h * 0.18)
 	var l1: String = ScreenLayout.HUD_LINE1_FMT % [game.level, game.wave, game.waves_in_level()]
@@ -568,6 +593,17 @@ func _draw_bar() -> void:
 	draw_rect(mr, TOWER_BODY, true)
 	draw_rect(mr, DIM, false, 2.0)
 	_label("MENU", mr, _fit_px("MENU", mr.size.x - 8.0, layout.font_px, 10), TEXT)
+	# PAUZA / POKRAČOVAT: jedno tlacitko, dva vyznamy. Hra bezi -> "PAUZA",
+	# hra stoji -> "POKRAČOVAT" a tlacitko se prebarvi na zlatou, takze stav
+	# nese barva i slovo (barva nikdy nesmi byt jedina znacka stavu). Sirka je
+	# z delsiho popisku, takze se pri prepnuti nic neposune.
+	var pr: Rect2 = layout.hud_pause
+	var hold: bool = game.is_paused()
+	draw_rect(pr, MENU_EDGE_FIRST if hold else TOWER_BODY, true)
+	draw_rect(pr, MENU_EDGE_FIRST if hold else DIM, false, 2.0)
+	_label("POKRAČOVAT" if hold else "PAUZA", pr,
+		_fit_px("POKRAČOVAT", pr.size.x - 8.0, layout.font_px, 10),
+		GLYPH if hold else TEXT)
 	var note: String = game.last_note()
 	if note != "":
 		var npx: int = _fit_px(note, layout.view.x - 2.0 * pad, layout.font_px)

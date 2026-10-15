@@ -335,6 +335,19 @@ func _after_hp_change() -> void:
 	hp = clampf(hp, 0.0, max_hp)
 
 
+# ------------------------------------------------------------------ PAUZA
+
+# Pauza je stav HRY, ne obrazovky: krok se ji ptá (`step`), takze ji nemuze
+# obejit nikdo, kdo hru rozjede. Obrazovka ji jen prepina a pod pauzou
+# nenecha desku reagovat.
+func toggle_pause() -> void:
+	paused = not paused
+
+
+func is_paused() -> bool:
+	return paused
+
+
 # ------------------------------------------------------------------ KROK HRY
 
 func step(dt: float) -> void:

@@ -48,6 +48,7 @@ func _process(_delta: float) -> bool:
 	_run("klepnuti na HRAT otevre bitvu", _test_tap_starts_battle)
 	_run("odchod z bitvy se nejdriv zepta", _test_tap_leave_asks)
 	_run("panel upgradu v bitve je porad otevreny a nakup funguje", _test_tap_shop_is_permanent)
+	_run("pauza v bitve zastavi hru a deska pod ni nereaguje", _test_tap_pause)
 	_run("paleta nad panelem prenastavi barvu veze", _test_tap_palette_switches_hue)
 	_run("vyber levelu: klepnuti na vyhrany level ho spusti znovu", _test_tap_level_select)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
@@ -346,6 +347,49 @@ func _test_tap_shop_is_permanent() -> void:
 	# KATEGORIE: klepnuti na druhy tab prepne radek (a rozvrzeni se prelozi).
 	v.call("_tap", (l.shop_tabs[1] as Rect2).get_center())
 	_check(int(v.get("shop_cat")) == 1, "klepnuti na tab nezmenilo kategorii")
+	v.queue_free()
+
+
+# PAUZA / POKRAČOVAT. Jedno tlacitko v hornim pruhu, dva vyznamy. Pod pauzou
+# se NESMI zmenit stav hry - ani nakup, ani barva veze -, ale MENU musi jit
+# i pod pauzou, jinak by se hrac z pauzy nedostal do menu.
+func _test_tap_pause() -> void:
+	var v: Node2D = _screen()
+	var g: Game = v.get("game")
+	var l: ScreenLayout = v.get("layout")
+	v.call("_tap", (l.menu_rects[0] as Rect2).get_center())
+	l = _phone(v)
+	_check(not g.is_paused(), "partie zacina pod pauzou")
+	var t: float = g.build_left
+	v.call("_tap", l.hud_pause.get_center())
+	_check(g.is_paused(), "klepnuti na PAUZU hru nezastavilo")
+	v.call("_process", 1.0)
+	_check(is_equal_approx(g.build_left, t), "pod pauzou partie bezi dal (priprava se odecitala)")
+	# DESKA POD PAUZOU NEREAGUJE.
+	var gold: int = g.gold
+	g.gold = 500
+	var stats: Array = Upgrades.stats_in(String(v.get("SHOP_CATS")[0]))
+	var first_id: String = String(stats[0]["id"])
+	v.call("_tap", (l.shop_cells[0] as Rect2).get_center())
+	_check(g.temp_level(first_id) == 0, "pod pauzou se da nakupovat")
+	_check(g.gold == 500, "pod pauzou se menilo zlato")
+	var hue: int = g.tower.hue
+	if l.pal_rects.size() >= 2:
+		v.call("_tap", (l.pal_rects[1] as Rect2).get_center())
+	_check(g.tower.hue == hue, "pod pauzou se da prenastavit barva veze")
+	# MENU JDE I POD PAUZOU a ZPET DO HRY pauzu nerusi: hrac si ji zapnul sam.
+	v.call("_tap", l.hud_menu.get_center())
+	_check(bool(v.get("leave_ask")), "pod pauzou se neda odejit do menu")
+	v.call("_tap", l.dlg_b.get_center())
+	_check(g.is_paused(), "ZPET DO HRY zrusilo pauzu, kterou si hrac zapnul")
+	_check(g.tower.hue == hue, "po ZPET DO HRY se zmenila barva veze")
+	# POKRACOVAT: hra zase bezi (a zlato nikdo nebral).
+	v.call("_tap", l.hud_pause.get_center())
+	_check(not g.is_paused(), "klepnuti na POKRACOVAT hru nespustilo")
+	v.call("_process", 1.0)
+	_check(g.build_left < t, "po zruseni pauzy se partie nekrokuje")
+	_check(g.gold == 500, "pauza menila zlato")
+	g.gold = gold
 	v.queue_free()
 
 
