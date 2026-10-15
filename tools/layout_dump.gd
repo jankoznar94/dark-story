@@ -60,7 +60,7 @@ func _init() -> void:
 		"hud_menu": _p(lay.hud_menu.get_center()),
 		"hud_pause": _p(lay.hud_pause.get_center()),
 		"hud_pause_rect": _r(lay.hud_pause),
-		"settings_row": _r(lay.settings_row),
+		"settings_rows": _rects(lay.settings_rows),
 		"upg_panel": _r(lay.upg_panel),
 		"upg_tabs": _centers(lay.upg_tabs),
 		"upg_tab_rects": _rects(lay.upg_tabs),

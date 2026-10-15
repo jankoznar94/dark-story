@@ -148,7 +148,10 @@ var lvl_note_y: float = 0.0
 var lvl_title_px: int = 30
 var menu_state_y: float = 0.0
 # NASTAVENI
-var settings_row: Rect2 = Rect2()
+# RADKY NASTAVENI JSOU SEZNAM (poradi = index, stejne jako u tabu): kdo prida
+# volbu, prida radek. Driv tu byl jeden `settings_row` natvrdo a druha volba
+# by si musela psat vlastni obdelnik - a klepala by se vedle.
+var settings_rows: Array = []
 var settings_back: Rect2 = Rect2()
 # DIALOG (ukoncit partii / level vyhran / konec). Jedno misto pro vsechny tri:
 # kdo by si psal vlastni obdelniky, rozejde se s testy i s kreslenim.
@@ -191,7 +194,7 @@ func update(v: Vector2) -> void:
 		lvl_back = Rect2()
 		pal_rects = []
 		menu_rects = []
-		settings_row = Rect2()
+		settings_rows = []
 		settings_back = Rect2()
 		dlg_box = Rect2()
 		dlg_a = Rect2()
@@ -605,17 +608,25 @@ func layout_levels() -> void:
 	lvl_note_y = lvl_title_y + float(lvl_title_px) * 1.05
 
 
-# NASTAVENI: jeden prepinac a ZPET, svisle vycentrovane.
+# NASTAVENI: radky voleb (jakost vykreslovani, hudba) a ZPET, svisle
+# vycentrovane. Pocet radku je jeden zdroj pravdy (`SETTINGS_ROWS`) - kdo
+# prida volbu, zmeni ho TADY a obrazovka si radek uz jen vykresli a obslouzi
+# podle INDEXU.
+const SETTINGS_ROWS := 2
+
+
 func layout_settings() -> void:
 	if view.x < 1.0 or view.y < 1.0:
-		settings_row = Rect2()
+		settings_rows = []
 		settings_back = Rect2()
 		return
 	var w: float = clampf(view.x * 0.78, 260.0, 560.0)
 	var h: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.09))
 	var gap: float = maxf(10.0, view.y * 0.03)
-	var total: float = h * 2.0 + gap
+	var total: float = h * float(SETTINGS_ROWS + 1) + gap * float(SETTINGS_ROWS)
 	var y0: float = (view.y - total) * 0.5
 	var x: float = (view.x - w) * 0.5
-	settings_row = Rect2(x, y0, w, h)
-	settings_back = Rect2(x, y0 + h + gap, w, h)
+	settings_rows = []
+	for i in range(SETTINGS_ROWS):
+		settings_rows.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
+	settings_back = Rect2(x, y0 + (h + gap) * float(SETTINGS_ROWS), w, h)

@@ -85,7 +85,45 @@ platí normální pravidla dál (jed i odraz zase fungují).
   novou verzi hry (jinak by si hráč smazal postup, když si chtěl jen
   aktualizovat).
 - **PAUZA je ikona, ne text**: čtvercové tlačítko s **dvěma čárkami** (hra stojí)
-  a po kliknutí s **trojúhelníkem** (běží). Stav nese tvar i barva.
+  a po kliknutí s **trojúhelníkem** (běží). Stav nese tvar i barva. **Ikona má
+  barvu podle podkladu** — na tmavém tlačítku je světlá (`TEXT`), pod pauzou je
+  podklad zlatý a ikona tmavá (`GLYPH`); kdo tam dá `GLYPH` natvrdo, kreslí tmavé
+  na tmavém a ikona zmizí.
+- **NASTAVENÍ má dva řádky**: *Jakost vykreslování* a *Hudba* (Zapnutá/Vypnutá).
+  Řádky jsou **seznam** podle indexu (`ScreenLayout.SETTINGS_ROWS`,
+  `_settings_rows()`), takže přidání další volby je jeden řádek navíc, ne nový
+  obdélník a nová obsluha klepnutí.
+
+## Hudba (Oct 2026)
+
+Jan: „A dáme do hry nějakou primitivní hudbu."
+
+- **Smyčka `assets/audio/theme.ogg`** (~95 kB, 19,2 s): 8 taktů v a moll
+  (Am–F–C–G dvakrát), 100 BPM — bas v obdélníku, arpeggio v trojúhelníku, měkký
+  kopák a tichý hat. Skládá se **výpočtem**, ne modelem:
+  `tools/make_music.py` (numpy → wav → ffmpeg → ogg, pevný seed, takže soubor je
+  při každém běhu stejný). Noty jsou záměrně kratší než takt, aby na konci
+  smyčky nezbyl dozvuk a **smyčka neklikala**.
+- **Hraje se až po prvním klepnutí** (`touched`): prohlížeč nespustí zvuk bez
+  gesta hráče. `_sync_music()` srovnává stav (ne událost), takže vypnutí
+  v nastavení hudbu opravdu zastaví a `AudioStreamPlayer` se nemusí hlídat na
+  deseti místech.
+- Smyčka se nastavuje v kódu (`AudioStreamOggVorbis.loop`), ne až v importu —
+  jinak by se po prvním přehrátí zastavila.
+
+## Ikony kategorií (Oct 2026)
+
+Jan: „upravíme ikonu meče a štítu. Tyto verze zkrátka nefungují. Štít musí mít
+jiné proporce. Teď je moc tenký a dlouhý. Musí působit masivnějším dojmem.
+Stejně tak meč."
+
+- **Meč a štít se kreslí výpočtem** (`tools/make_icons.py`, PIL), ne modelem:
+  proporce se u modelu nedaří trefit dvakrát za sebou. Měří se přitom
+  **poměr stran a výplň** rámečku: štít 0,69 → **1,04** (široký, taper začíná až
+  v polovině), meč 20 % → **39 %** inkoustu (široká čepel 28 px z 128).
+- Mince a hvězdička zůstávají z modelu (`lemonade-image-gen`).
+- **Po přepsání PNG je nutný `--import`**, jinak Godot kreslí starou texturu
+  z cache a měření lže.
 
 ## Rozvržení
 

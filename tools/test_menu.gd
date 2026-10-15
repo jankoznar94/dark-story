@@ -490,8 +490,28 @@ func _test_tap_settings_and_update() -> void:
 	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
 	_check(m.is_settings(), "klepnuti na SETTINGS neotevrelo nastaveni")
 	var before: bool = s.lowres
-	v.call("_tap", l.settings_row.get_center())
+	s.music = true
+	v.call("_tap", (l.settings_rows[0] as Rect2).get_center())
 	_check(s.lowres != before, "radek jakosti vykreslovani nic neprepnul")
+	# DRUHY RADEK = HUDBA (Jan, Oct 2026: "A dáme do hry nějakou primitivní
+	# hudbu."). Klepnuti na nej musi hudbu vypnout a hra to musi vzit na vedomi.
+	var mbefore: bool = s.music
+	v.call("_tap", (l.settings_rows[1] as Rect2).get_center())
+	_check(s.music != mbefore, "radek hudby hudbu neprepnul")
+	_check(mbefore, "nastaveni nezacina s hudbou zapnutou")
+	v.call("_tap", (l.settings_rows[1] as Rect2).get_center())
+	_check(s.music == mbefore, "druhe klepnuti na radek hudby ji nezapnulo zpet")
+	# HUDBA: prehravac musi existovat, soubor se musi nacist a stav hry se musi
+	# srovnat s nastavenim (ne jen s udalosti klepnuti).
+	var pl: AudioStreamPlayer = v.get("music")
+	_check(pl != null, "hra si nevytvorila prehravac hudby")
+	_check(pl != null and pl.stream != null, "hudba se nenacetla (chybi soubor theme.ogg?)")
+	s.music = false
+	v.call("_sync_music")
+	_check(pl == null or not pl.playing, "vypnuta hudba presto hraje")
+	s.music = true
+	v.call("_sync_music")
+	_check(pl == null or pl.playing, "zapnuta hudba po klepnuti nehraje")
 	v.call("_tap", l.settings_back.get_center())
 	_check(m.is_menu(), "ZPET z nastaveni nevrátilo do menu")
 	# UPDATE: mimo web se jen oznami, ze neni co aktualizovat.

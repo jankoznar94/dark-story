@@ -82,6 +82,7 @@ func _ready() -> void:
 		menu.load_build_id()
 	_apply_render_scale()
 	_refield()
+	_make_music()
 	get_viewport().size_changed.connect(_refield)
 
 
@@ -156,6 +157,7 @@ func _process(dt: float) -> void:
 	# Rozvrzeni si to musi vzit z obrazovky (pocita to MISTO v pruhu).
 	if layout.speed_visible != (game.speed_options() > 1):
 		layout.set_speed_visible(game.speed_options() > 1)
+	_sync_music()
 	_sync_shop_shape()
 	_sync_dialogs()
 	queue_redraw()
@@ -219,6 +221,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 # PORADI JE ZAVAZNE: to, co stoji NAD VSIM (dialog), je prvni. Hrac na dotaz
 # ma odpovedet, ne ho odklepnout necim jinym.
 func _tap(pos: Vector2) -> void:
+	# PRVNI KLEPNUTI ODEMYKA ZVUK (prohlizec nespusti hudbu bez gesta hrace).
+	touched = true
+	_sync_music()
 	if reset_ask:
 		_handle_reset_tap(pos)
 		return
@@ -319,13 +324,73 @@ func _handle_levels_tap(pos: Vector2) -> void:
 
 
 func _handle_settings_tap(pos: Vector2) -> void:
-	if layout.settings_row.has_point(pos):
-		settings.toggle_lowres()
-		_apply_render_scale()
-		_refield()
+	for i in range(layout.settings_rows.size()):
+		if not (layout.settings_rows[i] as Rect2).has_point(pos):
+			continue
+		# PORADI RADKU = PORADI v `_settings_rows()` (jeden zdroj pravdy).
+		match i:
+			0:
+				settings.toggle_lowres()
+				_apply_render_scale()
+				_refield()
+			1:
+				settings.toggle_music()
+				_sync_music()
 		return
 	if layout.settings_back.has_point(pos):
 		menu.open_menu()
+
+
+# RADKY OBRAZOVKY NASTAVENI: popisek + hodnota. Poradi je zavazne (klepnuti
+# i kresleni jdou podle indexu) a musi jich byt presne `ScreenLayout.
+# SETTINGS_ROWS` - hlida to test_menu.
+func _settings_rows() -> Array:
+	return [
+		["Jakost vykreslování", settings.lowres_text()],
+		["Hudba", settings.music_text()],
+	]
+
+
+# =========================================================================
+# HUDBA (Jan, Oct 2026: "A dáme do hry nějakou primitivní hudbu.")
+#
+# Jedna kratka smycka (soubor z `tools/make_music.py`) hraje porad dokola.
+#
+# PROCHRAMEC NESPUSTI ZVUK BEZ GESTA HRAVE: hudba se proto rozjede az po
+# PRVNIM klepnuti (`touched`). Hra, ktera "sama hraje", by v prohlizeci jen
+# hlasila chybu - a hrac by videl tlacitko, ktere nic nedela.
+# =========================================================================
+
+const MUSIC_PATH := "res://assets/audio/theme.ogg"
+const MUSIC_DB := -15.0
+var music: AudioStreamPlayer = null
+var touched: bool = false
+
+
+func _make_music() -> void:
+	music = AudioStreamPlayer.new()
+	var s: AudioStream = load(MUSIC_PATH)
+	if s != null:
+		if s is AudioStreamOggVorbis:
+			(s as AudioStreamOggVorbis).loop = true
+		elif s is AudioStreamWAV:
+			(s as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
+	music.stream = s
+	music.volume_db = MUSIC_DB
+	add_child(music)
+
+
+# HUDBA SE SROVNAVA SE STAVEM, ne s udalosti: kdo ji vypne v nastaveni, ten
+# nema resit, jestli zrovna hraje - tady se to srovna samo (a je to na jednom
+# miste, takze se neda zapomenout).
+func _sync_music() -> void:
+	if music == null:
+		return
+	var want: bool = touched and settings.music and music.stream != null
+	if want and not music.playing:
+		music.play()
+	elif not want and music.playing:
+		music.stop()
 
 
 # =========================================================================
@@ -724,7 +789,12 @@ func _draw_bar() -> void:
 # tlacitka, velikost z jeho strany (tlacitko je ctverec), takze je "velka" na
 # kazdem displeji. Barvu dostava zvenci: tmava na svetlem, tmava i na zlate.
 func _draw_pause_icon(r: Rect2, hold: bool) -> void:
-	var icon: Color = GLYPH
+	# BARVA IKONY MUSI BYT CITELNA NA PODKLADU TLACITKA (Jan, Oct 2026: "Tlačítko
+	# Pause samozřejmě musí mít takové barvy, aby byla ikona čitelná. Teď splývá
+	# s pozadím."): tlacitko ma tmavy podklad (`TOWER_BODY`), takze ikona je
+	# SVETLA jako popisek MENU; pod pauzou je podklad zlaty a ikona TMAVA.
+	# Kdo sem da `GLYPH` natvrdo, kresli tmave na tmavem.
+	var icon: Color = GLYPH if hold else TEXT
 	var c: Vector2 = r.get_center()
 	var s: float = minf(r.size.x, r.size.y) * 0.26
 	if hold:
@@ -1065,19 +1135,25 @@ func _arrow(r: Rect2, live: bool) -> void:
 
 
 func _draw_settings() -> void:
-	_label("NASTAVENÍ", Rect2(0.0, layout.settings_row.position.y - float(layout.menu_title_px) * 1.6,
+	var rows: Array = _settings_rows()
+	var r0: Rect2 = layout.settings_rows[0] if not layout.settings_rows.is_empty() else Rect2()
+	_label("NASTAVENÍ", Rect2(0.0, r0.position.y - float(layout.menu_title_px) * 1.6,
 		layout.view.x, float(layout.menu_title_px)), layout.menu_title_px, Color(0.90, 0.87, 0.80))
-	var r: Rect2 = layout.settings_row
 	var f: Font = ThemeDB.fallback_font
-	var px: int = _fit_px("Jakost vykreslování", r.size.x * 0.6, layout.menu_item_px, 12)
-	draw_rect(r, MENU_BG, true)
-	draw_rect(r, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
-	draw_string(f, Vector2(r.position.x + 12.0, r.position.y + r.size.y * 0.5 + float(px) * 0.36),
-		"Jakost vykreslování", HORIZONTAL_ALIGNMENT_LEFT, r.size.x * 0.6, px, Color(0.90, 0.87, 0.80))
-	var val: String = settings.lowres_text()
-	var vpx: int = _fit_px(val, r.size.x * 0.32 - 12.0, layout.menu_item_px, 12)
-	draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.5 + float(vpx) * 0.36),
-		val, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, vpx, Color(0.78, 0.62, 0.30))
+	# RADKY SE KRESLI PODLE INDEXU (jeden zdroj pravdy s klepanim): kdo prida
+	# volbu do `_settings_rows()`, dostane i radek - a nic se nerozjede.
+	for i in range(mini(rows.size(), layout.settings_rows.size())):
+		var r: Rect2 = layout.settings_rows[i]
+		var name: String = String(rows[i][0])
+		var val: String = String(rows[i][1])
+		var px: int = _fit_px(name, r.size.x * 0.6, layout.menu_item_px, 12)
+		draw_rect(r, MENU_BG, true)
+		draw_rect(r, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
+		draw_string(f, Vector2(r.position.x + 12.0, r.position.y + r.size.y * 0.5 + float(px) * 0.36),
+			name, HORIZONTAL_ALIGNMENT_LEFT, r.size.x * 0.6, px, Color(0.90, 0.87, 0.80))
+		var vpx: int = _fit_px(val, r.size.x * 0.32 - 12.0, layout.menu_item_px, 12)
+		draw_string(f, Vector2(r.position.x, r.position.y + r.size.y * 0.5 + float(vpx) * 0.36),
+			val, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, vpx, Color(0.78, 0.62, 0.30))
 	var br: Rect2 = layout.settings_back
 	draw_rect(br, MENU_BG, true)
 	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
