@@ -110,13 +110,11 @@ const SPAWN_WAVE_S := 55.0
 # zužuje, aby hrac na prvni pohled videl, ktery cil je hlavni.
 const BEAM_W_FRAC := 0.015
 const BEAM_TAPER := 0.72
-# PRSTENEC KOLEM POUTNIKA. Paprsek se na nem zastavi - konci na jeho PLASHTI,
-# ne ve stredu tela (Jan, Oct 2026: "Laser končí ve středu nepřítele, s hranatým
-# zakončením. Stejně tak začíná i odraz. Je to jak dva obdélníky vedle sebe.
-# Možná by bylo dobré, kdyby každý nepřítel byl v malém kruhu (své barvy). Laser
-# by mohl končit (a odraz začínat) na plášti toho kruhu."). Je to podil polomeru
-# kresby poutnika; kruh je i VIDET (kresli ho obrazovka), aby hrac videl, kde
-# paprsek konci, a aby to nebyla jen neviditelna hranice ve vzduchu.
+# PRSTENEC KOLEM POUTNIKA = jeho HP BAR (kruh, ktery je i VIDET). Paprsek na nem
+# uz NEKONCI: Jan (Oct 2026) "Laser směřuje stále do středu nepřítele. Měl by
+# směřovat spíš na jeho obal." - konci na TELI poutnika (`PILGRIM_HIT_FRAC`),
+# protoze prstenec je od tela dal a cara mezi nimi visela ve vzduchu. Prstenec
+# kresli obrazovka dal, aby hrac videl, kde konci zivoty poutnika.
 #
 # Oct 2026 (Jan): "Udělejme větší vnitřní padding. Ať kruh není nalepený přímo
 # na tvář uvnitř." Pri 1,30 sel prstenec tesne kolem tvaru (spicka trojuhelniku
@@ -964,16 +962,16 @@ func _laser(dt: float) -> void:
 		if not p.alive or not tower.sees(p) or not in_range(p, r):
 			continue
 		var chain: Array = _chain(p)
-		# PAPRSEK ZACINA NA PLASHTI VEZE a konci na prstenci cile - ne na
-		# stredu tela. Kdyz paprsek sviti pres poutnika (odraz na dalsi),
-		# projde skrz nej: vstoupi na blizsi strane prstence a vystoupi na
-		# te, ktera je bliz k dalsimu cili. Diky tomu na sebe segmenty
-		# Presne navazuji a nikde neni "svar" (Jan: "Je to jak dva obdelniky
-		# vedle sebe.").
+		# PAPRSEK ZACINA NA PLASHTI VEZE a konci na OKRAJI PUNTIKU cile
+		# (`pilgrim_hit_r`) - ne ve stredu tela a ne na prstenci (HP bar je dal).
+		# Kdyz paprsek sviti pres poutnika (odraz na dalsi), projde skrz nej:
+		# vstoupi na blizsi strane tela a vystoupi na te, ktera je bliz k dalsimu
+		# cili. Diky tomu na sebe segmenty presne navazuji a nikde neni "svar"
+		# (Jan: "Je to jak dva obdelniky vedle sebe.").
 		var from_pt: Vector2 = center + (chain[0].pos - center).normalized() * tower_r
 		for i in range(chain.size()):
 			var q: Pilgrim = chain[i]
-			var rr: float = pilgrim_ring_r(q)
+			var rr: float = pilgrim_hit_r(q)
 			var entry: Vector2 = q.pos - (q.pos - from_pt).normalized() * rr
 			beams.append({"from": from_pt, "to": entry, "target": q, "hop": i,
 				"crit": crit})
@@ -1096,11 +1094,28 @@ func pilgrim_r() -> float:
 	return unit_r * 0.05
 
 
-# POLOMER PRSTENCE, NA KTEREM PAPRSEK KONCI. Je to ta VIDITELNA kruzna hranice
-# kolem poutnika (kresli ji obrazovka). Vetsi poutnik (rozpadly kus modre) ma
-# vetsi i prstenec - jinak by mu paprsek koncil uvnitr tela.
+# POLOMER PRSTENCE. Je to ta VIDITELNA kruzna hranice kolem poutnika (kresli ji
+# obrazovka) a ZAROVEN jeho HP BAR - paprsek na nem uz NEKONCI (viz nize).
+# Vetsi poutnik (rozpadly kus modre) ma vetsi i prstenec.
 func pilgrim_ring_r(p: Pilgrim) -> float:
 	return pilgrim_r() * maxf(0.1, p.size) * RING_FRAC
+
+
+# POLOMER, NA KTEREM PAPRSEK OPRAVDU KONCI = VIDITELNY OKRAJ PUNTIKA.
+# Jan (Oct 2026): "Laser směřuje stále do středu nepřítele. Měl by směřovat
+# spíš na jeho obal." Paprsek proto konci na TELE poutnika, ne na prstenci:
+# prstenec je HP bar v 1,70 r a mezi nim a puntikem zustavala ~6 px mezera -
+# cara sice mirila do stredu, ale niceho se nedotkla.
+#
+# 0,92 JE STEJNE CISLO, jakym obrazovka kresli telo puntika (`_dot` kresli
+# `draw_circle(p, 0.92 * r, col)`) - kdyby se ta dve cisla rozešla, paprsek by
+# koncil ve vzduchu nebo uvnitr tela. Hlida to `test_core`
+# (`_test_odraz_beam_is_visible`) i `test_layout`.
+const PILGRIM_HIT_FRAC := 0.92
+
+
+func pilgrim_hit_r(p: Pilgrim) -> float:
+	return pilgrim_r() * maxf(0.1, p.size) * PILGRIM_HIT_FRAC
 
 
 # SIRKA PAPRSKU. S kazdym odrazem se zuzi, ale nikdy nezmizi - hrac musi

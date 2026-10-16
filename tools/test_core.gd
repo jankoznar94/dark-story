@@ -489,15 +489,20 @@ func _test_odraz_beam_is_visible() -> void:
 	_check((first["from"] as Vector2).distance_to(g.center) <= g.tower_r + 1.0,
 		"hlavni paprsek nevychazi z veze")
 	var victim: Pilgrim = first["target"]
-	var want_r: float = g.pilgrim_ring_r(victim)
-	_check(absf((second["from"] as Vector2).distance_to(victim.pos) - want_r) < 0.5,
-		"odraz nevychazi z prstence predchozi obeti (je %.2f od stredu, prstenec je %.2f)"
-		% [(second["from"] as Vector2).distance_to(victim.pos), want_r])
-	# A KONEC PAPRSKU JE NA PLASHTI, NE VE STREDU TELA (Jan: "Laser končí ve
-	# středu nepřítele, s hranatým zakončením... Je to jak dva obdélníky.").
+	# KONEC PAPRSKU JE NA VIDITELNEM OKRAJI PUNTIKU (Jan, Oct 2026: "Laser
+	# směřuje stále do středu nepřítele. Měl by směřovat spíš na jeho obal.").
+	# `pilgrim_hit_r` je 0,92 r - stejne cislo, jakym obrazovka kresli telo
+	# puntika, takze se paprsek tela opravdu dotkne; prstenec (HP bar, 1,70 r) je
+	# dal a paprsek na nem nekonci.
+	var want_r: float = g.pilgrim_hit_r(victim)
+	_check(want_r < g.pilgrim_ring_r(victim),
+		"konec paprsku neni bliz nez HP bar poutnika")
+	_check(absf(want_r - g.pilgrim_r() * victim.size * Game.PILGRIM_HIT_FRAC) < 0.001,
+		"paprsek nekonci na okraji puntika (%.2f)" % want_r)
 	var last: Dictionary = g.beams[g.beams.size() - 1]
 	_check(absf((last["to"] as Vector2).distance_to((last["target"] as Pilgrim).pos) - want_r) < 0.5,
-		"paprsek nekonci na prstenci cile, ale ve stredu tela")
+		"paprsek nekonci na okraji tela cile (je %.2f od stredu, okraj je %.2f)"
+		% [(last["to"] as Vector2).distance_to((last["target"] as Pilgrim).pos), want_r])
 
 
 # LASER NENI STRELA, KTERA UZ LETI. Jan (Oct 2026): "Barva laseru bude podle

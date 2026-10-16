@@ -756,9 +756,9 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
 	# zivoty. Barva zustava barva poutnika (nese ji zamereni veze), takze tvar,
-	# barvu i zbyvajici zivoty nese JEDEN kruh. Na jeho PLASHTI konci paprsek
-	# (a odrazi se z neho dal) - kresli se i proto, ze hranice, kterou hrac
-	# nevidi, vypada jako chyba. Duch ho nema: je pruhledny a neda se na nej
+	# barvu i zbyvajici zivoty nese JEDEN kruh. Paprsek se ho NEDOTYKA: konci na
+	# tele poutnika (`Game.PILGRIM_HIT_FRAC`, stejne cislo jako `_dot` nize) -
+	# prstenec je jen zivoty. Duch ho nema: je pruhledny a neda se na nej
 	# mirrit.
 	#
 	# DRUHY, BILY OBLOUK SE ZRUSIL (byl v 1,55 r, barva TEXT). Objevoval se pri
@@ -808,10 +808,13 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 # hrac musi vedet, na co ceka, i kdyz na nej prave mirrit neda.
 func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> void:
 	var w: float = maxf(1.6, r * 0.22)
+	# PODIL TELA JE Z `Game.PILGRIM_HIT_FRAC`: na tom samem polomeru konci
+	# paprsek (`Game.pilgrim_hit_r`). Kdyby tu stalo jine cislo, hra by
+	# mirila na teleso, ktere obrazovka nekresli (nebo mimo nej).
 	if hollow:
-		draw_arc(p, 0.88 * r, 0.0, TAU, 28, col, w)
+		draw_arc(p, Game.PILGRIM_HIT_FRAC * 0.96 * r, 0.0, TAU, 28, col, w)
 	else:
-		draw_circle(p, 0.92 * r, col)
+		draw_circle(p, Game.PILGRIM_HIT_FRAC * r, col)
 	var txt: String = Hue.letter_of(h)
 	if txt == "":
 		return

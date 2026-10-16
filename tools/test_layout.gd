@@ -99,7 +99,18 @@ func _test_beams_are_lines() -> void:
 	# PRSTENEC KOLEM POUTNIKA. Je to hranice, na ktere paprsek konci; kdyby se
 	# nekreslil, hrac vidi caru, ktera se z niceho nic zastavi ve vzduchu.
 	_check(src.contains("game.pilgrim_ring_r(p)"),
-		"prstenec kolem poutnika se nekresli - paprsek konci ve prazdnu")
+		"prstenec (HP bar) kolem poutnika se nekresli")
+	# KONEC PAPRSKU JE NA TELE POUTNIKA (Jan, Oct 2026: "Laser směřuje stále do
+	# středu nepřítele. Měl by směřovat spíš na jeho obal."). Podil je v JEDNOM
+	# miste (`Game.PILGRIM_HIT_FRAC`) a obrazovka kresli telo stejnym podilem -
+	# kdyby se ta dve cisla rozešla, paprsek konci ve vzduchu nebo v tele.
+	_check(src.contains("Game.PILGRIM_HIT_FRAC"),
+		"obrazovka kresli telo puntika jinym podilem, nez hra meri")
+	_check(Game.PILGRIM_HIT_FRAC > 0.5 and Game.PILGRIM_HIT_FRAC < 1.0,
+		"konec paprsku neni na tele poutnika (%.2f r)" % Game.PILGRIM_HIT_FRAC)
+	var gsrc: String = FileAccess.get_file_as_string("res://scripts/game.gd")
+	_check(gsrc.contains("pilgrim_hit_r(q)"),
+		"paprsek nekonci na tele cile - hra pouziva prstenec, ne okraj puntika")
 	# POZOR: `check_symbols.py` hlida kazdy vyskyt "game.<neco>" v obrazovkach,
 	# takze se ten nazev sklada az za behu - jinak by si nastroj myslel, ze se
 	# obrazovka porad dozaduje projektu, ktere hra uz nema.

@@ -20,16 +20,23 @@ nepoužívá.
 - **Dostřel je konec paprsku, ne doba letu.** Věž svítí jen na to, co má
   v kruhu dostřelu a co vidí (`Tower.sees`). Přepnutí barvy paprsek **utrhne** —
   pravidlo „vystřeleno = doletí“ už neexistuje, protože není co doletovat.
-- **PAPRSEK KONČÍ NA PRSTENCI, NE VE STŘEDU TĚLA** (Jan, Oct 2026: „Laser končí
-  ve středu nepřítele, s hranatým zakončením. Stejně tak začíná i odraz. Je to
-  jak dva obdélníky vedle sebe.“). Každý poutník má **kruh své barvy**
-  (`Game.pilgrim_ring_r`, 1,30 × poloměr kresby) a paprsek se na jeho plášti
-  zastaví; odraz z něj na té straně, která je blíž k dalšímu cíli. Segmenty na
-  sebe přesně navazují, konce jsou **kulaté** (Godot hranaté konce neumí, obrazovka
-  je dokresluje kolečkem) a paprsek je **tenčí** než dřív (0,015 meritka místo
-  0,026 — na telefonu 2,3 px místo 4,1 px).
-- **Poškození je ZA SEKUNDU** (`Game.laser_dps`). Základ 10/s je stejné číslo
-  jako dřív (10 za ránu při kadenci 1/s), takže se změnil způsob, ne obtížnost.
+- **PAPRSEK KONČÍ NA OKRAJI PUNTÍKU, NE VE STŘEDU TĚLA** (Jan, Oct 2026: „Laser
+  končí ve středu nepřítele… Je to jak dva obdélníky vedle sebe.“ a později
+  „Laser směřuje stále do středu nepřítele. Měl by směřovat spíš na jeho obal.“).
+  Paprsek se zastaví na **viditelném okraji těla** (`Game.pilgrim_hit_r` =
+  `PILGRIM_HIT_FRAC` 0,92 × poloměr kresby — stejné číslo, jakým obrazovka kreslí
+  tělo v `_dot`); odraz od něj pokračuje na té straně, která je blíž k dalšímu
+  cíli. Prstenec (`Game.pilgrim_ring_r`, 1,70 × poloměr) je **HP bar** a paprsek
+  na něm nekončí — mezi ním a tělem byla ~6 px mezera, takže čára mířila do středu
+  a ničeho se nedotkla. Segmenty na sebe přesně navazují, konce jsou **kulaté**
+  (Godot hranaté konce neumí, obrazovka je dokresluje kolečkem) a paprsek je
+  **tenčí** než dřív (0,015 meritka místo 0,026 — na telefonu 2,3 px místo 4,1 px).
+- **Poškození je ZA SEKUNDU** (`Game.laser_dps`). Základ **14/s** (dřív 10/s) je
+  spočítané, ne od oka: poutník je v dostřelu (0,34 pole) jen ~3,2 s, takže základ
+  dá za průchod 45 poškození — a nejtvrdsí poutník prvního kola (červená 2,2 × 20 =
+  44 životů) se tím dá zabít, kdežto s 10/s to bylo 32 a nešlo to (Jan: „Základní
+  poškození hráče musí být o něco vyšší. S tím, jak je nastavený na začátku kola
+  nemá skoro šanci nikoho zabít.“).
   **DPS jsou TŘI OSY, každá z tabulky upgradu:** *Poškození laseru* („ad“,
   přičítá), *Síla paprsku* („ap“, **násobí** — chybějící modifikátor po zrušení
   kadence) a kritika. **Síla paprsku** jde v menu 1,0× → 1,5× za body a v bitvě
