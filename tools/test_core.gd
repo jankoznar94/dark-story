@@ -48,6 +48,9 @@ func _init() -> void:
 		_test_silver_shift_form)
 	_run("modra podoba stribrne se rozpadne na dve obycejne kapky",
 		_test_silver_split_form)
+	_run("smes dvou barev je barva: id, dve pismena, vlastni barva", _test_mix_ids)
+	_run("vez vidi jen to, co ma v sade barev (a smes potrebuje obe)", _test_covers)
+	_run("dvojtap na palete michani barev (a pred sestym levelem ne)", _test_mix_taps)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -1094,3 +1097,111 @@ func _test_silver_split_form() -> void:
 	for q in pieces:
 		_check(not q.shifting and q.behaviour == Hue.B_NONE,
 			"kus po rozpadu meni podobu - ma se chovat standardne")
+
+
+# SMES DVOU BAREV JE BARVA (Jan, Oct 2026: "Oranžová bude mít - RY jako Red
+# Yellow."). Testuji se vsechny slozky, na kterych stoji zbytek hry: id (podle
+# poradi barev), dve pismena, vlastni barva a radek v tabulce pro KAZDOU dvojici.
+func _test_mix_ids() -> void:
+	_check(Hue.mix_id(Hue.RED, Hue.YELLOW) == Hue.mix_id(Hue.YELLOW, Hue.RED),
+		"smes cervene a zlute ma jine id podle poradi")
+	_check(Hue.is_mix(Hue.mix_id(Hue.RED, Hue.YELLOW)), "id smesi se nepozna jako smes")
+	_check(not Hue.is_mix(Hue.RED), "obycejna barva se hlasi jako smes")
+	_check(Hue.mix_id(Hue.RED, Hue.RED) == -1, "michani barvy se sebou proslo")
+	_check(Hue.pair_of(Hue.mix_id(Hue.RED, Hue.YELLOW)) == [Hue.RED, Hue.YELLOW],
+		"smes se nerozlozi na puvodni barvy")
+	_check(Hue.pair_of(Hue.RED) == [Hue.RED], "jedna barva se nerozlozi na sebe")
+	var ry: int = Hue.mix_id(Hue.RED, Hue.YELLOW)
+	_check(Hue.letter_of(ry) == "RY", "smes R+Y nema dve pismena (%s)" % Hue.letter_of(ry))
+	_check(Hue.name_of(ry) == "Oranžová", "smes R+Y se nejmenuje Oranzova (%s)" % Hue.name_of(ry))
+	_check(Hue.color_of(ry) != Hue.color_of(Hue.RED)
+		and Hue.color_of(ry) != Hue.color_of(Hue.YELLOW),
+		"smes ma stejnou barvu jako nekterá z obou slozek")
+	# ZADNA DVOJICE Z PALETY NESMI ZUSTAT BEZ RADKU V TABULCE - jinak by se
+	# kreslila zalozni seda a hrac by nevidel, co si to vlastne namichal.
+	# (Stribrna v palete nikdy neni, takze smes s ni vzniknout nemuze.)
+	for i in Hue.palette_at(Hue.MIX_UNLOCK_LEVEL):
+		for j in Hue.palette_at(Hue.MIX_UNLOCK_LEVEL):
+			if int(j) <= int(i):
+				continue
+			var m: int = Hue.mix_id(int(i), int(j))
+			_check(Hue.MIXES.has(Hue.mix_key(m)),
+				"dvojice %s nema radek v tabulce smesi" % Hue.mix_key(m))
+			_check(Hue.color_of(m) != Hue.MIX_FALLBACK["color"],
+				"dvojice %s se kresli zalozni barvou" % Hue.mix_key(m))
+			_check(Hue.letter_of(m).length() == 2,
+				"smes %s nema dve pismena" % Hue.mix_key(m))
+	# HODNOTY SMESI = PRUMER OBOU BAREV (Jan: "S průměrováním síly souhlasím."),
+	# ne maximum - zluta je rychla a slaba, cervena pomala a silna.
+	var want_hp: float = (Hue.hp_mult(Hue.RED) + Hue.hp_mult(Hue.YELLOW)) * 0.5
+	_check(absf(Hue.hp_mult(ry) - want_hp) < 0.001,
+		"smes R+Y nema prumer zivotu obou barev (%.2f, ma byt %.2f)" % [Hue.hp_mult(ry), want_hp])
+	var want_sp: float = (Hue.speed_mult(Hue.RED) + Hue.speed_mult(Hue.YELLOW)) * 0.5
+	_check(absf(Hue.speed_mult(ry) - want_sp) < 0.001, "smes R+Y nema prumer rychlosti")
+
+
+# VEZ VIDI JEN SVOU BARVU - A U SMESI MUSI MIT POUTNIK VSEchny JEJI BARVY
+# (Jan: "RY - Věž může útočit na červenou, žlutou a oranžovou. R - Věž útočí jen
+# na červenou, ne na oranžovou.").
+func _test_covers() -> void:
+	var r: Array = [Hue.RED]
+	var ry: Array = [Hue.RED, Hue.YELLOW]
+	var oranzova: int = Hue.mix_id(Hue.RED, Hue.YELLOW)
+	_check(Hue.covers(r, Hue.RED), "cervena vez nevidi cervenou")
+	_check(not Hue.covers(r, oranzova), "cervena vez vidi oranzovou")
+	_check(not Hue.covers(r, Hue.BLUE), "cervena vez vidi modrou")
+	_check(Hue.covers(ry, Hue.RED) and Hue.covers(ry, Hue.YELLOW) and Hue.covers(ry, oranzova),
+		"vez s RY nevidi cervenou, zlutou a oranzovou")
+	_check(not Hue.covers(ry, Hue.BLUE), "vez s RY vidi modrou")
+	# A OPRAVDU SE TO PROJEVI VE HRE: vez se smesi zamiri na obe sve barvy,
+	# ale na treti ne. (Tohle je jedine misto, kde se o barve rozhoduje.)
+	var g: Game = _fresh()
+	g.tower.palette = [Hue.RED, Hue.YELLOW, Hue.BLUE]
+	_check(g.tower.set_pair(Hue.RED, Hue.YELLOW), "vez nevzala dvojici R+Y")
+	var a: Pilgrim = _place(g, Hue.RED, 0.5)
+	var b: Pilgrim = _place(g, Hue.YELLOW, 0.5)
+	var c: Pilgrim = _place(g, Hue.BLUE, 0.5)
+	_check(g.tower.sees(a) and g.tower.sees(b), "vez s RY nevidi jednu ze svych barev")
+	_check(not g.tower.sees(c), "vez s RY vidi modrou")
+	_check(g.tower.mix() == oranzova, "vez s dvojici nehlasi smes")
+	_check(g.tower.color() != Hue.color_of(Hue.RED), "vez s dvojici ma barvu jedne slozky")
+
+
+# DVOJTAP NA PALETE (Jan: "Jeden obyčejný tap = výběr jednoduché barvy. Dva tapy
+# za sebou na stejnou barvu = promíchání barvy do již zvolené ... Jakmile je
+# navolena kombinace, tak pro změnu musí hráč vždy udělat prvně jeden tap na
+# jinou barvu a tím výběr resetuje.").
+func _test_mix_taps() -> void:
+	var g: Game = _fresh()
+	g.level = 1
+	g.refresh_palette()
+	_quiet(g)
+	# PRED SESTYM LEVELEM SE NEMICHA: hrac ma dve barvy, ale michani jeste nema.
+	g.tap_hue(Hue.RED)
+	g.tap_hue(Hue.RED)
+	_check(g.tower.hues == [Hue.RED], "michani slo uz v prvnim levelu")
+	_check(not Hue.mix_unlocked(1) and Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL),
+		"michani je odemcene v jinem levelu nez v sestem")
+	_check(Hue.mix_pool_at(1).is_empty(), "v prvnim levelu existuje smes")
+	# OD SESTEHO LEVELU: dvojtap do 0,3 s promicha, druhy tap pozdeji ne.
+	g.level = Hue.MIX_UNLOCK_LEVEL
+	g.refresh_palette()
+	_quiet(g)
+	_check(not Hue.mix_pool_at(Hue.MIX_UNLOCK_LEVEL).is_empty(),
+		"v sestem levelu neni zadna smes k dispozici")
+	g.tap_hue(Hue.RED)
+	_check(g.tower.hues == [Hue.RED], "obycejny tap nevybral cervenou")
+	g.tap_hue(Hue.YELLOW)
+	_check(g.tower.hues == [Hue.YELLOW], "druha barva nevybrala jednoduse")
+	g.tap_hue(Hue.YELLOW)
+	_check(g.tower.hues == [Hue.RED, Hue.YELLOW], "dvojtap nepromichal cervenou se zlutou")
+	_check(g.tower.mix() == Hue.mix_id(Hue.RED, Hue.YELLOW), "smes neni oranzova")
+	g.tap_hue(Hue.BLUE)
+	_check(g.tower.hues == [Hue.BLUE], "tap z kombinace nevybral jednoduchou barvu")
+	g.tick(1.0)
+	g.tap_hue(Hue.BLUE)
+	_check(g.tower.hues == [Hue.BLUE], "dva tapy s odstupem se pocitaly jako dvojtap")
+	g.tap_hue(Hue.RED)
+	g.tap_hue(Hue.RED)
+	_check(g.tower.hues == [Hue.RED, Hue.BLUE],
+		"dvojtap nepromichal modrou s cervenou (%s)" % str(g.tower.hues))

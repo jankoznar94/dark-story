@@ -140,6 +140,10 @@ const ICE_S := 2.0
 # Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
 # odraz za každého unikátního nepřítele").
 const ODRAZ_RANGE_FRAC := 0.55
+# DVOJTAP NA PALETE: dva tapy na stejnou barvu do teto doby = michani (druhy tap
+# se primichava do barvy zvolene pred tim). Je to horni hranice pro "dva tapy za
+# sebou" - delsi prodleva znamena dva obycejne tapy.
+const DOUBLE_TAP_S := 0.30
 
 # ------------------------------------------------------------------ ROZVRZENI
 
@@ -181,6 +185,15 @@ var log: Array = []
 # PAUZA HRY. Drzi ji obrazovka (panel upgradu, dotaz pri odchodu) - hra sama
 # jen vi, ze stoji, a `step` opravdu nekrokuje.
 var paused: bool = false
+
+# HERNI HODINY: bezi, kdykoli bezi krok hry (`step`). Meri se jimi dvojtap na
+# palete - kdyby se meril hodinami systemu, testy by nebyly deterministicke.
+var clock: float = 0.0
+# DVOJTAP NA PALETE: dva tapy na stejnou barvu do `DOUBLE_TAP_S` = michani.
+var last_tap_hue: int = -1
+var last_tap_t: float = -10.0
+# BARVA ZVOLENA PRED POSLEDNIM TAPEM. Do ni se druhy tap primichava.
+var before_hue: int = -1
 
 var pilgrims: Array = []
 # ZAMERENE CILE (multishot): vez jich drzi tolik, kolik ma koupeno.
@@ -516,6 +529,9 @@ func is_paused() -> bool:
 func step(dt: float) -> void:
 	if is_over() or paused:
 		return
+	# HERNI HODINY. Bezi JEN v kroku hry (ne kdyz je pauza nebo konec), takze se
+	# dvojtap meri hernim casem - testy pak zustavaji deterministicke.
+	clock += dt
 	# ZRYCHLENI HRY: nasobi se CELY krok, takze se zrychli vsechno, co je na
 	# case (pohyb, kadence, let strely, jed, led, regenerace, casy vln).
 	dt *= time_scale()
@@ -527,6 +543,12 @@ func step(dt: float) -> void:
 	_laser(dt)
 	_advance_effects(dt)
 	_prune()
+
+
+# POSUNOUT JEN HODINY. Pro testy dvojtapu: hrac v pauze (nebo v testu) potrebuje
+# nechat cas bezet, aby druhy tap uz nebyl dvojtap.
+func tick(dt: float) -> void:
+	clock += dt
 
 
 func _phase_step(dt: float) -> void:
@@ -616,6 +638,14 @@ func refresh_palette() -> void:
 	tower.palette = palette
 	if not palette.has(tower.hue) and not palette.is_empty():
 		tower.hue = int(palette[0])
+	# SMES: kdyby nekterá z obou barev z palety vypadla (nemeni se to, ale kdo
+	# bude menit pravidla odemykani, at to nerozbije), vez zustane na te, ktera
+	# v palete je - nikdy nesmi mirrit barvou, kterou hrac nema.
+	if tower.hues.size() > 1:
+		for h in tower.hues:
+			if not palette.has(h):
+				tower.hue = int(palette[0]) if not palette.is_empty() else Hue.RED
+				break
 	if before > 0 and palette.size() > before:
 		for h in palette:
 			if not Hue.palette_at(level - 1).has(h):
@@ -628,6 +658,34 @@ func spawn_pool() -> Array:
 
 func select_hue(h: int) -> bool:
 	return tower.set_hue(h)
+
+
+# --------------------------------------------------------------- MICHANI BAREV
+#
+# Jan (Oct 2026): "Jeden obyčejný tap = výběr jednoduché barvy. Dva tapy za
+# sebou na stejnou barvu = promíchání barvy do již zvolené. Jakmile je navolena
+# kombinace, tak pro změnu musí hráč vždy udělat prvně jeden tap na jinou barvu
+# a tím výběr resetuje. Pak dvojtapem vytvoří další kombinaci."
+#
+# Je to STAVOVY AUTOMAT HRY (ne obrazovky) a meri se HERNIM casem (`clock`), aby
+# se dalo testovat bez prohlizece. Prvni tap se projevi OKAMZITE (vez na chvili
+# prebije jednoduchou barvu) - cekat 0,3 s, nez se paleta ozve, by pusobilo mrtve.
+#
+# Vraci "mix" (promichano), "single" (obycejny tap) nebo "none" (barva neni
+# v palete) - obrazovka si podle toho hraje zvuk.
+func tap_hue(h: int) -> String:
+	if not palette.has(h):
+		return "none"
+	var dbl: bool = (h == last_tap_hue) and (clock - last_tap_t) <= DOUBLE_TAP_S
+	var was: int = before_hue
+	before_hue = tower.hue
+	last_tap_hue = h
+	last_tap_t = clock
+	if dbl and was >= 0 and was != h and Hue.mix_unlocked(level) and tower.set_pair(was, h):
+		_note("Barvy se míchají: %s (%s)." % [Hue.name_of(tower.mix()), Hue.letter_of(tower.mix())])
+		return "mix"
+	tower.set_hue(h)
+	return "single"
 
 
 # --------------------------------------------------------------- VSTUP POUTNIKU

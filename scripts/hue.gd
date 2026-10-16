@@ -94,6 +94,45 @@ const ROWS := [
 	},
 ]
 
+# SMESI BAREV (Oct 2026). Michani se odemkne v sestem levelu - Jan: "Dosáhl jsem
+# teď do levelu 6 a nová barva už nepřibyla. To znamená, tě by mělo přibýt
+# míchání barev."
+#
+# SMES JE BARVA, ne nova entita: ma sve id, barvu, dve pismena i jmeno, a proto
+# se nikde nemusi psat "kdyz je to smes, tak...". ID zacina na 100, aby se nikdy
+# nepletlo s jednoduchou barvou (0..5) - diky tomu zustaly VSECHNY smycky
+# `for h in range(Hue.COUNT)` (paleta, odemykani, tabulky) nedotcene.
+#
+# BARVA SMESI JE ADITIVNI PRUMER OBOU BAREV (Jan: "reálná kombinace"): cervena
+# + zluta = oranzova. Nektere smesi vyjdou blizko sebe (zluta+modra vs
+# zluta+fialova) - presne proto ma smes DVE PISMENA a vlastni tvar; barva nikdy
+# neni jediny nositel informace.
+const SINGLE_COUNT := 6
+const MIX_BASE := 100
+# LEVEL, od ktereho je michani odemcene. V petem levelu ma hrac vsechny zakladni
+# barvy a dalsi level by mu nemel co dat - misto nove barvy dostane michani.
+const MIX_UNLOCK_LEVEL := 6
+
+# TABULKA SMESI. Klic je dvojice pismen v poradi barev ("RY" = Red+Yellow), takze
+# se nikdy nevygeneruje "YR". Barvy jsou spoctene aditivnim prumerem (viz vyse),
+# sytost je drzena nad 0,32 - jinak by nekolik smesi vybledlo do sede a na tmave
+# plose by zmizely.
+const MIXES := {
+	"RY": {"name": "Oranžová", "letter": "RY", "color": Color(0.85, 0.59, 0.20)},
+	"RB": {"name": "Purpurová", "letter": "RB", "color": Color(0.60, 0.36, 0.60)},
+	"RG": {"name": "Hnědá", "letter": "RG", "color": Color(0.61, 0.47, 0.24)},
+	"RV": {"name": "Malinová", "letter": "RV", "color": Color(0.70, 0.29, 0.55)},
+	"YB": {"name": "Šedá", "letter": "YB", "color": Color(0.68, 0.58, 0.45)},
+	"YG": {"name": "Limetková", "letter": "YG", "color": Color(0.68, 0.71, 0.26)},
+	"YV": {"name": "Písková", "letter": "YV", "color": Color(0.76, 0.57, 0.50)},
+	"BG": {"name": "Petrolejová", "letter": "BG", "color": Color(0.24, 0.55, 0.62)},
+	"BV": {"name": "Šeříková", "letter": "BV", "color": Color(0.45, 0.41, 0.77)},
+	"GV": {"name": "Olivová", "letter": "GV", "color": Color(0.38, 0.46, 0.58)},
+}
+# Kdyby tabulka nekryla vsech 10 dvojic, jede se na tuhle barvu - nikdy se
+# nekresli "neco jineho, nez si hra mysli". Test hlida, ze se sem nikdy nesahne.
+const MIX_FALLBACK := {"name": "Směs", "letter": "??", "color": Color(0.50, 0.49, 0.46)}
+
 # ROZPAD MODRE: dva kusy, kazdy se 40 % zivotu rodice, mensi a nikdy se
 # nedeli znovu (jinak by z jednoho poutnika bylo nekonecno).
 const SPLIT_PIECES := 2
@@ -113,21 +152,85 @@ const VANISH_S := 3.0
 const SHIFT_S := 5.0
 
 
-static func is_valid(h: int) -> bool:
-	return h >= 0 and h < COUNT
+static func is_mix(h: int) -> bool:
+	return h >= MIX_BASE and h < MIX_BASE + SINGLE_COUNT * SINGLE_COUNT
 
 
+# ID SMESI DVOU BAREV. V poradi barev (mini, maxi), aby "cervena+zluta" a
+# "zluta+cervena" bylo VZDY to same id - jinak by jedna smes mela dve jmena.
+# Vraci -1, kdyz se michat neda (stejna barva nebo barva mimo tabulku).
+static func mix_id(a: int, b: int) -> int:
+	if a < 0 or b < 0 or a >= COUNT or b >= COUNT or a == b:
+		return -1
+	return MIX_BASE + mini(a, b) * SINGLE_COUNT + maxi(a, b)
+
+
+# NA JAKYCH BARVACH JE TAHLE BARVA POSTAVENA. U jednoduche barvy vraci sebe
+# samu, u smesi obe slozky - diky tomu se da o kazde barve mluvit jednim kódem.
+static func pair_of(h: int) -> Array:
+	if not is_mix(h):
+		return [h]
+	var rest: int = h - MIX_BASE
+	return [rest / SINGLE_COUNT, rest % SINGLE_COUNT]
+
+
+# KLIC DO TABULKY SMESI ("RY"). Sklada se z pismen v poradi barev, takze se
+# nikdy nevygeneruje "YR".
+static func mix_key(h: int) -> String:
+	var p: Array = pair_of(h)
+	if p.size() < 2:
+		return ""
+	return letter_of(int(p[0])) + letter_of(int(p[1]))
+
+
+# MUZE VEZE S TOUTO SADOU BAREV ZASahnout TOHOTO POUTNIKA? Kazda barva poutnika
+# musi byt v sade veze: vez s R vidi cervenou, ale oranzovou (R+Y) ne. Je to
+# JEDINE misto, kde se o barve rozhoduje - vsechno ostatni se na `sees` jen ptá.
+static func covers(tower_hues: Array, enemy_hue: int) -> bool:
+	for h in pair_of(enemy_hue):
+		if not tower_hues.has(int(h)):
+			return false
+	return true
+
+
+# JE MICHANI V TOMTO LEVELU ODEMCENE?
+static func mix_unlocked(level: int) -> bool:
+	return level >= MIX_UNLOCK_LEVEL
+
+
+# VSECHNY SMESI, KTERE V TETO CHVILI MAJI SMYSL (odemcene + obe barvy uz ve hre).
+static func mix_pool_at(level: int) -> Array:
+	if not mix_unlocked(level):
+		return []
+	var pal: Array = palette_at(level)
+	var out: Array = []
+	for i in range(pal.size()):
+		for j in range(i + 1, pal.size()):
+			out.append(mix_id(int(pal[i]), int(pal[j])))
+	return out
+
+
+# JEDNA TABULKA PRO VSE, CO O BARVE NEKDO VI.
 static func _row(h: int) -> Dictionary:
+	if is_mix(h):
+		var key: String = mix_key(h)
+		if MIXES.has(key):
+			return MIXES[key]
+		return MIX_FALLBACK
 	return ROWS[clampi(h, 0, COUNT - 1)]
 
 
 # Bezpecne prevody. GDScript bere zaporny index od konce pole, takze
 # `ROWS[-1]` je Stribrna - kdo si toho nevsimne, kresli neco jineho, nez si
 # mysli, a je presvedceny, ze je to spravne.
+static func is_valid(h: int) -> bool:
+	return (h >= 0 and h < COUNT) or is_mix(h)
+
+
 static func name_of(h: int) -> String:
 	if not is_valid(h):
 		return "?"
-	return String(_row(h)["name"])
+	return String(_row(h).get("name", "?"))
 
 
 static func color_of(h: int) -> Color:
@@ -139,14 +242,18 @@ static func color_of(h: int) -> Color:
 static func shape_of(h: int) -> String:
 	if not is_valid(h):
 		return "square"
-	return String(_row(h)["shape"])
+	return String(_row(h).get("shape", ""))
 
 
 # PISMENO BARVY: pocatecni pismeno anglickeho nazvu ("R" jako Red) - viz ROWS.
+# SMES MA DVE PISMENA ("RY" = Red + Yellow); sklada se z poradi barev, takze
+# "cervena+zluta" je VZDY "RY" a nikdy "YR".
 static func letter_of(h: int) -> String:
+	if is_mix(h):
+		return mix_key(h)
 	if not is_valid(h):
 		return "?"
-	return String(_row(h)["letter"])
+	return String(_row(h).get("letter", "?"))
 
 
 # PISMENO SMESI DVOU BAREV ("RY" = Red + Yellow). Poradi pismen je dane poradim
@@ -159,31 +266,48 @@ static func letter_of_pair(a: int, b: int) -> String:
 	return letter_of(mini(a, b)) + letter_of(maxi(a, b))
 
 
+# HODNOTY SOUHRNU. U SMESI JE TO PRUMER OBOU BAREV, ne maximum (Jan: "S
+# průměrováním síly souhlasím."). Zluta je rychla a slaba, cervena pomala
+# a silna - maximum z obou by bylo ~3,7x tezsi nez cervena sama.
 static func hp_mult(h: int) -> float:
+	if is_mix(h):
+		var p: Array = pair_of(h)
+		return (hp_mult(int(p[0])) + hp_mult(int(p[1]))) * 0.5
 	return float(_row(h)["hp"])
 
 
 static func speed_mult(h: int) -> float:
+	if is_mix(h):
+		var p: Array = pair_of(h)
+		return (speed_mult(int(p[0])) + speed_mult(int(p[1]))) * 0.5
 	return float(_row(h)["speed"])
 
 
 static func gold_of(h: int) -> int:
+	if is_mix(h):
+		var p: Array = pair_of(h)
+		return int(round(float(gold_of(int(p[0])) + gold_of(int(p[1]))) * 0.5))
 	return int(_row(h)["gold"])
 
 
+# CHOVANI SMESI: obe (reseno v `Pilgrim.behaviours`). Tady vraci prvni z nich -
+# je to zaloha pro mista, ktera potrebuji jedno jmeno chovani.
 static func behaviour_of(h: int) -> String:
-	return String(_row(h)["behaviour"])
+	if is_mix(h):
+		var p: Array = pair_of(h)
+		return behaviour_of(int(p[0]))
+	return String(_row(h).get("behaviour", B_NONE))
 
 
 # JE BARVA V PALETE? Stribrna ne - a presne proto na ni hrac nemuze mirrit.
 static func in_palette(h: int) -> bool:
 	if not is_valid(h):
 		return false
-	return bool(_row(h)["palette"])
+	return bool(_row(h).get("palette", false))
 
 
 static func unlock_level(h: int) -> int:
-	return int(_row(h)["unlock_level"])
+	return int(_row(h).get("unlock_level", 1))
 
 
 # BARVY, KTERE V TOMTO LEVELU VSTUPUJI DO HRY (vsechny, i nepolapitelne).

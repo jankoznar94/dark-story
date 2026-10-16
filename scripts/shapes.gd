@@ -81,5 +81,21 @@ static func _canonical(shape: String, r: float) -> PackedVector2Array:
 
 # KAM POUTNIK HLEDI - pro obrazovku i pro testy, aby se smer neopisoval zvlast.
 # Poutnik jde porad PRIMO k vezi, takze jeho smer je i smer, kterym se otaci.
+# PRERUSOVANA CARA (mrzivy paprsek). Vraci seznam usecek [od, do], ktere se maji
+# nakreslit; to, ze mezi nimi jsou mezery, je z toho "chlad". Je to VYPOCET, ne
+# kresleni - da se proto otestovat bez prohlizece.
+static func dash(a: Vector2, b: Vector2, w: float) -> Array:
+	var out: Array = []
+	var d: float = (b - a).length()
+	if d <= 0.001:
+		return out
+	var seg: float = maxf(6.0, w * 2.5)
+	var n: int = maxi(1, int(round(d / seg)))
+	for i in range(n):
+		var t0: float = float(i) / float(n)
+		out.append([a.lerp(b, t0), a.lerp(b, t0 + 0.6 / float(n))])
+	return out
+
+
 static func facing(dir: Vector2) -> Vector2:
 	return dir.normalized()

@@ -113,6 +113,20 @@ var shop_cells: Array = []
 # HORNI HRANA SPODNIHO PRUHU S BARVAMI. Neni to `view.y - pal_h` jako driv:
 # paleta je v bitve NAD panelem s upgrady, takze ji posouva panel.
 var pal_top: float = 0.0
+# PRUH SE SMESI (od sesteho levelu). Kolecko se smesi se do pruhu palety nevejde
+# (`pal_top` je jen ~100 px), takze ma vlastni pruh NAD paletou. Vyska se
+# rezervuje od zacatku toho levelu, ve kterem je michani odemcene - ne az kdyz
+# hrac dvojici zvoli; jinak by se herni plocha hnula pod rukama.
+const MIX_FRAC := 0.062
+var mix_h: float = 0.0
+var mix_top: float = 0.0
+# [kolecko smesi, cara k prvnimu puntiku, cara k druhemu] - kvuli sonde.
+var mix_rects: Array = []
+# TOTEZ JAKO USECKY (dve dvojice bodu) - kresleni potrebuje konce, ne obalku.
+var mix_lines: Array = []
+# Vi to ROZVRZENI od obrazovky (ta to vi z levelu hry) - stejne jako
+# `set_speed_visible`.
+var mix_unlocked: bool = false
 # MENU - OBRAZOVKA UPRAVY: stejna mrizka, ale pres cely displej a se SPECIALEM.
 var upg_panel: Rect2 = Rect2()
 var upg_tabs: Array = []
@@ -183,6 +197,9 @@ func update(v: Vector2) -> void:
 		shop_tab_icons = []
 		shop_cells = []
 		pal_top = 0.0
+		mix_h = 0.0
+		mix_top = 0.0
+		mix_rects = []
 		upg_panel = Rect2()
 		upg_tabs = []
 		upg_tab_icons = []
@@ -209,7 +226,9 @@ func update(v: Vector2) -> void:
 	# a teprve z ni herni plocha. Kdo spocte plochu driv, necha poutniky chodit
 	# pod panel (a hrac je nevidi).
 	layout_shop()
-	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, pal_top - bar_h))
+	# HERNI PLOCHA KONCI NAD PRUHEM SE SMESI (a ten je nad paletou). Kdyz je
+	# michani zamcene, je `mix_top` presne `pal_top` a plocha je stejna jako driv.
+	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, mix_top - bar_h))
 	var short_side: float = minf(arena.size.x, arena.size.y)
 	unit_r = maxf(20.0, (short_side * 0.5 - short_side * MARGIN_FRAC) * UNIT_SHRINK)
 	field_r = maxf(unit_r, arena.size.y * 0.5)
@@ -392,6 +411,50 @@ func set_speed_visible(on: bool) -> void:
 		update(view)
 
 
+# PRUH SE SMESI. Vi to ROZVRZENI od obrazovky (ta to vi z levelu hry): kdyz se
+# michani odemkne, pruh se rezervuje a plocha se o nej zmensi. Hra pred sestym
+# levelem vypada presne jako driv.
+func set_mix_unlocked(on: bool) -> void:
+	if mix_unlocked == on:
+		return
+	mix_unlocked = on
+	if view.x >= 1.0 and view.y >= 1.0:
+		update(view)
+
+
+# KOlecko SE SMESI A DVE CARY K PUNTIKUM. Kolecko lezi vodorovne presne mezi
+# stredy obou zvolenych puntiku (aby hrac na prvni pohled videl, ktere dve barvy
+# se michaji) a svisle uprostred sveho pruhu. Cary vedou z horni hrany puntiku
+# do kolecka - jsou to ukazatele, ne ramecky.
+func layout_mix(a: int, b: int) -> Array:
+	mix_rects = []
+	mix_lines = []
+	if mix_h <= 0.0 or pal_rects.is_empty():
+		return mix_rects
+	if a < 0 or b < 0 or a >= pal_rects.size() or b >= pal_rects.size() or a == b:
+		return mix_rects
+	var ra: Rect2 = pal_rects[a]
+	var rb: Rect2 = pal_rects[b]
+	# KOlecko SE MUSI VEJIT DO PRUHU - jinak by prelezlo do palety (a tu hrac
+	# pouziva). Sirka puntiku palety je jen voditko, pruh je tvrdy strop.
+	var side: float = clampf(ra.size.x * 0.7, 32.0, maxf(32.0, mix_h - 6.0))
+	var c: Vector2 = Vector2((ra.get_center().x + rb.get_center().x) * 0.5,
+		mix_top + mix_h * 0.5)
+	var dot := Rect2(c - Vector2(side, side) * 0.5, Vector2(side, side))
+	var fa: Vector2 = ra.position + Vector2(ra.size.x * 0.5, 0.0)
+	var fb: Vector2 = rb.position + Vector2(rb.size.x * 0.5, 0.0)
+	mix_lines = [[fa, c], [fb, c]]
+	mix_rects = [dot, _line_rect(fa, c, 2.0), _line_rect(fb, c, 2.0)]
+	return mix_rects
+
+
+# OBALKA CARY (pro sondu - ta hleda obdelniky, ne usecky).
+func _line_rect(a: Vector2, b: Vector2, w: float) -> Rect2:
+	var p: Vector2 = Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	var s: Vector2 = Vector2(absf(a.x - b.x), absf(a.y - b.y))
+	return Rect2(p, Vector2(maxf(s.x, w), maxf(s.y, w)))
+
+
 func layout_shop() -> void:
 	if view.x < 1.0 or view.y < 1.0:
 		shop_panel = Rect2()
@@ -411,6 +474,10 @@ func layout_shop() -> void:
 	# PALETA SE VEJDE TESNE NAD PANEL. Kdyby zustala dole, panel by ji zakryl
 	# a hrac by prisel o jedinou cestu, jak prehodit barvu veze.
 	pal_top = maxf(bar_h, shop_panel.position.y - gap - pal_h)
+	# PRUH SE SMESI JE NAD PALETOU. Kdyz michani jeste neni odemcene, je nulovy
+	# a plocha saha az k palete - hra pred sestym levelem vypada presne jako driv.
+	mix_h = view.y * MIX_FRAC if mix_unlocked else 0.0
+	mix_top = maxf(bar_h, pal_top - mix_h)
 
 
 # OBRAZOVKA UPRAVY V MENU: stejna mrizka, ale uprostred displeje mezi nadpisem

@@ -118,8 +118,23 @@ func _refield() -> void:
 	layout.update(get_viewport_rect().size)
 	game.set_field(layout.field_r, layout.unit_r, layout.center)
 	layout.layout_palette(game.palette.size())
+	# PRUH SE SMESI SE REZERVUJE OD ZACATKU LEVELU, ve kterem je michani odemcene
+	# (ne az kdyz hrac dvojici zvoli) - plocha se nesmi hybat pod rukama.
+	layout.set_mix_unlocked(Hue.mix_unlocked(game.level))
+	_sync_mix_strip()
 	_sync_shop_shape()
 	_sync_dialogs()
+
+
+# KOlecko SE SMESI A DVE CARY. Pocita se z TOHO, co je opravdu zvolene: dve
+# barvy veze a jejich MISTA v palete (rozvrzeni zna jen puntiky, ne barvy).
+func _sync_mix_strip() -> void:
+	if not layout.mix_unlocked or game.tower.hues.size() < 2:
+		layout.mix_rects = []
+		return
+	var a: int = game.palette.find(game.tower.hues[0])
+	var b: int = game.palette.find(game.tower.hues[1])
+	layout.layout_mix(a, b)
 
 
 # POCET RADKU PANELU SE MENI S KATEGORII. Rozvrzeni si ho musi vzit z TOHO,
@@ -174,6 +189,14 @@ func _process(dt: float) -> void:
 	_pull_js_state()
 	if layout.pal_rects.size() != game.palette.size():
 		layout.layout_palette(game.palette.size())
+	# MICHANI BAREV: pruh se smesi se objevi v tom levelu, ve kterem se michani
+	# odemkne (a od te chvile je rezervovany porad, i kdyz hrac zadnou dvojici
+	# zvolenou nema) - plocha se pod rukama nehybe.
+	if layout.mix_unlocked != Hue.mix_unlocked(game.level):
+		layout.set_mix_unlocked(Hue.mix_unlocked(game.level))
+		game.set_field(layout.field_r, layout.unit_r, layout.center)
+	if layout.mix_rects.size() != (3 if game.tower.hues.size() > 1 else 0):
+		_sync_mix_strip()
 	# ZRYCHLENI HRY: tlacitko v pruhu je jen kdyz si hrac koupil special.
 	# Rozvrzeni si to musi vzit z obrazovky (pocita to MISTO v pruhu).
 	if layout.speed_visible != (game.speed_options() > 1):
@@ -625,7 +648,10 @@ func _handle_battle_tap(pos: Vector2) -> void:
 	for i in range(layout.pal_rects.size()):
 		if (layout.pal_rects[i] as Rect2).has_point(pos):
 			if i < game.palette.size():
-				game.select_hue(int(game.palette[i]))
+				# DVOJTAP: dva tapy na stejnou barvu do 0,3 s = smes. Hra to
+				# rozhoduje sama (`game.tap_hue`) a meri hernim casem.
+				game.tap_hue(int(game.palette[i]))
+				_sync_mix_strip()
 			return
 	if layout.hud_menu.has_point(pos):
 		ask_leave()
@@ -683,6 +709,8 @@ func _draw_battle() -> void:
 	# sama - zadne zaměřování pod nim uz neni.
 	_draw_beams()
 	_draw_bar()
+	# PRUH SE SMESI JE NAD PALETOU (kolecko se do pruhu palety nevejde).
+	_draw_mix_strip()
 	_draw_palette()
 	# PANEL S NAKUPEM JE V BITVE PORAD - kresli se vzdy, ne "kdyz je otevreny".
 	_draw_shop()
@@ -780,7 +808,7 @@ func _closed(pts: PackedVector2Array) -> PackedVector2Array:
 # BARVA KRUHU DOSTRELU = BARVA VEZE. Ztlumena (0,62), aby kruh neprebijel
 # poutniky a paprsek - je to geometrie, ne zbran.
 func _range_color() -> Color:
-	var col: Color = Hue.color_of(game.tower.hue)
+	var col: Color = game.tower.color()
 	return Color(col.r, col.g, col.b, 0.62)
 
 
@@ -791,7 +819,13 @@ func _range_color() -> Color:
 # TM AVY OBRYS POD PAPRSKEM je stejny trik jako u byvalych tecek strel: na
 # svetlem poutnikovi nebo na karte by se barevna cara ztratila.
 func _draw_beams() -> void:
-	var col: Color = Hue.color_of(game.tower.hue)
+	var col: Color = game.tower.color()
+	# MRZIVY PAPRSEK: kdyz vez zpomaluje, je paprsek prerusovany a zimnave
+	# vybledly. Hrac z paprsku pozna, ze zpomaluje - a to je jedine misto, kde
+	# se to dozvi (krouzek kolem poutnika jsme zrusili).
+	var chill: bool = game.ice_frac() > 0.0
+	if chill:
+		col = col.lerp(Color(0.78, 0.89, 1.0), CHILL_TINT)
 	# ZABLESK KRITIKY: paprsek zbela (PLOCHY tón, zadny glow - Jan ma
 	# astigmatismus a svetla kolem svetla je pro nej to nejhorsi).
 	if game.crit_active():
@@ -812,8 +846,22 @@ func _draw_beams() -> void:
 # a nic jineho neumi - hrac to videl jako "dva obdelniky vedle sebe" (Jan,
 # Oct 2026), proto se kazdy konec dokresli koleckem o polomeru sirky paprsku.
 # Diky tomu na sebe segmenty v prstenci poutnika plynule navazuji.
-func _beam_line(a: Vector2, b: Vector2, c: Color, w: float) -> void:
-	draw_line(a, b, c, w)
+# MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), kresli se paprsek PRERUSOVANE
+# a v zimave (vybledle) barve - z paprsku je poznat "chlad", ne dalsi barva.
+# Krouzek kolem poutnika byl spatny: poutnik ma mit jen jeden kruh (sve zivoty).
+# Jan (Oct 2026): "Zpomalující střelu tedy zobrazíme trochu jinak. Až z toho je
+# lépe poznat, že se jedná o chill effect."
+const CHILL_TINT := 0.45
+
+
+func _beam_line(a: Vector2, b: Vector2, c: Color, w: float, dashed: bool = false) -> void:
+	if dashed:
+		# PRERUSOVANA CARA: mrzivy paprsek. Vypocet je v `Shapes.dash`, aby se dal
+		# otestovat bez prohlizece.
+		for seg in Shapes.dash(a, b, w):
+			draw_line(seg[0], seg[1], c, w)
+	else:
+		draw_line(a, b, c, w)
 	draw_circle(a, w * 0.5, c)
 	draw_circle(b, w * 0.5, c)
 
@@ -824,9 +872,12 @@ func _beam_line(a: Vector2, b: Vector2, c: Color, w: float) -> void:
 func _draw_tower() -> void:
 	var c: Vector2 = layout.center
 	var tr: float = layout.tower_r
+	var col: Color = game.tower.color()
 	draw_circle(c, tr, TOWER_BODY)
-	draw_arc(c, tr * 0.92, 0.0, TAU, 48, Hue.color_of(game.tower.hue), maxf(2.0, tr * 0.13))
-	_shape(game.tower.hue, c, tr * 0.52, Hue.color_of(game.tower.hue))
+	draw_arc(c, tr * 0.92, 0.0, TAU, 48, col, maxf(2.0, tr * 0.13))
+	# RUNA VEZE JE TVAR PRVNI BARVY (u smesi se tvary nespojuji - vez neni
+	# poutnik); barvu prstence i paprsku nese SMES, takze hrac vidi, co ma.
+	_shape(int(game.tower.hues[0]), c, tr * 0.52, col)
 	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
 	draw_arc(c, tr * 1.22, -PI * 0.5, -PI * 0.5 + TAU * frac, 64, _hp_color(frac),
 		maxf(3.0, tr * 0.24))
@@ -951,6 +1002,26 @@ func _draw_pause_icon(r: Rect2, hold: bool) -> void:
 # podle názvu barvy... Kombinované barvy budou mít dvě písmena"). Pismeno je
 # tmave (GLYPH) - na sytou barvu je to jedina barva, ktera ma vsude kontrast, a
 # je to stejny jazyk jako tmavy obrys tecky strely.
+# PRUH SE SMESI: dve tiche cary od zvolenych puntiku do kolecka, kolecko v barve
+# smesi a v nem DVE PISMENA. Barva nikdy neni jediny nositel informace - smes
+# dvou barev se da splést s barvou treti, proto jsou v kolecku pismena.
+func _draw_mix_strip() -> void:
+	var mix: int = game.tower.mix()
+	if mix < 0 or layout.mix_rects.is_empty():
+		return
+	var dot: Rect2 = layout.mix_rects[0]
+	var col: Color = Hue.color_of(mix)
+	var c: Vector2 = dot.get_center()
+	var side: float = minf(dot.size.x, dot.size.y)
+	var quiet: Color = Color(col.r, col.g, col.b, 0.55)
+	# CARY JDOU POD KOLECKO - kdyby se kreslily po nem, prekryly by pismena.
+	for ln in layout.mix_lines:
+		draw_line(ln[0], ln[1], quiet, maxf(2.0, side * 0.06))
+	draw_circle(c, side * 0.5, col)
+	draw_arc(c, side * 0.5, 0.0, TAU, 48, GLYPH, maxf(2.0, side * 0.09))
+	_label(Hue.letter_of(mix), dot, maxi(10, int(side * 0.46)), GLYPH)
+
+
 func _draw_palette() -> void:
 	for i in range(layout.pal_rects.size()):
 		if i >= game.palette.size():
@@ -958,7 +1029,7 @@ func _draw_palette() -> void:
 		var h: int = int(game.palette[i])
 		var r: Rect2 = layout.pal_rects[i]
 		var col: Color = Hue.color_of(h)
-		var active: bool = (h == game.tower.hue)
+		var active: bool = game.tower.hues.has(h)
 		var c: Vector2 = r.position + r.size * 0.5
 		var rad: float = minf(r.size.x, r.size.y) * 0.5
 		if active:

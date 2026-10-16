@@ -32,6 +32,10 @@ func _init() -> void:
 	_run("laser je cara s obrysem a kresli se nad vezi", _test_beams_are_lines)
 	_run("prstenec poutnika je jeho HP bar a nic jineho", _test_ring_is_hp_bar)
 	_run("poutnik je i po zmenseni citelny", _test_pilgrim_stays_readable)
+	_run("zpomalujici paprsek je mrzivy (a zadny krouzek kolem poutnika)",
+		_test_chill_beam)
+	_run("pruh se smesi se objevi az s michanim (a kolecko je mezi puntiky)",
+		_test_mix_strip)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
@@ -139,6 +143,45 @@ func _test_ring_is_hp_bar() -> void:
 		"prstenec je nalepeny na tvár (RING_FRAC %.2f)" % Game.RING_FRAC)
 
 
+# MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), kresli se paprsek prerusovane
+# a v zimnave barve - z paprsku ma byt poznat "chlad". Krouzek kolem poutnika uz
+# na to neni: poutnik ma mit jen jeden kruh (sve zivoty).
+func _test_chill_beam() -> void:
+	var src: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
+	var start: int = src.find("func _draw_beams")
+	var end: int = src.find("\nfunc _draw_tower", start)
+	var body: String = src.substr(start, (end - start) if end > start else 900)
+	_check(body.contains("game.ice_frac()"), "paprsek se nezbarvi podle ledoveho zasahu")
+	_check(body.contains("chill"), "paprsek nema priznak chladu")
+	var st: int = src.find("func _beam_line")
+	var se: int = src.find("\nfunc ", st + 1)
+	var bl: String = src.substr(st, (se - st) if se > st else 600)
+	_check(bl.contains("dashed") and bl.contains("draw_line"),
+		"prerusovany (mrzivy) paprsek se nekresli")
+	_check(not src.contains("0.45, 0.72, 0.90"),
+		"svetle modry krouzek kolem poutnika se porad kresli")
+	# PRERUSOVANI JE VYPOCET (`Shapes.dash`): kratky i dlouhy paprsek musi mit
+	# diry - jinak by z "chladu" byla jen dalsi cara.
+	var segs: Array = Shapes.dash(Vector2(0.0, 0.0), Vector2(120.0, 0.0), 3.0)
+	_check(segs.size() >= 5, "mrzivy paprsek nema diry (%d usecek)" % segs.size())
+	var covered: float = 0.0
+	for s in segs:
+		var p0: Vector2 = s[0]
+		var p1: Vector2 = s[1]
+		covered += (p1 - p0).length()
+		_check(p1.x > p0.x, "usek mrziveho paprsku nejde po smeru paprsku")
+	_check(absf(covered / (120.0 * 0.6) - 1.0) < 0.15,
+		"mrzivy paprsek je pokryty z %.0f %% (ma byt ~60 %%)" % (covered / 1.2))
+	_check(segs[0][0].distance_to(Vector2(0.0, 0.0)) < 0.01,
+		"mrzivy paprsek nezacina na vezi")
+	for i in range(1, segs.size()):
+		var prev_end: Vector2 = segs[i - 1][1]
+		var here: Vector2 = segs[i][0]
+		_check(here.x - prev_end.x > 1.0, "mezi useky mrziveho paprsku neni dira")
+	_check(Shapes.dash(Vector2.ZERO, Vector2(5.0, 0.0), 3.0).size() == 1,
+		"kratky paprsek se rozpadl na vic useku")
+
+
 # POUTNIK JE I PO ZMENSENI CITELNY. Jan (Oct 2026): "Všechny nepřátele o 15 %
 # zmenšíme" - ale zmenseni o par procent vic a z tvaru je necitelny puntik;
 # hranice je 5 px v polomeru na nejmensim beznem telefonu.
@@ -153,6 +196,59 @@ func _test_pilgrim_stays_readable() -> void:
 		var r_px: float = l.pilgrim_r * Game.PILGRIM_SIZE
 		_check(r_px >= 5.0, "%dx%d: poutnik ma po zmenseni %.1f px v polomeru"
 			% [int(r.x), int(r.y), r_px])
+
+
+# PRUH SE SMESI. Dokud je michani zamcene, je `mix_top` presne `pal_top` a hra
+# vypada jako driv (zadne misto navic). Po odemceni se pruh rezervuje a kolecko
+# smesi lezi VODOROVNE presne mezi stredy obou zvolenych puntiku - hrac musi na
+# prvni pohled videt, ktere dve barvy se michaji.
+func _test_mix_strip() -> void:
+	var l := ScreenLayout.new()
+	l.update(Vector2(390.0, 844.0))
+	# ZAMCENE MICHANI: pruh neni a plocha saha az k palete.
+	l.layout_palette(5)
+	_check(l.mix_h == 0.0 and absf(l.mix_top - l.pal_top) < 0.001,
+		"pruh se smesi existuje, i kdyz je michani zamcene")
+	_check(l.layout_mix(0, 1).is_empty(), "kolecko smesi se kresli pred odemcenim")
+	# ODEMCENE: pruh je nad paletou a herni plocha konci nad nim.
+	l.set_mix_unlocked(true)
+	l.layout_palette(5)
+	_check(l.mix_h > 0.0 and l.mix_top < l.pal_top, "pruh se smesi se neobjevil")
+	_check(l.arena.end.y <= l.mix_top + 0.001, "herni plocha zasahuje do pruhu se smesi")
+	_check(l.mix_top > l.arena.position.y, "pruh se smesi je nad herni plochou")
+	var rects: Array = l.layout_mix(0, 2)
+	_check(rects.size() == 3, "kolecko smesi a dve cary nejsou (%d)" % rects.size())
+	if rects.size() < 3:
+		return
+	var pa: Rect2 = l.pal_rects[0]
+	var pb: Rect2 = l.pal_rects[2]
+	var dot: Rect2 = rects[0]
+	var want_x: float = (pa.get_center().x + pb.get_center().x) * 0.5
+	_check(absf(dot.get_center().x - want_x) < 0.5,
+		"kolecko smesi neni mezi puntiky (%.1f, ma byt %.1f)" % [dot.get_center().x, want_x])
+	_check(dot.position.y >= l.mix_top - 0.001 and dot.end.y <= l.pal_top + 0.001,
+		"kolecko smesi neni v pruhu (%.1f..%.1f, pruh %.1f..%.1f)"
+		% [dot.position.y, dot.end.y, l.mix_top, l.pal_top])
+	_check(dot.size.x >= 36.0, "kolecko smesi je mensi nez 36 px (%.1f)" % dot.size.x)
+	# KAZDA CARA VEDE OD PUNTIKU DO KOLECKA (jinak hrac nevi, ktere dve barvy to jsou).
+	for k in range(2):
+		var line: Rect2 = rects[1 + k]
+		# cara vede z HORNI HRANY puntiku, ne ze stredu - pres puntik by ji nebylo videt
+		var pr: Rect2 = l.pal_rects[0 if k == 0 else 2]
+		var from: Vector2 = pr.position + Vector2(pr.size.x * 0.5, 0.0)
+		_check(line.grow(1.0).has_point(from) and line.grow(1.0).has_point(dot.get_center()),
+			"cara %d nevede od puntiku do kolecka smesi" % k)
+	# A VEJDE SE I NA MALY TELEFON (kolecko nesmi prelezt do palety).
+	var s := ScreenLayout.new()
+	s.update(Vector2(360.0, 640.0))
+	s.set_mix_unlocked(true)
+	s.layout_palette(5)
+	var sr: Array = s.layout_mix(0, 2)
+	if not sr.is_empty():
+		var sd: Rect2 = sr[0]
+		_check(sd.position.y >= s.mix_top - 0.001 and sd.end.y <= s.pal_top + 0.001,
+			"na 360x640 kolecko smesi preleza do palety")
+		_check(sd.size.x >= 30.0, "na 360x640 je kolecko smesi %.1f px" % sd.size.x)
 
 
 # PANEL V BITVE NENABIZI UPGRADE, KTERY V NI NEJDE KOUPIT. Stat s `temp_max` 0
@@ -247,7 +343,7 @@ func _test_range_is_colored() -> void:
 	var start: int = src.find("func _range_color")
 	var end: int = src.find("\nfunc ", start + 1)
 	var body: String = src.substr(start, (end - start) if end > start else 40)
-	_check(body.contains("Hue.color_of(game.tower.hue)"), "barva kruhu neni barva veze")
+	_check(body.contains("game.tower.color()"), "barva kruhu neni barva veze")
 
 
 # PANEL S UPGRADY JE V BITVE TRVALE OTEVRENY (Jan, Oct 2026: "Tlacitka v levelu
