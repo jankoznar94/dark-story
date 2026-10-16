@@ -944,14 +944,20 @@ func _test_difficulty() -> void:
 	g.profile = Profile.new()
 	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
 	# ZIVOTY POUTNIKA ROSTOU S LEVELEM (schvaleno: 1,22 za level). Kolo je
-	# poradi vlny pres cely pruchod hrou, tedy level 2 zacina kolem 11.
+	# poradi vlny pres cely pruchod hrou, takze druhy level zacina o
+	# `WAVES_PER_LEVEL` kol dal - cisla se tu NESMII opsat rucne (driv tu stalo
+	# 11 a 21 z doby deseti vln; s padesati vlnami by test meril treti vlnu
+	# prvniho levelu a hlásil, ze rust mezi levely je 1,00).
+	var k2: int = Game.WAVES_PER_LEVEL + 1
+	var k3: int = 2 * Game.WAVES_PER_LEVEL + 1
 	var h1: float = g.hp_for(1, 1, Hue.RED)
-	var h11: float = g.hp_for(11, 1, Hue.RED)
-	var h21: float = g.hp_for(21, 1, Hue.RED)
+	var h11: float = g.hp_for(k2, 1, Hue.RED)
+	var h21: float = g.hp_for(k3, 1, Hue.RED)
 	_check(h11 > h1, "druhy level nema tuzsi poutniky")
 	_check(absf(h11 / h1 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,22 (%.3f)" % (h11 / h1))
 	_check(absf(h21 / h11 - Game.LEVEL_HP) < 0.02, "rust mezi levely neni 1,22 (%.3f)" % (h21 / h11))
-	# KOLO SE POCITA PO DESETI VLNACH: prvni vlna druheho levelu je 11. kolo.
+	# KOLO SE POCITA PO CELY LEVEL: prvni vlna druheho levelu je
+	# WAVES_PER_LEVEL+1. kolo.
 	g.start_level(1)
 	_check(g.kolo() == 1, "prvni kolo prvniho levelu neni 1 (%d)" % g.kolo())
 	g.wave = 3
@@ -963,7 +969,12 @@ func _test_difficulty() -> void:
 	# 2026, Jan: "Počet nepřátel v jednotlivých vlnách bude obecně vyšší. V
 	# prvních levelech bude začínat třeba na 15. Ve vyšších to budou klidně
 	# desítky až stovky."). Strop drzi nekonecnou partii hratelnou.
-	_check(g.wave_size(1, 1) < g.wave_size(2, 1), "druha vlna neni vetsi nez prvni")
+	# STRICTNE ROSTOUCI VLNA PO VLNE NELZE: pri padesati vlnach na level a
+	# rozsahu 15..51 (Janova cisla) je hodnot vic nez k dispozici, takze se
+	# nektere pocty opakuji. Hlida se proto to, na cem opravdu zalezi: prvni
+	# vlna je 15 (Janovo cislo), prvni a pata se lisi a tabulka v ramci levelu
+	# (i mezi levely) roste.
+	_check(g.wave_size(1, 1) < g.wave_size(5, 1), "druha polovina prvni desitky vln neroste")
 	_check(g.wave_size(1, 1) >= 15, "prvni vlna nezacina na patnacti (%d)" % g.wave_size(1, 1))
 	_check(g.wave_size(1, 5) > g.wave_size(1, 1),
 		"druhy level nema vetsi vlnu (%d vs %d)" % [g.wave_size(1, 5), g.wave_size(1, 1)])

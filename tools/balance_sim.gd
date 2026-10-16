@@ -33,10 +33,11 @@ const PERM_ORDER := ["ad", "ar", "ap", "ad", "hp", "am", "ar", "cc", "rg", "cd",
 var levels_limit: int = 8
 # KTERY HRAC SE HRAJE (viz `ALLIN_ORDER`).
 var temp_order: Array = TEMP_ORDER
-# CASOVY STROP PARTIE. Deset vln na level znamena ~5 minut na level, takze
-# strop musi byt vysoky - jinak sim skonci "DOHRANO" a nic to nerekne o tom,
-# kde se hra opravdu láme.
-var time_limit: float = 3600.0
+# CASOVY STROP PARTIE. Level ma od Oct 2026 PADESAT vln (~11 min za deset vln,
+# takze ~37 min za level) - strop musi byt vysoky, jinak sim skonci "DOHRANO" a
+# nic to nerekne o tom, kde se hra opravdu láme. Pro srovnani s minulosti je
+# lepsi merit `--levels=2` a CAS NA LEVEL, ne kolik levelu se stihne za hodinu.
+var time_limit: float = 20000.0
 var _switches: int = 0
 
 
@@ -67,7 +68,11 @@ func _run() -> void:
 	var last_key: String = ""
 	print("  level  vlna  zivoty  zlato  body  perm+temp")
 	var guard: int = 0
-	while g.level <= levels_limit and t < time_limit and guard < 400000:
+	# POJISTKA PROTI ZACYCLENI. Je to pocet SNIMKU (60 za sekundu herniho casu),
+	# takze 2 000 000 je ~9 hodin partie - dost na to, aby se padesativlnove
+	# levely (~54 min) vubec stihly zmerit. Nizsi strop uz jednou utnul beh
+	# uprostred tretiho levelu a vypadal jako "dohrano".
+	while g.level <= levels_limit and t < time_limit and guard < 2000000:
 		guard += 1
 		_play(g)
 		g.step(dt)
@@ -85,8 +90,14 @@ func _run() -> void:
 			g.next_level()
 	if g.phase == "lost":
 		print("  KONEC: vez padla na levelu %d (%d. vlna), cas %.0f s" % [g.level, g.wave, t])
-	else:
+	elif g.level > levels_limit:
 		print("  DOHRANO: %d levelu za %.0f s" % [levels_limit, t])
+	else:
+		# STOP UPROSTRED HRY NENI "DOHRANO". Kdo si to splete, precte si ze hry,
+		# ktera se ukoncila stropem, ze hrac dohral - a udela z toho spatny
+		# zaver o obtiznosti (přesně to se stalo pri prvnim mereni padesati vln).
+		print("  STOP: cas %.0f s (strop) - dohrano %d levelu, hra na %d. levelu, %d. vlne, zivoty veze %d"
+			% [t, g.level - 1, g.level, g.wave, int(ceil(g.hp))])
 	print("  hrac za partii: %d prepnuti barvy (%.1f za level)" % [_switches, float(_switches) / float(maxi(1, g.level))])
 	print("SIM_END level=%d wave=%d hp=%d switches=%d" % [g.level, g.wave, int(ceil(g.hp)), _switches])
 

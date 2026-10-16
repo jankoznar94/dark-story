@@ -41,14 +41,16 @@ extends RefCounted
 const TRAVEL_S := 11.8
 const BASE_HP := 20.0
 # OBTIZNOST: kazdy dalsi LEVEL je o 22 % tuzsi (Jan schvalil 1,22; driv 1,15)
-# a kazda dalsi vlna v levelu o 6 %. Driv to bylo 13 % za vlnu v nekonecne
-# partii - s levelem a resetenym zlatem by to bylo nehratelne.
+# a kazda dalsi vlna v levelu jen nepatrne (`WAVE_HP`). Driv to bylo 13 % za
+# vlnu v nekonecne partii - s levelem a resetenym zlatem by to bylo nehratelne.
 const LEVEL_HP := 1.40
-# Vlna v ramci levelu uz zveda obtiznost jen NECITELNE (1,06 misto 1,15):
-# deset vln po 1,06 da za level stejny rust jako pet vln po 1,15, takze delsi
-# level neznamena tezsi hru, jen vic krokku. Kdo hybe poctem vln, musi
-# premerit `tools/balance_sim.gd`.
-const WAVE_HP := 1.06
+# Vlna v ramci levelu zveda obtiznost jen NECITELNE. INVARIANT: rust ZA CELY
+# LEVEL se pri zmene poctu vln NESMI zmenit. Driv deset vln po 1,06 dalo za
+# level 1,79 (1,06^10); pri PADESATI vlnach to same vyjde na 1,0117
+# (= 1,06^10 ^ (1/50)). Kdo hybe poctem vln, prepocte timhle vzorcem a premeri
+# `tools/balance_sim.gd` - jinak se z dlouheho levelu stane nehratelna zed
+# (1,06^50 = 18x) nebo nuda.
+const WAVE_HP := 1.0117
 const START_GOLD := 150
 # ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku rostou 1,40x za level; kdyby zlato
 # stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
@@ -64,33 +66,49 @@ const BUILD_TIME := 5.0
 # klidně desítky až stovky. Samozřejmě musí chodit v takovém tempu a pořadí, aby
 # bylo možné je zabít."
 #
-# JSOU TO DVE CISLA, NE JEDNO: tabulka je pocet poutniku v 1.-10. vlne PRVNIHO
-# levelu a kazdy dalsi level ji NASOBI (`WAVE_SIZE_PER_LEVEL`). Driv se k tabulce
-# pricitaval jeden poutnik za level, takze se stropu (24) dosahlo uz ve tretim
-# levelu a "vyssi levely" se v poctech vubec neprojevily. Nasobenim se z desítek
-# stanou stovky.
-const WAVE_SIZES := [15, 17, 19, 22, 25, 29, 33, 38, 44, 51]
+# JSOU TO DVE CISLA, NE JEDNO: tabulka je pocet poutniku v TECHTO vlnech PRVNIHO
+# levelu (od Oct 2026 PADESAT vlna na level, Jan: "Kazde kolo bude mit 50
+# levelu" = level ma 50 vln) a kazdy dalsi level ji NASOBI
+# (`WAVE_SIZE_PER_LEVEL`). Driv se k tabulce pricitaval jeden poutnik za level,
+# takze se stropu (24) dosahlo uz ve tretim levelu a "vyssi levely" se v
+# poctech vubec neprojevily. Nasobenim se z desítek stanou stovky.
+#
+# TABULKA MA PADESAT POLOZEK (ne deset): vlna 1 zacina na 15 (Janovo cislo) a
+# padesata konci na 51 - stejny ROZSAH jako driv, jen rozlozeny do petkrat
+# vice kroku, takze rust mezi dvema vlnami je maly (2,5 % misto 13 %).
+# Kdo meni pocet vln, musi prodlouzit/zkratit TUHLE tabulku: `wave_size` bere
+# `WAVE_SIZES[vlna]`, takze kratka tabulka by vsechny pozdejsi vlny srovnala
+# na sve posledni cislo (a level by prestal gradovat).
+const WAVE_SIZES := [15, 15, 16, 16, 17, 17, 17, 18, 18, 19,
+	19, 20, 20, 21, 21, 22, 22, 23, 24, 24,
+	25, 25, 26, 27, 27, 28, 29, 29, 30, 31,
+	32, 33, 33, 34, 35, 36, 37, 38, 39, 40,
+	41, 42, 43, 44, 45, 46, 47, 49, 50, 51]
 const WAVE_SIZE_PER_LEVEL := 1.20
 # STROP VELIKOSTI VLNY: hra je nekonecna, takze pocet musi nekam dojit - na 20.
 # levelu by jinak chodily tisice poutniku a hra by se zadrhla.
 const WAVE_SIZES_MAX := 400
-# ODMENA ZA VLNU. S DESETI VLNAMI NA LEVEL se zlato za level ZDVOJNASOBILO
-# (vic vln = vic zabiti i vic bonusu) a hra se tim stala lehci, i kdyz se
-# obtiznost nemenila - zmereno simulatorem. Proto je bonus za vlnu mensi:
-# soucet za level zustava zhruba tam, kde byl u peti vln.
-const WAVE_BONUS := 10
-const WAVE_BONUS_PER_WAVE := 4
+# ODMENA ZA VLNU. Soucet za CELY LEVEL se drzi na tom, kde byl u deseti vln
+# (320 zlata): s padesati vlnami NESMI bonus za vlnu zustat 10/4, to by dalo
+# 5600 zlata za level a hra by se zlomila - a hrac to vidi, protoze zlato zacina
+# na kazdem levelu znovu. 50*4 + 0,1*1275 = 327 zlata za level (driv 320).
+const WAVE_BONUS := 4
+const WAVE_BONUS_PER_WAVE := 0.1
 # ODMENA ZA VYHRANY LEVEL V BODECH (Jan schvalil): 25 + 5 * level.
 const BODY_BASE := 25
 const BODY_PER_LEVEL := 5
-# KAZDY LEVEL MA DESET VLN. Jan (Oct 2026): "Kol v levelu by mělo být víc."
-# Driv to bylo 3-5 vln podle poradi levelu; level tak byl kratky a barvy se
-# musely odemykat uprostred neho. Deset vln je i Janovo starsi cislo ("Levely
-# by měly mít jen 10 kol").
-const WAVES_PER_LEVEL := 10
-# KOLO SE POCITA VZDY PO DESETI VLNACH, takze "kolo" je proste poradi vlny pres
-# cely pruchod hrou. Odtud se bere obtiznost (hp_for) i velikost vlny
-# (wave_size) - jedno pocitadlo, ne dve.
+# KAZDY LEVEL MA PADESAT VLN. Jan (Oct 2026): "Kazde kolo bude mit 50 levelu, ne?
+# Ted ma stale 10 jako driv." Driv to bylo 3-5 vln podle poradi levelu a pak
+# deset ("Levely by měly mít jen 10 kol"); Oct 2026 se level otevrel na padesat
+# vln. Pozor: kdo hybe timhle cislem, hybe i `WAVE_HP` (rust za level musi
+# zustat 1,79), `WAVE_SIZES` (tabulka musi mit stejne polozek), `WAVE_BONUS`
+# (soucet zlata za level), `SPAWN_GAP_PER_WAVE` (mezera na konci levelu) a
+# `KOLO_PER_LEVEL`, ze ktereho se pocita `kolo()`. Vsechno to hlida
+# `tools/test_core.gd` a meri `tools/balance_sim.gd`.
+const WAVES_PER_LEVEL := 50
+# KOLO SE POCITA VZDY PO CELY LEVEL (dnes padesat vln), takze "kolo" je proste
+# poradi vlny pres cely pruchod hrou. Odtud se bere obtiznost (hp_for) i velikost
+# vlny (wave_size) - jedno pocitadlo, ne dve.
 const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 
 # DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje - a u VELKE
@@ -98,7 +116,10 @@ const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 # toho by vlna o stovkach poutniku trvala desitky minut.
 const SPAWN_GAP_START := 2.5
 const SPAWN_GAP_MIN := 0.45
-const SPAWN_GAP_PER_WAVE := 0.13
+# MEZERA SE ZKRACI ZA CELY LEVEL O STEJNYCH 1,3 s jako drive (2,5 -> 1,2 s):
+# koeficient je proto 0,13 * 10/50 = 0,026. S puvodni 0,13 by uz od 16. vlny
+# sedela na dne (0,45) a poslednich 35 vln levelu by se vysypalo stejne rychle.
+const SPAWN_GAP_PER_WAVE := 0.026
 # CELKOVA DOBA VYSYPANI VLNY. Neni to kosmetika: pocet poutniku je ted v destikach
 # az stovkach, takze pevna mezera by jednu vlnu natahla pres deset minut. Je to
 # ZAROVEN HRANICE OBTIZNOSTI: cim kratsi vysypani, tim vic poutniku je na plose
