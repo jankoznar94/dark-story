@@ -53,6 +53,8 @@ func _init() -> void:
 	_run("dvojtap na palete michani barev (a pred sestym levelem ne)", _test_mix_taps)
 	_run("kombinovany poutnik: obe barvy, obe schopnosti, prumer sil",
 		_test_mix_pilgrim)
+	_run("boss je na kazde desate vlne (20x zivoty, 30 % rychlosti, 5x zlato)",
+		_test_boss)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -1329,3 +1331,66 @@ func _test_mix_taps() -> void:
 	g.tap_hue(Hue.RED)
 	_check(g.tower.hues == [Hue.RED, Hue.BLUE],
 		"dvojtap nepromichal modrou s cervenou (%s)" % str(g.tower.hues))
+
+
+# BOSS JE NA KAZDE DESATE VLNE. Jan (Oct 2026): "Taky musime pridat boss fighty."
+# Vzor je The Tower: na normalnich vlnach je boss vylouceny a na boss vlne
+# zaruceny, ma 20x zivoty a 30 % rychlosti bezneho poutnika, je vyrazne vetsi
+# a pada z nej 5x vic zlata. Cisla se BEROU Z TABULKY (`Game.BOSS_*`), ne opisuji -
+# jinak by test hlidal neco jineho, nez co hra opravdu dela.
+func _test_boss() -> void:
+	var g: Game = _fresh()
+	_check(not g.boss_wave(1), "boss je na prvni vlne")
+	_check(not g.boss_wave(Game.BOSS_EVERY_WAVES - 1), "boss je o vlnu driv")
+	_check(g.boss_wave(Game.BOSS_EVERY_WAVES), "na %d. vlne boss neni" % Game.BOSS_EVERY_WAVES)
+	# NORMALNI VLNA: ani jeden boss.
+	g.wave = Game.BOSS_EVERY_WAVES - 1
+	g._start_wave()
+	while g.spawned < g.plan.size():
+		g._spawn_next()
+	_check(g.pilgrims.size() > 0, "normalni vlna nevysypala ani jednoho poutnika")
+	for p in g.pilgrims:
+		_check(not p.is_boss, "boss se objevil na normalni vlne")
+	# BOSS VLNA: prave jeden, uprostred vlny.
+	g.pilgrims = []
+	g.wave = Game.BOSS_EVERY_WAVES
+	g._start_wave()
+	var plain: float = g.hp_for(g.kolo(), g.wave, Hue.RED)
+	var plain_speed: float = g.pilgrim_speed() * Hue.speed_mult(Hue.RED)
+	while g.spawned < g.plan.size():
+		g._spawn_next()
+	var bosses: Array = []
+	for p in g.pilgrims:
+		if p.is_boss:
+			bosses.append(p)
+	_check(bosses.size() == 1, "na boss vlne je %d bossu (ma byt jeden)" % bosses.size())
+	if bosses.is_empty():
+		return
+	var b: Pilgrim = bosses[0]
+	var want_hp: float = g.hp_for(g.kolo(), g.wave, b.hue)
+	_check(absf(b.max_hp - want_hp * Game.BOSS_HP_MULT) < 0.01,
+		"boss nema %dx zivoty (%.1f, ma byt %.1f)"
+		% [int(Game.BOSS_HP_MULT), b.max_hp, want_hp * Game.BOSS_HP_MULT])
+	var want_speed: float = g.pilgrim_speed() * Hue.speed_mult(b.hue) * Game.BOSS_SPEED_MULT
+	_check(absf(b.speed - want_speed) < 0.01,
+		"boss nema %d %% rychlosti (%.2f, ma byt %.2f)"
+		% [int(Game.BOSS_SPEED_MULT * 100.0), b.speed, want_speed])
+	_check(b.size > Game.PILGRIM_SIZE * 1.5,
+		"boss neni vyrazne vetsi nez poutnik (%.2f)" % b.size)
+	_check(b.pos.distance_to(g.center) > g.field_r * 0.9,
+		"boss se nerodi na okraji plochy")
+	# ZLATO ZA BOSSE JE VETSI (The Tower: 5 coinu misto 1).
+	var gold0: int = g.gold
+	g._kill(b)
+	_check(g.gold - gold0 > int(round(float(Hue.gold_of(b.hue)) * g.gold_mult())),
+		"zabiti bosse nedalo vic zlata (%d)" % (g.gold - gold0))
+	# A BOSS SE POCITA DO VLNY: kdyby se nevysypal, vlna by nikdy neskoncila.
+	var total: int = g.plan.size()
+	g.pilgrims = []
+	g.boss_at = -1
+	g.spawned = 0
+	while g.spawned < total:
+		g._spawn_next()
+	_check(g.pilgrims.size() == total,
+		"boss vlna vysypala %d poutniku z %d" % [g.pilgrims.size(), total])
+

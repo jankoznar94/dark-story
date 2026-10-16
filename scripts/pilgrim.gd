@@ -26,6 +26,12 @@ var behaviour: String = Hue.B_NONE
 var behaviours: Array = [Hue.B_NONE]
 # VELIKOST KRESBY. Modre kusy po rozpadu jsou mensi - hrac to vidi.
 var size: float = 1.0
+# BOSS. Velky, pomaly a vytrvaly poutnik (Jan, Oct 2026: "Taky musime pridat
+# boss fighty." a "Pomaly, extra vydrz, extra velikost, pripadne nejaky stit
+# navic nebo tak."). NENI to nova entita: je to poutnik s jinymi cisly
+# (zivoty, rychlost, velikost), takze barvy, paprsek, jed, led i chovani
+# barvy plati dal - hrac na nej miri stejnou zbrani, jen mu to trva dele.
+var is_boss: bool = false
 # MUZE SE JESTE ROZPADNOUT? Rozpad je jen jednou.
 var can_split: bool = true
 # MENI PODOBU? Stribrna poutnik neni "poutnik s chovanim shift" - je to poutnik,

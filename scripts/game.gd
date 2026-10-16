@@ -105,6 +105,23 @@ const SPAWN_GAP_PER_WAVE := 0.13
 # naraz a tim vic prace pro vez - hra se pak da dohrat jen s nakoupenymi upgrady.
 const SPAWN_WAVE_S := 55.0
 
+# BOSS. Jan (Oct 2026): "Taky musime pridat boss fighty." Vzor je hra The
+# Tower: na normalnich vlnach je boss vylouceny a na boss vlne zaruceny, ma
+# 20x zivoty a 30 % rychlosti bezneho poutnika (tam: 20x health, 30 % speed),
+# je vyrazne vetsi a pada z nej 5x vic zlata (tam: 5 coinu misto 1).
+#
+# NENI to nova mechanika: boss je poutnik TE vlny s jinymi cisly, takze plati
+# vsechno ostatni - barvy, paprsek, odraz, jed, led i chovani barvy. Proto je
+# boss ZKOUSKA POSKOZENI, ne hadanka.
+const BOSS_EVERY_WAVES := 10
+const BOSS_HP_MULT := 20.0
+const BOSS_SPEED_MULT := 0.30
+const BOSS_SIZE := 2.5
+const BOSS_GOLD_MULT := 5.0
+# KDE VE VLNE SE BOSS OJEVI. The Tower: na tierech 1-6 v pevnem bode vlny
+# (uprostred), od tieru 7 nahodne mezi 5 a 75 % vlny.
+const BOSS_SPAWN_FRAC := 0.5
+
 # LASER. Neni to strela, co leti - je to paprsek, ktery sviti, dokud je cil
 # v dostrelu a vez ho vidi. Sirka je podil MERITKA a s kazdym odrazem se
 # zužuje, aby hrac na prvni pohled videl, ktery cil je hlavni.
@@ -185,6 +202,9 @@ var build_left: float = BUILD_TIME
 var spawn_left: float = 0.0
 var plan: Array = []
 var spawned: int = 0
+# KTERY POUTNIK VLNY JE BOSS (-1 = zadny). Boss se rodi z poutnika te vlny,
+# takze nese jeji barvu - jen je vetsi, tvrdsi a pomalejsi.
+var boss_at: int = -1
 var log: Array = []
 # PAUZA HRY. Drzi ji obrazovka (panel upgradu, dotaz pri odchodu) - hra sama
 # jen vi, ze stoji, a `step` opravdu nekrokuje.
@@ -588,8 +608,17 @@ func _start_wave() -> void:
 	spawned = 0
 	spawn_left = 0.0
 	phase = "wave"
-	_note("Level %d · vlna %d/%d — %d poutníků."
-		% [level, wave, waves_in_level(), plan.size()])
+	# BOSS SE OJEVI UPROSTRED VLNY (The Tower: na nizsich tierech v pevnem
+	# bode vlny) - takze hrac nejdriv neco postrili a pak prijde boss.
+	boss_at = -1
+	if boss_wave(wave):
+		boss_at = int(round(float(plan.size()) * BOSS_SPAWN_FRAC))
+	if boss_at >= 0:
+		_note("Level %d · vlna %d/%d — BOSS a %d poutníků."
+			% [level, wave, waves_in_level(), plan.size()])
+	else:
+		_note("Level %d · vlna %d/%d — %d poutníků."
+			% [level, wave, waves_in_level(), plan.size()])
 	_announce_new_enemies()
 
 
@@ -702,6 +731,13 @@ const MIX_SHARE := 0.10
 const MIX_MAX := 2
 
 
+# JE TAHLE VLNA BOSS VLNA? Kazda desata - stejne jako v The Tower ("boss waves
+# every 10 waves"). Kdo zmeni tuhle funkci, meni, kolikrat za partii hrac
+# potka bosse; hra i testy se ptaji TOHLE, nikdy na cislo 10.
+func boss_wave(n: int) -> bool:
+	return n % BOSS_EVERY_WAVES == 0
+
+
 func wave_plan(n: int) -> Array:
 	var total: int = wave_size(wave, level)
 	var pool: Array = spawn_pool()
@@ -775,8 +811,23 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 
 
 func _spawn_next() -> void:
-	spawn_at_angle(rng.randf() * TAU, int(plan[clampi(spawned, 0, plan.size() - 1)]))
+	var p: Pilgrim = spawn_at_angle(rng.randf() * TAU,
+		int(plan[clampi(spawned, 0, plan.size() - 1)]))
+	if spawned == boss_at:
+		_make_boss(p)
 	spawned += 1
+
+
+# BOSS Z BEZNEHO POUTNIKA VLNY: stejna barva i chovani, jen vetsi, tvrdsi
+# a pomalejsi. Dela se TADY, ne ve `spawn_at_angle` - kdyby mel boss vlastni
+# vetev, casem by se ta dve mista rozešla a hrac by potkal bosse bez barvy
+# nebo bez zlata te vlny.
+func _make_boss(p: Pilgrim) -> void:
+	p.is_boss = true
+	p.max_hp *= BOSS_HP_MULT
+	p.hp = p.max_hp
+	p.speed *= BOSS_SPEED_MULT
+	p.size *= BOSS_SIZE
 
 
 # ------------------------------------------------------------------- POHYB
@@ -1059,7 +1110,11 @@ func _hurt(p: Pilgrim, amount: float) -> void:
 func _kill(p: Pilgrim) -> void:
 	p.alive = false
 	_event("kill")
-	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult())) + int(round(val("gk")))
+	# BOSS PADA ZA PETINASOBNE ZLATO (The Tower: 5 coinu misto 1) - kdyby padal
+	# za stejne, hrac by se bossum vyhybal a zkouska poskozeni by se nevyplatila.
+	var mult: float = BOSS_GOLD_MULT if p.is_boss else 1.0
+	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult() * mult)) \
+		+ int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.
 	if p.has_behaviour(Hue.B_SPLIT) and p.can_split:

@@ -94,6 +94,12 @@ nepoužívá.
   barvy mají okno delší, resp. kratší).
 - **Levely vypadají stejně**, liší se jen **počtem** a složením vln (každá
   vlna míchá všechny barvy, které jsou v tom levelu ve hře).
+- **BOSS na každé desáté vlně** (Jan, Oct 2026: „Taky musíme přidat boss fighty."),
+  vzorem je The Tower: na ostatních vlnách vyloučený, na boss vlně zaručený, **20×
+  životy**, **30 % rychlosti**, **2,5× větší** kresba, **5× zlato** za zabití a rodí
+  se **uprostřed vlny** (`Game.BOSS_*`). Není to nová entita — je to poutník té vlny
+  s jinými čísly, takže na něj platí barvy, paprsek, odraz, jed i led. Když dojde
+  k věži, ubere jí, co mu zbylo (tedy řádově víc než běžný poutník).
 - **Barev přibývá po jedné a míchání se učí postupně** (Jan, Oct 2026): 1. level
   2 barvy, 2. tři, 3. čtyři, 4. pět; 5. level pět barev + kombinace **prvních dvou**
   (R+Y), 6. level kombinace prvních **tří** (RY, RB, YB), 7. level prvních **čtyř**,
