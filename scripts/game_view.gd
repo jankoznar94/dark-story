@@ -735,14 +735,17 @@ func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 func _draw_pilgrim(p: Pilgrim) -> void:
 	var true_col: Color = Hue.color_of(p.hue)
 	var r: float = layout.pilgrim_r * p.size
-	# CHLAD JE VIDET PRIMO NA POUTNIKOVI. Jan (Oct 2026): "Ten chill effect budeme
-	# muset udělat přímo na targetu. Chill effect by měl trvat třeba 3s po ukončení
-	# dmg." Telo se zbali do zimnaveho odstinu, ale PRSTENEC si drzi SVOU barvu -
-	# z nej hrac pozna, jestli na poutnika vubec muze mirrit (a zledovany poutnik
-	# jinak vypada jako stribrny menic).
-	var body: Color = true_col
-	if p.ice_left > 0.0:
-		body = body.lerp(ICE_BODY, ICE_TINT)
+	# CHLAD SE NA TELE POUTNIKA VUBEC NEPROJEVUJE. Jan (Oct 2026): "Chill effect
+	# nesmí měnit barvu nepřítele. Proto jsme kolem něj dali devitihran, aby
+	# naznačil zmrazení. Změna barvy je dost matoucí."
+	#
+	# DRIV se telo zbarvovalo do zimnava modrobila (`ICE_BODY`/`ICE_TINT`) a Jan
+	# v tom videl druhou barvu: zledovany poutnik vypadal jako JINA barva, nez
+	# jakou ma - a barva je tu jedina informace, podle ktere se miri (vez vidi
+	# jen svou barvu). Hrac tak miril na barvu, ktera na plose vubec nebyla.
+	# Stav "mrznu" proto nese VYHRADNE DEVITIHRAN kolem prstence (viz nize) a
+	# zpozdeni v chuzi; barva tela zustava PRESNE barva poutnika, i kdyz je
+	# zledovany.
 	# POUTNIK JE PUNTIK S INICIALAMI BARVY. Jan (Oct 2026): "Všichni budou mít
 	# tvar puntíku. V něm budou mít iniciály barvy nebo kombinace barev. Zbytek
 	# zůstává. Takže musí být o něco větší, aby to bylo čitelné."
@@ -751,7 +754,7 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# spojene) nepoznal, na kterou kombinaci ma mirrit - "hráč podle pouhého
 	# odstínu nepozná o kterou kombinaci nepřítele se jedná. Takže na něj nedokáže
 	# zaútočit." Pismena "R"/"RY" reknou kombinaci PRIMO.
-	_dot(p.hue, p.pos, r, body, p.is_ghost())
+	_dot(p.hue, p.pos, r, true_col, p.is_ghost())
 	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
@@ -881,11 +884,6 @@ func _draw_beams() -> void:
 # PAPRSEK JE VZDY V JEDNOM KUSE. Prerusovana cara (mrzivy paprsek) se zrusila:
 # Jan (Oct 2026): "Laser je teď čárkovaný... Starý laser byl lepší."
 const CHILL_TINT := 0.45
-# ZLEDOVANY POUTNIK: telo zbledne k zimnave modrobile, prstenec si drzi svou
-# barvu (z nej hrac pozna, jestli na poutnika muze mirrit). 0,5 drzi jeste znat
-# puvodni odstin - pri vetsim zblednuti by zledovany poutnik splynul se stribrnou.
-const ICE_BODY := Color(0.80, 0.90, 1.0)
-const ICE_TINT := 0.5
 # LEDOVY KRYSTAL: barva namrazoveho prstence kolem HP baru. Je to ZIMNAVA MODRA,
 # ne bilá: nahled s bledou barvou (0,72/0,86/0,97) vypadal jako bily obrys -
 # a "bily obrys" uz u poutniku jednou byl a Jan ho vracel. Plocha, zadny glow
