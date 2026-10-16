@@ -44,6 +44,10 @@ func _init() -> void:
 	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
 	_run("fialova je nejpomalejsi barva ve hre", _test_hue_speed_order)
+	_run("stribrna meni po peti vterinach podobu i se schopnostmi barvy",
+		_test_silver_shift_form)
+	_run("modra podoba stribrne se rozpadne na dve obycejne kapky",
+		_test_silver_split_form)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -1009,3 +1013,84 @@ func _test_hue_speed_order() -> void:
 			continue
 		_check(moved[Hue.VIOLET] < moved[h],
 			"fialova (%f px) neni pomalejsi nez barva %d (%f px)" % [moved[Hue.VIOLET], h, moved[h]])
+
+
+# STRIBRNA MENI PODOBU I SE SCHOPNOSTMI BARVY (Jan, Oct 2026: "Nově budou měnit
+# po 5s. A se změnou podoby budou přebírat i výhody jednotlivých barev. Zelená =
+# léčení, žlutá = rychlost, modrá = při smrti se rozdělí, fialová = po první ráně
+# zmizí, červená = vysoká odolnost. Měly by se měnit i životy. Hra by měla
+# přepočítávat podle procentuální hodnoty.")
+#
+# Testuji se obe pulky zadani: (a) meni podobu po PETI vterinach (ne po trech)
+# a meni se dal, (b) nova podoba ma schopnost, rychlost i ZIVOTNI POOL sve barvy -
+# a zivoty se prenaseji jako PROCENTO, ne jako cislo. V kazde podobe ma tedy jiny
+# pocet zivotu, ale stejny podil.
+func _test_silver_shift_form() -> void:
+	var g: Game = _fresh()
+	var p: Pilgrim = g.spawn_at_angle(0.0, Hue.SILVER)
+	p.speed = 0.0
+	_check(p.shifting, "stribrna neni oznacena jako menici podobu")
+	_check(absf(Hue.SHIFT_S - 5.0) < 0.001,
+		"stribrna meni podobu po %.1f s (ma byt 5)" % Hue.SHIFT_S)
+	# (a) CAS: po ctyrech vterinach se jeste nic nezmenilo, po peti uz ano.
+	var h0: int = p.hue
+	g._advance_behaviour(p, 4.0)
+	_check(p.hue == h0, "stribrna zmenila podobu driv nez po peti vterinach")
+	g._advance_behaviour(p, 1.5)
+	_check(p.hue != h0, "stribrna po peti vterinach podobu nezmenila")
+
+	# (b) PROCENTO ZIVOTU A POOL NOVE BARVY.
+	p.hp = p.max_hp * 0.4
+	g._shift(p)
+	var pool: float = g.hp_for(g.kolo(), g.wave, p.hue)
+	_check(absf(p.max_hp - pool) < 0.001,
+		"nova podoba si nevzala zivotni pool sve barvy (%.1f, ma byt %.1f)"
+		% [p.max_hp, pool])
+	_check(absf(p.hp_frac() - 0.4) < 0.001,
+		"zmena podoby neudrzela procento zivotu (%.3f)" % p.hp_frac())
+	_check(p.behaviour == Hue.behaviour_of(p.hue),
+		"nova podoba si nevzala schopnost sve barvy (%s)" % p.behaviour)
+	_check(absf(p.speed - g.pilgrim_speed() * Hue.speed_mult(p.hue)) < 0.001,
+		"nova podoba si nevzala rychlost sve barvy")
+	_check(p.shifting, "po zmene podoby se stribrna prestala menit")
+
+	# FIALOVA PODOBA: neviditelnost se zmenou konci a nova podoba ma svuj "prvni
+	# zasah" znovu (Jan: "...tak o neviditelnost v rámci změny přijde").
+	p.ghost_left = Hue.VANISH_S
+	p.was_hit = true
+	g._shift(p)
+	_check(p.ghost_left == 0.0, "neviditelnost prezila zmenu podoby")
+	_check(not p.was_hit, "nova podoba si nese zasah z podoby predchozi")
+
+
+# ROZPAD MODRE PODOBY STRIBRNE (Jan: "modrá = při smrti se rozdělí (pak už se dvě
+# malé kapky chovají standardně)"). Kusy jsou OBYCEJNI poutnici - nemeni podobu
+# a maji chovani `none`, takze z jednoho menice nevznikne nekonecny pocet menicu.
+func _test_silver_split_form() -> void:
+	var g: Game = _fresh()
+	# Modra vstupuje do hry ve druhem levelu - v prvnim ji `_random_other_hue`
+	# vubec nemuze vybrat (bere jen barvy, ktere na plose jsou).
+	g.start_level(3)
+	_quiet(g)
+	var p: Pilgrim = g.spawn_at_angle(0.0, Hue.SILVER)
+	p.speed = 0.0
+	var blue: bool = false
+	for i in range(200):
+		g._shift(p)
+		if p.hue == Hue.BLUE:
+			blue = true
+			break
+	_check(blue, "stribrna se v modre podobe vubec neobjevila")
+	if not blue:
+		return
+	_check(p.behaviour == Hue.B_SPLIT, "modra podoba stribrne se nerozpada")
+	g._hurt(p, p.max_hp * 2.0)
+	var pieces: Array = []
+	for q in g.pilgrims:
+		if q != p:
+			pieces.append(q)
+	_check(pieces.size() == Hue.SPLIT_PIECES,
+		"modra podoba se nerozpadla na %d kusy (%d)" % [Hue.SPLIT_PIECES, pieces.size()])
+	for q in pieces:
+		_check(not q.shifting and q.behaviour == Hue.B_NONE,
+			"kus po rozpadu meni podobu - ma se chovat standardne")

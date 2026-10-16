@@ -600,7 +600,7 @@ func _behaviour_hint(h: int) -> String:
 		Hue.B_VANISH:
 			return "Po prvním zásahu na tři vteřiny zmizí a putuje dál."
 		Hue.B_SHIFT:
-			return "Mění každé tři vteřiny barvu a na stříbrnou se už nevrátí."
+			return "Mění každých pět vteřin podobu — bere si schopnost, rychlost i životy té barvy. Na stříbrnou se už nevrátí."
 	return ""
 
 
@@ -681,6 +681,10 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 	p.speed = pilgrim_speed() * Hue.speed_mult(hue)
 	if p.behaviour == Hue.B_SHIFT:
 		p.shift_left = Hue.SHIFT_S
+	# MENICI PODSTATA JE ZVLAST (viz `Pilgrim.shifting`): `behaviour` se pri
+	# zmene podoby prepisuje schopnosti nove barvy, takze "je to menic" se z nej
+	# neda precist.
+	p.shifting = (p.behaviour == Hue.B_SHIFT)
 	pilgrims.append(p)
 	return p
 
@@ -724,11 +728,37 @@ func _advance_behaviour(p: Pilgrim, dt: float) -> void:
 		p.hp = minf(p.max_hp, p.hp + p.max_hp * Hue.REGEN_FRAC * dt)
 	if p.ghost_left > 0.0:
 		p.ghost_left = maxf(0.0, p.ghost_left - dt)
-	if p.behaviour == Hue.B_SHIFT:
+	if p.shifting:
 		p.shift_left -= dt
 		if p.shift_left <= 0.0:
 			p.shift_left = Hue.SHIFT_S
-			p.hue = _random_other_hue(p.hue)
+			_shift(p)
+
+
+# STRIBRNA MENI PODOBU (Jan, Oct 2026): "Nově budou měnit po 5s. A se změnou
+# podoby budou přebírat i výhody jednotlivých barev. Zelená = léčení, žlutá =
+# rychlost, modrá = při smrti se rozdělí, fialová = po první ráně zmizí, červená
+# = vysoká odolnost. Měly by se měnit i životy. Hra by měla přepočítávat podle
+# procentuální hodnoty."
+#
+# Forma se bere CELA: nova barva da poutnikovi svou schopnost, svou rychlost
+# i SVUJ ZIVOTNI POOL. Zivoty se NEPRICITAJI ani neprepisuji - prenasi se
+# PROCENTO: `hp_frac()` pred zmenou se nasadi na pool nove barvy. Proto ma
+# stribrna v kazde podobe jinak zivotu a cervena je vzdycky ta tlustsi (2,2x).
+func _shift(p: Pilgrim) -> void:
+	var frac: float = p.hp_frac()
+	p.hue = _random_other_hue(p.hue)
+	p.behaviour = Hue.behaviour_of(p.hue)
+	p.max_hp = hp_for(kolo(), wave, p.hue)
+	p.hp = maxf(1.0, p.max_hp * frac)
+	# RYCHLOST JE VYHODA ZLUTE, takze nova podoba znamena i novou chuzi.
+	p.speed = pilgrim_speed() * Hue.speed_mult(p.hue)
+	# NEVIDITELNOST KONCI SE ZMENOU PODOBY (Jan: "pokud bude neviditelný v době,
+	# kdy má změnit podobu, tak o neviditelnost v rámci změny přijde"). Nove
+	# podoby se take netyka zasah z podoby predchozi - fialova zmizi az po SVEM
+	# prvnim zasahu, ne po tom, ktery dostala jako neco jineho.
+	p.ghost_left = 0.0
+	p.was_hit = false
 
 
 # JED A LED SE ODPOCITAVAJI ZVLAST: plati i na poutnika, ktery uz je z dosahu

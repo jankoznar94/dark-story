@@ -27,7 +27,10 @@ const COUNT := 6
 #   split  - po zabiti se rozpadne na dva mensi kusy
 #   regen  - obnovuje si zivoty
 #   vanish - po prvnim zasahu na chvili zmizi (pro vez je neviditelna)
-#   shift  - kazde 3 s zmeni barvu na jinou; zacina jako stribrna
+#   shift  - kazdych PET SEKUND zmeni podobu: vezme si barvu, jeji schopnost
+#            (leceni / rychlost / rozpad / zmizeni / odolnost), jeji rychlost
+#            i jeji zdravotni pool; zacina jako stribrna a na stribrnou se uz
+#            nevrati
 const B_NONE := "none"
 const B_SPLIT := "split"
 const B_REGEN := "regen"
@@ -104,8 +107,10 @@ const REGEN_FRAC := 0.04
 
 # FIALOVA: jak dlouho po prvnim zasahu je pro vez neviditelna.
 const VANISH_S := 3.0
-# STRIBRNA: jak casto meni barvu.
-const SHIFT_S := 3.0
+# STRIBRNA: jak casto meni podobu. Pet vterin (Jan, Oct 2026: "Teď mění podobu
+# po 3s. Nově budou měnit po 5s.") - za tu dobu ji hrac stihne zabit, i kdyz
+# cestou projde dvema podobami.
+const SHIFT_S := 5.0
 
 
 static func is_valid(h: int) -> bool:

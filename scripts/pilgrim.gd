@@ -22,6 +22,12 @@ var behaviour: String = Hue.B_NONE
 var size: float = 1.0
 # MUZE SE JESTE ROZPADNOUT? Rozpad je jen jednou.
 var can_split: bool = true
+# MENI PODOBU? Stribrna poutnik neni "poutnik s chovanim shift" - je to poutnik,
+# ktery MENI PODOBU, a v kazde podobe ma chovani te barvy (`behaviour` se pri
+# zmene prepisuje). Kdyby se menici podstata drzela v `behaviour`, prvni zmena
+# by ji smazala a poutnik by zustal navzdy v te podobe - proto je to zvlastni
+# policko (Jan, Oct 2026).
+var shifting: bool = false
 # UZ BYL ZASAZEN? U fialove se na prvni zasah vaze zmizeni.
 var was_hit: bool = false
 # FIALOVA: kolik sekund jeste bude pro vez neviditelna.
