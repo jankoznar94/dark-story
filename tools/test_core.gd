@@ -486,8 +486,13 @@ func _test_odraz_beam_is_visible() -> void:
 			second = bm
 	_check(not first.is_empty(), "hlavni paprsek vubec nevznikl - neni co kreslit")
 	_check(not second.is_empty(), "odraz vubec nevznikl - hrac nevidi, ze se paprsek siri")
-	_check((first["from"] as Vector2).distance_to(g.center) <= g.tower_r + 1.0,
-		"hlavni paprsek nevychazi z veze")
+	# PAPRSEK VYCHAZI Z OKRAJE VEZE (Jan, Oct 2026: "Laser od věže má začínat
+	# na okraji věže. Ne ve středu.") - z nejvnejsi viditelne hranice, ne z tela
+	# veze: `tower_edge_r` je zivotni oblouk (1,22 r) + pulka jeho tloušťky.
+	_check(absf((first["from"] as Vector2).distance_to(g.center) - g.tower_edge_r()) < 0.6,
+		"hlavni paprsek nevychazi z okraje veze (je %.1f od stredu, okraj je %.1f)"
+		% [(first["from"] as Vector2).distance_to(g.center), g.tower_edge_r()])
+	_check(g.tower_edge_r() > g.tower_r, "okraj veze neni vnejsi nez telo veze")
 	var victim: Pilgrim = first["target"]
 	# KONEC PAPRSKU JE NA VIDITELNEM OKRAJI PUNTIKU (Jan, Oct 2026: "Laser
 	# směřuje stále do středu nepřítele. Měl by směřovat spíš na jeho obal.").

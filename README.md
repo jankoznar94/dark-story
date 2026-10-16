@@ -28,7 +28,10 @@ nepoužívá.
   tělo v `_dot`); odraz od něj pokračuje na té straně, která je blíž k dalšímu
   cíli. Prstenec (`Game.pilgrim_ring_r`, 1,70 × poloměr) je **HP bar** a paprsek
   na něm nekončí — mezi ním a tělem byla ~6 px mezera, takže čára mířila do středu
-  a ničeho se nedotkla. Segmenty na sebe přesně navazují, konce jsou **kulaté**
+  a ničeho se nedotkla. **Paprsek vychází z okraje věže** (`Game.tower_edge_r` =
+  životní oblouk 1,22 r + půlka jeho tloušťky — tatáž čísla, jakými věž kreslí),
+  ne z těla věže (Jan: „Laser od věže má začínat na okraji věže. Ne ve středu.“).
+  Segmenty na sebe přesně navazují, konce jsou **kulaté**
   (Godot hranaté konce neumí, obrazovka je dokresluje kolečkem) a paprsek je
   **tenčí** než dřív (0,015 meritka místo 0,026 — na telefonu 2,3 px místo 4,1 px).
 - **Poškození je ZA SEKUNDU** (`Game.laser_dps`). Základ **14/s** (dřív 10/s) je

@@ -917,8 +917,10 @@ func _draw_tower() -> void:
 		rune = int(game.tower.hues[0])
 	_dot(rune, c, tr * 0.52, col)
 	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
-	draw_arc(c, tr * 1.22, -PI * 0.5, -PI * 0.5 + TAU * frac, 64, _hp_color(frac),
-		maxf(3.0, tr * 0.24))
+	# ZIVOTY VEZE: oblouk je ZAROVEN nejvnejsi hranice veze - prave odtud
+	# vychazi paprsek (`Game.tower_edge_r`), takze se ta dve cisla nesmi rozejit.
+	draw_arc(c, tr * Game.TOWER_ARC_R, -PI * 0.5, -PI * 0.5 + TAU * frac, 64,
+		_hp_color(frac), maxf(3.0, tr * Game.TOWER_ARC_W))
 
 
 func _hp_color(frac: float) -> Color:

@@ -109,6 +109,14 @@ func _test_beams_are_lines() -> void:
 	_check(Game.PILGRIM_HIT_FRAC > 0.5 and Game.PILGRIM_HIT_FRAC < 1.0,
 		"konec paprsku neni na tele poutnika (%.2f r)" % Game.PILGRIM_HIT_FRAC)
 	var gsrc: String = FileAccess.get_file_as_string("res://scripts/game.gd")
+	# A ZACATEK PAPRSKU JE NA OKRAJI VEZE (Jan, Oct 2026: "Laser od věže má
+	# začínat na okraji věže. Ne ve středu."). Obrazovka kresli zivoty veze
+	# stejnym polomerem, jaky hra pouziva pro start paprsku.
+	_check(src.contains("Game.TOWER_ARC_R"),
+		"vez kresli zivoty jinym polomerem, nez odkud vychazi paprsek")
+	_check(gsrc.contains("tower_edge_r()"), "paprsek nevychazi z okraje veze")
+	_check(Game.TOWER_ARC_R > 1.0 and Game.TOWER_ARC_W > 0.0,
+		"zivotni oblouk veze nema smysl (%.2f r, %.2f tloustka)" % [Game.TOWER_ARC_R, Game.TOWER_ARC_W])
 	_check(gsrc.contains("pilgrim_hit_r(q)"),
 		"paprsek nekonci na tele cile - hra pouziva prstenec, ne okraj puntika")
 	# POZOR: `check_symbols.py` hlida kazdy vyskyt "game.<neco>" v obrazovkach,

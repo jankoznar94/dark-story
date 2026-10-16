@@ -962,13 +962,13 @@ func _laser(dt: float) -> void:
 		if not p.alive or not tower.sees(p) or not in_range(p, r):
 			continue
 		var chain: Array = _chain(p)
-		# PAPRSEK ZACINA NA PLASHTI VEZE a konci na OKRAJI PUNTIKU cile
-		# (`pilgrim_hit_r`) - ne ve stredu tela a ne na prstenci (HP bar je dal).
-		# Kdyz paprsek sviti pres poutnika (odraz na dalsi), projde skrz nej:
-		# vstoupi na blizsi strane tela a vystoupi na te, ktera je bliz k dalsimu
-		# cili. Diky tomu na sebe segmenty presne navazuji a nikde neni "svar"
-		# (Jan: "Je to jak dva obdelniky vedle sebe.").
-		var from_pt: Vector2 = center + (chain[0].pos - center).normalized() * tower_r
+		# PAPRSEK ZACINA NA OKRAJI VEZE (`tower_edge_r` - ne ve stredu a ne uvnitr
+		# jejiho prstence) a konci na OKRAJI PUNTIKU cile (`pilgrim_hit_r`). Kdyz
+		# paprsek sviti pres poutnika (odraz na dalsi), projde skrz nej: vstoupi na
+		# blizsi strane tela a vystoupi na te, ktera je bliz k dalsimu cili. Diky tomu
+		# na sebe segmenty presne navazuji a nikde neni "svar" (Jan: "Je to jak dva
+		# obdelniky vedle sebe.").
+		var from_pt: Vector2 = center + (chain[0].pos - center).normalized() * tower_edge_r()
 		for i in range(chain.size()):
 			var q: Pilgrim = chain[i]
 			var rr: float = pilgrim_hit_r(q)
@@ -1116,6 +1116,20 @@ const PILGRIM_HIT_FRAC := 0.92
 
 func pilgrim_hit_r(p: Pilgrim) -> float:
 	return pilgrim_r() * maxf(0.1, p.size) * PILGRIM_HIT_FRAC
+
+
+# ODKUD PAPRSEK VYCHAZI: Z OKRAJE VEZE. Vez kresli tri kruhy (`_draw_tower`):
+# telo (`tower_r`), barevny prstenec v 0,92 r a ZIVOTY ve `TOWER_ARC_R` o
+# tloustce `TOWER_ARC_W` - nejvnejsi viditelna hranice je tedy
+# `TOWER_ARC_R + TOWER_ARC_W / 2`. Jan (Oct 2026): "Laser od věže má začínat
+# na okraji věže. Ne ve středu." Cisla jsou TU a obrazovka je odtud bere -
+# kdyby si je opsala, paprsek by jednou vysel zevnitr veze.
+const TOWER_ARC_R := 1.22
+const TOWER_ARC_W := 0.24
+
+
+func tower_edge_r() -> float:
+	return tower_r * (TOWER_ARC_R + TOWER_ARC_W * 0.5)
 
 
 # SIRKA PAPRSKU. S kazdym odrazem se zuzi, ale nikdy nezmizi - hrac musi
