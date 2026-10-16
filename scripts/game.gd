@@ -114,17 +114,35 @@ const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 # DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje - a u VELKE
 # vlny se zkrati jeste vic, aby se cely zastup vysypal do `SPAWN_WAVE_S`. Bez
 # toho by vlna o stovkach poutniku trvala desitky minut.
-const SPAWN_GAP_START := 2.5
-const SPAWN_GAP_MIN := 0.45
-# MEZERA SE ZKRACI ZA CELY LEVEL O STEJNYCH 1,3 s jako drive (2,5 -> 1,2 s):
-# koeficient je proto 0,13 * 10/50 = 0,026. S puvodni 0,13 by uz od 16. vlny
-# sedela na dne (0,45) a poslednich 35 vln levelu by se vysypalo stejne rychle.
-const SPAWN_GAP_PER_WAVE := 0.026
+#
+# PROC TAK MALA CISLA (Oct 2026): s padesati vlnami na level se level roztahl
+# na 54 minut a Jan chtel 20-25. Zmereno simulatorem (`balance_sim.gd`,
+# --levels=2), jak dlouho level trva podle mezer:
+#   puvodni 2,5 / 0,026 / 55 s ...... 54 min (level 1+2 = 6524 s)
+#   polovina (1,25 / 0,013) ......... 35 min
+#   ctvrtina (0,63 / 0,0065 / 14 s) . 26 min
+#   tato cisla ...................... 22-23 min (level 1 = 1378 s)
+#   skoro nulova mezera (0,1 / 0,05)  19 min <- PODLAHA: i kdyby cela vlna
+#                                     stala na plose naraz, dobu vlny urcuje
+#                                     doba zabijeni (~21 s na vlnu)
+# Kdo hybe temito cisly, hybe DELKOU LEVELU i jeho obtiznosti: cim mensi
+# mezera, tim vic poutniku je na plose naraz a tim vic prace pro vez.
+const SPAWN_GAP_START := 0.45
+const SPAWN_GAP_MIN := 0.08
+# Mezera se za cely level zkrati o 0,23 s (0,45 -> 0,22); driv to bylo 1,3 s za
+# deset vln. Pomer 10/50 z puvodniho koeficientu 0,13 by dal 0,026 - to bylo
+# merene tech 54 minut, proto je koeficient mensi nez "spravedlivy" prepocet.
+const SPAWN_GAP_PER_WAVE := 0.0047
 # CELKOVA DOBA VYSYPANI VLNY. Neni to kosmetika: pocet poutniku je ted v destikach
 # az stovkach, takze pevna mezera by jednu vlnu natahla pres deset minut. Je to
 # ZAROVEN HRANICE OBTIZNOSTI: cim kratsi vysypani, tim vic poutniku je na plose
 # naraz a tim vic prace pro vez - hra se pak da dohrat jen s nakoupenymi upgrady.
-const SPAWN_WAVE_S := 55.0
+#
+# POZOR: u VELKYCH vln tenhle strop NEPLATI, protoze `spawn_gap` konci na
+# `SPAWN_GAP_MIN` - a ta je vyssi nez strop/počet. Vlna o 400 poutnicich se
+# proto vysype za 0,08 * 399 = 32 s, ne za 10 s. Kdo chce strop opravdu
+# vynutit, musi snizit i dno (a vedet, ze tisic poutniku naraz hru zadrhne).
+const SPAWN_WAVE_S := 10.0
 
 # BOSS. Jan (Oct 2026): "Taky musime pridat boss fighty." Vzor je hra The
 # Tower: na normalnich vlnach je boss vylouceny a na boss vlne zaruceny, ma
