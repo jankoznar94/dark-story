@@ -8,24 +8,10 @@ extends RefCounted
 # u smesi nepoznal, na kterou kombinaci ma mirrit.
 #
 # Zustava jen to, co se pocita a da se proto otestovat bez prohlizece:
-#   * PRERUSOVANA CARA (mrzivy paprsek, chlad),
 #   * LEDOVY KRYSTAL (namrazovy prstenec kolem HP baru).
-
-
-# PRERUSOVANA CARA (mrzivy paprsek). Vraci seznam usecek [od, do], ktere se maji
-# nakreslit; to, ze mezi nimi jsou mezery, je z toho "chlad". Je to VYPOCET, ne
-# kresleni - da se proto otestovat bez prohlizece.
-static func dash(a: Vector2, b: Vector2, w: float) -> Array:
-	var out: Array = []
-	var d: float = (b - a).length()
-	if d <= 0.001:
-		return out
-	var seg: float = maxf(6.0, w * 2.5)
-	var n: int = maxi(1, int(round(d / seg)))
-	for i in range(n):
-		var t0: float = float(i) / float(n)
-		out.append([a.lerp(b, t0), a.lerp(b, t0 + 0.6 / float(n))])
-	return out
+#
+# PRERUSOVANA CARA (`Shapes.dash`, mrzivy paprsek) se ZRUSILA - Jan (Oct 2026):
+# "Laser je teď čárkovaný... Nevím proč jsi to změnila. Starý laser byl lepší."
 
 
 # LEDOVY KRYSTAL (namrazovy prstenec kolem poutnika). Jan (Oct 2026): "Zmrazení

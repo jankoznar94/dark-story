@@ -66,8 +66,18 @@ const STATS := [
 	# probíhat plynule a čím vyšší bude mít věž dmg, tím rychleji to logicky
 	# bude nepřítele zabíjet."). Cislo 10 zustalo stejne jako driv (10 za ranu
 	# pri kadenci 1,00 s = 10 za sekundu), takze se zmenil ZPUSOB, ne obtiznost.
+	#
+	# ZAKLAD 14 (Jan, Oct 2026: "Základní poškození hráče musí být o něco vyšší.
+	# S tím, jak je nastavený na začátku kola nemá skoro šanci nikoho zabít.").
+	# Odkud cislo je - je to POCITANE, ne od oka: poutnik je v dostrelu
+	# (`ar` 0,34 pole) jen `(0,34 * field_r - tower_r) / rychlost` = ~3,2 s,
+	# takze zaklad da za pruchod `14 * 3,2 = 45` poskozeni. Nejtvrdsi poutnik
+	# prvniho kola (cervena, `hp` 2,2 x 20) ma 44 zivotu - s 10 (32 poskozeni)
+	# ho hrac NEMEL cim zabit ani s plnym dostrelem, s 14 ho zabije.
+	# `cap` = hodnota na `perm_max` (start + krok * perm_max), jinak by se
+	# permanentni zebricek zastavil na jinem cisle, nez tabulka slibuje.
 	{"id": "ad", "label": "Poškození laseru", "cat": CAT_OFF, "kind": "int",
-		"start": 10, "step": 2, "cap": 24, "perm_max": 7, "temp_max": UNLIMITED},
+		"start": 14, "step": 2, "cap": 28, "perm_max": 7, "temp_max": UNLIMITED},
 	# SÍLA PAPRSKU = chybějící modifikátor (Jan, Oct 2026: "Jak zbylo jen dmg,
 	# bez attack speed, tak vlastně chybí jeden modifikátor a hráč nestíhá věž
 	# vylepšovat tak, aby stíhala zabíjet všechny nepřátele, i když investuje

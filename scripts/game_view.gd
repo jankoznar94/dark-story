@@ -846,9 +846,11 @@ func _range_color() -> Color:
 # svetlem poutnikovi nebo na karte by se barevna cara ztratila.
 func _draw_beams() -> void:
 	var col: Color = game.tower.color()
-	# MRZIVY PAPRSEK: kdyz vez zpomaluje, je paprsek prerusovany a zimnave
-	# vybledly. Hrac z paprsku pozna, ze zpomaluje - a to je jedine misto, kde
-	# se to dozvi (krouzek kolem poutnika jsme zrusili).
+	# MRZIVY PAPRSEK. Kdyz vez zpomaluje, paprsek zledovati - vybledne do
+	# zimnava. PRERUSOVANI SE ZRUSILO (Jan, Oct 2026: "Laser je teď čárkovaný...
+	# Nevím proč jsi to změnila. Starý laser byl lepší."): chlad nese BARVA
+	# paprsku a ledovy krystal na cili, paprsek zustava v JEDNOM KUSE. Hrac
+	# o chladu vi i tak, a laser je to, co ma byt: laser.
 	var chill: bool = game.ice_frac() > 0.0
 	if chill:
 		col = col.lerp(Color(0.78, 0.89, 1.0), CHILL_TINT)
@@ -864,19 +866,17 @@ func _draw_beams() -> void:
 		# TM AVY OBRYS POD PAPRSKEM: na svetlem poutnikovi nebo na karte by se
 		# barevna cara ztratila. Je to obrys, ne druha cara - paprsek zustava
 		# barevny, obrys ho jen oddeluje od podkladu.
-		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE, chill)
-		_beam_line(b["from"], b["to"], col, w, chill)
+		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE)
+		_beam_line(b["from"], b["to"], col, w)
 
 
 # JEDEN SEGMENT PAPRSKU S KULATYMI KONCI. Godot kresli caru s hranatym koncem
 # a nic jineho neumi - hrac to videl jako "dva obdelniky vedle sebe" (Jan,
 # Oct 2026), proto se kazdy konec dokresli koleckem o polomeru sirky paprsku.
 # Diky tomu na sebe segmenty v prstenci poutnika plynule navazuji.
-# MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), kresli se paprsek PRERUSOVANE
-# a v zimave (vybledle) barve - z paprsku je poznat "chlad", ne dalsi barva.
-# Krouzek kolem poutnika byl spatny: poutnik ma mit jen jeden kruh (sve zivoty).
-# Jan (Oct 2026): "Zpomalující střelu tedy zobrazíme trochu jinak. Až z toho je
-# lépe poznat, že se jedná o chill effect."
+#
+# PAPRSEK JE VZDY V JEDNOM KUSE. Prerusovana cara (mrzivy paprsek) se zrusila:
+# Jan (Oct 2026): "Laser je teď čárkovaný... Starý laser byl lepší."
 const CHILL_TINT := 0.45
 # ZLEDOVANY POUTNIK: telo zbledne k zimnave modrobile, prstenec si drzi svou
 # barvu (z nej hrac pozna, jestli na poutnika muze mirrit). 0,5 drzi jeste znat
@@ -890,15 +890,7 @@ const ICE_TINT := 0.5
 const ICE_RING := Color(0.55, 0.76, 0.96)
 
 
-func _beam_line(a: Vector2, b: Vector2, c: Color, w: float, dashed: bool = false) -> void:
-	if dashed:
-		# PRERUSOVANA CARA: mrzivy paprsek. Vypocet je v `Shapes.dash`, aby se dal
-		# otestovat bez prohlizece. KONCE SE NEKRESLI: kulata tecka na konci
-		# prerusovane cary by kolem poutnika byla dalsi krouzek, a tech ma hrac
-		# uz dost (Jan je vracel dvakrat).
-		for seg in Shapes.dash(a, b, w):
-			draw_line(seg[0], seg[1], c, w)
-		return
+func _beam_line(a: Vector2, b: Vector2, c: Color, w: float) -> void:
 	draw_line(a, b, c, w)
 	draw_circle(a, w * 0.5, c)
 	draw_circle(b, w * 0.5, c)

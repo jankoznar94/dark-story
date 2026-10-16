@@ -143,9 +143,10 @@ func _test_ring_is_hp_bar() -> void:
 		"prstenec je nalepeny na tvár (RING_FRAC %.2f)" % Game.RING_FRAC)
 
 
-# MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), kresli se paprsek prerusovane
-# a v zimnave barve - z paprsku ma byt poznat "chlad". Krouzek kolem poutnika uz
-# na to neni: poutnik ma mit jen jeden kruh (sve zivoty).
+# MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), paprsek zledovati - dostane
+# zimnave vybledlou barvu. PRERUSOVANI SE ZRUSILO: Jan (Oct 2026) "Laser je teď
+# čárkovaný... Nevím proč jsi to změnila. Starý laser byl lepší." Chlad nese
+# BARVA paprsku a ledovy krystal na cili, ne diry v paprsku.
 func _test_chill_beam() -> void:
 	var src: String = FileAccess.get_file_as_string("res://scripts/game_view.gd")
 	var start: int = src.find("func _draw_beams")
@@ -153,37 +154,19 @@ func _test_chill_beam() -> void:
 	var body: String = src.substr(start, (end - start) if end > start else 900)
 	_check(body.contains("game.ice_frac()"), "paprsek se nezbarvi podle ledoveho zasahu")
 	_check(body.contains("chill"), "paprsek nema priznak chladu")
-	# PAST, KTERA STALA ROK: `_beam_line` sice umel prerusovanou caru, ale bitva
-	# mu to nikdy nerekla (`dashed` zustavalo false) - paprsek byl porad plny
-	# a "mrzivy" byl jen v hlavicce commitu. Hlida se PROPOJENI, ne jen text.
-	_check(body.contains("w, chill)"), "bitva nekresli mrzivy paprsek prerusovane")
+	# PAPRSEK JE VZDY V JEDNOM KUSE. `chill` meni JEN BARVU (`col.lerp`), nikdy
+	# se neprerusuje - kdo vrati `dashed`, vrati tim "carkovany laser".
+	_check(not body.contains("dash"),
+		"mrzivy paprsek se zase kresli prerusovane (carkovany laser)")
 	var st: int = src.find("func _beam_line")
 	var se: int = src.find("\nfunc ", st + 1)
 	var bl: String = src.substr(st, (se - st) if se > st else 600)
-	_check(bl.contains("dashed") and bl.contains("draw_line"),
-		"prerusovany (mrzivy) paprsek se nekresli")
+	_check(bl.contains("draw_line") and bl.contains("draw_circle(a, w * 0.5, c)"),
+		"paprsek nema kulaty konec")
+	_check(not bl.contains("Shapes."),
+		"paprsek si zase pocita prerusovanou caru")
 	_check(not src.contains("0.45, 0.72, 0.90"),
 		"svetle modry krouzek kolem poutnika se porad kresli")
-	# PRERUSOVANI JE VYPOCET (`Shapes.dash`): kratky i dlouhy paprsek musi mit
-	# diry - jinak by z "chladu" byla jen dalsi cara.
-	var segs: Array = Shapes.dash(Vector2(0.0, 0.0), Vector2(120.0, 0.0), 3.0)
-	_check(segs.size() >= 5, "mrzivy paprsek nema diry (%d usecek)" % segs.size())
-	var covered: float = 0.0
-	for s in segs:
-		var p0: Vector2 = s[0]
-		var p1: Vector2 = s[1]
-		covered += (p1 - p0).length()
-		_check(p1.x > p0.x, "usek mrziveho paprsku nejde po smeru paprsku")
-	_check(absf(covered / (120.0 * 0.6) - 1.0) < 0.15,
-		"mrzivy paprsek je pokryty z %.0f %% (ma byt ~60 %%)" % (covered / 1.2))
-	_check(segs[0][0].distance_to(Vector2(0.0, 0.0)) < 0.01,
-		"mrzivy paprsek nezacina na vezi")
-	for i in range(1, segs.size()):
-		var prev_end: Vector2 = segs[i - 1][1]
-		var here: Vector2 = segs[i][0]
-		_check(here.x - prev_end.x > 1.0, "mezi useky mrziveho paprsku neni dira")
-	_check(Shapes.dash(Vector2.ZERO, Vector2(5.0, 0.0), 3.0).size() == 1,
-		"kratky paprsek se rozpadl na vic useku")
 	# CHLAD JE VIDET PRIMO NA POUTNIKOVI (Jan, Oct 2026: "Ten chill effect budeme
 	# muset udělat přímo na targetu"). Telo se zbali do zimnaveho odstinu, ale
 	# prstenec (= HP bar) si drzi SVOU barvu - z nej hrac pozna, na co muze mirrit.

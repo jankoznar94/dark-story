@@ -235,12 +235,16 @@ func _test_laser_burns_continuously() -> void:
 	_check(g.beams.size() == 1, "na zamereny cil nesviti prave jeden paprsek (%d)" % g.beams.size())
 	var a0: float = p.hp
 	_tick(g, 1.0)
-	_check(absf((a0 - p.hp) - g.laser_dps()) < 0.05,
+	# TOLERANCE JE RELATIVNI. Snímky se zaokrouhluji na celé kroky, takže
+	# namerena hodnota je o zlomek procenta jina nez `laser_dps()` - s pevnou
+	# toleranci 0,05 px se to pri vyssim poskozeni prehoupne na FAIL, i kdyz
+	# paprsek tece presne (14/s dalo 14,06).
+	_check(absf((a0 - p.hp) - g.laser_dps()) < g.laser_dps() * 0.01,
 		"za sekundu laser ubral %.2f, cekano %.2f" % [a0 - p.hp, g.laser_dps()])
 	# A PLYNULE DAL: zadny cil nema "davky", po kterych by se dalo utect.
 	var b0: float = p.hp
 	_tick(g, 0.5)
-	_check(absf((b0 - p.hp) - g.laser_dps() * 0.5) < 0.05,
+	_check(absf((b0 - p.hp) - g.laser_dps() * 0.5) < g.laser_dps() * 0.01,
 		"za pul sekundy laser ubral %.2f, cekano %.2f" % [b0 - p.hp, g.laser_dps() * 0.5])
 
 
@@ -321,8 +325,10 @@ func _test_crit() -> void:
 	_check(absf(g.crit_dmg() - 2.5) < 0.001, "kriticke poskozeni neni 2,5x (%.2f)" % g.crit_dmg())
 	# U PLYNULEHO PAPRSKU SE KRITIKA ZAPOCITAVA DO PRUMERU (losovat kazdy
 	# snimek by znamenalo cisla, ktera hrac nikde nevidi). Stredni hodnota je
-	# stejna, jako kdyby se losovalo: 10 * (1 + 0,40 * (2,5 - 1)) = 16/s.
-	var want: float = 10.0 * (1.0 + 0.40 * 1.5)
+	# stejna, jako kdyby se losovalo: zaklad * (1 + 0,40 * (2,5 - 1)).
+	# ZAKLAD SE BERE Z TABULKY, ne opsany - jinak se kazda zmena poskozeni
+	# projevi jako "rozbitý test" misto "rozbité rovnice".
+	var want: float = Upgrades.value_of("ad", 0, 0) * (1.0 + 0.40 * 1.5)
 	_check(absf(g.laser_dps() - want) < 0.01,
 		"stredni poskozeni s kritikou neni %.1f (je %.2f)" % [want, g.laser_dps()])
 	# KRIT JE VIDET JAKO ZABLESK, ne jako skakani cisel: sanci jsme prevedli na
@@ -697,10 +703,11 @@ func _test_poison() -> void:
 	p.hp = 1000.0
 	p.max_hp = 1000.0
 	g._burn(p, 10.0)
-	_check(absf(p.poison_dps - 2.0) < 0.001, "poskozeni jedu za sekundu neni 2 (%.2f)" % p.poison_dps)
+	var jed: float = g.laser_dps() * 0.20
+	_check(absf(p.poison_dps - jed) < 0.001, "poskozeni jedu za sekundu neni %.2f (%.2f)" % [jed, p.poison_dps])
 	var hp0: float = p.hp
 	_tick(g, 1.0)
-	_check(absf((hp0 - p.hp) - 2.0) < 0.2, "jed za sekundu ubral %.2f (cekano 2)" % (hp0 - p.hp))
+	_check(absf((hp0 - p.hp) - jed) < jed * 0.15, "jed za sekundu ubral %.2f (cekano %.2f)" % [hp0 - p.hp, jed])
 	# JED VYPRSI: po POISON_S uz neubira.
 	_tick(g, Game.POISON_S + 0.5)
 	var hp1: float = p.hp
@@ -835,8 +842,9 @@ func _test_temp_buy() -> void:
 		if g3.buy_temp("ad"):
 			sold += 1
 	_check(sold == want, "docasnych kroku poskozeni se koupilo %d z %d" % [sold, want])
-	_check(absf(g3.val("ad") - 58.0) < 0.0001,
-		"po %d docasnych krocich neni poskozeni 58/s (je %.2f)" % [want, g3.val("ad")])
+	var cekane: float = Upgrades.value_of("ad", 0, 0) + 2.0 * float(want)
+	_check(absf(g3.val("ad") - cekane) < 0.0001,
+		"po %d docasnych krocich neni poskozeni %.0f/s (je %.2f)" % [want, cekane, g3.val("ad")])
 	_check(g3.val("ad") > 24.0, "docasny zebricek porad konci na stropu 24")
 	var paid: int = 100000 - g3.gold
 	_check(paid == 5 * (want * (want + 1) / 2), "cena %d docasnych kroku neni %d zlata (%d)" % [want, 5 * (want * (want + 1) / 2), paid])
@@ -857,11 +865,15 @@ func _test_perm_shift() -> void:
 	g.profile.perm["ad"] = 2
 	g.start_level(1)
 	_quiet(g)
-	_check(absf(g.val("ad") - 14.0) < 0.001, "start po dvou permanentních neni 14/s (%.2f)" % g.val("ad"))
+	var cekany: float = Upgrades.value_of("ad", 2, 0)
+	_check(absf(g.val("ad") - cekany) < 0.001,
+		"start po dvou permanentních neni %.0f/s (%.2f)" % [cekany, g.val("ad")])
 	var gold0: int = g.gold
 	_check(g.buy_temp("ad"), "krok po permanentnim upgradu nejde koupit")
 	_check(gold0 - g.gold == 5, "krok po permanentnim upgradu stoJI jinak nez 5 zlata (%d)" % (gold0 - g.gold))
-	_check(absf(g.val("ad") - 16.0) < 0.001, "krok se neprisel k posunutemu startu (%.2f)" % g.val("ad"))
+	var po_kroku: float = Upgrades.value_of("ad", 2, 1)
+	_check(absf(g.val("ad") - po_kroku) < 0.001,
+		"krok se neprisel k posunutemu startu (%.2f, cekano %.0f)" % [g.val("ad"), po_kroku])
 
 
 func _test_level_flow() -> void:

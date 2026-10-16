@@ -52,9 +52,9 @@ func _test_value() -> void:
 	# POSKOZENI RANY je parametr hrace ("Ještě musíme přidat upgrade pro Attack
 	# damage") a plati pro nej to same: permanentni strop, docasne bez stropu.
 	# Od Oct 2026 je to poskozeni ZA SEKUNDU (vez sviti laserem).
-	_check(absf(Upgrades.value_of("ad", 0, 0) - 10.0) < 0.0001, "zakladni poskozeni neni 10")
-	_check(absf(Upgrades.value_of("ad", 0, 1) - 12.0) < 0.0001, "krok poskozeni neni +2")
-	_check(absf(Upgrades.value_of("ad", 7, 0) - 24.0) < 0.0001, "poskozeni na 7. permanentním neni 24")
+	_check(absf(Upgrades.value_of("ad", 0, 0) - 14.0) < 0.0001, "zakladni poskozeni neni 14")
+	_check(absf(Upgrades.value_of("ad", 0, 1) - 16.0) < 0.0001, "krok poskozeni neni +2")
+	_check(absf(Upgrades.value_of("ad", 7, 0) - 28.0) < 0.0001, "poskozeni na 7. permanentním neni 28")
 	_check(Upgrades.value_of("ad", 7, 20) > Upgrades.value_of("ad", 7, 0),
 		"docasne kroky poskozeni nic nepridaly")
 	# ODRAZ: jedna polozka, dve cisla - pocet odrazu a jejich sila. S kazdym
@@ -235,7 +235,7 @@ func _test_texts() -> void:
 		_check(t != "", "%s: hodnota se vytiskne prazdna" % id)
 		_check(not t.contains("."), "%s: hodnota ma tecku misto ceske carky (%s)" % [id, t])
 		_check(String(s["label"]) != "", "%s: popisek je prazdny" % id)
-	_check(Upgrades.value_text("ad", 0, 1) == "12", "text poskozeni neni 12")
+	_check(Upgrades.value_text("ad", 0, 1) == "16", "text poskozeni neni 16")
 	_check(Upgrades.value_text("ar", 6, 0) == "40 %", "text dostrelu neni 40 %")
 
 
