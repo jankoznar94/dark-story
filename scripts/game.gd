@@ -930,8 +930,14 @@ func _random_other_hue(cur: int) -> int:
 	return int(pool[rng.randi_range(0, pool.size() - 1)])
 
 
+# JE POUTNIK V DOSTRELU? Jan (Oct 2026): "Věž si všimne nepřítele ve chvíli,
+# kdy se HP bar nepřítele dotkne rádiusu zjišťování." Proto se k dostrelu
+# PRICITA polomer prstence cile (= jeho HP bar): hranici dostrelu prekroci uz
+# svym okrajem, ne az stredem tela. Vetsi poutnik (boss, rozpadly kus modre)
+# ma vetsi i prstenec, takze jeho okraj "dosahne" dal - a to je spravne:
+# je to vetsi teleso.
 func in_range(p: Pilgrim, r: float) -> bool:
-	return p.pos.distance_to(center) <= r
+	return p.pos.distance_to(center) <= r + pilgrim_ring_r(p)
 
 
 # --------------------------------------------------------------- ZAMEROVANI

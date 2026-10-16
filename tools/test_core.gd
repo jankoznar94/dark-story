@@ -55,6 +55,8 @@ func _init() -> void:
 		_test_mix_pilgrim)
 	_run("boss je na kazde desate vlne (20x zivoty, 30 % rychlosti, 5x zlato)",
 		_test_boss)
+	_run("vez si vsimne poutnika, kdyz se dostrelu dotkne jeho HP bar",
+		_test_range_counts_hp_bar)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -1393,4 +1395,32 @@ func _test_boss() -> void:
 		g._spawn_next()
 	_check(g.pilgrims.size() == total,
 		"boss vlna vysypala %d poutniku z %d" % [g.pilgrims.size(), total])
+
+# DOSTREL SE POCITA K OKRAJI POUTNIKA, NE K JEHO STREDU. Jan (Oct 2026): "Věž si
+# všimne nepřítele ve chvíli, kdy se HP bar nepřítele dotkne rádiusu zjišťování."
+# Hlida se to CISLY (o kousek bliz / o kousek dal), ne okem - prave na tomhle se
+# da udelat chyba, ktera je videt jen v bitve.
+func _test_range_counts_hp_bar() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	var r: float = g.range_px()
+	# POUTNIK, KTERY SE DOSTRELU DOTYKA PRSTENCEM (svym HP barem).
+	var touch: Pilgrim = _place(g, Hue.RED, 0.5)
+	touch.speed = 0.0
+	touch.pos = g.center + Vector2(0.0, r + g.pilgrim_ring_r(touch) - 1.0)
+	_check(g.in_range(touch, r),
+		"poutnik, ktery se dostrelu dotyka prstencem, neni v dostrelu")
+	# A JEDEN O KOUSEK DAL: uz ani prstencem.
+	var out: Pilgrim = _place(g, Hue.RED, 0.5, PI)
+	out.speed = 0.0
+	out.pos = g.center + Vector2(0.0, r + g.pilgrim_ring_r(out) + 2.0)
+	_check(not g.in_range(out, r), "poutnik za dostrelem je v dostrelu")
+	# A OPRAVDU SE TO PROJEVI: vez na nej zamiri (driv by na nej nemirila).
+	g.pilgrims = [touch, out]
+	g.locks = []
+	g._aim()
+	_check(g.locks.has(touch),
+		"vez nemiri na poutnika, ktery je v dostrelu jen svym HP barem")
+	_check(not g.locks.has(out), "vez miri na poutnika za dostrelem")
+
 

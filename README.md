@@ -86,6 +86,11 @@ nepoužívá.
   jeho horní i dolní okraj se dotýká okraje herního pruhu a boky vedou mimo
   obraz — poutníci proto vcházejí ze všech směrů, i z boků. Vnější kruh, který
   je vidět, je jen **kruh dostřelu**.
+- **Dostřel se počítá k OKRAJI poutníka, ne k jeho středu** (Jan, Oct 2026:
+  „Věž si všimne nepřítele ve chvíli, kdy se HP bar nepřítele dotkne rádiusu
+  zjišťování."). `Game.in_range` proto k dostřelu přičítá poloměr prstence cíle
+  (= jeho HP bar) — hranici dostřelu překročí už svým okrajem. Větší poutník
+  (boss, rozpadlý kus modré) tím „dosáhne" dál, protože je to větší těleso.
 - **Dosah je kruh** (kreslený na zemi): základ **34 %** poloměru plochy
   (0,34 na 390×844 — 79 px od každého boku, takže je kam upgradovat),
   vylepšením **46 %** a **60 %**; nikdy ne celá plocha. Je to okno, ve kterém
