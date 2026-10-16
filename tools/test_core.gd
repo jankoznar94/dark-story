@@ -51,6 +51,8 @@ func _init() -> void:
 	_run("smes dvou barev je barva: id, dve pismena, vlastni barva", _test_mix_ids)
 	_run("vez vidi jen to, co ma v sade barev (a smes potrebuje obe)", _test_covers)
 	_run("dvojtap na palete michani barev (a pred sestym levelem ne)", _test_mix_taps)
+	_run("kombinovany poutnik: obe barvy, obe schopnosti, prumer sil",
+		_test_mix_pilgrim)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -629,7 +631,10 @@ func _test_ghost_is_immune() -> void:
 	g.profile.perm["ps"] = 3          # jed 50 % poskozeni rany za sekundu
 	var p: Pilgrim = _place(g, Hue.VIOLET, 0.9)
 	p.speed = 0.0
+	# (test si schvalne dela fialovou schopnost u jine barvy - a schopnosti se
+	# v bitve ctou z `behaviours`, takze se musi nastavit i to)
 	p.behaviour = Hue.B_VANISH
+	p.behaviours = [Hue.B_VANISH]
 	g._burn(p, 10.0)                 # prvni zasah: rozjede jed a fialova zmizi
 	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
 	_check(p.poison_left > 0.0, "jed se pri zasahu vubec nerozjel")
@@ -668,7 +673,10 @@ func _test_vanish_stops_the_beam() -> void:
 	p.speed = 0.0
 	p.hp = 1000.0
 	p.max_hp = 1000.0
+	# (test si schvalne dela fialovou schopnost u jine barvy - a schopnosti se
+	# v bitve ctou z `behaviours`, takze se musi nastavit i to)
 	p.behaviour = Hue.B_VANISH
+	p.behaviours = [Hue.B_VANISH]
 	g.step(1.0 / 240.0)
 	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
 	_check(g.beams.size() == 1, "na cervenou fialovou nesviti paprsek (%d)" % g.beams.size())
@@ -722,6 +730,83 @@ func _test_ice() -> void:
 	_tick(g, 1.0)
 	_check(absf((from2 - p.pos.distance_to(g.center)) - full) < 1.0,
 		"po vyprseni ledu poutnik nejde plnou rychlosti")
+	# CHLAD DRZI I PO UKONCENI POSKOZOVANI. Jan (Oct 2026): "Chill effect by měl
+	# trvat třeba 3s po ukončení dmg." Poutnik zustava zledovany jeste tri sekundy
+	# potom, co do nej vez prestala strilet - proto je videt i na tech, kteri uz
+	# odesli z dostrelu (a proto to musi byt videt na NEM, ne na paprsku).
+	_check(absf(Game.ICE_S - 3.0) < 0.001, "chlad netrva tri sekundy (%.2f s)" % Game.ICE_S)
+	var q: Pilgrim = _place(g, Hue.RED, 0.9)
+	q.speed = 0.0
+	g._burn(q, 1.0)
+	_tick(g, 2.0)
+	_check(q.slow_mult() < 0.99, "chlad vyprchal driv nez po trech sekundach")
+	_check(q.ice_left > 0.9, "po dvou sekundach zbyva chladu %.2f s" % q.ice_left)
+	_tick(g, 1.2)
+	_check(q.ice_left <= 0.0, "chlad drzi dele nez tri sekundy (%.2f s)" % q.ice_left)
+
+
+# KOMBINOVANY POUTNIK (plan, ukol 6). Jan: "Žlutý nepřítel je rychlý, ale slabý.
+# Červený je pomalý, ale silný. Oranžový bude rychlý a silný. Jejich výskyt
+# nesmí být vysoký, jinak by to hráč nemohl zvládnout." + "S průměrováním síly
+# souhlasím."
+func _test_mix_pilgrim() -> void:
+	var g: Game = _fresh()
+	# PRED ODEMCENIM MICHANI NEEXISTUJE - ani v planu vlny.
+	g.level = 1
+	g.refresh_palette()
+	_check(Hue.mix_pool_at(1).is_empty(), "v prvnim levelu jde michat")
+	for i in range(20):
+		for h in g.wave_plan(1):
+			_check(not Hue.is_mix(int(h)),
+				"kombinovany poutnik se objevil pred odemcenim michani")
+	# PO ODEMCENI: chodi, ale vzacne - nejvyc MIX_MAX na vlnu.
+	g.level = Hue.MIX_UNLOCK_LEVEL
+	g.refresh_palette()
+	var seen: int = 0
+	for i in range(40):
+		var mixes: int = 0
+		for h in g.wave_plan(1):
+			if Hue.is_mix(int(h)):
+				mixes += 1
+		seen += mixes
+		_check(mixes <= Game.MIX_MAX,
+			"na vlnu slo %d kombinovanych poutniku (strop je %d)" % [mixes, Game.MIX_MAX])
+	_check(seen > 0, "po odemceni michani se neobjevil zadny kombinovany poutnik")
+	# SILA JE PRUMER OBOU BAREV (ne maximum): cervena je silna a pomalá, modra
+	# slaba a rychla - oranzova z nich ma byt uprostred.
+	var mix: int = Hue.mix_id(Hue.RED, Hue.BLUE)
+	var p: Pilgrim = g.spawn_at_angle(0.0, mix)
+	var want_hp: float = (g.hp_for(g.kolo(), g.wave, Hue.RED)
+		+ g.hp_for(g.kolo(), g.wave, Hue.BLUE)) * 0.5
+	_check(absf(p.max_hp - want_hp) < 0.01,
+		"kombinovany poutnik nema prumer zivotu (%.1f, ma byt %.1f)" % [p.max_hp, want_hp])
+	var want_speed: float = g.pilgrim_speed() * Hue.speed_mult(mix)
+	_check(absf(p.speed - want_speed) < 0.01, "kombinovany poutnik nema prumer rychlosti")
+	# NA KOMBINOVANEHO POUTNIKA POTREBUJE VEZ OBE BARVY - barva samotna ho nezastavi.
+	g.tower.palette = [Hue.RED, Hue.BLUE, Hue.GREEN]
+	g.tower.set_hue(Hue.RED)
+	_check(not g.tower.sees(p), "vez s jednou barvou vidi kombinovaneho poutnika")
+	_check(g.tower.set_pair(Hue.RED, Hue.BLUE), "vez nevzala dvojici cervena+modra")
+	_check(g.tower.sees(p), "vez se obema barvama nevidi kombinovaneho poutnika")
+	# MA OBE SCHOPNOSTI: zelena leci, modra se rozpadne.
+	var q: Pilgrim = g.spawn_at_angle(1.0, Hue.mix_id(Hue.GREEN, Hue.BLUE))
+	_check(q.has_behaviour(Hue.B_REGEN) and q.has_behaviour(Hue.B_SPLIT),
+		"kombinovany poutnik nema obe schopnosti (%s)" % str(q.behaviours))
+	q.hp = q.max_hp * 0.5
+	g._advance_behaviour(q, 1.0)
+	_check(q.hp > q.max_hp * 0.5, "kombinovany poutnik se neléčí")
+	var before: int = g.pilgrims.size()
+	g._kill(q)
+	# Mrtvy poutnik zustava v poli, dokud ho hra neuklidi - proto + SPLIT_PIECES
+	# (a ne -1).
+	_check(g.pilgrims.size() == before + Hue.SPLIT_PIECES,
+		"kombinovany poutnik se nerozpadl (%d poutniku)" % g.pilgrims.size())
+	# A POZNAMKA: hrac musi vedet, proc ho nedokaze zasahnout.
+	g.pilgrims.clear()
+	g.log.clear()
+	g.spawn_at_angle(2.0, Hue.mix_id(Hue.RED, Hue.YELLOW))
+	_check(g.last_note().contains("obě barvy"),
+		"hra nerekla, ze kombinovany poutnik chce obe barvy (%s)" % g.last_note())
 
 
 func _test_temp_buy() -> void:

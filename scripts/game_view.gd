@@ -733,11 +733,19 @@ func _fit_px(s: String, width: float, max_px: int, min_px: int = 10) -> int:
 
 
 func _draw_pilgrim(p: Pilgrim) -> void:
-	var col: Color = Hue.color_of(p.hue)
+	var true_col: Color = Hue.color_of(p.hue)
 	var r: float = layout.pilgrim_r * p.size
+	# CHLAD JE VIDET PRIMO NA POUTNIKOVI. Jan (Oct 2026): "Ten chill effect budeme
+	# muset udělat přímo na targetu. Chill effect by měl trvat třeba 3s po ukončení
+	# dmg." Telo se zbali do zimnaveho odstinu, ale PRSTENEC si drzi SVOU barvu -
+	# z nej hrac pozna, jestli na poutnika vubec muze mirrit (a zledovany poutnik
+	# jinak vypada jako stribrny menic).
+	var body: Color = true_col
+	if p.ice_left > 0.0:
+		body = body.lerp(ICE_BODY, ICE_TINT)
 	# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026). Smer bere z `p.dir`, ktery
 	# je smer chuze - kdyz se zmeni chuze, tvary se otoci samy.
-	_shape(p.hue, p.pos, r, col, p.is_ghost(), Shapes.facing(p.dir))
+	_shape(p.hue, p.pos, r, body, p.is_ghost(), Shapes.facing(p.dir))
 	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
@@ -757,12 +765,11 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 		# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
 		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5,
 			-PI * 0.5 + TAU * p.hp_frac(), 24,
-			Color(col.r, col.g, col.b, RING_ALPHA), maxf(1.6, r * 0.20))
-	# JED A LED JSME SE NEKRESLI. Jan (Oct 2026): "Kolem nepřátel, do kterých
-	# střílím, je stále navíc světle modrý kroužek. Nechci ho tam." Byl to
-	# ukazatel Ledového zásahu (svetle modry krouzek na 2,05 r) - kolem poutnika
-	# smi byt JEDINY kruh, a to jeho prstenec (= HP bar). Zpomaleni tim sice
-	# neni videt, ale hrac si o krouzek rekl dvakrat.
+			Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
+	# JED A LED SE NEKRESLI JAKO KROUZEK. Jan (Oct 2026): "Kolem nepřátel, do
+	# kterých střílím, je stále navíc světle modrý kroužek. Nechci ho tam." Kolem
+	# poutnika smi byt JEDINY kruh, a to jeho prstenec (= HP bar). Led je proto
+	# videt na TELE poutnika (vyse) a na paprsku, ne na dalsim kruhu.
 	#
 	# JED (zeleny) zustava: je to stav, ktery ubira zivoty v case, a bez nej by
 	# hrac nevidel, ze mu zakoupeny "Jedovatý zásah" pracuje.
@@ -777,6 +784,21 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false,
 		toward: Vector2 = Vector2.ZERO) -> void:
 	var w: float = maxf(1.6, r * 0.26)
+	# KOMBINOVANY POUTNIK: TVAR JE SPOJENI OBOU TVARU (Jan: "čtverec se zobákem").
+	# Hrac z tvaru pozna, ze na nej potrebuje obe barvy - barva samotna by to
+	# nerekla (smesi dvou barev jsou si nektere blizke).
+	if Hue.is_mix(h):
+		var parts: Array = Hue.pair_of(h)
+		for poly in Shapes.pts_pair(Hue.shape_of(int(parts[0])),
+				Hue.shape_of(int(parts[1])), p, r, toward):
+			var pp: PackedVector2Array = poly
+			if pp.is_empty():
+				continue
+			if hollow:
+				draw_polyline(_closed(pp), col, w)
+			else:
+				draw_colored_polygon(pp, col)
+		return
 	var shape: String = Hue.shape_of(h)
 	if shape == "square":
 		var rect := Rect2(p - Vector2(0.80 * r, 0.80 * r), Vector2(1.60 * r, 1.60 * r))
@@ -852,6 +874,11 @@ func _draw_beams() -> void:
 # Jan (Oct 2026): "Zpomalující střelu tedy zobrazíme trochu jinak. Až z toho je
 # lépe poznat, že se jedná o chill effect."
 const CHILL_TINT := 0.45
+# ZLEDOVANY POUTNIK: telo zbledne k zimnave modrobile, prstenec si drzi svou
+# barvu (z nej hrac pozna, jestli na poutnika muze mirrit). 0,5 drzi jeste znat
+# puvodni odstin - pri vetsim zblednuti by zledovany poutnik splynul se stribrnou.
+const ICE_BODY := Color(0.80, 0.90, 1.0)
+const ICE_TINT := 0.5
 
 
 func _beam_line(a: Vector2, b: Vector2, c: Color, w: float, dashed: bool = false) -> void:

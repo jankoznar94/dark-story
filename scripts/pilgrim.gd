@@ -18,6 +18,12 @@ var alive: bool = true
 # CHOVANI BARVY SI POUTNIK NESE S SEBOU. Necte se z jeho barvy: stribrna po
 # prvni zmene barvu zmeni, ale sve chovani si musi nechat dal.
 var behaviour: String = Hue.B_NONE
+# VSECHNY SCHOPNOSTI BARVY. U jednoduche barvy je to jedna, u SMESI (kombinovany
+# poutnik) dve - plan (Jan): "prvni verze dá kombinovanému poutníkovi OBĚ chování
+# (dělení i regenerace apod.)". `behaviour` zustava PRVNI z nich, protoze stribrna
+# si pri zmene podoby prebira prave ji. Kdo se v bitve ptá, jestli poutnik neco
+# umi, musi se ptát `has_behaviour()` - jinak smesi polovina schopnosti zmizi.
+var behaviours: Array = [Hue.B_NONE]
 # VELIKOST KRESBY. Modre kusy po rozpadu jsou mensi - hrac to vidi.
 var size: float = 1.0
 # MUZE SE JESTE ROZPADNOUT? Rozpad je jen jednou.
@@ -73,3 +79,12 @@ func targetable() -> bool:
 # poznal, ze na nej ted nema cenu mirrit.
 func is_ghost() -> bool:
 	return alive and ghost_left > 0.0
+
+
+# UMI POUTNIK TOHLE? U smesi se musi ptat TAKHLE - `behaviour` je jen prvni
+# schopnost, takze `behaviour == B_SPLIT` by u oranzove (regen + rozpad) pulku
+# schopnosti zahodilo (plan: "dá kombinovanému poutníkovi OBĚ chování").
+# Ptá se i na `behaviour`: ten je prvni z `behaviours`, takze se obe policka
+# nemuzou rozejit (a kod, ktery plni jen `behaviour`, neztrati schopnost).
+func has_behaviour(b: String) -> bool:
+	return behaviours.has(b) or behaviour == b

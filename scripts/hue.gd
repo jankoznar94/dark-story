@@ -220,6 +220,24 @@ static func _row(h: int) -> Dictionary:
 	return ROWS[clampi(h, 0, COUNT - 1)]
 
 
+# SCHOPNOSTI SMESI: MA OBE. Plan (Jan): "prvni verze dá kombinovanému poutníkovi
+# OBĚ chování (dělení i regenerace apod.)". U jednoduche barvy je to jedna
+# schopnost, u smesi dve - proto se vsude v bitve ptá `Pilgrim.has_behaviour()`,
+# ne na jednu hodnotu `behaviour` (ta zustava jako PRVNI schopnost kvuli stribrne,
+# ktera si pri zmene podoby prebira prave ji).
+static func behaviours_of(h: int) -> Array:
+	if not is_mix(h):
+		return [behaviour_of(h)]
+	var out: Array = []
+	for part in pair_of(h):
+		var b: String = behaviour_of(int(part))
+		if b != B_NONE and not out.has(b):
+			out.append(b)
+	if out.is_empty():
+		out.append(B_NONE)
+	return out
+
+
 # Bezpecne prevody. GDScript bere zaporny index od konce pole, takze
 # `ROWS[-1]` je Stribrna - kdo si toho nevsimne, kresli neco jineho, nez si
 # mysli, a je presvedceny, ze je to spravne.

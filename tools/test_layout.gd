@@ -36,6 +36,7 @@ func _init() -> void:
 		_test_chill_beam)
 	_run("pruh se smesi se objevi az s michanim (a kolecko je mezi puntiky)",
 		_test_mix_strip)
+	_run("kombinovany poutnik ma spojeny tvar obou barev", _test_mix_shape)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
@@ -180,6 +181,15 @@ func _test_chill_beam() -> void:
 		_check(here.x - prev_end.x > 1.0, "mezi useky mrziveho paprsku neni dira")
 	_check(Shapes.dash(Vector2.ZERO, Vector2(5.0, 0.0), 3.0).size() == 1,
 		"kratky paprsek se rozpadl na vic useku")
+	# CHLAD JE VIDET PRIMO NA POUTNIKOVI (Jan, Oct 2026: "Ten chill effect budeme
+	# muset udělat přímo na targetu"). Telo se zbali do zimnaveho odstinu, ale
+	# prstenec (= HP bar) si drzi SVOU barvu - z nej hrac pozna, na co muze mirrit.
+	var st2: int = src.find("func _draw_pilgrim")
+	var en2: int = src.find("\nfunc ", st2 + 1)
+	var pil: String = src.substr(st2, (en2 - st2) if en2 > st2 else 1400)
+	_check(pil.contains("p.ice_left > 0.0") and pil.contains("ICE_BODY"),
+		"zledovany poutnik neni videt na svem tele")
+	_check(pil.contains("true_col"), "prstenec zledovaneho poutnika ztraci svou barvu")
 
 
 # POUTNIK JE I PO ZMENSENI CITELNY. Jan (Oct 2026): "Všechny nepřátele o 15 %
@@ -267,6 +277,52 @@ func _test_shop_hides_perm_only() -> void:
 	_check(body.contains("temp_max"), "panel v bitve nabizi i stat bez docasnych kroku")
 	# A dostrel opravdu zadne docasne kroky nema - jinak by filtr nemel co delat.
 	_check(Upgrades.temp_max("ar") == 0, "dostrel ma docasne kroky, filtr nema co delat")
+
+
+# SPOJENY TVAR SMESI (Jan: "Červená (čtverec) + žlutá (trojúhelník) = oranžová
+# (čtverec se zobákem, jak kdybych přilepil rovnostranný trojúhelník na jednu
+# stranu čtverce)"). Prvni tvar zustava v plne velikosti a NEOTACI SE, kdyz je
+# to ctverec (otoceny ctverec je kosostverec, a to je jina barva), druhy je
+# zmenseny a trci "na cumak" - hrac z tvaru pozna obe barvy.
+func _test_mix_shape() -> void:
+	var c := Vector2(100.0, 100.0)
+	var pair: Array = Shapes.pts_pair("square", "triangle", c, 10.0, Vector2.RIGHT)
+	_check(pair.size() == 2, "spojeny tvar smesi nema dva tvary (%d)" % pair.size())
+	if pair.size() < 2:
+		return
+	var first: PackedVector2Array = pair[0]
+	var second: PackedVector2Array = pair[1]
+	_check(first.size() == 4 and second.size() == 3,
+		"spojeny tvar neni ctverec s trojuhelnikem (%d + %d bodu)" % [first.size(), second.size()])
+	# CTVEREC ZUSTAL ROVNY: jeho body lezi jen ve dvou svislicich a dvou vodorovnach.
+	var xs := {}
+	var ys := {}
+	var x_max: float = -9999.0
+	for v in first:
+		xs[snappedf(v.x, 0.01)] = true
+		ys[snappedf(v.y, 0.01)] = true
+		x_max = maxf(x_max, v.x)
+	_check(xs.size() == 2 and ys.size() == 2,
+		"ve spojenem tvaru se ctverec otocil (kosostverec)")
+	# DRUHY TVAR TRCI DOPREDU (k vezi) A JE MENSI.
+	var bx_max: float = -9999.0
+	var bx_min: float = 9999.0
+	for v in second:
+		bx_max = maxf(bx_max, v.x)
+		bx_min = minf(bx_min, v.x)
+	_check(bx_max > x_max, "druhy tvar netrci z prvniho (cumak)")
+	_check(bx_max - bx_min < 2.0 * 10.0, "druhy tvar neni mensi nez prvni")
+	# Kdyz poutnik stoji (nulovy smer), tvary se nesmi srazit na sebe.
+	var still: Array = Shapes.pts_pair("square", "triangle", c, 10.0, Vector2.ZERO)
+	_check(still.size() == 2 and not (still[0] as PackedVector2Array).is_empty()
+		and not (still[1] as PackedVector2Array).is_empty(),
+		"bez smeru chuze se spojeny tvar rozpadl")
+	var smax: float = -9999.0
+	var smin: float = 9999.0
+	for v in (still[1] as PackedVector2Array):
+		smax = maxf(smax, v.x)
+		smin = minf(smin, v.x)
+	_check(smax - smin > 1.0, "bez smeru chuze se druhy tvar smrskl na bod")
 
 
 # PALETA JE PLNÝ PUNTÍK S BORDEREM (Jan: "Žádné tvary").

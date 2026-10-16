@@ -135,7 +135,10 @@ const PILGRIM_SIZE := 0.85
 # pro Attack damage", Jan Oct 2026) - hledej `laser_dps()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.
 const POISON_S := 3.0
-const ICE_S := 2.0
+# JAK DLOUHO DRZI CHLAD. Jan (Oct 2026): "Chill effect by měl trvat třeba 3s po
+# ukončení dmg." Je to i doba, po kterou je poutnik ZPOMALENY - stav je jeden
+# (`ice_left`), takze se nerozejde to, co hrac vidi, od toho, co se deje.
+const ICE_S := 3.0
 # ODRAZ: jak daleko od sebe mohou byt dva poutnici, aby paprsek preskocil.
 # Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
 # odraz za každého unikátního nepřítele").
@@ -690,6 +693,14 @@ func tap_hue(h: int) -> String:
 
 # --------------------------------------------------------------- VSTUP POUTNIKU
 
+# KOMBINOVANI POUTNICI. Jan: "Jejich výskyt nesmí být vysoký, jinak by to hráč
+# nemohl zvládnout." Do vlny jich jde nejvyce MIX_MAX a jen kdyz uz je michani
+# odemcene (a existuje smes, kterou hrac dokaze zasahnout - potrebuje na ni obe
+# barvy ve vezi).
+const MIX_SHARE := 0.10
+const MIX_MAX := 2
+
+
 func wave_plan(n: int) -> Array:
 	var total: int = wave_size(wave, level)
 	var pool: Array = spawn_pool()
@@ -704,6 +715,16 @@ func wave_plan(n: int) -> Array:
 		var t: Variant = out[i]
 		out[i] = out[j]
 		out[j] = t
+	# SMES MISTO JEDNODUCHE BARVY. Az PO zamichani, aby se michalo do cele vlny
+	# (a aby se smes neobjevila vzdy na stejnem miste poradi).
+	var mixes: Array = Hue.mix_pool_at(level)
+	var used: int = 0
+	for i in range(out.size()):
+		if mixes.is_empty() or used >= MIX_MAX:
+			break
+		if rng.randf() < MIX_SHARE:
+			out[i] = int(mixes[rng.randi_range(0, mixes.size() - 1)])
+			used += 1
 	return out
 
 
@@ -729,6 +750,7 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 	var p := Pilgrim.new()
 	p.hue = hue
 	p.behaviour = Hue.behaviour_of(hue)
+	p.behaviours = Hue.behaviours_of(hue)
 	# VELIKOST KRESBY (Jan: o 15 % mensi nez driv) - viz `PILGRIM_SIZE`.
 	# Rozpadly kus modre ji dale zmensi pres `Hue.SPLIT_SIZE`.
 	p.size = PILGRIM_SIZE
@@ -743,6 +765,10 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 	# zmene podoby prepisuje schopnosti nove barvy, takze "je to menic" se z nej
 	# neda precist.
 	p.shifting = (p.behaviour == Hue.B_SHIFT)
+	# KOMBINOVANY POUTNIK: hrac musi vedet, PROC ho nedokaze zasahnout. Bez
+	# poznamky by to vypadalo jako chyba hry (plan, ukol 6 krok 3).
+	if Hue.is_mix(hue):
+		_note("%s - potřebuješ obě barvy!" % Hue.name_of(hue))
 	pilgrims.append(p)
 	return p
 
@@ -782,7 +808,7 @@ func _regen(dt: float) -> void:
 
 
 func _advance_behaviour(p: Pilgrim, dt: float) -> void:
-	if p.behaviour == Hue.B_REGEN:
+	if p.has_behaviour(Hue.B_REGEN):
 		p.hp = minf(p.max_hp, p.hp + p.max_hp * Hue.REGEN_FRAC * dt)
 	if p.ghost_left > 0.0:
 		p.ghost_left = maxf(0.0, p.ghost_left - dt)
@@ -807,6 +833,7 @@ func _shift(p: Pilgrim) -> void:
 	var frac: float = p.hp_frac()
 	p.hue = _random_other_hue(p.hue)
 	p.behaviour = Hue.behaviour_of(p.hue)
+	p.behaviours = Hue.behaviours_of(p.hue)
 	p.max_hp = hp_for(kolo(), wave, p.hue)
 	p.hp = maxf(1.0, p.max_hp * frac)
 	# RYCHLOST JE VYHODA ZLUTE, takze nova podoba znamena i novou chuzi.
@@ -1022,7 +1049,7 @@ func _hurt(p: Pilgrim, amount: float) -> void:
 		p.was_hit = true
 		# FIALOVA: po PRVNIM zasahu zmizi na 3 s (putuje dal, ale vez ji
 		# nevidi, i kdyz ma hrac jeji barvu).
-		if p.behaviour == Hue.B_VANISH:
+		if p.has_behaviour(Hue.B_VANISH):
 			p.ghost_left = Hue.VANISH_S
 	if p.hp <= 0.0:
 		_kill(p)
@@ -1034,7 +1061,7 @@ func _kill(p: Pilgrim) -> void:
 	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult())) + int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.
-	if p.behaviour == Hue.B_SPLIT and p.can_split:
+	if p.has_behaviour(Hue.B_SPLIT) and p.can_split:
 		var side: Vector2 = p.dir.rotated(PI * 0.5)
 		for i in range(Hue.SPLIT_PIECES):
 			var q := Pilgrim.new()

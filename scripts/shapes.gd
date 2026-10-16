@@ -97,5 +97,30 @@ static func dash(a: Vector2, b: Vector2, w: float) -> Array:
 	return out
 
 
+# SPOJENY TVAR SMESI. Jan: "Červená (čtverec) + žlutá (trojúhelník) = oranžová
+# (čtverec se zobákem, jak kdybych přilepil rovnostranný trojúhelník na jednu
+# stranu čtverce)". Vraci DVA polygony: prvni tvar v plne velikosti a druhy
+# zmenseny, posunuty "na cumak" (poutnik jde k vezi oblicejem, takze cumak je
+# smerem k vezi). Je to VYPOCET, ne kresleni - da se otestovat bez prohlizece.
+static func pts_pair(a: String, b: String, c: Vector2, r: float, face: Vector2) -> Array:
+	var dir: Vector2 = face.normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	var out: Array = [_poly(a, c, r, face)]
+	out.append(_poly(b, c + dir * (r * 0.95), r * 0.62, face))
+	return out
+
+
+# TVAR JAKO POLYGON I PRO CTVEREC. Ctverec v `Shapes` schvalne neni (kresli se
+# pres `draw_rect` a NEOTACI SE - otoceny je kosostverec, a to je jina barva),
+# ale spojeny tvar smesi ho potrebuje taky. Sklada se proto tady a vzdy rovne.
+static func _poly(shape: String, c: Vector2, r: float, face: Vector2) -> PackedVector2Array:
+	if shape == "square":
+		return PackedVector2Array([
+			c + Vector2(-0.80 * r, -0.80 * r), c + Vector2(0.80 * r, -0.80 * r),
+			c + Vector2(0.80 * r, 0.80 * r), c + Vector2(-0.80 * r, 0.80 * r)])
+	return pts(shape, c, r, face)
+
+
 static func facing(dir: Vector2) -> Vector2:
 	return dir.normalized()
