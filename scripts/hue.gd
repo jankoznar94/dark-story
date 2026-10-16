@@ -11,8 +11,9 @@ extends RefCounted
 #
 # BARVA NIKDY NENI JEDINY NOSITEL INFORMACE. U sesti barev to plati
 # dvojnasob: cervena se zelenou je nejcastejsi porucha barvocitu a fialova
-# s modrou se pletou taky. Proto ma kazda barva SVUJ TVAR a tvar je to, co
-# hrac na plose opravdu cte.
+# s modrou se pletou taky. Proto ma kazda barva SVOJE PISMENO a poutnik ho nosi
+# ve svem puntiku ("R" jako Red, smes dve pismena "RY") - pismeno je to, co hrac
+# na plose opravdu cte.
 
 const RED := 0
 const YELLOW := 1
@@ -56,22 +57,22 @@ const B_SHIFT := "shift"
 #                 zacatku nejde mirrit a je to cely jeji smysl.
 const ROWS := [
 	{
-		"name": "Červená", "letter": "R", "color": Color(0.80, 0.22, 0.17), "shape": "square",
+		"name": "Červená", "letter": "R", "color": Color(0.80, 0.22, 0.17),
 		"hp": 2.2, "speed": 0.60, "gold": 18, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{
-		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22), "shape": "triangle",
+		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22),
 		"hp": 0.6, "speed": 1.60, "gold": 10, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{
-		"name": "Modrá", "letter": "B", "color": Color(0.22, 0.46, 0.80), "shape": "droplet",
+		"name": "Modrá", "letter": "B", "color": Color(0.22, 0.46, 0.80),
 		"hp": 1.0, "speed": 1.00, "gold": 14, "behaviour": B_SPLIT,
 		"unlock_level": 2, "palette": true,
 	},
 	{
-		"name": "Zelená", "letter": "G", "color": Color(0.26, 0.62, 0.30), "shape": "cross",
+		"name": "Zelená", "letter": "G", "color": Color(0.26, 0.62, 0.30),
 		"hp": 1.2, "speed": 1.00, "gold": 16, "behaviour": B_REGEN,
 		"unlock_level": 3, "palette": true,
 	},
@@ -83,12 +84,12 @@ const ROWS := [
 		# zasahu na 3 s zmizi, ma hrac vic casu ho vubec najit. Kdo hybe timhle
 		# cislem, hybe obtiznosti; hlida to `tools/test_core.gd`
 		# (`_test_hue_speed_order`).
-		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74), "shape": "diamond",
+		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74),
 		"hp": 0.7, "speed": 0.50, "gold": 14, "behaviour": B_VANISH,
 		"unlock_level": 4, "palette": true,
 	},
 	{
-		"name": "Stříbrná", "letter": "S", "color": Color(0.78, 0.80, 0.82), "shape": "circle",
+		"name": "Stříbrná", "letter": "S", "color": Color(0.78, 0.80, 0.82),
 		"hp": 2.5, "speed": 0.60, "gold": 26, "behaviour": B_SHIFT,
 		"unlock_level": 5, "palette": false,
 	},
@@ -137,7 +138,11 @@ const MIX_FALLBACK := {"name": "Směs", "letter": "??", "color": Color(0.50, 0.4
 # nedeli znovu (jinak by z jednoho poutnika bylo nekonecno).
 const SPLIT_PIECES := 2
 const SPLIT_HP_FRAC := 0.40
-const SPLIT_SIZE := 0.72
+# VELIKOST ROZPADLEHO KUSU (modra). Byl 0,72 - ale od Oct 2026 nosi kazdy poutnik
+# ve svem puntiku PISMENO barvy, a v 0,72 se uz "B" do puntiku neveslo (na 390x844
+# vyslo 5,9 px v polomeru). 0,85 drzi kus mensi nez rodic, ale pismeno se do nej
+# vejde - hlida to `test_layout._test_enemy_is_dot_with_letters`.
+const SPLIT_SIZE := 0.85
 const SPLIT_GOLD := 6
 
 # REGENERACE ZELENE: podil maximalnich zivotu za sekundu. Musi byt vyrazne
@@ -255,12 +260,6 @@ static func color_of(h: int) -> Color:
 	if not is_valid(h):
 		return Color(0.36, 0.35, 0.33)
 	return _row(h)["color"]
-
-
-static func shape_of(h: int) -> String:
-	if not is_valid(h):
-		return "square"
-	return String(_row(h).get("shape", ""))
 
 
 # PISMENO BARVY: pocatecni pismeno anglickeho nazvu ("R" jako Red) - viz ROWS.

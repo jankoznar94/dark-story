@@ -126,11 +126,14 @@ const BEAM_TAPER := 0.72
 # Zmereno na snimku 390x844 (`zily2_ring_probe.py`): tvár 11 px, prstenec 22 px.
 const RING_FRAC := 1.70
 # VELIKOST POUTNIKA je NASOBEK ZAKLADNI velikosti kresby (`ScreenLayout.pilgrim_r`).
-# Jan (Oct 2026): "Všechny nepřátele o 15 % zmenšíme a o 15 % zpomalíme jejich
-# pohyb. Ať to vytvoří pocit ještě větší vzdálenosti a rozlohy." Nese si ji
-# poutnik (ne rozvrzeni), takze se zmensi i jeho prstenec - a vetsi vnitrni
-# padding z `RING_FRAC` zustava. Zpomaleni je v `TRAVEL_S`.
-const PILGRIM_SIZE := 0.85
+# Puvodne 0,85 (Jan: "Všechny nepřátele o 15 % zmenšíme"). Od Oct 2026 je poutnik
+# PUNTIK S PISMENY a Jan k tomu rekl: "Všichni budou mít tvar puntíku. V něm budou
+# mít iniciály barvy nebo kombinace barev. Zbytek zůstává. Takže musí být o něco
+# větší, aby to bylo čitelné." Proto 1,05: do prumeru 16 px se vejdou dve pismena.
+# Nese si ji poutnik (ne rozvrzeni), takze se zvetsi i jeho prstenec (= HP bar) -
+# vetsi vnitrni padding z `RING_FRAC` zustava. Hlida to `test_layout`
+# (`_test_pilgrim_stays_readable`).
+const PILGRIM_SIZE := 1.05
 # POSKOZENI LASERU (za sekundu) JE PARAMETR HRACE ("Ještě musíme přidat upgrade
 # pro Attack damage", Jan Oct 2026) - hledej `laser_dps()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.

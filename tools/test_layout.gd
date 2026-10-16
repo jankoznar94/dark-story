@@ -36,7 +36,7 @@ func _init() -> void:
 		_test_chill_beam)
 	_run("pruh se smesi se objevi az s michanim (a kolecko je mezi puntiky)",
 		_test_mix_strip)
-	_run("kombinovany poutnik ma spojeny tvar obou barev", _test_mix_shape)
+	_run("nepritel je puntik s inicialami barvy", _test_enemy_is_dot_with_letters)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
@@ -44,7 +44,6 @@ func _init() -> void:
 	_run("panel v bitve nenabizi upgrade, ktery v ni nejde koupit", _test_shop_hides_perm_only)
 	_run("bunka upgradu ma hodnotu a cenu na jednom radku", _test_cell_lines)
 	_run("taby kategorii maji ikony", _test_tabs_are_icons)
-	_run("poutnici jdou k vezi oblicejem", _test_shapes_face_the_tower)
 	for r in RESOLUTIONS:
 		_run("rozliseni %dx%d" % [int(r.x), int(r.y)], _test_resolution.bind(r))
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -317,50 +316,44 @@ func _test_shop_hides_perm_only() -> void:
 	_check(Upgrades.temp_max("ar") == 0, "dostrel ma docasne kroky, filtr nema co delat")
 
 
-# SPOJENY TVAR SMESI (Jan: "Červená (čtverec) + žlutá (trojúhelník) = oranžová
-# (čtverec se zobákem, jak kdybych přilepil rovnostranný trojúhelník na jednu
-# stranu čtverce)"). Prvni tvar zustava v plne velikosti a NEOTACI SE, kdyz je
-# to ctverec (otoceny ctverec je kosostverec, a to je jina barva), druhy je
-# zmenseny a trci "na cumak" - hrac z tvaru pozna obe barvy.
-func _test_mix_shape() -> void:
-	var c := Vector2(100.0, 100.0)
-	var pair: Array = Shapes.pts_pair("square", "triangle", c, 10.0, Vector2.RIGHT)
-	_check(pair.size() == 2, "spojeny tvar smesi nema dva tvary (%d)" % pair.size())
-	if pair.size() < 2:
+# NEPRITEL JE PUNTIK S INICIALAMI BARVY. Jan (Oct 2026): "Všichni budou mít tvar
+# puntíku. V něm budou mít iniciály barvy nebo kombinace barev. Zbytek zůstává.
+# Takže musí být o něco větší, aby to bylo čitelné." Duvod: "hráč podle pouhého
+# odstínu nepozná o kterou kombinaci nepřítele se jedná. Takže na něj nedokáže
+# zaútočit." TVARY (ctverec, trojuhelnik, kapka, kriz, kosostverec) i otaceni
+# "oblicejem" k vezi tim zmizely - kdo je vraci, vraci i ten problem.
+func _test_enemy_is_dot_with_letters() -> void:
+	var src: String = _src()
+	var st: int = src.find("func _dot")
+	_check(st >= 0, "kresleni puntiku s pismeny vubec neexistuje")
+	if st < 0:
 		return
-	var first: PackedVector2Array = pair[0]
-	var second: PackedVector2Array = pair[1]
-	_check(first.size() == 4 and second.size() == 3,
-		"spojeny tvar neni ctverec s trojuhelnikem (%d + %d bodu)" % [first.size(), second.size()])
-	# CTVEREC ZUSTAL ROVNY: jeho body lezi jen ve dvou svislicich a dvou vodorovnach.
-	var xs := {}
-	var ys := {}
-	var x_max: float = -9999.0
-	for v in first:
-		xs[snappedf(v.x, 0.01)] = true
-		ys[snappedf(v.y, 0.01)] = true
-		x_max = maxf(x_max, v.x)
-	_check(xs.size() == 2 and ys.size() == 2,
-		"ve spojenem tvaru se ctverec otocil (kosostverec)")
-	# DRUHY TVAR TRCI DOPREDU (k vezi) A JE MENSI.
-	var bx_max: float = -9999.0
-	var bx_min: float = 9999.0
-	for v in second:
-		bx_max = maxf(bx_max, v.x)
-		bx_min = minf(bx_min, v.x)
-	_check(bx_max > x_max, "druhy tvar netrci z prvniho (cumak)")
-	_check(bx_max - bx_min < 2.0 * 10.0, "druhy tvar neni mensi nez prvni")
-	# Kdyz poutnik stoji (nulovy smer), tvary se nesmi srazit na sebe.
-	var still: Array = Shapes.pts_pair("square", "triangle", c, 10.0, Vector2.ZERO)
-	_check(still.size() == 2 and not (still[0] as PackedVector2Array).is_empty()
-		and not (still[1] as PackedVector2Array).is_empty(),
-		"bez smeru chuze se spojeny tvar rozpadl")
-	var smax: float = -9999.0
-	var smin: float = 9999.0
-	for v in (still[1] as PackedVector2Array):
-		smax = maxf(smax, v.x)
-		smin = minf(smin, v.x)
-	_check(smax - smin > 1.0, "bez smeru chuze se druhy tvar smrskl na bod")
+	var en: int = src.find("\nfunc ", st + 1)
+	var dot: String = src.substr(st, (en - st) if en > st else 900)
+	_check(dot.contains("draw_circle("), "poutnik neni plny puntik (chybi draw_circle)")
+	_check(dot.contains("Hue.letter_of("), "puntik nema inicialy barvy")
+	# VELIKOST PISMEN SE HLEDA, NE HADA: dve pismena ("RY") jsou sirsi nez jedno
+	# a na mensim displeji je puntik mensi.
+	_check(dot.contains("_fit_px("), "velikost pismen se nerozhoduje podle puntiku")
+	_check(not dot.contains("draw_colored_polygon"),
+		"puntik kresli tvar, i kdyz ma byt jen puntik s pismeny")
+	# KRESLENI POUTNIKA MUSI PUNTIK OPRAVDU POUZIT (a nesahat po tvary).
+	var pst: int = src.find("func _draw_pilgrim")
+	var pen: int = src.find("\nfunc ", pst + 1)
+	var pil: String = src.substr(pst, (pen - pst) if pen > pst else 1600)
+	_check(pil.contains("_dot(p.hue"), "kresleni poutnika neposila barvu do puntiku")
+	_check(not pil.contains("Shapes.pts"), "poutnik porad kresli tvar")
+	# I NEJMENSI PUNTIK MUSI POJMOUT PISMENO. Nejmensi je rozpadly kus modre
+	# (SPLIT_SIZE) - kdyby se zmenseni zvetsilo, pismena by z nej vypadla.
+	for r in RESOLUTIONS:
+		# NA SIRKU SE VELIKOST NEHLIDA (stejne jako u `_test_resolution`).
+		if r.y <= r.x:
+			continue
+		var l := ScreenLayout.new()
+		l.update(r)
+		var r_px: float = l.pilgrim_r * Game.PILGRIM_SIZE * Hue.SPLIT_SIZE
+		_check(r_px >= 6.0, "%dx%d: rozpadly kus ma jen %.1f px - pismeno se do nej nevejde"
+			% [int(r.x), int(r.y), r_px])
 
 
 # PALETA JE PLNÝ PUNTÍK S BORDEREM (Jan: "Žádné tvary").
@@ -377,37 +370,6 @@ func _test_palette_is_dot() -> void:
 	# PISMENO BARVY VE STREDU (Jan, Oct 2026). Bez nej je barva jediny nositel
 	# informace - presne to, co u sesti barev nefunguje.
 	_check(body.contains("Hue.letter_of("), "puntik palety nema pismeno barvy")
-
-
-# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026: "všichni nepřátelé by měli k věži
-# směřovat 'obličejem'. Trojúhelník jedno z vrcholů, ne stěnou. Kapka bříškem, ne
-# stranou."). Trojuhelnik ma k vezi VRCHOL, kapka BRISKO, kosostverec vrchol, kriz
-# rameno. Ctverec a kruh se NEOTACI - ctverec otoceny o 45 stupnu je kosostverec
-# fialove, a to je jina barva.
-func _test_shapes_face_the_tower() -> void:
-	var c := Vector2(100.0, 100.0)
-	var r := 10.0
-	var right := Vector2(1.0, 0.0)
-	var tri: PackedVector2Array = Shapes.pts("triangle", c, r, right)
-	_check(tri.size() == 3, "trojuhelnik nema tri vrcholy")
-	var tip: float = -99999.0
-	for v in tri:
-		tip = maxf(tip, v.x)
-	_check(absf(tip - (c.x + r)) < 0.01,
-		"trojuhelnik nedrzi vrcholem k vezi (spicka %.2f, ma byt %.2f)" % [tip, c.x + r])
-	var dr: PackedVector2Array = Shapes.pts("droplet", c, r, right)
-	var belly: float = -99999.0
-	for v in dr:
-		belly = maxf(belly, v.x)
-	_check(absf(belly - (c.x + 0.95 * r)) < 0.01, "kapka nedrzi brisko k vezi")
-	_check(not Shapes.pts("diamond", c, r, right).is_empty(), "kosostverec se neotaci")
-	_check(not Shapes.pts("cross", c, r, right).is_empty(), "kriz se neotaci")
-	_check(Shapes.pts("square", c, r, right).is_empty(), "ctverec se otaci (byl by z nej kosostverec)")
-	_check(Shapes.pts("circle", c, r, right).is_empty(), "kruh se otaci, i kdyz je to jedno")
-	var still: PackedVector2Array = Shapes.pts("triangle", c, r, Vector2.ZERO)
-	_check(absf(still[0].y - (c.y - r)) < 0.01, "bez smeru se tvar prece jen otocil")
-	_check(_src().contains("Shapes.facing(p.dir)"),
-		"obrazovka neposila do tvaru smer chuze - poutnici by chodili bokem")
 
 
 # PISMENO MA KAZDA BARVA JINE, JEDNOPISMENNOVE A NIKDY PRAZDNE. Dve barvy se

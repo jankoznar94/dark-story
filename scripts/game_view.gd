@@ -743,9 +743,15 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	var body: Color = true_col
 	if p.ice_left > 0.0:
 		body = body.lerp(ICE_BODY, ICE_TINT)
-	# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026). Smer bere z `p.dir`, ktery
-	# je smer chuze - kdyz se zmeni chuze, tvary se otoci samy.
-	_shape(p.hue, p.pos, r, body, p.is_ghost(), Shapes.facing(p.dir))
+	# POUTNIK JE PUNTIK S INICIALAMI BARVY. Jan (Oct 2026): "Všichni budou mít
+	# tvar puntíku. V něm budou mít iniciály barvy nebo kombinace barev. Zbytek
+	# zůstává. Takže musí být o něco větší, aby to bylo čitelné."
+	#
+	# PROC SE TVARY ZRUSILY: hrac z tvaru poznal barvu, ale u SMESE (dva tvary
+	# spojene) nepoznal, na kterou kombinaci ma mirrit - "hráč podle pouhého
+	# odstínu nepozná o kterou kombinaci nepřítele se jedná. Takže na něj nedokáže
+	# zaútočit." Pismena "R"/"RY" reknou kombinaci PRIMO.
+	_dot(p.hue, p.pos, r, body, p.is_ghost())
 	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
@@ -769,10 +775,10 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# LEDOVY KRYSTAL: namrazovy prstenec KOLEM HP baru. Jan (Oct 2026): "Ten vnější
 	# kruh ještě kolem HP baru byl možná skutečně nejlepší řešení. Jen bych ho
 	# udělal tak, aby více evokoval zmrazení. Předtím spíš evokoval silové pole."
-	# a "Zkusme ledový krystal." Obrys je ZUBATY (12 vrcholu, kazdy druhy bliz
-	# k poutnikovi) - hladky kruh byl to silove pole. Geometrie je v `Shapes`
-	# (`CRYSTAL_RING_FRAC`), aby se dala otestovat bez prohlizece: krystal se
-	# nesmi dotknout prstence (= HP bar) ani jedoveho krouzku.
+	# a "Zkusme ledový krystal", nakonec "Devitihran je nejlepší": PRAVIDELNY
+	# devitihran (6 nebo 12 vrcholu vypadalo spatne). Geometrie je v `Shapes`,
+	# aby se dala otestovat bez prohlizece: krystal se nesmi dotknout prstence
+	# (= HP bar) ani jedoveho krouzku.
 	#
 	# Kresli se po cely chlad (`p.ice_left`), tedy i ty tri sekundy po poslednim
 	# zasahu, kdy uz zadny paprsek nesviti - prave proto musi byt stav videt na
@@ -792,48 +798,28 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 		draw_arc(p.pos, r * 2.35, 0.0, TAU, 20, Color(0.55, 0.80, 0.35, 0.85), 2.0)
 
 
-# TVAR BAREV. Barva nikdy neni jediny nositel informace - u sesti barev to
-# plati dvojnasob (cervena se zelenou je nejcastejsi porucha barvocitu).
-# `toward` = smer, kterym ma tvar hledet (u poutnika k vezi); kdyz je nulovy,
-# tvary stoji rovne (runa veze, puntik v palete). Otaceni je v `Shapes`.
-func _shape(h: int, p: Vector2, r: float, col: Color, hollow: bool = false,
-		toward: Vector2 = Vector2.ZERO) -> void:
-	var w: float = maxf(1.6, r * 0.26)
-	# KOMBINOVANY POUTNIK: TVAR JE SPOJENI OBOU TVARU (Jan: "čtverec se zobákem").
-	# Hrac z tvaru pozna, ze na nej potrebuje obe barvy - barva samotna by to
-	# nerekla (smesi dvou barev jsou si nektere blizke).
-	if Hue.is_mix(h):
-		var parts: Array = Hue.pair_of(h)
-		for poly in Shapes.pts_pair(Hue.shape_of(int(parts[0])),
-				Hue.shape_of(int(parts[1])), p, r, toward):
-			var pp: PackedVector2Array = poly
-			if pp.is_empty():
-				continue
-			if hollow:
-				draw_polyline(_closed(pp), col, w)
-			else:
-				draw_colored_polygon(pp, col)
-		return
-	var shape: String = Hue.shape_of(h)
-	if shape == "square":
-		var rect := Rect2(p - Vector2(0.80 * r, 0.80 * r), Vector2(1.60 * r, 1.60 * r))
-		if hollow:
-			draw_rect(rect, col, false, w)
-		else:
-			draw_rect(rect, col, true)
-		return
-	var pts: PackedVector2Array = Shapes.pts(shape, p, r, toward)
-	if pts.is_empty():
-		# KRUH (a cokoli neznaneho): nema se co otacet.
-		if hollow:
-			draw_arc(p, 0.85 * r, 0.0, TAU, 28, col, w)
-		else:
-			draw_circle(p, 0.92 * r, col)
-		return
+# PUNTIK S INICIALAMI. Jedina kresba, kterou ma kazdy nepritel i runa veze.
+# Jan (Oct 2026): "Všichni budou mít tvar puntíku. V něm budou mít iniciály barvy
+# nebo kombinace barev." Barva nikdy neni jediny nositel informace - u smesi to
+# plati dvojnasob, protoze "hráč podle pouhého odstínu nepozná o kterou kombinaci
+# nepřítele se jedná".
+#
+# `hollow` = duch (fialova po prvnim zasahu): jen obrys, ale pismena zustavaji -
+# hrac musi vedet, na co ceka, i kdyz na nej prave mirrit neda.
+func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> void:
+	var w: float = maxf(1.6, r * 0.22)
 	if hollow:
-		draw_polyline(_closed(pts), col, w)
+		draw_arc(p, 0.88 * r, 0.0, TAU, 28, col, w)
 	else:
-		draw_colored_polygon(pts, col)
+		draw_circle(p, 0.92 * r, col)
+	var txt: String = Hue.letter_of(h)
+	if txt == "":
+		return
+	# VELIKOST PISMEN SE HLEDA, NE HADA: dve pismena ("RY") jsou sirsi nez jedno
+	# a na mensim telefonu je puntik mensi. `_fit_px` zmensuje, dokud se text do
+	# puntiku nevejde - a nikdy pod 8 px (menssi pismo hrac neprecte).
+	var px: int = _fit_px(txt, r * 1.55, maxi(9, int(r * 1.35)), 8)
+	_label(txt, Rect2(p.x - r, p.y - r, 2.0 * r, 2.0 * r), px, GLYPH)
 
 
 func _closed(pts: PackedVector2Array) -> PackedVector2Array:
@@ -924,9 +910,14 @@ func _draw_tower() -> void:
 	var col: Color = game.tower.color()
 	draw_circle(c, tr, TOWER_BODY)
 	draw_arc(c, tr * 0.92, 0.0, TAU, 48, col, maxf(2.0, tr * 0.13))
-	# RUNA VEZE JE TVAR PRVNI BARVY (u smesi se tvary nespojuji - vez neni
-	# poutnik); barvu prstence i paprsku nese SMES, takze hrac vidi, co ma.
-	_shape(int(game.tower.hues[0]), c, tr * 0.52, col)
+	# RUNA VEZE JSOU INICIALY BARVY - stejne jako u poutniku a v palete. U smesi
+	# dve pismena ("RY"), u jedne barvy jedno. Tvary ve hre nejsou (Jan, Oct 2026:
+	# "Všichni budou mít tvar puntíku"), takze i runa veze je puntik s pismeny.
+	# Barvu prstence i paprsku nese SMES, takze hrac vidi, co ma.
+	var rune: int = game.tower.mix()
+	if rune < 0:
+		rune = int(game.tower.hues[0])
+	_dot(rune, c, tr * 0.52, col)
 	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
 	draw_arc(c, tr * 1.22, -PI * 0.5, -PI * 0.5 + TAU * frac, 64, _hp_color(frac),
 		maxf(3.0, tr * 0.24))
