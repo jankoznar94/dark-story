@@ -126,6 +126,12 @@ func _test_ring_is_hp_bar() -> void:
 		"prstenec poutnika nekresli zbyvajici zivoty - kruh neni HP bar")
 	_check(not body.contains("1.55"),
 		"kolem poutnika se kresli druhy (bily) oblouk, ktery tam nema byt")
+	# SVETLE MODRY KROUZEK (led) JE TAM TAKY NAVIC. Jan dvakrat: "Při zásahu
+	# nepřítele se objevuje ještě jeden kruhový Border (světle modrý nebo bílý)"
+	# a "Kolem nepřátel, do kterých střílím, je stále navíc světle modrý kroužek.
+	# Nechci ho tam." Kolem poutnika smi byt JEDINY kruh - jeho prstenec.
+	_check(not body.contains("0.45, 0.72, 0.90"),
+		"kolem poutnika se kresli svetle modry krouzek (led) - nepatri tam")
 	# PRSTENEC SE NESMI DOTYKAT TVARE. Tvar saha k 1,15 r (kapka brisko), takze
 	# s `RING_FRAC` pod 1,45 je mezera mensi nez tretina polomeru a kruh vypada,
 	# jako by obkresloval oblicej (Jan: "Ať kruh není nalepený přímo na tvář").

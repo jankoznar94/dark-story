@@ -730,11 +730,14 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5,
 			-PI * 0.5 + TAU * p.hp_frac(), 24,
 			Color(col.r, col.g, col.b, RING_ALPHA), maxf(1.6, r * 0.20))
-	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji. Drzi si
-	# odstup od prstence (2,05 a 2,35 r) - kdyby sedly tesne na nej, hrac vidi
-	# dvojity kruh a nevi, ktery z nich je zivot.
-	if p.ice_left > 0.0:
-		draw_arc(p.pos, r * 2.05, 0.0, TAU, 20, Color(0.45, 0.72, 0.90, 0.85), 2.0)
+	# JED A LED JSME SE NEKRESLI. Jan (Oct 2026): "Kolem nepřátel, do kterých
+	# střílím, je stále navíc světle modrý kroužek. Nechci ho tam." Byl to
+	# ukazatel Ledového zásahu (svetle modry krouzek na 2,05 r) - kolem poutnika
+	# smi byt JEDINY kruh, a to jeho prstenec (= HP bar). Zpomaleni tim sice
+	# neni videt, ale hrac si o krouzek rekl dvakrat.
+	#
+	# JED (zeleny) zustava: je to stav, ktery ubira zivoty v case, a bez nej by
+	# hrac nevidel, ze mu zakoupeny "Jedovatý zásah" pracuje.
 	if p.poison_left > 0.0:
 		draw_arc(p.pos, r * 2.35, 0.0, TAU, 20, Color(0.55, 0.80, 0.35, 0.85), 2.0)
 
