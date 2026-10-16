@@ -97,6 +97,36 @@ static func dash(a: Vector2, b: Vector2, w: float) -> Array:
 	return out
 
 
+# LEDOVY KRYSTAL (namrazovy prstenec kolem poutnika). Jan (Oct 2026): "Zmrazení
+# musíme znázornit jinak. Ten vnější kruh ještě kolem HP baru byl možná skutečně
+# nejlepší řešení. Jen bych ho udělal tak, aby více evokoval zmrazení. Předtím
+# spíš evokoval silové pole." a "Zkusme ledový krystal."
+#
+# PROC HRANY A NE KRUH: silove pole je HLADKY kruh - stejne silny vsude, takze
+# vypada jako hranice, ne jako stav. Krystal ma HRANY: 12 vrcholu, kazdy druhy
+# je bliz k poutnikovi. Obrys je tim zubaty a cte se jako namraza.
+#
+# VZDALENOSTI JSOU TU, NE V OBRAZOVCE (`CRYSTAL_RING_FRAC`, `CRYSTAL_INNER`):
+# krystal se nesmi dotknout prstence (= HP bar na 1,0) ani jedoveho krouzku
+# (2,35 tela = 1,382 prstence), a to se tak da OTESTOVAT bez prohlizece.
+#
+# Vsechno je VYPOCET, ne kresleni (a zadne losovani za behu - krystal, ktery si
+# kazdy snimek losuje polomer, kmita a vypada jako chyba).
+const CRYSTAL_POINTS := 12
+const CRYSTAL_RING_FRAC := 1.30     # nasobek `pilgrim_ring_r` (= polomer HP baru)
+const CRYSTAL_INNER := 0.85         # vnitrni vrcholy krystalu
+
+
+static func crystal_ring(c: Vector2, ring_r: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var r: float = ring_r * CRYSTAL_RING_FRAC
+	for i in range(CRYSTAL_POINTS):
+		var a: float = TAU * float(i) / float(CRYSTAL_POINTS)
+		var rr: float = r if i % 2 == 0 else r * CRYSTAL_INNER
+		out.append(c + Vector2(cos(a), sin(a)) * rr)
+	return out
+
+
 # SPOJENY TVAR SMESI. Jan: "Červená (čtverec) + žlutá (trojúhelník) = oranžová
 # (čtverec se zobákem, jak kdybych přilepil rovnostranný trojúhelník na jednu
 # stranu čtverce)". Vraci DVA polygony: prvni tvar v plne velikosti a druhy

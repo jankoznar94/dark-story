@@ -766,10 +766,25 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5,
 			-PI * 0.5 + TAU * p.hp_frac(), 24,
 			Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
+	# LEDOVY KRYSTAL: namrazovy prstenec KOLEM HP baru. Jan (Oct 2026): "Ten vnější
+	# kruh ještě kolem HP baru byl možná skutečně nejlepší řešení. Jen bych ho
+	# udělal tak, aby více evokoval zmrazení. Předtím spíš evokoval silové pole."
+	# a "Zkusme ledový krystal." Obrys je ZUBATY (12 vrcholu, kazdy druhy bliz
+	# k poutnikovi) - hladky kruh byl to silove pole. Geometrie je v `Shapes`
+	# (`CRYSTAL_RING_FRAC`), aby se dala otestovat bez prohlizece: krystal se
+	# nesmi dotknout prstence (= HP bar) ani jedoveho krouzku.
+	#
+	# Kresli se po cely chlad (`p.ice_left`), tedy i ty tri sekundy po poslednim
+	# zasahu, kdy uz zadny paprsek nesviti - prave proto musi byt stav videt na
+	# poutnikovi a ne jen na paprsku.
+	if p.ice_left > 0.0 and not p.is_ghost():
+		draw_polyline(_closed(Shapes.crystal_ring(p.pos, game.pilgrim_ring_r(p))),
+			ICE_RING, maxf(1.6, r * 0.20))
 	# JED A LED SE NEKRESLI JAKO KROUZEK. Jan (Oct 2026): "Kolem nepřátel, do
 	# kterých střílím, je stále navíc světle modrý kroužek. Nechci ho tam." Kolem
-	# poutnika smi byt JEDINY kruh, a to jeho prstenec (= HP bar). Led je proto
-	# videt na TELE poutnika (vyse) a na paprsku, ne na dalsim kruhu.
+	# poutnika smi byt JEDINY kruh, a to jeho prstenec (= HP bar) - led je proto
+	# videt na TELE poutnika, na paprsku a v LEDOVEM KRYSTALU (vyse), ne na
+	# dalsim hladkem krouzku.
 	#
 	# JED (zeleny) zustava: je to stav, ktery ubira zivoty v case, a bez nej by
 	# hrac nevidel, ze mu zakoupeny "Jedovatý zásah" pracuje.
@@ -860,8 +875,8 @@ func _draw_beams() -> void:
 		# TM AVY OBRYS POD PAPRSKEM: na svetlem poutnikovi nebo na karte by se
 		# barevna cara ztratila. Je to obrys, ne druha cara - paprsek zustava
 		# barevny, obrys ho jen oddeluje od podkladu.
-		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE)
-		_beam_line(b["from"], b["to"], col, w)
+		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE, chill)
+		_beam_line(b["from"], b["to"], col, w, chill)
 
 
 # JEDEN SEGMENT PAPRSKU S KULATYMI KONCI. Godot kresli caru s hranatym koncem
@@ -879,16 +894,22 @@ const CHILL_TINT := 0.45
 # puvodni odstin - pri vetsim zblednuti by zledovany poutnik splynul se stribrnou.
 const ICE_BODY := Color(0.80, 0.90, 1.0)
 const ICE_TINT := 0.5
+# LEDOVY KRYSTAL: barva namrazoveho prstence kolem HP baru. Zimnava, ale plocha
+# (zadny glow - Jan ma astigmatismus) a trochu svetlejsi nez mrzivy paprsek,
+# aby se krystal na tmavem podkladu neschoval.
+const ICE_RING := Color(0.72, 0.86, 0.97)
 
 
 func _beam_line(a: Vector2, b: Vector2, c: Color, w: float, dashed: bool = false) -> void:
 	if dashed:
 		# PRERUSOVANA CARA: mrzivy paprsek. Vypocet je v `Shapes.dash`, aby se dal
-		# otestovat bez prohlizece.
+		# otestovat bez prohlizece. KONCE SE NEKRESLI: kulata tecka na konci
+		# prerusovane cary by kolem poutnika byla dalsi krouzek, a tech ma hrac
+		# uz dost (Jan je vracel dvakrat).
 		for seg in Shapes.dash(a, b, w):
 			draw_line(seg[0], seg[1], c, w)
-	else:
-		draw_line(a, b, c, w)
+		return
+	draw_line(a, b, c, w)
 	draw_circle(a, w * 0.5, c)
 	draw_circle(b, w * 0.5, c)
 

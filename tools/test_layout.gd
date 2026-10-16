@@ -154,6 +154,10 @@ func _test_chill_beam() -> void:
 	var body: String = src.substr(start, (end - start) if end > start else 900)
 	_check(body.contains("game.ice_frac()"), "paprsek se nezbarvi podle ledoveho zasahu")
 	_check(body.contains("chill"), "paprsek nema priznak chladu")
+	# PAST, KTERA STALA ROK: `_beam_line` sice umel prerusovanou caru, ale bitva
+	# mu to nikdy nerekla (`dashed` zustavalo false) - paprsek byl porad plny
+	# a "mrzivy" byl jen v hlavicce commitu. Hlida se PROPOJENI, ne jen text.
+	_check(body.contains("w, chill)"), "bitva nekresli mrzivy paprsek prerusovane")
 	var st: int = src.find("func _beam_line")
 	var se: int = src.find("\nfunc ", st + 1)
 	var bl: String = src.substr(st, (se - st) if se > st else 600)
@@ -190,6 +194,34 @@ func _test_chill_beam() -> void:
 	_check(pil.contains("p.ice_left > 0.0") and pil.contains("ICE_BODY"),
 		"zledovany poutnik neni videt na svem tele")
 	_check(pil.contains("true_col"), "prstenec zledovaneho poutnika ztraci svou barvu")
+	# LEDOVY KRYSTAL. Jan: "Ten vnější kruh ještě kolem HP baru byl možná skutečně
+	# nejlepší řešení ... ať víc evokuje zmrazení" + "Zkusme ledový krystal".
+	# Je to ZUBATY obrys, ne hladky kruh - hladky kruh evokoval silove pole.
+	_check(pil.contains("Shapes.crystal_ring"), "zledovany poutnik nema namrazovy prstenec")
+	var ring_r: float = 11.26
+	var cry: PackedVector2Array = Shapes.crystal_ring(Vector2.ZERO, ring_r)
+	_check(cry.size() == Shapes.CRYSTAL_POINTS,
+		"krystal nema %d vrcholu (%d)" % [Shapes.CRYSTAL_POINTS, cry.size()])
+	var lo: float = 1e9
+	var hi: float = 0.0
+	for p in cry:
+		var d: float = p.length()
+		lo = minf(lo, d)
+		hi = maxf(hi, d)
+	_check(absf(hi - ring_r * Shapes.CRYSTAL_RING_FRAC) < 0.01,
+		"vnejsi polomer krystalu neni CRYSTAL_RING_FRAC (%.2f)" % (hi / ring_r))
+	_check(lo < hi * 0.9, "krystal je hladky kruh - nema hrany (%.1f vs %.1f)" % [lo, hi])
+	# KRYSTAL SE NESMI PREKRYVAT: prstenec (= HP bar) je na 1,0 ring_r, jedovy
+	# krouzek na 2,35 tela = 1,382 ring_r (RING_FRAC 1,70). Krystal musi lezet
+	# MEZI nimi - dotek s prstencem by oba kruhy slepil do jednoho, dotek
+	# s jednem by michal dva stavy (chlad a jed) do jednoho obrazku.
+	_check(Shapes.CRYSTAL_INNER * Shapes.CRYSTAL_RING_FRAC > 1.02,
+		"krystal se dotyka prstence (vnitrni vrchol na %.2f r)" % (Shapes.CRYSTAL_INNER * Shapes.CRYSTAL_RING_FRAC))
+	_check(Shapes.CRYSTAL_RING_FRAC < 1.38,
+		"krystal leze do jedoveho krouzku (%.2f r)" % Shapes.CRYSTAL_RING_FRAC)
+	# ZLEDOVANY POUTNIK JE PORAD ZAMIRITELNY: krystal kresli jen stav, barvu
+	# prstence (= na co hrac muze mirrit) nesmi prekreslit.
+	_check(pil.contains("ICE_RING"), "krystal se kresli barvou tela, ne ledovou")
 
 
 # POUTNIK JE I PO ZMENSENI CITELNY. Jan (Oct 2026): "Všechny nepřátele o 15 %
