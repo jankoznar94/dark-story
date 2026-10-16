@@ -200,10 +200,6 @@ const ICE_S := 3.0
 # Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
 # odraz za každého unikátního nepřítele").
 const ODRAZ_RANGE_FRAC := 0.55
-# DVOJTAP NA PALETE: dva tapy na stejnou barvu do teto doby = michani (druhy tap
-# se primichava do barvy zvolene pred tim). Je to horni hranice pro "dva tapy za
-# sebou" - delsi prodleva znamena dva obycejne tapy.
-const DOUBLE_TAP_S := 0.30
 
 # ------------------------------------------------------------------ ROZVRZENI
 
@@ -249,14 +245,14 @@ var log: Array = []
 # jen vi, ze stoji, a `step` opravdu nekrokuje.
 var paused: bool = false
 
-# HERNI HODINY: bezi, kdykoli bezi krok hry (`step`). Meri se jimi dvojtap na
+# HERNI HODINY: bezi, kdykoli bezi krok hry (`step`). Meri se jimi DVA PRSTY na
 # palete - kdyby se meril hodinami systemu, testy by nebyly deterministicke.
 var clock: float = 0.0
-# DVOJTAP NA PALETE: dva tapy na stejnou barvu do `DOUBLE_TAP_S` = michani.
-var last_tap_hue: int = -1
-var last_tap_t: float = -10.0
-# BARVA ZVOLENA PRED POSLEDNIM TAPEM. Do ni se druhy tap primichava.
-var before_hue: int = -1
+# PRSTY NA PALETE: index prstu -> barva pod nim a herni cas, kdy dosedl. Z toho
+# se pozna "dva prsty zaraz" - viz `finger_down`. Drzi se ve HRE (ne na
+# obrazovce), aby se michani dalo testovat bez prohlizece.
+var finger_hue: Dictionary = {}
+var finger_at: Dictionary = {}
 
 var pilgrims: Array = []
 # ZAMERENE CILE (multishot): vez jich drzi tolik, kolik ma koupeno.
@@ -608,8 +604,8 @@ func step(dt: float) -> void:
 	_prune()
 
 
-# POSUNOUT JEN HODINY. Pro testy dvojtapu: hrac v pauze (nebo v testu) potrebuje
-# nechat cas bezet, aby druhy tap uz nebyl dvojtap.
+# POSUNOUT JEN HODINY. Pro testy michani dvema prsty: hrac v pauze (nebo v
+# testu) potrebuje nechat cas bezet, aby druhy prst uz nebyl "zaraz".
 func tick(dt: float) -> void:
 	clock += dt
 
@@ -734,30 +730,58 @@ func select_hue(h: int) -> bool:
 
 # --------------------------------------------------------------- MICHANI BAREV
 #
-# Jan (Oct 2026): "Jeden obyčejný tap = výběr jednoduché barvy. Dva tapy za
-# sebou na stejnou barvu = promíchání barvy do již zvolené. Jakmile je navolena
-# kombinace, tak pro změnu musí hráč vždy udělat prvně jeden tap na jinou barvu
-# a tím výběr resetuje. Pak dvojtapem vytvoří další kombinaci."
+# Jan (Oct 2026): "Jeden klik na jednu barvu znamená reset, výběr jen jedné
+# barvy a pro mixování to bude tak, že hráč klepne dvěma prsty zároveň. Na obě
+# barvy zároveň."
+#
+# DRIV to byl DVOJTAP (dva tapy na stejnou barvu do 0,3 s). Proc uz ne: hrac
+# musi druhy tap trefit do casoveho okna a prvni tap ho na chvili prebije na
+# jednoduchou barvu - takze chvilku hraje barvou, kterou nechtel. U dvou prstu
+# hrac drzi obe barvy pod prsty a vidi, co dela.
 #
 # Je to STAVOVY AUTOMAT HRY (ne obrazovky) a meri se HERNIM casem (`clock`), aby
-# se dalo testovat bez prohlizece. Prvni tap se projevi OKAMZITE (vez na chvili
-# prebije jednoduchou barvu) - cekat 0,3 s, nez se paleta ozve, by pusobilo mrtve.
+# se dalo testovat bez prohlizece.
 #
-# Vraci "mix" (promichano), "single" (obycejny tap) nebo "none" (barva neni
-# v palete) - obrazovka si podle toho hraje zvuk.
-func tap_hue(h: int) -> String:
+# PRVNI PRST SE PROJEVI OKAMZITE: cekat, jestli neprijde druhy, by pusobilo
+# mrtve. Kdyz druhy prst dosedne do `TOUCH_MIX_S` na JINOU barvu, prvni volba se
+# tim promicha. Pozdejsi druhy prst je novy vyber (jedna barva).
+#
+# Vraci "mix" (promichano), "single" (jedna barva) nebo "none" (barva neni
+# v palete) - obrazovka si podle toho muze prehrat zvuk.
+const TOUCH_MIX_S := 0.35
+
+
+func finger_down(index: int, h: int) -> String:
 	if not palette.has(h):
 		return "none"
-	var dbl: bool = (h == last_tap_hue) and (clock - last_tap_t) <= DOUBLE_TAP_S
-	var was: int = before_hue
-	before_hue = tower.hue
-	last_tap_hue = h
-	last_tap_t = clock
-	if dbl and was >= 0 and was != h and Hue.mix_unlocked(level) and tower.set_pair(was, h):
+	# DRUHY PRST ZARAZ: hleda se prst, ktery je jeste dole, dosedl nedavno a lezi
+	# na JINE barve. Kdyby se hledalo i na stejne barve, dve klepnuti na jednu
+	# barvu by vyrabela smes te barvy se sebou.
+	var other: int = -1
+	for i in finger_hue.keys():
+		if int(i) == index:
+			continue
+		if clock - float(finger_at[i]) > TOUCH_MIX_S:
+			continue
+		if int(finger_hue[i]) == h:
+			continue
+		other = int(i)
+		break
+	finger_hue[index] = h
+	finger_at[index] = clock
+	if other >= 0 and Hue.mix_unlocked(level) \
+			and tower.set_pair(int(finger_hue[other]), h):
 		_note("Barvy se míchají: %s (%s)." % [Hue.name_of(tower.mix()), Hue.letter_of(tower.mix())])
 		return "mix"
 	tower.set_hue(h)
 	return "single"
+
+
+# PRST NAHORU. Kdo prst zvedne, prestava platit jako "druhy prst zaraz" - bez
+# toho by michani fungovalo i mezi dvema dotyky, ktere od sebe deli minuty.
+func finger_up(index: int) -> void:
+	finger_hue.erase(index)
+	finger_at.erase(index)
 
 
 # --------------------------------------------------------------- VSTUP POUTNIKU

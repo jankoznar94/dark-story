@@ -50,7 +50,7 @@ func _init() -> void:
 		_test_silver_split_form)
 	_run("smes dvou barev je barva: id, dve pismena, vlastni barva", _test_mix_ids)
 	_run("vez vidi jen to, co ma v sade barev (a smes potrebuje obe)", _test_covers)
-	_run("dvojtap na palete michani barev (a pred sestym levelem ne)", _test_mix_taps)
+	_run("michani dvema prsty zaraz (a pred patym levelem ne)", _test_mix_fingers)
 	_run("kombinovany poutnik: obe barvy, obe schopnosti, prumer sil",
 		_test_mix_pilgrim)
 	_run("boss je na kazde desate vlne (20x zivoty, 30 % rychlosti, 5x zlato)",
@@ -1289,19 +1289,21 @@ func _test_covers() -> void:
 	_check(g.tower.color() != Hue.color_of(Hue.RED), "vez s dvojici ma barvu jedne slozky")
 
 
-# DVOJTAP NA PALETE (Jan: "Jeden obyčejný tap = výběr jednoduché barvy. Dva tapy
-# za sebou na stejnou barvu = promíchání barvy do již zvolené ... Jakmile je
-# navolena kombinace, tak pro změnu musí hráč vždy udělat prvně jeden tap na
-# jinou barvu a tím výběr resetuje.").
-func _test_mix_taps() -> void:
+# MICHANI DVA PRSTY ZARAZ (Jan, Oct 2026): "Jeden klik na jednu barvu znamená
+# reset, výběr jen jedné barvy a pro mixování to bude tak, že hráč klepne dvěma
+# prsty zároveň. Na obě barvy zároveň." Nahrazuje byvaly DVOJTAP.
+func _test_mix_fingers() -> void:
 	var g: Game = _fresh()
 	g.level = 1
 	g.refresh_palette()
 	_quiet(g)
-	# PRED PETYM LEVELEM SE NEMICHA: hrac ma dve barvy, ale michani jeste nema.
-	g.tap_hue(Hue.RED)
-	g.tap_hue(Hue.RED)
-	_check(g.tower.hues == [Hue.RED], "michani slo uz v prvnim levelu")
+	# PRED PATYM LEVELEM SE NEMICHA: hrac ma dve barvy, ale michani jeste nema.
+	g.finger_down(0, Hue.RED)
+	g.finger_down(1, Hue.YELLOW)
+	g.finger_up(0)
+	g.finger_up(1)
+	_check(g.tower.hues == [Hue.YELLOW],
+		"michani slo uz v prvnim levelu (%s)" % str(g.tower.hues))
 	_check(not Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL - 1)
 		and Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL),
 		"michani je odemcene v jinem levelu nez v %d." % Hue.MIX_UNLOCK_LEVEL)
@@ -1322,28 +1324,52 @@ func _test_mix_taps() -> void:
 		"v pátém levelu neni smes R+Y")
 	_check(not Hue.mix_pool_at(5).has(Hue.mix_id(Hue.RED, Hue.BLUE)),
 		"v pátém levelu jde michat i modrou")
-	# A V PETEM LEVELU UZ SE MICHAT DA: dvojtap do 0,3 s promicha, druhy pozdeji ne.
+	# A OD PETATEHO LEVELU SE MICHA DVA PRSTY ZARAZ.
 	g.level = Hue.MIX_UNLOCK_LEVEL
 	g.refresh_palette()
 	_quiet(g)
 	_check(not Hue.mix_pool_at(Hue.MIX_UNLOCK_LEVEL).is_empty(),
 		"v %d. levelu neni zadna smes k dispozici" % Hue.MIX_UNLOCK_LEVEL)
-	g.tap_hue(Hue.RED)
-	_check(g.tower.hues == [Hue.RED], "obycejny tap nevybral cervenou")
-	g.tap_hue(Hue.YELLOW)
-	_check(g.tower.hues == [Hue.YELLOW], "druha barva nevybrala jednoduse")
-	g.tap_hue(Hue.YELLOW)
-	_check(g.tower.hues == [Hue.RED, Hue.YELLOW], "dvojtap nepromichal cervenou se zlutou")
+	# JEDEN PRST = JEDNA BARVA. Tim hrac z kombinace taky resetuje.
+	g.finger_down(0, Hue.RED)
+	g.finger_up(0)
+	_check(g.tower.hues == [Hue.RED], "jeden prst nevybral cervenou")
+	g.finger_down(0, Hue.YELLOW)
+	g.finger_up(0)
+	_check(g.tower.hues == [Hue.YELLOW], "jeden prst nevybral zlutou jednoduse")
+	# DVA PRSTY ZARAZ = SMES (a hrac ji vidi hned, zadne cekani na dvojtap).
+	g.finger_down(0, Hue.RED)
+	g.finger_down(1, Hue.YELLOW)
+	_check(g.tower.hues == [Hue.RED, Hue.YELLOW],
+		"dva prsty nepromichaly cervenou se zlutou (%s)" % str(g.tower.hues))
 	_check(g.tower.mix() == Hue.mix_id(Hue.RED, Hue.YELLOW), "smes neni oranzova")
-	g.tap_hue(Hue.BLUE)
-	_check(g.tower.hues == [Hue.BLUE], "tap z kombinace nevybral jednoduchou barvu")
-	g.tick(1.0)
-	g.tap_hue(Hue.BLUE)
-	_check(g.tower.hues == [Hue.BLUE], "dva tapy s odstupem se pocitaly jako dvojtap")
-	g.tap_hue(Hue.RED)
-	g.tap_hue(Hue.RED)
-	_check(g.tower.hues == [Hue.RED, Hue.BLUE],
-		"dvojtap nepromichal modrou s cervenou (%s)" % str(g.tower.hues))
+	g.finger_up(0)
+	g.finger_up(1)
+	# DRUHY PRST AZ PO OKNE UZ NENI "ZARAZ": je to novy vyber jedne barvy.
+	g.finger_down(0, Hue.YELLOW)
+	g.tick(Game.TOUCH_MIX_S + 0.01)
+	g.finger_down(1, Hue.RED)
+	_check(g.tower.hues == [Hue.RED],
+		"pozdejsi druhy prst se pocital jako michani (%s)" % str(g.tower.hues))
+	g.finger_up(0)
+	g.finger_up(1)
+	# ZVEDNUTY PRST NEPLATI: kdo prst zvedne, ten uz druhy neni.
+	g.finger_down(0, Hue.YELLOW)
+	g.finger_up(0)
+	g.finger_down(1, Hue.RED)
+	_check(g.tower.hues == [Hue.RED],
+		"zvednuty prst se pocital jako druhy prst zaraz (%s)" % str(g.tower.hues))
+	g.finger_up(1)
+	# DVA PRSTY NA STEJNOU BARVU NEJSOU SMES - neni co michat.
+	g.finger_down(0, Hue.RED)
+	g.finger_down(1, Hue.RED)
+	_check(g.tower.hues == [Hue.RED],
+		"dva prsty na stejnou barvu udelaly smes (%s)" % str(g.tower.hues))
+	g.finger_up(0)
+	g.finger_up(1)
+	# PRES BARVU, KTEROU HRAC NEMA, SE NEMICHA (stribrna v palete nikdy neni).
+	_check(g.finger_down(0, Hue.SILVER) == "none", "vez vzala stribrnou")
+	g.finger_up(0)
 
 
 # BOSS JE NA KAZDE DESATE VLNE. Jan (Oct 2026): "Taky musime pridat boss fighty."

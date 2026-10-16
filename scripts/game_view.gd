@@ -74,6 +74,9 @@ var layout: ScreenLayout
 var menu := Menu.new()
 var settings := Settings.new()
 var _pressed: bool = false
+# INDEX PRSTU, KTERY ZACAL SOUCASNE KLEPNUTI. Druhy prst se pozna podle toho, ze
+# ma JINY index (`InputEventScreenTouch.index`); u mysi je to vzdy 0.
+var _first_index: int = 0
 # DOTAZ PRI ODCHODU Z BOJE. Dokud je otevreny, partie se NEKROKUJE - hrac se
 # nema rozhodovat, zatimco mu umiraji poutnici.
 var leave_ask: bool = false
@@ -246,24 +249,50 @@ func _apply_render_scale() -> void:
 
 # STRAZCE KLEPNUTI: Godot vyrabi z kazdeho dotyku i mys, takze se reaguje JEN
 # na stisk (pohyb nema akci) a stav se resetuje pri pusteni.
+#
+# DRUHY PRST JE VYJIMKA - MICHANI BAREV (Jan, Oct 2026): druhy prst dosedne,
+# dokud je prvni jeste dole, takze by ho strazce zahodil. Dotyk na paletu se
+# proto pred strazcem posila hre a ta rozhodne (`Game.finger_down`): bud z nej
+# je smes, nebo novy vyber jedne barvy. Kdyz druhy prst mine paletu, plati
+# strazce dal a nic se nedeje.
 func _unhandled_input(ev: InputEvent) -> void:
-	var pos: Vector2 = Vector2.ZERO
-	var press: bool = false
-	if ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT:
-		pos = ev.position
-		press = ev.pressed
-	elif ev is InputEventScreenTouch:
-		pos = ev.position
-		press = ev.pressed
-	else:
+	var touch: bool = ev is InputEventScreenTouch
+	if not touch and not (ev is InputEventMouseButton and ev.button_index == MOUSE_BUTTON_LEFT):
 		return
-	if not press:
-		_pressed = false
+	var pos: Vector2 = ev.position
+	if not ev.pressed:
+		if touch:
+			game.finger_up(ev.index)
+			if ev.index == _first_index:
+				_pressed = false
+		else:
+			_pressed = false
 		return
+	if touch:
+		var h: int = _palette_hue_at(pos)
+		if _pressed and h >= 0:
+			# Vysledek muze byt smes i novy vyber jedne barvy - pruh se smesi
+			# se proto prekresli vzdy, ne jen u smesi.
+			game.finger_down(ev.index, h)
+			_sync_mix_strip()
+			return
 	if _pressed:
 		return
 	_pressed = true
+	if touch:
+		_first_index = ev.index
 	_tap(pos)
+
+
+# BARVA POD PRSTEM (id barvy), nebo -1. Mimo bitvu, po konci hry a pod pauzou
+# paleta neexistuje - pres paletu se tedy ani nemicha.
+func _palette_hue_at(pos: Vector2) -> int:
+	if not menu.is_battle() or game.is_over() or game.is_paused():
+		return -1
+	for i in range(layout.pal_rects.size()):
+		if (layout.pal_rects[i] as Rect2).has_point(pos) and i < game.palette.size():
+			return int(game.palette[i])
+	return -1
 
 
 # PORADI JE ZAVAZNE: to, co stoji NAD VSIM (dialog), je prvni. Hrac na dotaz
@@ -648,9 +677,10 @@ func _handle_battle_tap(pos: Vector2) -> void:
 	for i in range(layout.pal_rects.size()):
 		if (layout.pal_rects[i] as Rect2).has_point(pos):
 			if i < game.palette.size():
-				# DVOJTAP: dva tapy na stejnou barvu do 0,3 s = smes. Hra to
-				# rozhoduje sama (`game.tap_hue`) a meri hernim casem.
-				game.tap_hue(int(game.palette[i]))
+				# MICHANI DVA PRSTY: hra rozhodne, jestli je to smes (druhy
+				# prst na jinou barvu do `Game.TOUCH_MIX_S`), nebo vyber jedne
+				# barvy. Cas se meri hernimi hodinami, ne systemovymi.
+				game.finger_down(_first_index, int(game.palette[i]))
 				_sync_mix_strip()
 			return
 	if layout.hud_menu.has_point(pos):
