@@ -102,28 +102,38 @@ static func dash(a: Vector2, b: Vector2, w: float) -> Array:
 # nejlepší řešení. Jen bych ho udělal tak, aby více evokoval zmrazení. Předtím
 # spíš evokoval silové pole." a "Zkusme ledový krystal."
 #
-# PROC HRANY A NE KRUH: silove pole je HLADKY kruh - stejne silny vsude, takze
-# vypada jako hranice, ne jako stav. Krystal ma HRANY: 12 vrcholu, kazdy druhy
-# je bliz k poutnikovi. Obrys je tim zubaty a cte se jako namraza.
+# PROC MNOHOUHELNIK A NE KRUH: silove pole je HLADKY kruh - stejne silny vsude,
+# takze vypada jako hranice, ne jako stav. Krystal ma ROVNE STRANY a rohy, takze
+# se cte jako krystal.
 #
-# VZDALENOSTI JSOU TU, NE V OBRAZOVCE (`CRYSTAL_RING_FRAC`, `CRYSTAL_INNER`):
-# krystal se nesmi dotknout prstence (= HP bar na 1,0) ani jedoveho krouzku
-# (2,35 tela = 1,382 prstence), a to se tak da OTESTOVAT bez prohlizece.
+# PRAVIDELNY, NE ZUBATY. Jan (Oct 2026): "To vypadá blbě. Měl by to být normálně
+# pravidelný hexagon nebo Oktagon." Nepravidelny obrys (kazdy vrchol jinde
+# daleko) vypadal jako rozbita kresba, ne jako krystal.
 #
-# Vsechno je VYPOCET, ne kresleni (a zadne losovani za behu - krystal, ktery si
-# kazdy snimek losuje polomer, kmita a vypada jako chyba).
-const CRYSTAL_POINTS := 12
-const CRYSTAL_RING_FRAC := 1.30     # nasobek `pilgrim_ring_r` (= polomer HP baru)
-const CRYSTAL_INNER := 0.85         # vnitrni vrcholy krystalu
+# VZDALENOSTI JSOU TU, NE V OBRAZOVCE: krystal se nesmi dotknout prstence
+# (= HP bar na 1,0) ani jedoveho krouzku (2,35 tela = 1,382 prstence), a to se
+# tak da OTESTOVAT bez prohlizece.
+#
+# Je to VYPOCET, ne kresleni (a zadne losovani za behu).
+const CRYSTAL_SIDES := 8            # oktagon; 6 = hexagon (Jan pripousti oba)
+const CRYSTAL_RADIUS := 1.25        # vsechny vrcholy stejne daleko (opsana kruznice)
 
 
-static func crystal_ring(c: Vector2, ring_r: float) -> PackedVector2Array:
+# NEJBLIZSI BOD STRANY. U pravidelneho mnohouhelniku se STRED STRANY dostane
+# k poutnikovi bliz nez vrchol - a ten se nesmi dotknout prstence (= HP bar).
+static func crystal_inner() -> float:
+	return CRYSTAL_RADIUS * cos(PI / float(CRYSTAL_SIDES))
+
+
+# VRCHOL NAHORU (ne strana): krystal je tim soumerny a hrac ho cte stejne jako
+# prstenec zivotu, ktery taky zacina nahore.
+static func crystal_ring(c: Vector2, ring_r: float,
+		sides: int = CRYSTAL_SIDES) -> PackedVector2Array:
 	var out := PackedVector2Array()
-	var r: float = ring_r * CRYSTAL_RING_FRAC
-	for i in range(CRYSTAL_POINTS):
-		var a: float = TAU * float(i) / float(CRYSTAL_POINTS)
-		var rr: float = r if i % 2 == 0 else r * CRYSTAL_INNER
-		out.append(c + Vector2(cos(a), sin(a)) * rr)
+	var n: int = maxi(3, sides)
+	for i in range(n):
+		var a: float = -PI * 0.5 + TAU * float(i) / float(n)
+		out.append(c + Vector2(cos(a), sin(a)) * ring_r * CRYSTAL_RADIUS)
 	return out
 
 

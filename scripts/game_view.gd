@@ -894,10 +894,11 @@ const CHILL_TINT := 0.45
 # puvodni odstin - pri vetsim zblednuti by zledovany poutnik splynul se stribrnou.
 const ICE_BODY := Color(0.80, 0.90, 1.0)
 const ICE_TINT := 0.5
-# LEDOVY KRYSTAL: barva namrazoveho prstence kolem HP baru. Zimnava, ale plocha
-# (zadny glow - Jan ma astigmatismus) a trochu svetlejsi nez mrzivy paprsek,
-# aby se krystal na tmavem podkladu neschoval.
-const ICE_RING := Color(0.72, 0.86, 0.97)
+# LEDOVY KRYSTAL: barva namrazoveho prstence kolem HP baru. Je to ZIMNAVA MODRA,
+# ne bilá: nahled s bledou barvou (0,72/0,86/0,97) vypadal jako bily obrys -
+# a "bily obrys" uz u poutniku jednou byl a Jan ho vracel. Plocha, zadny glow
+# (Jan ma astigmatismus).
+const ICE_RING := Color(0.55, 0.76, 0.96)
 
 
 func _beam_line(a: Vector2, b: Vector2, c: Color, w: float, dashed: bool = false) -> void:

@@ -195,30 +195,31 @@ func _test_chill_beam() -> void:
 		"zledovany poutnik neni videt na svem tele")
 	_check(pil.contains("true_col"), "prstenec zledovaneho poutnika ztraci svou barvu")
 	# LEDOVY KRYSTAL. Jan: "Ten vnější kruh ještě kolem HP baru byl možná skutečně
-	# nejlepší řešení ... ať víc evokuje zmrazení" + "Zkusme ledový krystal".
-	# Je to ZUBATY obrys, ne hladky kruh - hladky kruh evokoval silove pole.
+	# nejlepší řešení ... ať víc evokuje zmrazení", "Zkusme ledový krystal"
+	# a "Měl by to být normálně pravidelný hexagon nebo Oktagon". Je to PRAVIDELNY
+	# mnohouhelnik (6 nebo 8 stran) - hladky kruh byl silove pole a nepravidelny
+	# obrys vypadal jako rozbita kresba.
 	_check(pil.contains("Shapes.crystal_ring"), "zledovany poutnik nema namrazovy prstenec")
+	_check(Shapes.CRYSTAL_SIDES == 6 or Shapes.CRYSTAL_SIDES == 8,
+		"krystal neni hexagon ani oktagon (%d stran)" % Shapes.CRYSTAL_SIDES)
 	var ring_r: float = 11.26
 	var cry: PackedVector2Array = Shapes.crystal_ring(Vector2.ZERO, ring_r)
-	_check(cry.size() == Shapes.CRYSTAL_POINTS,
-		"krystal nema %d vrcholu (%d)" % [Shapes.CRYSTAL_POINTS, cry.size()])
-	var lo: float = 1e9
-	var hi: float = 0.0
+	_check(cry.size() == Shapes.CRYSTAL_SIDES,
+		"krystal nema %d vrcholu (%d)" % [Shapes.CRYSTAL_SIDES, cry.size()])
+	# PRAVIDELNY: vsechny vrcholy stejne daleko od stredu (Jan: "normálně
+	# pravidelný"). Kdo sem prida nahodne kolísani, rozbije tvar.
 	for p in cry:
-		var d: float = p.length()
-		lo = minf(lo, d)
-		hi = maxf(hi, d)
-	_check(absf(hi - ring_r * Shapes.CRYSTAL_RING_FRAC) < 0.01,
-		"vnejsi polomer krystalu neni CRYSTAL_RING_FRAC (%.2f)" % (hi / ring_r))
-	_check(lo < hi * 0.9, "krystal je hladky kruh - nema hrany (%.1f vs %.1f)" % [lo, hi])
+		_check(absf(p.length() / ring_r - Shapes.CRYSTAL_RADIUS) < 0.01,
+			"vrchol krystalu neni na CRYSTAL_RADIUS (%.3f)" % (p.length() / ring_r))
+	# VRCHOL NAHORU: krystal je soumerny se prstencem zivotu (ten taky zacina nahore).
+	_check(absf(cry[0].x) < 0.01 and cry[0].y < 0.0, "krystal nema vrchol nahoru")
 	# KRYSTAL SE NESMI PREKRYVAT: prstenec (= HP bar) je na 1,0 ring_r, jedovy
-	# krouzek na 2,35 tela = 1,382 ring_r (RING_FRAC 1,70). Krystal musi lezet
-	# MEZI nimi - dotek s prstencem by oba kruhy slepil do jednoho, dotek
-	# s jednem by michal dva stavy (chlad a jed) do jednoho obrazku.
-	_check(Shapes.CRYSTAL_INNER * Shapes.CRYSTAL_RING_FRAC > 1.02,
-		"krystal se dotyka prstence (vnitrni vrchol na %.2f r)" % (Shapes.CRYSTAL_INNER * Shapes.CRYSTAL_RING_FRAC))
-	_check(Shapes.CRYSTAL_RING_FRAC < 1.38,
-		"krystal leze do jedoveho krouzku (%.2f r)" % Shapes.CRYSTAL_RING_FRAC)
+	# krouzek na 2,35 tela = 1,382 ring_r (RING_FRAC 1,70). Podstatny je STRED
+	# STRANY (`crystal_inner`), ne vrchol - ten je k poutnikovi nejbliz.
+	_check(Shapes.crystal_inner() > 1.02,
+		"krystal se dotyka prstence (stred strany na %.2f r)" % Shapes.crystal_inner())
+	_check(Shapes.CRYSTAL_RADIUS < 1.38,
+		"krystal leze do jedoveho krouzku (%.2f r)" % Shapes.CRYSTAL_RADIUS)
 	# ZLEDOVANY POUTNIK JE PORAD ZAMIRITELNY: krystal kresli jen stav, barvu
 	# prstence (= na co hrac muze mirrit) nesmi prekreslit.
 	_check(pil.contains("ICE_RING"), "krystal se kresli barvou tela, ne ledovou")
