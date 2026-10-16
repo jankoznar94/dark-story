@@ -195,13 +195,13 @@ func _test_chill_beam() -> void:
 		"zledovany poutnik neni videt na svem tele")
 	_check(pil.contains("true_col"), "prstenec zledovaneho poutnika ztraci svou barvu")
 	# LEDOVY KRYSTAL. Jan: "Ten vnější kruh ještě kolem HP baru byl možná skutečně
-	# nejlepší řešení ... ať víc evokuje zmrazení", "Zkusme ledový krystal"
-	# a "Měl by to být normálně pravidelný hexagon nebo Oktagon". Je to PRAVIDELNY
-	# mnohouhelnik (6 nebo 8 stran) - hladky kruh byl silove pole a nepravidelny
-	# obrys vypadal jako rozbita kresba.
+	# nejlepší řešení ... ať víc evokuje zmrazení", "Zkusme ledový krystal",
+	# "Měl by to být normálně pravidelný hexagon nebo Oktagon" a nakonec
+	# "Devitihran je nejlepší" (z nahledu 6/8/9/10). Kdo cislo zmeni, at vi, ze
+	# tim meni vzhled hry - a at si precte i druhou pulku teto kontroly.
 	_check(pil.contains("Shapes.crystal_ring"), "zledovany poutnik nema namrazovy prstenec")
-	_check(Shapes.CRYSTAL_SIDES == 6 or Shapes.CRYSTAL_SIDES == 8,
-		"krystal neni hexagon ani oktagon (%d stran)" % Shapes.CRYSTAL_SIDES)
+	_check(Shapes.CRYSTAL_SIDES == 9,
+		"krystal neni devitihran, ktery Jan vybral (%d stran)" % Shapes.CRYSTAL_SIDES)
 	var ring_r: float = 11.26
 	var cry: PackedVector2Array = Shapes.crystal_ring(Vector2.ZERO, ring_r)
 	_check(cry.size() == Shapes.CRYSTAL_SIDES,
@@ -220,6 +220,11 @@ func _test_chill_beam() -> void:
 		"krystal se dotyka prstence (stred strany na %.2f r)" % Shapes.crystal_inner())
 	_check(Shapes.CRYSTAL_RADIUS < 1.38,
 		"krystal leze do jedoveho krouzku (%.2f r)" % Shapes.CRYSTAL_RADIUS)
+	# KRYSTAL NESMI BYT SKORO KRUH. Cim vic stran, tim bliz je obrys kruhu - a
+	# hladky kruh je presne to silove pole, ktere mel krystal nahradit. Devitihran
+	# ma pomer 0,94; od 0,97 vys by to byl jen maly mnohouhelnikovy rozdil.
+	_check(Shapes.crystal_inner() < Shapes.CRYSTAL_RADIUS * 0.97,
+		"krystal je skoro kruh (stred strany na %.3f r)" % Shapes.crystal_inner())
 	# ZLEDOVANY POUTNIK JE PORAD ZAMIRITELNY: krystal kresli jen stav, barvu
 	# prstence (= na co hrac muze mirrit) nesmi prekreslit.
 	_check(pil.contains("ICE_RING"), "krystal se kresli barvou tela, ne ledovou")

@@ -110,12 +110,16 @@ static func dash(a: Vector2, b: Vector2, w: float) -> Array:
 # pravidelný hexagon nebo Oktagon." Nepravidelny obrys (kazdy vrchol jinde
 # daleko) vypadal jako rozbita kresba, ne jako krystal.
 #
+# DEVITIHRAN. Jan vybiral z nahledu sesty/osmi/deviti/desetiuhelnik:
+# "Devitihran je nejlepší" (Oct 2026). Mene stran = moc hrotu, vic stran = obrys
+# je skoro kruh a vraci se to silove pole, ktere mel krystal nahradit.
+#
 # VZDALENOSTI JSOU TU, NE V OBRAZOVCE: krystal se nesmi dotknout prstence
 # (= HP bar na 1,0) ani jedoveho krouzku (2,35 tela = 1,382 prstence), a to se
 # tak da OTESTOVAT bez prohlizece.
 #
 # Je to VYPOCET, ne kresleni (a zadne losovani za behu).
-const CRYSTAL_SIDES := 8            # oktagon; 6 = hexagon (Jan pripousti oba)
+const CRYSTAL_SIDES := 9            # devitihran (Jan, Oct 2026)
 const CRYSTAL_RADIUS := 1.25        # vsechny vrcholy stejne daleko (opsana kruznice)
 
 
