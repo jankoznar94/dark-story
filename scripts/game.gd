@@ -32,10 +32,13 @@ extends RefCounted
 #
 # Oct 2026 - OPACNY SMER: "Rychlost pohybu všech nepřátel se zrychlí na rychlost
 # 1.5x. Bude to nová výchozí hodnota. Nové 1.0x = staré 1.5x. Jsou teď příliš
-# pomalí." 15 / 1,5 = 10 s. POZOR: okno na reakci je `dostrel * TRAVEL_S`, takze
-# se zkratilo z 5,1 s na 3,4 s - kdo hybe timhle cislem, hybe obtiznosti a musi
-# to merit (`tools/balance_sim.gd`).
-const TRAVEL_S := 10.0
+# pomalí." 15 / 1,5 = 10 s.
+#
+# Oct 2026 (Jan): "Všechny nepřátele o 15 % zpomalíme. Ať to vytvoří pocit ještě
+# větší vzdálenosti a rozlohy." 10 / 0,85 = 11,8 s. POZOR: okno na reakci je
+# `dostrel * TRAVEL_S`, takze s pomalejsi chuzi roste i okno na reakci - kdo
+# hybe timhle cislem, hybe obtiznosti a musi to merit (`tools/balance_sim.gd`).
+const TRAVEL_S := 11.8
 const BASE_HP := 20.0
 # OBTIZNOST: kazdy dalsi LEVEL je o 22 % tuzsi (Jan schvalil 1,22; driv 1,15)
 # a kazda dalsi vlna v levelu o 6 %. Driv to bylo 13 % za vlnu v nekonecne
@@ -114,7 +117,20 @@ const BEAM_TAPER := 0.72
 # by mohl končit (a odraz začínat) na plášti toho kruhu."). Je to podil polomeru
 # kresby poutnika; kruh je i VIDET (kresli ho obrazovka), aby hrac videl, kde
 # paprsek konci, a aby to nebyla jen neviditelna hranice ve vzduchu.
-const RING_FRAC := 1.30
+#
+# Oct 2026 (Jan): "Udělejme větší vnitřní padding. Ať kruh není nalepený přímo
+# na tvář uvnitř." Pri 1,30 sel prstenec tesne kolem tvaru (spicka trojuhelniku
+# je v 1,00 r, brisko kapky v 1,15 r) - na telefonu zbyla mezera 1-4 px a kruh
+# vypadal, jako by obkresloval oblicej. Pri 1,70 je mezera 4-6 px podle tvaru:
+# poutnik je v kruhu, ne v jeho obrysu. Paprsek tim konci o kousek dal od tela.
+# Zmereno na snimku 390x844 (`zily2_ring_probe.py`): tvár 11 px, prstenec 22 px.
+const RING_FRAC := 1.70
+# VELIKOST POUTNIKA je NASOBEK ZAKLADNI velikosti kresby (`ScreenLayout.pilgrim_r`).
+# Jan (Oct 2026): "Všechny nepřátele o 15 % zmenšíme a o 15 % zpomalíme jejich
+# pohyb. Ať to vytvoří pocit ještě větší vzdálenosti a rozlohy." Nese si ji
+# poutnik (ne rozvrzeni), takze se zmensi i jeho prstenec - a vetsi vnitrni
+# padding z `RING_FRAC` zustava. Zpomaleni je v `TRAVEL_S`.
+const PILGRIM_SIZE := 0.85
 # POSKOZENI LASERU (za sekundu) JE PARAMETR HRACE ("Ještě musíme přidat upgrade
 # pro Attack damage", Jan Oct 2026) - hledej `laser_dps()` v sekci PARAMETRY.
 # JED A LED: jak dlouho ucinek drzi. Podil (20/35/50 %) je v tabulce upgradu.
@@ -655,6 +671,9 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 	var p := Pilgrim.new()
 	p.hue = hue
 	p.behaviour = Hue.behaviour_of(hue)
+	# VELIKOST KRESBY (Jan: o 15 % mensi nez driv) - viz `PILGRIM_SIZE`.
+	# Rozpadly kus modre ji dale zmensi pres `Hue.SPLIT_SIZE`.
+	p.size = PILGRIM_SIZE
 	p.pos = center + Vector2(cos(a), sin(a)) * field_r
 	p.dir = (center - p.pos).normalized()
 	p.max_hp = hp_for(kolo(), wave, hue)

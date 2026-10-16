@@ -30,6 +30,8 @@ func _init() -> void:
 	_run("nulova velikost okna nic nerozbije", _test_zero_size)
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	_run("laser je cara s obrysem a kresli se nad vezi", _test_beams_are_lines)
+	_run("prstenec poutnika je jeho HP bar a nic jineho", _test_ring_is_hp_bar)
+	_run("poutnik je i po zmenseni citelny", _test_pilgrim_stays_readable)
 	_run("paleta je puntik, ne tvar", _test_palette_is_dot)
 	_run("pismeno barvy je jedno a jedinecne", _test_letters)
 	_run("kruh dostrelu ma barvu veze", _test_range_is_colored)
@@ -104,6 +106,47 @@ func _test_beams_are_lines() -> void:
 	_check(i_tower >= 0 and i_beams >= 0,
 		"kresleni paprsku neni hned za vezi (v poli se nevi, co je nad cim)")
 	_check(i_tower < i_beams, "paprsky se kresli driv nez vez - nejsou nad ni")
+
+
+# PRSTENEC KOLEM POUTNIKA JE ZAROVEN JEHO HP BAR (Jan, Oct 2026: "Kruhy kolem
+# nepřátel budou sloužit rovnou jako jejich HP bary.") a NIC JINEHO kolem nej
+# neni. Druhy, bily oblouk (`r * 1.55`, barva TEXT) se zrusil - Jan ho videl
+# jako "ještě jeden kruhový Border (světle modrý nebo bílý) kolem jejich životů.
+# Ten je tam navíc." Hlida se MISTO VOLANI ve zdroji obrazovky: kdyby se vratil,
+# obrazovka k tomu nic nerekne a hrac vidi dve kolecka misto jednoho.
+func _test_ring_is_hp_bar() -> void:
+	var src: String = _src()
+	var at: int = src.find("func _draw_pilgrim")
+	_check(at >= 0, "ve zdroji obrazovky chybi _draw_pilgrim")
+	if at < 0:
+		return
+	var end: int = src.find("\nfunc ", at + 1)
+	var body: String = src.substr(at, (end - at) if end > at else src.length() - at)
+	_check(body.contains("TAU * p.hp_frac()"),
+		"prstenec poutnika nekresli zbyvajici zivoty - kruh neni HP bar")
+	_check(not body.contains("1.55"),
+		"kolem poutnika se kresli druhy (bily) oblouk, ktery tam nema byt")
+	# PRSTENEC SE NESMI DOTYKAT TVARE. Tvar saha k 1,15 r (kapka brisko), takze
+	# s `RING_FRAC` pod 1,45 je mezera mensi nez tretina polomeru a kruh vypada,
+	# jako by obkresloval oblicej (Jan: "Ať kruh není nalepený přímo na tvář").
+	_check(Game.RING_FRAC >= 1.45,
+		"prstenec je nalepeny na tvár (RING_FRAC %.2f)" % Game.RING_FRAC)
+
+
+# POUTNIK JE I PO ZMENSENI CITELNY. Jan (Oct 2026): "Všechny nepřátele o 15 %
+# zmenšíme" - ale zmenseni o par procent vic a z tvaru je necitelny puntik;
+# hranice je 5 px v polomeru na nejmensim beznem telefonu.
+func _test_pilgrim_stays_readable() -> void:
+	for r in RESOLUTIONS:
+		# NA SIRKU SE VELIKOST NEHLIDA (stejne jako u `_test_resolution`): hra je
+		# na vysku a na sirokem displeji vyjdou jednotky male i v poradku.
+		if r.y <= r.x:
+			continue
+		var l := ScreenLayout.new()
+		l.update(r)
+		var r_px: float = l.pilgrim_r * Game.PILGRIM_SIZE
+		_check(r_px >= 5.0, "%dx%d: poutnik ma po zmenseni %.1f px v polomeru"
+			% [int(r.x), int(r.y), r_px])
 
 
 # PANEL V BITVE NENABIZI UPGRADE, KTERY V NI NEJDE KOUPIT. Stat s `temp_max` 0

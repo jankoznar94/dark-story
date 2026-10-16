@@ -39,16 +39,17 @@ const CARD_BG := Color(0.095, 0.090, 0.100)
 const CARD_ROW := Color(0.125, 0.118, 0.128)
 const CARD_EDGE := Color(0.34, 0.33, 0.36)
 # RAMEK BUNKY UPGRADU. Jan (Oct 2026): "Rámečky všechny tlačítek upgradů budou
-# tlustší. Třeba 3px." Prvni pokus byl presne 3 px (zmereno v prohlizeci) a Jan
-# ho vratil: "bordery tlačítek s upgrady je stále tenký". 3 px na bunce 176x48
-# je totiz porad jen tenka linka - hranice je 4 px, kde je ramecek videt jako
-# ramecek, ne jako obrys. Kdo bude hybat, at to zmeri (`~/probes/zily2_frame_probe.py`).
-const CELL_FRAME := 4.0
+# tlustší. Třeba 3px." Ani 3 px ani 4 px to nevyřešily - Jan je vracel slovy
+# "bordery tlačítek s upgrady je stále tenký" (dvakrát) a "stále stejně tenký".
+# Na bunce 176x48 se 4 px cte jako obrys, ne jako ramecek; 6 px uz je ramecek,
+# ktery je videt jako ramecek. Zmereno v prohlizeci na zive strance
+# (`zily2_frame_probe.py` ve skillu) - kdo bude hybat, at to zmeri znovu.
+const CELL_FRAME := 6.0
 # TABY KATEGORII A RAMEK PANELU. Jsou to taky tlacitka upgradu (a ty nevybrane
-# mely 1 px, takze vypadaly rozbite) - se 4 px bunkou musi drzet krok, jinak
+# mely 1 px, takze vypadaly rozbite) - se 6 px bunkou musi drzet krok, jinak
 # panel vypada, jako by kazda cast byla z jine hry.
-const TAB_FRAME := 3.0
-const PANEL_FRAME := 3.0
+const TAB_FRAME := 4.0
+const PANEL_FRAME := 4.0
 # ZIVOTY VEZE: zelena dokud drzi, cervena pod tretinou. Barva NENI jediny
 # nositel - cislo je i v hornim pruhu.
 const HP_GOOD := Color(0.62, 0.76, 0.56)
@@ -709,23 +710,33 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# POUTNIK JDE K VEZI "OBLICEJEM" (Jan, Oct 2026). Smer bere z `p.dir`, ktery
 	# je smer chuze - kdyz se zmeni chuze, tvary se otoci samy.
 	_shape(p.hue, p.pos, r, col, p.is_ghost(), Shapes.facing(p.dir))
-	# PRSTENEC: kruh barev poutnika, na jehoz PLASHTI konci paprsek (a odrazi se
-	# z neho dal). Kresli se i proto, ze hranice, kterou hrac nevidi, vypada
-	# jako chyba. Duch ho nema - je pruhledny a neda se na nej mirrit.
+	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
+	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
+	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
+	# zivoty. Barva zustava barva poutnika (nese ji zamereni veze), takze tvar,
+	# barvu i zbyvajici zivoty nese JEDEN kruh. Na jeho PLASHTI konci paprsek
+	# (a odrazi se z neho dal) - kresli se i proto, ze hranice, kterou hrac
+	# nevidi, vypada jako chyba. Duch ho nema: je pruhledny a neda se na nej
+	# mirrit.
+	#
+	# DRUHY, BILY OBLOUK SE ZRUSIL (byl v 1,55 r, barva TEXT). Objevoval se pri
+	# kazdem zasahu a Jan ho videl jako "jeden kruhovy border (svetle modry nebo
+	# bily) kolem jejich zivotu" - byl to HP bar vedle HP baru, ktery tam nema
+	# co delat (Oct 2026).
 	if not p.is_ghost():
-		var rr: float = game.pilgrim_ring_r(p)
-		# 20 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
+		# 24 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
 		# muze byt naraz i nekolik stovek poutniku, tak se pocet usecek drzi
 		# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
-		draw_arc(p.pos, rr, 0.0, TAU, 20, Color(col.r, col.g, col.b, RING_ALPHA),
-			maxf(1.2, r * 0.16))
-	if p.hp_frac() < 0.999:
-		draw_arc(p.pos, r * 1.55, -PI * 0.5, -PI * 0.5 + TAU * p.hp_frac(), 24, TEXT, 2.0)
-	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji.
+		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5,
+			-PI * 0.5 + TAU * p.hp_frac(), 24,
+			Color(col.r, col.g, col.b, RING_ALPHA), maxf(1.6, r * 0.20))
+	# JED A LED musi byt VIDET, jinak hrac nevi, ze mu upgrady pracuji. Drzi si
+	# odstup od prstence (2,05 a 2,35 r) - kdyby sedly tesne na nej, hrac vidi
+	# dvojity kruh a nevi, ktery z nich je zivot.
 	if p.ice_left > 0.0:
-		draw_arc(p.pos, r * 1.9, 0.0, TAU, 20, Color(0.45, 0.72, 0.90, 0.85), 2.0)
+		draw_arc(p.pos, r * 2.05, 0.0, TAU, 20, Color(0.45, 0.72, 0.90, 0.85), 2.0)
 	if p.poison_left > 0.0:
-		draw_arc(p.pos, r * 2.2, 0.0, TAU, 20, Color(0.55, 0.80, 0.35, 0.85), 2.0)
+		draw_arc(p.pos, r * 2.35, 0.0, TAU, 20, Color(0.55, 0.80, 0.35, 0.85), 2.0)
 
 
 # TVAR BAREV. Barva nikdy neni jediny nositel informace - u sesti barev to
@@ -1038,7 +1049,7 @@ func _draw_card(panel: Rect2, tabs: Array, icons: Array, active: int, cats: Arra
 		var on: bool = (i == active)
 		draw_rect(tr, CARD_ROW if on else CARD_BG, true)
 		var col: Color = TEXT if on else DIM
-		draw_rect(tr, col if on else CARD_EDGE, false, TAB_FRAME if on else 2.0)
+		draw_rect(tr, col if on else CARD_EDGE, false, TAB_FRAME if on else 3.0)
 		var cat: String = String(cats[i]) if i < cats.size() else ""
 		var tex: Texture2D = _cat_icon(cat)
 		if tex != null:
