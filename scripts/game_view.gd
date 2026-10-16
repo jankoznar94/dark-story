@@ -819,6 +819,9 @@ func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> voi
 	# a na mensim telefonu je puntik mensi. `_fit_px` zmensuje, dokud se text do
 	# puntiku nevejde - a nikdy pod 8 px (menssi pismo hrac neprecte).
 	var px: int = _fit_px(txt, r * 1.55, maxi(9, int(r * 1.35)), 8)
+	# NA STŘEDU PUNTIKU. Jan (Oct 2026): "Iniciály musí být logicky na středu."
+	# `_label` (bez `dy`) centruje text ve obdelniku, ktery je presne kolem
+	# stredu puntiku - zadny posun stranou ani dolu.
 	_label(txt, Rect2(p.x - r, p.y - r, 2.0 * r, 2.0 * r), px, GLYPH)
 
 

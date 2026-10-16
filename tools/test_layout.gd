@@ -335,6 +335,13 @@ func _test_enemy_is_dot_with_letters() -> void:
 	# VELIKOST PISMEN SE HLEDA, NE HADA: dve pismena ("RY") jsou sirsi nez jedno
 	# a na mensim displeji je puntik mensi.
 	_check(dot.contains("_fit_px("), "velikost pismen se nerozhoduje podle puntiku")
+	# PISMENA PATRI NA STŘED PUNTIKU (Jan, Oct 2026: "Iniciály musí být logicky na
+	# středu."). Hlida se OBDELNIK, ne pocit: musi byt presne kolem stredu `p`
+	# a bez posunu (`dy`) - ten obrazek posune.
+	_check(dot.contains("Rect2(p.x - r, p.y - r, 2.0 * r, 2.0 * r)"),
+		"pismena nejsou na stredu puntiku (obdelnik neni kolem stredu)")
+	_check(not dot.contains("_label(txt, Rect2(p.x - r, p.y - r, 2.0 * r, 2.0 * r), px, GLYPH,"),
+		"pismena puntiku maji posun - nejsou na stredu")
 	_check(not dot.contains("draw_colored_polygon"),
 		"puntik kresli tvar, i kdyz ma byt jen puntik s pismeny")
 	# KRESLENI POUTNIKA MUSI PUNTIK OPRAVDU POUZIT (a nesahat po tvary).
