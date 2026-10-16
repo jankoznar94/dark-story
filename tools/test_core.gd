@@ -1283,19 +1283,36 @@ func _test_mix_taps() -> void:
 	g.level = 1
 	g.refresh_palette()
 	_quiet(g)
-	# PRED SESTYM LEVELEM SE NEMICHA: hrac ma dve barvy, ale michani jeste nema.
+	# PRED PETYM LEVELEM SE NEMICHA: hrac ma dve barvy, ale michani jeste nema.
 	g.tap_hue(Hue.RED)
 	g.tap_hue(Hue.RED)
 	_check(g.tower.hues == [Hue.RED], "michani slo uz v prvnim levelu")
-	_check(not Hue.mix_unlocked(1) and Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL),
-		"michani je odemcene v jinem levelu nez v sestem")
+	_check(not Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL - 1)
+		and Hue.mix_unlocked(Hue.MIX_UNLOCK_LEVEL),
+		"michani je odemcene v jinem levelu nez v %d." % Hue.MIX_UNLOCK_LEVEL)
 	_check(Hue.mix_pool_at(1).is_empty(), "v prvnim levelu existuje smes")
-	# OD SESTEHO LEVELU: dvojtap do 0,3 s promicha, druhy tap pozdeji ne.
+	# POSTUPNE ZVYKANI NA MICHANI (Jan, Oct 2026): v kazdem dalsim levelu pribude
+	# jedna barva, se kterou se smi michat - a tim i dvojice, ktere z ni jdou.
+	_check(Hue.mix_colors_at(5) == 2 and Hue.mix_colors_at(6) == 3
+		and Hue.mix_colors_at(7) == 4 and Hue.mix_colors_at(8) == 5,
+		"michani se neodemyka po barvach (5: %d, 6: %d, 7: %d, 8: %d)"
+		% [Hue.mix_colors_at(5), Hue.mix_colors_at(6), Hue.mix_colors_at(7),
+			Hue.mix_colors_at(8)])
+	_check(Hue.mix_pool_at(5).size() == 1 and Hue.mix_pool_at(6).size() == 3
+		and Hue.mix_pool_at(7).size() == 6 and Hue.mix_pool_at(8).size() == 10,
+		"pocet smesi v levelech nesedi (5: %d, 6: %d, 7: %d, 8: %d)"
+		% [Hue.mix_pool_at(5).size(), Hue.mix_pool_at(6).size(),
+			Hue.mix_pool_at(7).size(), Hue.mix_pool_at(8).size()])
+	_check(Hue.mix_pool_at(5).has(Hue.mix_id(Hue.RED, Hue.YELLOW)),
+		"v pátém levelu neni smes R+Y")
+	_check(not Hue.mix_pool_at(5).has(Hue.mix_id(Hue.RED, Hue.BLUE)),
+		"v pátém levelu jde michat i modrou")
+	# A V PETEM LEVELU UZ SE MICHAT DA: dvojtap do 0,3 s promicha, druhy pozdeji ne.
 	g.level = Hue.MIX_UNLOCK_LEVEL
 	g.refresh_palette()
 	_quiet(g)
 	_check(not Hue.mix_pool_at(Hue.MIX_UNLOCK_LEVEL).is_empty(),
-		"v sestem levelu neni zadna smes k dispozici")
+		"v %d. levelu neni zadna smes k dispozici" % Hue.MIX_UNLOCK_LEVEL)
 	g.tap_hue(Hue.RED)
 	_check(g.tower.hues == [Hue.RED], "obycejny tap nevybral cervenou")
 	g.tap_hue(Hue.YELLOW)

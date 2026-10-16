@@ -4,7 +4,7 @@ extends RefCounted
 # VEŽ. Uz to neni tabulka stupnu - vsechny jeji hodnoty (dostrel, kadence,
 # kritika, cile, ricochet, jed, led) jsou PARAMETRY HRACE a pocita je `Game`
 # z tabulky `Upgrades`. Tady zustava jen to, co je opravdu o vezi:
-#   * BARVY, na ktere je prebita (jedna, nebo SMES DVOU - od levelu 6),
+#   * BARVY, na ktere je prebita (jedna, nebo SMES DVOU - od 5. levelu),
 #     a PALETA, ze ktere smi vybirat,
 #   * VIDI NA TOHOHLE POUTNIKA? (`sees`) - jedine misto, kde se rozhoduje
 #     o barve, a proto to musi zustat tady.

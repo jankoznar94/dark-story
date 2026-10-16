@@ -95,8 +95,9 @@ const ROWS := [
 	},
 ]
 
-# SMESI BAREV (Oct 2026). Michani se odemkne v sestem levelu - Jan: "Dosáhl jsem
-# teď do levelu 6 a nová barva už nepřibyla. To znamená, tě by mělo přibýt
+# SMESI BAREV. Michani se odemyka v PETEM levelu (kdyz uz nova barva neni co
+# pridat - Jan: "Dosáhl jsem teď do levelu 6 a nová barva už nepřibyla.") a dalsi
+# tri levely pribyvaji dalsi dvojice (viz `MIX_UNLOCK_LEVEL`).
 # míchání barev."
 #
 # SMES JE BARVA, ne nova entita: ma sve id, barvu, dve pismena i jmeno, a proto
@@ -110,9 +111,17 @@ const ROWS := [
 # neni jediny nositel informace.
 const SINGLE_COUNT := 6
 const MIX_BASE := 100
-# LEVEL, od ktereho je michani odemcene. V petem levelu ma hrac vsechny zakladni
-# barvy a dalsi level by mu nemel co dat - misto nove barvy dostane michani.
-const MIX_UNLOCK_LEVEL := 6
+# LEVEL, OD KTEREHO SE MICHÁ, A KOLIK BAREV SE V KAZDEM LEVELU MICHÁ.
+# Jan (Oct 2026) rozdelil michani do ctyr levelu, aby si hrac na kombinace zvykal
+# postupne (samotne barvy se odemykaji po jedne - `unlock_level` v ROWS):
+#   1.-4. level - 2, 3, 4 a 5 barev (michani jeste ne),
+#   5. level - kombinace PRVNICH DVOU barev (R+Y),
+#   6. level - kombinace prvnich TRI (RY, RB, YB),
+#   7. level - kombinace prvnich CTYR,
+#   8. level - kombinace VSECH PETI.
+# "Prvnich N" je poradi v palete (`palette_at`): cervena, zluta, modra, zelena,
+# fialova. Hlida to `test_core` (`mix_colors_at` i pocty v `mix_pool_at`).
+const MIX_UNLOCK_LEVEL := 5
 
 # TABULKA SMESI. Klic je dvojice pismen v poradi barev ("RY" = Red+Yellow), takze
 # se nikdy nevygeneruje "YR". Barvy jsou spoctene aditivnim prumerem (viz vyse),
@@ -203,14 +212,24 @@ static func mix_unlocked(level: int) -> bool:
 	return level >= MIX_UNLOCK_LEVEL
 
 
-# VSECHNY SMESI, KTERE V TETO CHVILI MAJI SMYSL (odemcene + obe barvy uz ve hre).
-static func mix_pool_at(level: int) -> Array:
+# KOLIK PRVNICH BAREV SE V TOMTO LEVELU SMI MICHAT. Je to jedine misto, kde je
+# receno, jak rychle si hrac na michani zvyka (viz `MIX_UNLOCK_LEVEL`).
+static func mix_colors_at(level: int) -> int:
 	if not mix_unlocked(level):
-		return []
-	var pal: Array = palette_at(level)
+		return 0
+	return clampi(level - MIX_UNLOCK_LEVEL + 2, 0, palette_at(level).size())
+
+
+# VSECHNY SMESI, KTERE V TETO CHVILI MAJI SMYSL: michani je odemcene, obe barvy
+# uz ve hre jsou a je to dvojice z prvnich `mix_colors_at` barev.
+static func mix_pool_at(level: int) -> Array:
+	var n: int = mini(mix_colors_at(level), palette_at(level).size())
 	var out: Array = []
-	for i in range(pal.size()):
-		for j in range(i + 1, pal.size()):
+	if n < 2:
+		return out
+	var pal: Array = palette_at(level)
+	for i in range(n):
+		for j in range(i + 1, n):
 			out.append(mix_id(int(pal[i]), int(pal[j])))
 	return out
 

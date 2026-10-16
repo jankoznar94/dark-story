@@ -94,6 +94,12 @@ nepoužívá.
   barvy mají okno delší, resp. kratší).
 - **Levely vypadají stejně**, liší se jen **počtem** a složením vln (každá
   vlna míchá všechny barvy, které jsou v tom levelu ve hře).
+- **Barev přibývá po jedné a míchání se učí postupně** (Jan, Oct 2026): 1. level
+  2 barvy, 2. tři, 3. čtyři, 4. pět; 5. level pět barev + kombinace **prvních dvou**
+  (R+Y), 6. level kombinace prvních **tří** (RY, RB, YB), 7. level prvních **čtyř**,
+  8. level kombinace **všech pěti** (10 dvojic). Hráč tak na každý nový typ směsi
+  dostane celý level — místo aby na něj spadlo všech deset naráz. Hlídá to
+  `test_core` (`Hue.mix_colors_at` i počty v `Hue.mix_pool_at`).
 
 ## Upgrady a tempo hry (Oct 2026)
 
