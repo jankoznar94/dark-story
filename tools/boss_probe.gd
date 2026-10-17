@@ -47,7 +47,9 @@ func _run() -> void:
 	var at_end: Array = []
 	var rows: Array = []
 	var guard: int = 0
-	while wave <= waves_to_watch and guard < 60 * 60 * 20:
+	# STROP SIMULACE: 60 minut herniho casu (level ma padesat vln a boss vlny
+	# jsou pomale - s dvaceti minutami se sonda dostala jen na 20. vlnu).
+	while wave <= waves_to_watch and guard < 60 * 60 * 60:
 		guard += 1
 		if g.wave != wave:
 			if wave >= 1:

@@ -1550,9 +1550,22 @@ func _test_tiers() -> void:
 	if boss == null:
 		return
 	_check(boss.tier == 0, "boss ma uroven %d (ma byt 1)" % (boss.tier + 1))
-	var want: float = g7.hp_for(g7.kolo(), g7.wave, boss.hue, 0) * Game.BOSS_HP_MULT
+	var want: float = g7.boss_hp()
 	_check(absf(boss.max_hp - want) < 0.01,
 		"boss ma %.1f zivotu, ma byt %.1f (uroven se mu nesmi pocitat)" % [boss.max_hp, want])
+	# BOSS JE STEJNE TVRDY VE VSECH BARVACH: kdyby se zivoty nasobily barvou,
+	# mel by zluty boss 0,7x a cerveny 2,2x - a zluty by umrel mezi poutniky
+	# drive, nez by si ho hrac vsiml (presne to Jan videl).
+	var hp_of: Array = []
+	for h in Hue.active_at(g7.level):
+		g7.pilgrims = []
+		g7.wave = Game.BOSS_EVERY_WAVES * 2
+		var b2: Pilgrim = g7.spawn_at_angle(0.0, int(h), 0)
+		g7._make_boss(b2)
+		hp_of.append(b2.max_hp)
+	for hp in hp_of:
+		_check(absf(float(hp) - hp_of[0]) < 0.01,
+			"boss neni stejne tvrdy ve vsech barvach (%.0f vs %.0f)" % [float(hp), hp_of[0]])
 	# UROVEN SE DEDA NA POUTNIKA (kresba i zivoty), ne na celou vlnu.
 	g7.wave = 1
 	var p3: Pilgrim = g7.spawn_at_angle(0.0, Hue.RED, 3)
@@ -1610,10 +1623,12 @@ func _test_boss() -> void:
 	if bosses.is_empty():
 		return
 	var b: Pilgrim = bosses[0]
-	var want_hp: float = g.hp_for(g.kolo(), g.wave, b.hue)
-	_check(absf(b.max_hp - want_hp * Game.BOSS_HP_MULT) < 0.01,
+	# BOSS JE STEJNE TVRDY VE VSECH BARVACH (`Game.boss_hp`) - jinak by zluty
+	# boss umrel mezi poutniky, nez by si ho hrac vsiml.
+	var want_hp: float = g.boss_hp()
+	_check(absf(b.max_hp - want_hp) < 0.01,
 		"boss nema %dx zivoty (%.1f, ma byt %.1f)"
-		% [int(Game.BOSS_HP_MULT), b.max_hp, want_hp * Game.BOSS_HP_MULT])
+		% [int(Game.BOSS_HP_MULT), b.max_hp, want_hp])
 	# RYCHLOST BOSSE NEZAVISI NA BARVE (Oct 2026) - jinak by se nedalo rict,
 	# kdy dojde k vezi, a cerveny boss by sel sam o pul minuty dele.
 	var want_speed: float = g.pilgrim_speed() * Game.BOSS_SPEED_MULT

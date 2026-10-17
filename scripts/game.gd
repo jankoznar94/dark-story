@@ -1060,6 +1060,24 @@ func hp_for(k: int, wave_n: int, h: int, tier: int = 0) -> float:
 	return BASE_HP * lvl_mult * wave_mult * Hue.hp_mult(h) * Hue.tier_hp(tier)
 
 
+# ZIVOTY BOSSE. NEZAVISI NA BARVE - a to je cely smysl.
+#
+# Jan (Oct 2026): "Zluty nemuze zemrit drive, nez si ho vsimnu. Ma byt veliky.
+# Vyrazne jiny nez ostatni nepratele kolem." Zmereno (`tools/boss_color_probe`):
+# barvy se stridaji (level 1: cervena, cervena, zluta, zluta, zluta), ale kdyz
+# se zivoty nasobily barvou, mel zluty boss na 30. vlne 470 ziv. proti 1033
+# cerveneho - a protoze vez se v boss vlne deli mezi bosse a poutniky, zluty
+# boss umrel mezi nimi TISE, drive nez dosel k vezi. Hrac tedy videl jen
+# cervene bosse a mel pocit, ze jine barvy nejsou.
+#
+# REFERENCI JE NEJTVRDSI BARVA (`Hue.RED`, 2,2x): boss je presne tak tvrdy jako
+# dnesni cerveny boss, at ma kteroukoli barvu, takze se "boss" pozna vzdycky.
+# Kdo hybe timhle cislem, hybe OBTIZNOSTI BOSS VLN U VSECH BAREV - a MUSI
+# premerit `tools/balance_sim.gd`.
+func boss_hp() -> float:
+	return hp_for(kolo(), wave, Hue.RED, 0) * BOSS_HP_MULT
+
+
 func spawn_at_angle(a: float, h: int = -1, tier: int = 0) -> Pilgrim:
 	var pool: Array = spawn_pool()
 	var hue: int = h
@@ -1113,7 +1131,7 @@ func _make_boss(p: Pilgrim) -> void:
 	# `_start_wave`, aby si `plan_tier` a poutnik neodporovaly). Kdyby boss
 	# zdedil uroven 4, bylo by z 20x zivotu 58x a hrac by na nej nemel sanci.
 	p.tier = 0
-	p.max_hp = hp_for(kolo(), wave, p.hue, 0) * BOSS_HP_MULT
+	p.max_hp = boss_hp()
 	p.hp = p.max_hp
 	# RYCHLOST SE POCITA ZE ZAKLADU, NE Z POUTNIKA: kdyby se nasobila i jeji
 	# barva (`p.speed` uz `Hue.speed_mult` ma), byl by cerveny boss o vic nez
@@ -1414,8 +1432,14 @@ func _kill(p: Pilgrim) -> void:
 	# za stejne, hrac by se bossum vyhybal a zkouska poskozeni by se nevyplatila.
 	# UROVEN BARVY ZLATO ZVEDA TAKY (`Hue.TIER_GOLD`): vetsi poutnik = vic prace
 	# = vic penez, jinak by byl jenom otrava navic.
+	#
+	# BOSS PLATI STEJNE VE VSECH BARVACH (jako jeho zivoty, viz `boss_hp`):
+	# kdyby se zlato bralo z jeho barvy, bral by hrac za stejne tezky souboj
+	# 2 zlata (zluty) nebo 4 (cerveny) - a to je presne ten rozdil, ktery
+	# z barev dela neco, co hrac nema jak ovlivnit.
+	var pay_hue: int = Hue.RED if p.is_boss else p.hue
 	var mult: float = BOSS_GOLD_MULT if p.is_boss else Hue.tier_gold(p.tier)
-	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult() * mult)) \
+	gold += int(round(float(Hue.gold_of(pay_hue)) * gold_mult() * mult)) \
 		+ int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.
