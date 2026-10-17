@@ -111,47 +111,28 @@ const WAVES_PER_LEVEL := 50
 # vlny (wave_size) - jedno pocitadlo, ne dve.
 const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 
-# DOCASNE UCPINKY: mezera se v ramci levelu zkracuje a u VELKE vlny se zkrati
-# jeste vic, aby se cely zastup vysypal do `SPAWN_WAVE_S`. Bez toho by vlna
-# o stovkach poutniku trvala desitky minut.
+# VSTUPNI OKNO VLNY. Neni to pevna mezera: pocita se z ROZDILU CASU CESTY barev
+# ve vlne (`wave_gap`).
 #
-# POZOR, JE TO MEZERA MEZI DORAZY, NE MEZI VSTUPY. Vstupni casy se pocitaji
-# zpetne z dorazu (`wave_spawn_order`), aby barvy dosly k vezi SPOLU - proto
-# se "mezera ve vstupech" v `_phase_step` neda precist z techto cisel.
+# Jan (Oct 2026, druhy pruchod): "Nemá smysl, aby došli ve stejnou chvíli. Ta
+# hra potřebuje, aby chodili různě. Náhodně. Aby hráč neustále musel hlídat
+# barvu a průběžně přepínat." - takze ZADNE srovnavani dorazu: barvy vstupuji
+# v nahodnem poradi a dlouho (okno je nasobek rozdilu rychlosti), takze se
+# u veze MIJEJI CELY CAS. Kdo hleda "dorazi spolu", hleda starou verzi teto
+# opravy - srovnavani dorazu Jan zamitl.
 #
-# PROC TAK MALA CISLA (Oct 2026): s padesati vlnami na level se level roztahl
-# na 54 minut a Jan chtel 20-25. Zmereno simulatorem (`balance_sim.gd`,
-# --levels=2), jak dlouho level trva podle mezer:
-#   puvodni 2,5 / 0,026 / 55 s ...... 54 min (level 1+2 = 6524 s)
-#   polovina (1,25 / 0,013) ......... 35 min
-#   ctvrtina (0,63 / 0,0065 / 14 s) . 26 min
-#   tato cisla ...................... 22-23 min (level 1 = 1378 s)
-#   skoro nulova mezera (0,1 / 0,05)  19 min <- PODLAHA: i kdyby cela vlna
-#                                     stala na plose naraz, dobu vlny urcuje
-#                                     doba zabijeni (~21 s na vlnu)
-# PO MICHANI VLNY (viz `wave_spawn_order`) SE DELKA LEVELU NEMENI: dorazy jsou
-# jen jinak rozlozene. Zmereno `balance_sim.gd --levels=1`: 1396 s (start 0,45)
-# a 1414 s (start 0,55) proti 1425 s pred opravou - porad tech ~23 minut.
-# Kdo hybe temito cisly, hybe DELKOU LEVELU i jeho obtiznosti: cim mensi
-# mezera, tim vic poutniku je na plose naraz a tim vic prace pro vez.
-const SPAWN_GAP_START := 0.55
-const SPAWN_GAP_MIN := 0.08
-# Mezera se za cely level zkrati o 0,23 s (0,45 -> 0,22); driv to bylo 1,3 s za
-# deset vln. Pomer 10/50 z puvodniho koeficientu 0,13 by dal 0,026 - to bylo
-# merene tech 54 minut, proto je koeficient mensi nez "spravedlivy" prepocet.
-const SPAWN_GAP_PER_WAVE := 0.0047
-# STROP CELKOVE DOBY DORAZU VLNY. Neni to kosmetika: pocet poutniku je ted
-# v destikach az stovkach, takze pevna mezera by jednu vlnu natahla pres deset
-# minut. Je to ZAROVEN HRANICE OBTIZNOSTI: cim kratsi doba dorazu, tim vic
-# poutniku je na plose naraz a tim vic prace pro vez - hra se pak da dohrat jen
-# s nakoupenymi upgrady.
-#
-# POZOR: u VELKYCH vln tenhle strop NEPLATI, protoze `arrival_gap` konci na
-# `SPAWN_GAP_MIN` - a ta je vyssi nez strop/pocet. Vlna o 400 poutnicich ma
-# proto dorazy rozlozene na 0,08 * 399 = 32 s, ne do 10 s. Kdo chce strop
-# opravdu vynutit, musi snizit i dno (a vedet, ze tisic dorazu naraz hru
-# zadrhne).
-const SPAWN_WAVE_S := 10.0
+# PROC ZROVNA ROZDIL CASU CESTY: zluta je u veze o ~8 s driv nez cervena a to
+# se neda obejit (rozhoduje rychlost). Kdyz vlna vstupuje krátce, obe barvy se
+# minou a prepinani barev nema smysl (zmereno 0 %). Kdyz vstupuje DELE nez je
+# ten rozdil, obe barvy jsou v dostrelu porad a hrac musí prepinat prubezne.
+const SPAWN_SPREAD := 2.0
+# DNO A STROP OKNA: prvni vlny nesmi vstupovat v jednom okamziku a vlna
+# o stovkach poutniku nesmi vstupovat pul minuty.
+const SPAWN_WINDOW_MIN := 6.0
+const SPAWN_WINDOW_MAX := 30.0
+# DNO NA JEDNOHO POUTNIKA. Je to ZAROVEN HRANICE OBTIZNOSTI: cim kratsi mezera,
+# tim vic poutniku je na plose naraz a tim vic prace pro vez.
+const SPAWN_GAP_MIN := 0.10
 
 # BOSS. Jan (Oct 2026): "Taky musime pridat boss fighty." Vzor je hra The
 # Tower: na normalnich vlnach je boss vylouceny a na boss vlne zaruceny, ma
@@ -651,14 +632,21 @@ func _phase_step(dt: float) -> void:
 		_wave_clear()
 
 
-# MEZERA MEZI DORAZY POUTNIKU K VEZI. Dve hranice: klesajici zaklad podle vlny
-# a strop na CELKOVOU dobu dorazu - velka vlna se musi dorazit do
-# `SPAWN_WAVE_S`, i kdyz by ji zaklad nechal pomalejsi.
-func arrival_gap(n: int) -> float:
-	var base: float = maxf(SPAWN_GAP_MIN, SPAWN_GAP_START - SPAWN_GAP_PER_WAVE * float(wave))
-	if n > 1:
-		base = minf(base, SPAWN_WAVE_S / float(n - 1))
-	return maxf(SPAWN_GAP_MIN, base)
+# MEZERA MEZI VSTUPY = VSTUPNI OKNO / (N-1). Okno je nasobek rozdilu casu cesty
+# nejrychlejsi a nejpomalejsi barvy vlny - je to presne to, co rozhoduje
+# o tom, jestli se barvy u veze budou mijet.
+func wave_gap(arrivals: Array) -> float:
+	var n: int = arrivals.size()
+	if n < 2:
+		return SPAWN_WINDOW_MIN
+	var lo: float = 1.0e9
+	var hi: float = -1.0
+	for h in arrivals:
+		var t: float = travel_time(int(h))
+		lo = minf(lo, t)
+		hi = maxf(hi, t)
+	var window: float = clampf((hi - lo) * SPAWN_SPREAD, SPAWN_WINDOW_MIN, SPAWN_WINDOW_MAX)
+	return maxf(SPAWN_GAP_MIN, window / float(n - 1))
 
 
 # JAK DLOUHO JDE POUTNIK OD OKRAJE, NEZ SE OBJEVI V DOSTRELU (sekundy).
@@ -666,53 +654,32 @@ func arrival_gap(n: int) -> float:
 # vidi - a prave tenhle cas rozhoduje o michani. Vzdalenost i rychlost se berou
 # z rozvrzeni (`field_r`, `range_px`, `pilgrim_speed`), takze cislo sedi na
 # kazdem displeji a meni se i s koupenym dostrelem (ten je permanentni a hra se
-# tim sam prekompenzuje).
+# tim sama prekompenzuje).
 func travel_time(h: int) -> float:
 	var ring: float = pilgrim_r() * PILGRIM_SIZE * RING_FRAC
 	var d: float = maxf(1.0, field_r - range_px() - ring)
 	return d / maxf(0.001, pilgrim_speed() * Hue.speed_mult(h))
 
 
-# KDY KDO VSTOUPI, ABY BARVY DORAZILY SPOLU (jadro opravy "barvy se mijely").
+# KDY KDO VSTOUPI. Plan vlny je PORADI VSTUPU (nahodne promichane barvy, viz
+# `wave_plan`) a vstupuji v nem po celou dobu vstupniho okna (`wave_gap`).
 #
-# Jan (Oct 2026): "Zlutí dorazí mnohem dříve než červení a ve chvíli, kdy
-# dorazí červení, už jsou všichni žlutí mrtví. Přepínání barev věže tedy
-# postrádá smysl. Musí se více mísit. Musí se více střídat ve spawnu. Musíme
-# prodloužit délku vlny."
+# Jan (Oct 2026): "Nemá smysl, aby došli ve stejnou chvíli. Ta hra potřebuje,
+# aby chodili různě. Náhodně. Aby hráč neustále musel hlídat barvu a průběžně
+# přepínat." - proto se tu casy NEPOCITAJI zpetne z dorazu (to byla prvni verze
+# opravy a Jan ji zamitl). Rychle barvy vstupuji driv a k vezi dojdou driv; to
+# je v poradku - dulezite je, ze se OBE BARVY MIJEJI U VEZE CELY CAS, protoze
+# vlna vstupuje dele, nez je rozdil jejich rychlosti.
 #
-# Rozhoduje RYCHLOST, ne poradi vstupu: zluta (1,60) je u veze za 7,4 s, cervena
-# (0,60) za 19,7 s. Dokud vsechny barvy vstupovaly v kratkem okne (~6 s), obe
-# skupiny se MINULY o vic nez deset vterin a prepinani barev nemelo smysl
-# (zmereno sondou `tools/wave_probe.gd`: michani 0 %).
-#
-# Reseni je opacny smer vypoctu: plan vlny je PORADI DORAZU (`wave_plan`, barvy
-# se stridaji) a cas vstupu se z nej pocita ZPETNE - pomala barva vstupuje
-# driv, rychla pozdeji. Prodlouzi se tim vstupni cast vlny (~6 -> ~18 s) a
-# barvy se u veze stridaji cely cas.
-#
-# CO SE NEMENI: rychlosti (`Hue.speed_mult`), pocty ani poskozeni. Hrac porad
-# vidi, ze zluta je rychla a cervena pomaly - meni se jen to, KDY vstoupi.
+# CO SE NEMENI: rychlosti (`Hue.speed_mult`), pocty ani poskozeni. Meni se jen
+# to, KDY ktera barva vstoupi.
 func wave_spawn_order(arrivals: Array) -> Array:
 	var out: Array = []
 	if arrivals.is_empty():
 		return out
-	# NEJPOMALEJSI BARVA VLNY URCIJE ZACATEK: prvni poutnik vstupuje hned
-	# a k vezi jde nejdyl, takze na nem stoji cely casovy ramec vlny.
-	var slow: float = 0.0
-	for h in arrivals:
-		slow = maxf(slow, travel_time(int(h)))
-	var gap: float = arrival_gap(arrivals.size())
+	var gap: float = wave_gap(arrivals)
 	for i in range(arrivals.size()):
-		var h: int = int(arrivals[i])
-		var arrive: float = slow + float(i) * gap
-		out.append({"h": h, "at": maxf(0.0, arrive - travel_time(h)), "i": i})
-	# PORADI VSTUPU JE JINE NEZ PORADI DORAZU (kdo vstoupi pozdeji, muze dorazit
-	# driv). Pri stejnem case rozhoduje poradi dorazu - jinak by hra prestala
-	# byt deterministicka.
-	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if absf(float(a["at"]) - float(b["at"])) > 0.0001:
-			return float(a["at"]) < float(b["at"])
-		return int(a["i"]) < int(b["i"]))
+		out.append({"h": int(arrivals[i]), "at": float(i) * gap, "i": i})
 	return out
 
 

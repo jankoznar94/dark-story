@@ -1435,20 +1435,23 @@ func _test_boss() -> void:
 	_check(g.pilgrims.size() == total,
 		"boss vlna vysypala %d poutniku z %d" % [g.pilgrims.size(), total])
 
-# BARVY SE U VEZE MUSI POTKAT, NE MINOUT (Oct 2026).
+# BARVY SE U VEZE MUSI MIJET CELY CAS (Oct 2026).
 #
 # Jan: "Zlutí dorazí mnohem dříve než červení a ve chvíli, kdy dorazí červení,
 # už jsou všichni žlutí mrtví. Přepínání barev věže tedy postrádá smysl. Musí se
 # více mísit. Musí se více střídat ve spawnu. Musíme prodloužit délku vlny."
+# a podruhé: "Nemá smysl, aby došli ve stejnou chvíli. Ta hra potřebuje, aby
+# chodili různě. Náhodně. Aby hráč neustále musel hlídat barvu a průběžně
+# přepínat."
 #
-# Rozhoduje RYCHLOST, ne poradi vstupu: zluta je u veze driv nez cervena, at se
-# poradi vstupu zamicha jakkoli. Hra proto pocita casy vstupu ZPETNE z dorazu
-# (`Game.wave_spawn_order`) a barvy se stridaji (`Game.wave_plan`).
+# Rozhoduje RYCHLOST, ne poradi vstupu: zluta je u veze o ~8 s driv nez cervena.
+# Hra proto vstupni okno pocita z TOHOHLE ROZDILU (`Game.wave_gap`) - srovnavat
+# dorazy (aby dosli spolu) Jan zamitl.
 #
 # Test to meri z ROZVRHU VLNY, ne hranim partie: kazdemu poutnikovi spocte cas
-# dorazu (`vstup + travel_time`) a porovna OKNA DORAZU jednotlivych barev.
-# Stara hra mela okna uplne mimo sebe (zmereno: cervena 12,9-19,1 s, zluta
-# 4,8-8,8 s) - tenhle test se starym `wave_plan`/`spawn_gap` hlasi FAIL.
+# dorazu (`vstup + travel_time`) a hlida, ze (1) vstupni okno je delsi nez rozdil
+# rychlosti, (2) okna dorazu barev se prekryvaji, (3) barvy se stridaji a (4) casy
+# vstupu jsou nesesoubezne. Se starym kodem hlasi FAIL - overeno.
 func _test_colors_arrive_together() -> void:
 	var g: Game = _fresh()
 	# NA TELEFONU: Jan si toho vsiml na nem a rozvrzeni rozhoduje o case cesty.
@@ -1492,20 +1495,30 @@ func _test_colors_arrive_together() -> void:
 			var b: Array = wins[keys[j]]
 			var over: float = minf(float(a[1]), float(b[1])) - maxf(float(a[0]), float(b[0]))
 			var shorter: float = minf(float(a[1]) - float(a[0]), float(b[1]) - float(b[0]))
-			_check(over > shorter * 0.5,
+			_check(over > shorter * 0.30,
 				"barvy %s a %s se u veze minou (prekryv %.1f s z %.1f s)"
 				% [Hue.name_of(int(keys[i])), Hue.name_of(int(keys[j])), over, shorter])
-	# CELE OKNO DORAZU JE KRATKE: dorazy jsou rozlozene mezerou mezi nimi, ne
-	# rozdilem rychlosti (ten je pres osm vterin).
+	# VSTUPNI OKNO MUSI BYT DELSI NEZ ROZDIL RYCHLOSTI. To je cely mechanismus:
+	# dokud vlna vstupuje krátce, obe barvy se u veze minou (a prepinani barev
+	# je dekorace) - at se poradi vstupu zamicha jakkoli.
+	var t_lo: float = 1.0e9
+	var t_hi: float = -1.0
+	for h in keys:
+		t_lo = minf(t_lo, g.travel_time(int(h)))
+		t_hi = maxf(t_hi, g.travel_time(int(h)))
+	var window: float = g.wave_gap(arrivals) * float(arrivals.size() - 1)
+	_check(window >= t_hi - t_lo,
+		"vlna vstupuje %.1f s, ale rozdil rychlosti je %.1f s - barvy se minou"
+		% [window, t_hi - t_lo])
+	# CELE OKNO DORAZU = VSTUPNI OKNO + ROZDIL RYCHLOSTI (nic vic).
 	var lo: float = 1.0e9
 	var hi: float = -1.0
 	for h in wins.keys():
 		lo = minf(lo, float(wins[h][0]))
 		hi = maxf(hi, float(wins[h][1]))
-	var gap: float = g.arrival_gap(arrivals.size())
-	_check(hi - lo <= float(arrivals.size() - 1) * gap + 0.05,
-		"dorazy jsou rozsypane na %.1f s (nejvyse %.1f s)"
-		% [hi - lo, float(arrivals.size() - 1) * gap])
+	_check(hi - lo <= window + (t_hi - t_lo) + 0.05,
+		"dorazy jsou rozsypane na %.1f s (nejvyce %.1f s)"
+		% [hi - lo, window + (t_hi - t_lo)])
 
 
 # DOSTREL SE POCITA K OKRAJI POUTNIKA, NE K JEHO STREDU. Jan (Oct 2026): "Věž si
