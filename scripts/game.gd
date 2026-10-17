@@ -45,13 +45,23 @@ const BASE_HP := 20.0
 # vlnu v nekonecne partii - s levelem a resetenym zlatem by to bylo nehratelne.
 const LEVEL_HP := 1.40
 # Vlna v ramci levelu zveda obtiznost jen NECITELNE. INVARIANT: rust ZA CELY
-# LEVEL se pri zmene poctu vln NESMI zmenit. Driv deset vln po 1,06 dalo za
-# level 1,79 (1,06^10); pri PADESATI vlnach to same vyjde na 1,0117
-# (= 1,06^10 ^ (1/50)). Kdo hybe poctem vln, prepocte timhle vzorcem a premeri
-# `tools/balance_sim.gd` - jinak se z dlouheho levelu stane nehratelna zed
-# (1,06^50 = 18x) nebo nuda.
-const WAVE_HP := 1.0117
-const START_GOLD := 150
+# LEVEL byl 1,79 (= 1,06^10 z doby deseti vln) -> `WAVE_HP` 1,0117.
+#
+# Oct 2026 (Jan): "Narust obtiznosti mezi vlnami je ted prilis slaby. ... Je
+# velmi snadne se brzy dostat na vysoke upgrady poskozeni a pak je kazdy mrtvy
+# behem chvilky." - proto 1,0117 -> 1,018: za cely level to je 2,4x (misto
+# 1,79x) a rust je na vlnach videt. POZOR, TIM SE INVARIANT MENI VEDOME:
+# rust za level = 2,4x, a s `LEVEL_HP` 1,40 je level-to-level 3,4x (driv 2,5x).
+# Kdo hybe timhle cislem, MUSI premerit `tools/balance_sim.gd` (`--levels=2`).
+# (Zkouseno 1,022 = 2,9x za level: hlupy hrac padl v 49. vlne prvniho levelu -
+# na prvni level je to moc, hrac nema jak rust.)
+const WAVE_HP := 1.018
+# START ZLATA. Jan (Oct 2026): "hráč začíná s příliš mnoho penězi. Je velmi
+# snadné se brzy dostat na vysoké upgrady poškození a pak je každý mrtvý během
+# chvilky." 150 -> 60: na zacatku levelu si hrac koupi dva az tri docasne kroky
+# (5 + 10 + 15), ne deset. Zlato za zabiti zustava - hrac ma rust pocitit
+# v bitve, ne hned na startu.
+const START_GOLD := 60
 # ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku rostou 1,40x za level; kdyby zlato
 # stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
 # zlomila - zmereno simulatorem (`tools/balance_sim.gd --order=damage`): hrac,
@@ -97,6 +107,18 @@ const WAVE_BONUS_PER_WAVE := 0.1
 # ODMENA ZA VYHRANY LEVEL V BODECH (Jan schvalil): 25 + 5 * level.
 const BODY_BASE := 25
 const BODY_PER_LEVEL := 5
+# BODY ZA ODRAZENOU VLNU. Jan (Oct 2026): "hráč by měl dostávat body pro
+# permanentní upgrady i během boje. Ne jen po dokončení levelu. Takhle to
+# logicky nedává smysl."
+#
+# V The Tower je to stejne: mince (permanentni mena) se vydelavaji BEHEM
+# partie - za zabiti ne-zakladnich nepritel, za vlnu a za milniky - a utraceji
+# se az ve Workshopu mezi partiemi. Body se proto pripisuji HNED a ukladaji
+# (`Profile.add_body`), takze hrac o ne neprijde, kdyz partii vzdá.
+#
+# POCITAJI SE JEN V NOVEM LEVELU (`level > profile.best`): jinak by si hrac
+# opakovanim prvniho levelu vykupil cely permanentni zebricek.
+const BODY_PER_WAVE := 1
 # KAZDY LEVEL MA PADESAT VLN. Jan (Oct 2026): "Kazde kolo bude mit 50 levelu, ne?
 # Ted ma stale 10 jako driv." Driv to bylo 3-5 vln podle poradi levelu a pak
 # deset ("Levely by měly mít jen 10 kol"); Oct 2026 se level otevrel na padesat
@@ -504,10 +526,12 @@ func start_level(n: int) -> void:
 func _level_won() -> void:
 	phase = "won"
 	var first: bool = level > profile.best
-	body_earned = 0
+	# `body_earned` uz nese body za odrazene vlny (`BODY_PER_WAVE`) - pricitá se
+	# k nim odmena za level, aby dialog rekl CELY zisk teto partie.
 	if first:
-		body_earned = BODY_BASE + BODY_PER_LEVEL * level
-		profile.add_body(body_earned)
+		var bonus: int = BODY_BASE + BODY_PER_LEVEL * level
+		body_earned += bonus
+		profile.add_body(bonus)
 	profile.clear_level(level)
 	if first:
 		_note("Level %d vyhrán — %d bodů do menu." % [level, body_earned])
@@ -716,6 +740,10 @@ func _start_wave() -> void:
 func _wave_clear() -> void:
 	gold += int(round(float(WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave) * gold_mult())) + int(round(val("gw")))
 	_note("Vlna %d odražena." % wave)
+	# BODY PRUBEZNE, ne az na konci levelu - viz `BODY_PER_WAVE`.
+	if level > profile.best:
+		profile.add_body(BODY_PER_WAVE)
+		body_earned += BODY_PER_WAVE
 	if wave >= waves_in_level():
 		_level_won()
 		return

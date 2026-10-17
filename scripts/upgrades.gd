@@ -308,7 +308,14 @@ static func _cz(v: float, digits: int) -> String:
 static func temp_cost(id: String, bought: int) -> int:
 	if not temp_buyable(id):
 		return 0
-	return TEMP_COST * (clampi(bought, 0, 99) + 1)
+	# CENA ROSTE KVADRATICKY (Oct 2026). Driv to bylo linearni (5*(n+1)) a
+	# hrac s prijmem ~20 000 zlata za level si koupil pres 80 kroku poskozeni -
+	# Jan: "Je velmi snadné se brzy dostat na vysoké upgrady poškození a pak je
+	# každý mrtvý během chvilky." Strop tu porad ZADNY neni (Jan, Oct 2026:
+	# "já prozatím nechci žádné stropy") - draha je az druha polovina zebricku:
+	# 5, 20, 45, 80, 125 ... takze 10 kroku stoji 1925 zlata, ne 275.
+	var n: int = clampi(bought, 0, 99) + 1
+	return TEMP_COST * n * n
 
 
 # CENA PERMANENTNIHO STUPNE. `bought` = kolik stupnu uz hrac ma.

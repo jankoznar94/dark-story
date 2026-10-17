@@ -144,13 +144,17 @@ func _test_beam_power() -> void:
 
 
 func _test_temp_cost() -> void:
+	# CENA ROSTE KVADRATICKY (Oct 2026, viz `Upgrades.temp_cost`): kazdy krok je
+	# 5 * n^2, takze druhy stoji 20 a osmy 320. Linearni cena driv nechala hrace
+	# koupit pres 80 kroku poskozeni za level (Jan: "kazdy je mrtvy behem
+	# chvilky").
 	_check(Upgrades.temp_cost("ad", 0) == 5, "prvni docasny krok nestoji 5 zlata")
-	_check(Upgrades.temp_cost("ad", 1) == 10, "druhy docasny krok nestoji 10 zlata")
-	_check(Upgrades.temp_cost("ad", 7) == 40, "osmy docasny krok nestoji 40 zlata")
+	_check(Upgrades.temp_cost("ad", 1) == 20, "druhy docasny krok nestoji 20 zlata")
+	_check(Upgrades.temp_cost("ad", 7) == 320, "osmy docasny krok nestoji 320 zlata")
 	# Cena musi byt stejna napric kategoriemi - hrac jinak nepochopi, podle
 	# ceho se cena pocita.
 	for id in ["ad", "hp", "am", "gk", "cc"]:
-		_check(Upgrades.temp_cost(id, 2) == 15, "%s: treti krok nestoji 15 zlata" % id)
+		_check(Upgrades.temp_cost(id, 2) == 45, "%s: treti krok nestoji 45 zlata" % id)
 
 
 func _test_perm_cost() -> void:
