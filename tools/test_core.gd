@@ -55,6 +55,8 @@ func _init() -> void:
 		_test_mix_pilgrim)
 	_run("boss je na kazde desate vlne (20x zivoty, 30 % rychlosti, 5x zlato)",
 		_test_boss)
+	_run("barvy se u veze potkavaji (a stridaji se), ne mijejí",
+		_test_colors_arrive_together)
 	_run("vez si vsimne poutnika, kdyz se dostrelu dotkne jeho HP bar",
 		_test_range_counts_hp_bar)
 	print("checks=%d fails=%d" % [checks, fails.size()])
@@ -1432,6 +1434,79 @@ func _test_boss() -> void:
 		g._spawn_next()
 	_check(g.pilgrims.size() == total,
 		"boss vlna vysypala %d poutniku z %d" % [g.pilgrims.size(), total])
+
+# BARVY SE U VEZE MUSI POTKAT, NE MINOUT (Oct 2026).
+#
+# Jan: "Zlutí dorazí mnohem dříve než červení a ve chvíli, kdy dorazí červení,
+# už jsou všichni žlutí mrtví. Přepínání barev věže tedy postrádá smysl. Musí se
+# více mísit. Musí se více střídat ve spawnu. Musíme prodloužit délku vlny."
+#
+# Rozhoduje RYCHLOST, ne poradi vstupu: zluta je u veze driv nez cervena, at se
+# poradi vstupu zamicha jakkoli. Hra proto pocita casy vstupu ZPETNE z dorazu
+# (`Game.wave_spawn_order`) a barvy se stridaji (`Game.wave_plan`).
+#
+# Test to meri z ROZVRHU VLNY, ne hranim partie: kazdemu poutnikovi spocte cas
+# dorazu (`vstup + travel_time`) a porovna OKNA DORAZU jednotlivych barev.
+# Stara hra mela okna uplne mimo sebe (zmereno: cervena 12,9-19,1 s, zluta
+# 4,8-8,8 s) - tenhle test se starym `wave_plan`/`spawn_gap` hlasi FAIL.
+func _test_colors_arrive_together() -> void:
+	var g: Game = _fresh()
+	# NA TELEFONU: Jan si toho vsiml na nem a rozvrzeni rozhoduje o case cesty.
+	g.set_field(250.0, 155.8, Vector2(195.0, 313.0))
+	g.wave = 1
+	var arrivals: Array = g.wave_plan(1)
+	var order: Array = g.wave_spawn_order(arrivals)
+	_check(order.size() == arrivals.size(),
+		"plan vstupu ma jiny pocet poutniku (%d z %d)" % [order.size(), arrivals.size()])
+	# BARVY SE STRIDAJI: v poradi dorazu nesmi jit tri stejne po sobe.
+	var run: int = 1
+	var worst: int = 1
+	for i in range(1, arrivals.size()):
+		run = (run + 1) if int(arrivals[i]) == int(arrivals[i - 1]) else 1
+		worst = maxi(worst, run)
+	_check(worst <= 2, "jde %d stejnych barev po sobe (barvy se maji stridat)" % worst)
+	# CASY VSTUPU JSOU NESOUBEZNE A PRVNI POUTNIK VSTUPUJE NA ZACATKU VLNY.
+	var last: float = -1.0
+	var wins: Dictionary = {}
+	for it in order:
+		var at: float = float(it["at"])
+		_check(at >= last - 0.0001,
+			"poutnik vstupuje driv nez predchozi (%.2f s po %.2f s)" % [at, last])
+		last = at
+		var h: int = int(it["h"])
+		var arrive: float = at + g.travel_time(h)
+		if wins.has(h):
+			var w: Array = wins[h]
+			w[0] = minf(float(w[0]), arrive)
+			w[1] = maxf(float(w[1]), arrive)
+		else:
+			wins[h] = [arrive, arrive]
+	_check(float(order[0]["at"]) < 0.001,
+		"prvni poutnik nevstupuje na zacatku vlny (%.2f s)" % float(order[0]["at"]))
+	# OKNA DORAZU SE MUSI PREKRYVAT - jinak se barvy u veze minou.
+	_check(wins.size() >= 2, "v prvni vlne je jen %d barva" % wins.size())
+	var keys: Array = wins.keys()
+	for i in range(keys.size()):
+		for j in range(i + 1, keys.size()):
+			var a: Array = wins[keys[i]]
+			var b: Array = wins[keys[j]]
+			var over: float = minf(float(a[1]), float(b[1])) - maxf(float(a[0]), float(b[0]))
+			var shorter: float = minf(float(a[1]) - float(a[0]), float(b[1]) - float(b[0]))
+			_check(over > shorter * 0.5,
+				"barvy %s a %s se u veze minou (prekryv %.1f s z %.1f s)"
+				% [Hue.name_of(int(keys[i])), Hue.name_of(int(keys[j])), over, shorter])
+	# CELE OKNO DORAZU JE KRATKE: dorazy jsou rozlozene mezerou mezi nimi, ne
+	# rozdilem rychlosti (ten je pres osm vterin).
+	var lo: float = 1.0e9
+	var hi: float = -1.0
+	for h in wins.keys():
+		lo = minf(lo, float(wins[h][0]))
+		hi = maxf(hi, float(wins[h][1]))
+	var gap: float = g.arrival_gap(arrivals.size())
+	_check(hi - lo <= float(arrivals.size() - 1) * gap + 0.05,
+		"dorazy jsou rozsypane na %.1f s (nejvyse %.1f s)"
+		% [hi - lo, float(arrivals.size() - 1) * gap])
+
 
 # DOSTREL SE POCITA K OKRAJI POUTNIKA, NE K JEHO STREDU. Jan (Oct 2026): "Věž si
 # všimne nepřítele ve chvíli, kdy se HP bar nepřítele dotkne rádiusu zjišťování."

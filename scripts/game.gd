@@ -111,9 +111,13 @@ const WAVES_PER_LEVEL := 50
 # vlny (wave_size) - jedno pocitadlo, ne dve.
 const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 
-# DOCASNE UCPINKY: mezera mezi poutniky se v ramci levelu zkracuje - a u VELKE
-# vlny se zkrati jeste vic, aby se cely zastup vysypal do `SPAWN_WAVE_S`. Bez
-# toho by vlna o stovkach poutniku trvala desitky minut.
+# DOCASNE UCPINKY: mezera se v ramci levelu zkracuje a u VELKE vlny se zkrati
+# jeste vic, aby se cely zastup vysypal do `SPAWN_WAVE_S`. Bez toho by vlna
+# o stovkach poutniku trvala desitky minut.
+#
+# POZOR, JE TO MEZERA MEZI DORAZY, NE MEZI VSTUPY. Vstupni casy se pocitaji
+# zpetne z dorazu (`wave_spawn_order`), aby barvy dosly k vezi SPOLU - proto
+# se "mezera ve vstupech" v `_phase_step` neda precist z techto cisel.
 #
 # PROC TAK MALA CISLA (Oct 2026): s padesati vlnami na level se level roztahl
 # na 54 minut a Jan chtel 20-25. Zmereno simulatorem (`balance_sim.gd`,
@@ -125,23 +129,28 @@ const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 #   skoro nulova mezera (0,1 / 0,05)  19 min <- PODLAHA: i kdyby cela vlna
 #                                     stala na plose naraz, dobu vlny urcuje
 #                                     doba zabijeni (~21 s na vlnu)
+# PO MICHANI VLNY (viz `wave_spawn_order`) SE DELKA LEVELU NEMENI: dorazy jsou
+# jen jinak rozlozene. Zmereno `balance_sim.gd --levels=1`: 1396 s (start 0,45)
+# a 1414 s (start 0,55) proti 1425 s pred opravou - porad tech ~23 minut.
 # Kdo hybe temito cisly, hybe DELKOU LEVELU i jeho obtiznosti: cim mensi
 # mezera, tim vic poutniku je na plose naraz a tim vic prace pro vez.
-const SPAWN_GAP_START := 0.45
+const SPAWN_GAP_START := 0.55
 const SPAWN_GAP_MIN := 0.08
 # Mezera se za cely level zkrati o 0,23 s (0,45 -> 0,22); driv to bylo 1,3 s za
 # deset vln. Pomer 10/50 z puvodniho koeficientu 0,13 by dal 0,026 - to bylo
 # merene tech 54 minut, proto je koeficient mensi nez "spravedlivy" prepocet.
 const SPAWN_GAP_PER_WAVE := 0.0047
-# CELKOVA DOBA VYSYPANI VLNY. Neni to kosmetika: pocet poutniku je ted v destikach
-# az stovkach, takze pevna mezera by jednu vlnu natahla pres deset minut. Je to
-# ZAROVEN HRANICE OBTIZNOSTI: cim kratsi vysypani, tim vic poutniku je na plose
-# naraz a tim vic prace pro vez - hra se pak da dohrat jen s nakoupenymi upgrady.
+# STROP CELKOVE DOBY DORAZU VLNY. Neni to kosmetika: pocet poutniku je ted
+# v destikach az stovkach, takze pevna mezera by jednu vlnu natahla pres deset
+# minut. Je to ZAROVEN HRANICE OBTIZNOSTI: cim kratsi doba dorazu, tim vic
+# poutniku je na plose naraz a tim vic prace pro vez - hra se pak da dohrat jen
+# s nakoupenymi upgrady.
 #
-# POZOR: u VELKYCH vln tenhle strop NEPLATI, protoze `spawn_gap` konci na
-# `SPAWN_GAP_MIN` - a ta je vyssi nez strop/počet. Vlna o 400 poutnicich se
-# proto vysype za 0,08 * 399 = 32 s, ne za 10 s. Kdo chce strop opravdu
-# vynutit, musi snizit i dno (a vedet, ze tisic poutniku naraz hru zadrhne).
+# POZOR: u VELKYCH vln tenhle strop NEPLATI, protoze `arrival_gap` konci na
+# `SPAWN_GAP_MIN` - a ta je vyssi nez strop/pocet. Vlna o 400 poutnicich ma
+# proto dorazy rozlozene na 0,08 * 399 = 32 s, ne do 10 s. Kdo chce strop
+# opravdu vynutit, musi snizit i dno (a vedet, ze tisic dorazu naraz hru
+# zadrhne).
 const SPAWN_WAVE_S := 10.0
 
 # BOSS. Jan (Oct 2026): "Taky musime pridat boss fighty." Vzor je hra The
@@ -235,7 +244,15 @@ var body_earned: int = 0
 var phase: String = "build"
 var build_left: float = BUILD_TIME
 var spawn_left: float = 0.0
+# PORADI VSTUPU (barvy, jak opravdu vstupuji na plochu). POZOR: NENI to poradi
+# dorazu - viz `wave_spawn_order`. Kdo kresli "co prijde", at se ptá tady.
 var plan: Array = []
+# CAS VSTUPU JEDNOTLIVYCH POUTNIKU VLNY (sekundy od zacatku vlny), stejne
+# dlouhe jako `plan`. Driv tu byl jen jeden odpočet a pevna mezera - s ni se
+# barvy rozpadly na dve skupiny (zluti u veze o deset vterin driv nez cerveni).
+var spawn_at: Array = []
+# KOLIK SEKUND UZ VLNA VSTUPUJE (`step` ho posouva jen ve fazi "wave").
+var wave_clock: float = 0.0
 var spawned: int = 0
 # KTERY POUTNIK VLNY JE BOSS (-1 = zadny). Boss se rodi z poutnika te vlny,
 # takze nese jeji barvu - jen je vetsi, tvrdsi a pomalejsi.
@@ -490,7 +507,9 @@ func start_level(n: int) -> void:
 	hp = max_hp
 	gold = int(round(float(START_GOLD) * gold_mult())) + int(round(val("gl")))
 	plan = []
+	spawn_at = []
 	spawned = 0
+	wave_clock = 0.0
 	refresh_palette()
 	_note("Level %d — %d vln." % [level, waves_in_level()])
 
@@ -618,30 +637,98 @@ func _phase_step(dt: float) -> void:
 		return
 	if phase != "wave":
 		return
+	wave_clock += dt
 	if spawned < plan.size():
 		spawn_left -= dt
 		if spawn_left <= 0.0:
 			_spawn_next()
-			spawn_left = spawn_gap()
+			# DALSI POUTNIK VSTOUPI V CAS, KTERY RIKA PLAN VLNY - ne za pevnou
+			# mezeru. Kdyz mel vstoupit uz driv (rychla barva se drzi zpet),
+			# je odpočet nula a vstoupi hned v dalsim snimku.
+			if spawned < plan.size():
+				spawn_left = maxf(0.0, float(spawn_at[spawned]) - wave_clock)
 	elif pilgrims.is_empty():
 		_wave_clear()
 
 
-# MEZERA MEZI POUTNIKY. Dve hranice: klesajici zaklad podle vlny a strop na
-# CELKOVOU dobu vysypani - velka vlna se musi vysypat do `SPAWN_WAVE_S`, i kdyz
-# by ji zaklad nechal pomalejsi.
-func spawn_gap() -> float:
+# MEZERA MEZI DORAZY POUTNIKU K VEZI. Dve hranice: klesajici zaklad podle vlny
+# a strop na CELKOVOU dobu dorazu - velka vlna se musi dorazit do
+# `SPAWN_WAVE_S`, i kdyz by ji zaklad nechal pomalejsi.
+func arrival_gap(n: int) -> float:
 	var base: float = maxf(SPAWN_GAP_MIN, SPAWN_GAP_START - SPAWN_GAP_PER_WAVE * float(wave))
-	var n: int = plan.size()
 	if n > 1:
 		base = minf(base, SPAWN_WAVE_S / float(n - 1))
 	return maxf(SPAWN_GAP_MIN, base)
 
 
+# JAK DLOUHO JDE POUTNIK OD OKRAJE, NEZ SE OBJEVI V DOSTRELU (sekundy).
+# NENI to cesta az k vezi: hrac prepina barvu ve chvili, kdy barvu v dostrelu
+# vidi - a prave tenhle cas rozhoduje o michani. Vzdalenost i rychlost se berou
+# z rozvrzeni (`field_r`, `range_px`, `pilgrim_speed`), takze cislo sedi na
+# kazdem displeji a meni se i s koupenym dostrelem (ten je permanentni a hra se
+# tim sam prekompenzuje).
+func travel_time(h: int) -> float:
+	var ring: float = pilgrim_r() * PILGRIM_SIZE * RING_FRAC
+	var d: float = maxf(1.0, field_r - range_px() - ring)
+	return d / maxf(0.001, pilgrim_speed() * Hue.speed_mult(h))
+
+
+# KDY KDO VSTOUPI, ABY BARVY DORAZILY SPOLU (jadro opravy "barvy se mijely").
+#
+# Jan (Oct 2026): "Zlutí dorazí mnohem dříve než červení a ve chvíli, kdy
+# dorazí červení, už jsou všichni žlutí mrtví. Přepínání barev věže tedy
+# postrádá smysl. Musí se více mísit. Musí se více střídat ve spawnu. Musíme
+# prodloužit délku vlny."
+#
+# Rozhoduje RYCHLOST, ne poradi vstupu: zluta (1,60) je u veze za 7,4 s, cervena
+# (0,60) za 19,7 s. Dokud vsechny barvy vstupovaly v kratkem okne (~6 s), obe
+# skupiny se MINULY o vic nez deset vterin a prepinani barev nemelo smysl
+# (zmereno sondou `tools/wave_probe.gd`: michani 0 %).
+#
+# Reseni je opacny smer vypoctu: plan vlny je PORADI DORAZU (`wave_plan`, barvy
+# se stridaji) a cas vstupu se z nej pocita ZPETNE - pomala barva vstupuje
+# driv, rychla pozdeji. Prodlouzi se tim vstupni cast vlny (~6 -> ~18 s) a
+# barvy se u veze stridaji cely cas.
+#
+# CO SE NEMENI: rychlosti (`Hue.speed_mult`), pocty ani poskozeni. Hrac porad
+# vidi, ze zluta je rychla a cervena pomaly - meni se jen to, KDY vstoupi.
+func wave_spawn_order(arrivals: Array) -> Array:
+	var out: Array = []
+	if arrivals.is_empty():
+		return out
+	# NEJPOMALEJSI BARVA VLNY URCIJE ZACATEK: prvni poutnik vstupuje hned
+	# a k vezi jde nejdyl, takze na nem stoji cely casovy ramec vlny.
+	var slow: float = 0.0
+	for h in arrivals:
+		slow = maxf(slow, travel_time(int(h)))
+	var gap: float = arrival_gap(arrivals.size())
+	for i in range(arrivals.size()):
+		var h: int = int(arrivals[i])
+		var arrive: float = slow + float(i) * gap
+		out.append({"h": h, "at": maxf(0.0, arrive - travel_time(h)), "i": i})
+	# PORADI VSTUPU JE JINE NEZ PORADI DORAZU (kdo vstoupi pozdeji, muze dorazit
+	# driv). Pri stejnem case rozhoduje poradi dorazu - jinak by hra prestala
+	# byt deterministicka.
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if absf(float(a["at"]) - float(b["at"])) > 0.0001:
+			return float(a["at"]) < float(b["at"])
+		return int(a["i"]) < int(b["i"]))
+	return out
+
+
 func _start_wave() -> void:
-	plan = wave_plan(wave)
+	# PORADI DORAZU a casy vstupu. `plan` je pak PORADI VSTUPU - obrazovka
+	# i testy se ptaji jeho, takze se nikde nesmi predpokladat, ze prvni
+	# vstupujici je i prvni u veze.
+	var arrivals: Array = wave_plan(wave)
+	plan = []
+	spawn_at = []
+	for it in wave_spawn_order(arrivals):
+		plan.append(int(it["h"]))
+		spawn_at.append(float(it["at"]))
 	spawned = 0
 	spawn_left = 0.0
+	wave_clock = 0.0
 	phase = "wave"
 	# BOSS SE OJEVI UPROSTRED VLNY (The Tower: na nizsich tierech v pevnem
 	# bode vlny) - takze hrac nejdriv neco postrili a pak prijde boss.
@@ -809,12 +896,21 @@ func wave_plan(n: int) -> Array:
 		return out
 	for i in range(total):
 		out.append(int(pool[i % pool.size()]))
-	# Fisher-Yates vlastnim rng, aby hra zustala deterministicka
-	for i in range(out.size() - 1, 0, -1):
-		var j: int = rng.randi_range(0, i)
-		var t: Variant = out[i]
-		out[i] = out[j]
-		out[j] = t
+	# STRIDANI PO CYKLECH. Cely plan se driv zamichal najednou (Fisher-Yates
+	# pres celou vlnu), takze vedle sebe staly klidne tri stejne barvy a hrac
+	# videl "zhluk zlutych". Kazdy cyklus ma od kazde barvy jednu a poradi
+	# uvnitr cyklu je nahodne - barvy se stridaji a vlna se neopakuje porad
+	# stejne. (Nahoda jde vlastnim rng, takze hra zustava deterministicka.)
+	var step: int = maxi(1, pool.size())
+	var pos: int = 0
+	while pos < out.size():
+		var take: int = mini(step, out.size() - pos)
+		for j in range(take - 1, 0, -1):
+			var k: int = rng.randi_range(0, j)
+			var t: Variant = out[pos + j]
+			out[pos + j] = out[pos + k]
+			out[pos + k] = t
+		pos += take
 	# SMES MISTO JEDNODUCHE BARVY. Az PO zamichani, aby se michalo do cele vlny
 	# (a aby se smes neobjevila vzdy na stejnem miste poradi).
 	var mixes: Array = Hue.mix_pool_at(level)
