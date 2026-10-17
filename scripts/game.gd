@@ -61,7 +61,24 @@ const WAVE_HP := 1.018
 # chvilky." 150 -> 60: na zacatku levelu si hrac koupi dva az tri docasne kroky
 # (5 + 10 + 15), ne deset. Zlato za zabiti zustava - hrac ma rust pocitit
 # v bitve, ne hned na startu.
-const START_GOLD := 60
+#
+# Oct 2026 (Jan): "Nárůst cen u upgradů bude naopak méně strmý a výdělky za
+# zabití poutníků budou úměrně taky nižší. Ať je pocitově upgrade stejně drahý
+# v poměru počet zabitých/nový upgrade, ale ať cena tak rychle neroste do
+# stovek a tisíců. Jde spíš o optický rozdíl."
+#
+# => CELY ZLATY OBEH SE ZMENŠIL PETKRAT a je to VEDOME jen opticka zmena:
+#    * cena docasneho kroku je `n^2` misto `5 * n^2` (1, 4, 9, 16, 25 ...),
+#    * zakladni zlato za zabiti 18/10/14/16/14/26 -> 4/2/3/3/3/5,
+#    * start 60 -> 12, bonus za vlnu 4/0,1 -> 0,8/0,02,
+#    * "Zlato za zabiti" ma cenu 5x vyssi nez ostatni (`Upgrades.temp_cost`):
+#      jeho krok je cele +1 zlato, takze v petkrat mensi mene je petkrat
+#      silnejsi - jinak by se z nej stal nejlepsi nakup ve hre.
+#    Kdo hybe jednou stranou, MUSI pohnout i druhou: rozhoduje POMER (kolik
+#    zabiti hrac na jeden upgrade potrebuje), ne velikost cisla na obrazovce.
+#    Overuje se to simulatorem - pocet koupenych kroku za level musi vyjit
+#    stejne jako pred zmenou.
+const START_GOLD := 12
 # ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku rostou 1,40x za level; kdyby zlato
 # stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
 # zlomila - zmereno simulatorem (`tools/balance_sim.gd --order=damage`): hrac,
@@ -83,17 +100,29 @@ const BUILD_TIME := 5.0
 # takze se stropu (24) dosahlo uz ve tretim levelu a "vyssi levely" se v
 # poctech vubec neprojevily. Nasobenim se z desítek stanou stovky.
 #
-# TABULKA MA PADESAT POLOZEK (ne deset): vlna 1 zacina na 15 (Janovo cislo) a
-# padesata konci na 51 - stejny ROZSAH jako driv, jen rozlozeny do petkrat
-# vice kroku, takze rust mezi dvema vlnami je maly (2,5 % misto 13 %).
+# TABULKA MA PADESAT POLOZEK (ne deset): vlna 1 zacina na 15 (Janovo cislo)
+# a padesata konci na 72.
+#
+# Oct 2026 (Jan): "Nárůst počtu poutníků v jednotlivých vlnách musí být o něco
+# strmější." - tabulka je proto GEOMETRICKA (15 x 4,8^(i/49)), ne skoro
+# rovnomerne rozlozena jako driv. Pomer prvni a posledni vlny levelu sel
+# z 3,4x na 4,8x (+41 % strmosti); prumer vlny z 29,5 na 36,4 poutniku
+# (+23 %). Prvni tri desitky vln jsou tim o par poutniku vetsi, posledni
+# desitka narostla vyrazne (51 -> 72).
+#
+# POZOR: vetsi vlny znamenaji delsi level (doba vlny = max(vstupni okno,
+# doba zabijeni) a doba zabijeni roste s poctem). Kdo hybe tabulkou, at
+# zmeri `tools/balance_sim.gd --levels=1` - a kdo chce level zkratit, hybe
+# `SPAWN_SPREAD` (mene michani barev) nebo `BUILD_TIME`, ne pocty zpet dolu.
+#
 # Kdo meni pocet vln, musi prodlouzit/zkratit TUHLE tabulku: `wave_size` bere
 # `WAVE_SIZES[vlna]`, takze kratka tabulka by vsechny pozdejsi vlny srovnala
 # na sve posledni cislo (a level by prestal gradovat).
-const WAVE_SIZES := [15, 15, 16, 16, 17, 17, 17, 18, 18, 19,
-	19, 20, 20, 21, 21, 22, 22, 23, 24, 24,
-	25, 25, 26, 27, 27, 28, 29, 29, 30, 31,
-	32, 33, 33, 34, 35, 36, 37, 38, 39, 40,
-	41, 42, 43, 44, 45, 46, 47, 49, 50, 51]
+const WAVE_SIZES := [15, 15, 16, 17, 17, 18, 18, 19, 19, 20,
+	21, 21, 22, 23, 23, 24, 25, 26, 27, 28,
+	28, 29, 30, 31, 32, 33, 34, 36, 37, 38,
+	39, 40, 42, 43, 45, 46, 47, 49, 51, 52,
+	54, 56, 58, 59, 61, 63, 65, 68, 70, 72]
 const WAVE_SIZE_PER_LEVEL := 1.20
 # STROP VELIKOSTI VLNY: hra je nekonecna, takze pocet musi nekam dojit - na 20.
 # levelu by jinak chodily tisice poutniku a hra by se zadrhla.
@@ -101,9 +130,11 @@ const WAVE_SIZES_MAX := 400
 # ODMENA ZA VLNU. Soucet za CELY LEVEL se drzi na tom, kde byl u deseti vln
 # (320 zlata): s padesati vlnami NESMI bonus za vlnu zustat 10/4, to by dalo
 # 5600 zlata za level a hra by se zlomila - a hrac to vidi, protoze zlato zacina
-# na kazdem levelu znovu. 50*4 + 0,1*1275 = 327 zlata za level (driv 320).
-const WAVE_BONUS := 4
-const WAVE_BONUS_PER_WAVE := 0.1
+# na kazdem levelu znovu. 50*0,8 + 0,02*1275 = 65 zlata za level (driv 327).
+# Petkrat mensi cislo je soucast zmenseni celeho zlateho obehu (viz
+# `START_GOLD`) - pomer bonusu k vydelku ze zabiti zustava stejny.
+const WAVE_BONUS := 0.8
+const WAVE_BONUS_PER_WAVE := 0.02
 # ODMENA ZA VYHRANY LEVEL V BODECH (Jan schvalil): 25 + 5 * level.
 const BODY_BASE := 25
 const BODY_PER_LEVEL := 5
@@ -149,7 +180,8 @@ const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 # ten rozdil, obe barvy jsou v dostrelu porad a hrac musí prepinat prubezne.
 const SPAWN_SPREAD := 3.0
 # DNO A STROP OKNA: prvni vlny nesmi vstupovat v jednom okamziku a vlna
-# o stovkach poutniku nesmi vstupovat pul minuty.
+# o stovkach poutniku nesmi vstupovat pul minuty. STROP MA VYJIMKU - na boss
+# vlne je okno aspon tak dlouhe, jak dlouho jde boss k vezi (viz `wave_gap`).
 const SPAWN_WINDOW_MIN := 6.0
 const SPAWN_WINDOW_MAX := 30.0
 # DNO NA JEDNOHO POUTNIKA. Je to ZAROVEN HRANICE OBTIZNOSTI: cim kratsi mezera,
@@ -166,12 +198,38 @@ const SPAWN_GAP_MIN := 0.10
 # boss ZKOUSKA POSKOZENI, ne hadanka.
 const BOSS_EVERY_WAVES := 10
 const BOSS_HP_MULT := 20.0
-const BOSS_SPEED_MULT := 0.30
+# RYCHLOST BOSSE JE PETINA ZAKLADNI, ALE UZ NE ZAVISLA NA BARVE (Oct 2026).
+# Driv se nasobila i `Hue.speed_mult`, takze cerveny boss sel k vezi 65 s a
+# zluty 30 s - cas, kdy boss dojde, se nedal naplanovat a cerveny boss stravil
+# posledni pulminutu cesty sam (presne to Jan kritizoval).
+#
+# Dve veci, ktere se tim zmenily, a obe se MUSELY premerit (`tools/balance_sim`):
+#   * DRIV BYL BOSS UVNITR VLNY, ne za ni. Vez se musi delit mezi bosse a
+#     poutniky, kteri jeste jdou - boss proto dostane za stejnou dobu mene ran
+#     a MUSI mit vic casu v dostrelu. Odtud petina (0,20) misto 30 %: presne
+#     tolik mel nejpomalejsi boss ve stare hre (cervena a stribrna, jejichz
+#     `speed_mult` je 0,60 x 0,30), takze nejtvrdsi bossove zustali zabitelni.
+#     0,30 uz hrace v 10. vlne zabilo (zmereno: hlupy hrac padl na 10. vlne).
+#   * DOBA CESTY JE PRO KAZDEHO BOSSE STEJNA: `TRAVEL_S / 0.20` = ~59 s. Diky
+#     tomu se da vlna rozvrhnout tak, aby jeste prichazela, kdyz boss dochazi
+#     k vezi (`wave_gap` na boss vlne prodluzuje vstupni okno na tuhle dobu).
+const BOSS_SPEED_MULT := 0.20
 const BOSS_SIZE := 2.5
 const BOSS_GOLD_MULT := 5.0
-# KDE VE VLNE SE BOSS OJEVI. The Tower: na tierech 1-6 v pevnem bode vlny
-# (uprostred), od tieru 7 nahodne mezi 5 a 75 % vlny.
-const BOSS_SPAWN_FRAC := 0.5
+# KDE VE VLNE SE BOSS OJEVI.
+#
+# Oct 2026 (Jan): "Kola s bossem musí být udělaná trochu jinak. Boss musí
+# vyrazit dříve. Teď vždy hráč pobije všechny ostatní a boss sám pak cestuje
+# strašně dlouho k věži o samotě. Ve chvíli, kdy boss dochází k věži, ještě
+# musí zabývat nějací nepřátelé."
+#
+# => 0,0 = BOSS VYRAZI PRVNI, na cele vlny. Je pomaly (30 % rychlosti), takze
+#    ho beznou poutnici, kteri vstupuji za nim, cestou dohoní a predhoní - takze
+#    k vezi nedojde sam v prazdnem poli, ale uprostred vlny. Driv stál uprostred
+#    vstupu a hrac mel vsechno ostatni dawno mrtve.
+# The Tower: na tierech 1-6 v pevnem bode vlny (uprostred), od tieru 7 nahodne
+# mezi 5 a 75 % vlny - Janovo reseni je jednodussi a odpovida jeho pripomince.
+const BOSS_SPAWN_FRAC := 0.0
 
 # LASER. Neni to strela, co leti - je to paprsek, ktery sviti, dokud je cil
 # v dostrelu a vez ho vidi. Sirka je podil MERITKA a s kazdym odrazem se
@@ -670,6 +728,18 @@ func wave_gap(arrivals: Array) -> float:
 		lo = minf(lo, t)
 		hi = maxf(hi, t)
 	var window: float = clampf((hi - lo) * SPAWN_SPREAD, SPAWN_WINDOW_MIN, SPAWN_WINDOW_MAX)
+	# BOSS VLNA: VSTUPNI OKNO JE ASPON TAK DLOUHE, JAK DLOUHO JDE BOSS K VEZI.
+	# Boss vyrazi PRVNI a je petkrat pomalejsi - kdyby vlna vstupovala krátce,
+	# prisel by k vezi sam (Jan, Oct 2026: "Ve chvíli, kdy boss dochází k věži,
+	# ještě musí zabývat nějací nepřátelé."). Kdyz vlna vstupuje prave tak
+	# dlouho, jako boss jde, vstupuje posledni poutnik ve chvili, kdy boss
+	# dorazi, a cely bossuv pochod je obklopen proudem nepritel.
+	#
+	# Pocita se z BOSSOVY CESTY, ne opsanym cislem: kdo zrychli bosse, zkrati
+	# tim i okno jeho vlny (a naopak). `wave > 0` je pojistka - `boss_wave(0)`
+	# by jinak platilo a hra bez vlny by dostala bossovsky strop.
+	if wave > 0 and boss_wave(wave):
+		window = maxf(window, TRAVEL_S / BOSS_SPEED_MULT)
 	return maxf(SPAWN_GAP_MIN, window / float(n - 1))
 
 
@@ -980,7 +1050,12 @@ func _make_boss(p: Pilgrim) -> void:
 	p.is_boss = true
 	p.max_hp *= BOSS_HP_MULT
 	p.hp = p.max_hp
-	p.speed *= BOSS_SPEED_MULT
+	# RYCHLOST SE POCITA ZE ZAKLADU, NE Z POUTNIKA: kdyby se nasobila i jeji
+	# barva (`p.speed` uz `Hue.speed_mult` ma), byl by cerveny boss o vic nez
+	# dvojnasobne pomalejsi nez zluty a nešlo by rict, kdy dojde k vezi.
+	# Doba cesty je tim pro kazdeho bosse stejna (TRAVEL_S / 0.20 = ~59 s) -
+	# viz `BOSS_SPEED_MULT` a `wave_gap`.
+	p.speed = pilgrim_speed() * BOSS_SPEED_MULT
 	p.size *= BOSS_SIZE
 
 

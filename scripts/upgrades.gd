@@ -34,10 +34,18 @@ const CATEGORIES := [
 	{"id": CAT_SPEC, "label": "SPECIÁL"},
 ]
 
-# CENA DOCASNEHO KROKU: N-ty krok (od jedne) stoji 5 * N zlata. Neni to zavisle
-# na permanentnim stupni - presne jak Jan chtel ("lvl 1 dočasného upgradu bude
-# stát vždy například 5 goldů, ať začínám na střela/1s nebo střela/0.6s").
-const TEMP_COST := 5
+# CENA DOCASNEHO KROKU: N-ty krok (od jedne) stoji `TEMP_COST * N * N` zlata.
+# Neni to zavisle na permanentnim stupni - presne jak Jan chtel ("lvl 1
+# dočasného upgradu bude stát vždy například 5 goldů, až začínám na
+# střela/1s nebo střela/0.6s").
+#
+# Oct 2026 (Jan): "Nárůst cen u upgradů bude naopak méně strmý ... ale ať cena
+# tak rychle neroste do stovek a tisíců. Jde spíš o optický rozdíl." Zaklad je
+# proto 1 (cena kroku je 1, 4, 9, 16, 25 ...) misto 5 - cely zlaty obeh se
+# zmensil petkrat VCRETNE vyderlku za zabiti (`Hue.ROWS`, `Game.START_GOLD`).
+# Pomer "kolik zabiti na jeden upgrade" je tim PRESNE stejny jako driv; meni se
+# jen cislo na obrazovce. Kdo hybe zakladem, MUSI pohnout i zlatem za zabiti.
+const TEMP_COST := 1
 # CENA PERMANENTNIHO STUPNE: kazde tri urovne stoji o bod vic (1,1,1,2,2,2,...).
 const PERM_EVERY := 3
 # SPECIALY maji vlastni cenu za stupen (nasobek): multishot 3, ostatni 4.
@@ -109,11 +117,16 @@ const STATS := [
 		"start": 0.0, "step": 0.5, "cap": 3.0, "perm_max": 6, "temp_max": UNLIMITED},
 
 	{"id": "gk", "label": "Zlato za zabití", "cat": CAT_ECO, "kind": "plus",
-		"start": 0, "step": 1, "cap": 6, "perm_max": 6, "temp_max": UNLIMITED},
+		"start": 0, "step": 1, "cap": 6, "perm_max": 6, "temp_max": UNLIMITED,
+		# "cost": 5 - viz `temp_cost`: krok je cele +1 zlato za zabiti, takze
+		# v petkrat mensi mene (Oct 2026) je petkrat silnejsi.
+		"cost": 5},
+	# ZLATO ZA VLNU A ZA LEVEL se zmensilo s celym obehem (5 -> 1 a 25 -> 5);
+	# strop je hodnota na `perm_max`, takze se posunul s krokem (6 a 30).
 	{"id": "gw", "label": "Zlato za vlnu", "cat": CAT_ECO, "kind": "plus",
-		"start": 0, "step": 5, "cap": 30, "perm_max": 6, "temp_max": UNLIMITED},
+		"start": 0, "step": 1, "cap": 6, "perm_max": 6, "temp_max": UNLIMITED},
 	{"id": "gl", "label": "Zlato za level", "cat": CAT_ECO, "kind": "plus",
-		"start": 0, "step": 25, "cap": 150, "perm_max": 6, "temp_max": UNLIMITED},
+		"start": 0, "step": 5, "cap": 30, "perm_max": 6, "temp_max": UNLIMITED},
 
 	{"id": "ms", "label": "Víc cílů", "cat": CAT_SPEC, "kind": "int",
 		"start": 1, "step": 1, "cap": 5, "perm_max": 4, "temp_max": 0, "perm_cost": 3},
@@ -304,7 +317,7 @@ static func _cz(v: float, digits: int) -> String:
 
 
 # CENA DOCASNEHO KROKU. `bought` = kolik kroku uz hrac v tomto levelu koupil.
-# Cena roste (5, 10, 15, ...) - to je jediny "strop" neomezeneho zebricku.
+# Cena roste (1, 4, 9, 16, ...) - to je jediny "strop" neomezeneho zebricku.
 static func temp_cost(id: String, bought: int) -> int:
 	if not temp_buyable(id):
 		return 0
@@ -313,9 +326,17 @@ static func temp_cost(id: String, bought: int) -> int:
 	# Jan: "Je velmi snadné se brzy dostat na vysoké upgrady poškození a pak je
 	# každý mrtvý během chvilky." Strop tu porad ZADNY neni (Jan, Oct 2026:
 	# "já prozatím nechci žádné stropy") - draha je az druha polovina zebricku:
-	# 5, 20, 45, 80, 125 ... takze 10 kroku stoji 1925 zlata, ne 275.
+	# 1, 4, 9, 16, 25 ... (petkrat mensi cisla nez driv, viz `TEMP_COST`).
+	#
+	# UROVEN CENY JE VLASTNOST STATU, NE VYJIMKA V KODU (`"cost"` v tabulce).
+	# "Zlato za zabití" ji ma petkrat vyssi, protoze jeho krok je cele
+	# +1 zlato za zabiti: v petkrat mensi mene je petkrat silnejsi, takze by se
+	# z neho stal jednoznacne nejlepsi nakup ve hre. Cislo kroku je tim porad
+	# stejne drahe V ZABITICH jako driv (`test_upgrades` to hlida).
+	var s: Dictionary = stat(id)
+	var mult: int = int(s.get("cost", 1))
 	var n: int = clampi(bought, 0, 99) + 1
-	return TEMP_COST * n * n
+	return mult * TEMP_COST * n * n
 
 
 # CENA PERMANENTNIHO STUPNE. `bought` = kolik stupnu uz hrac ma.

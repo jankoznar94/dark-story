@@ -15,7 +15,8 @@ func _init() -> void:
 	Profile.allow_save = false   # testy NESMI prepsat hracuv postup
 	_run("hodnota je start + (permanentni + docasne) kroky, orezana stropem", _test_value)
 	_run("permanentni stupen posouva start, cena docasneho kroku se NEMENI", _test_perm_shifts_start)
-	_run("docasna cena je 5x N a je stejna pro kazdou kategorii", _test_temp_cost)
+	_run("docasna cena je N^2 a uroven ceny je vlastnost statu", _test_temp_cost)
+	_run("zlaty obeh je petkrat mensi a pomer zustal", _test_economy_scale)
 	_run("sila paprsku je nasobici osa (1,0x - 1,5x a v bitve dal)", _test_beam_power)
 	_run("permanentni cena roste a specialy jsou drazsi", _test_perm_cost)
 	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
@@ -138,23 +139,70 @@ func _test_beam_power() -> void:
 	_check(absf(Upgrades.value_of("ap", 5, 4) - 1.9) < 0.0001,
 		"docasne kroky nepokracuji v nasobeni (%.2f)" % Upgrades.value_of("ap", 5, 4))
 	_check(Upgrades.temp_buyable("ap"), "sila paprsku se v bitve neda koupit")
-	_check(Upgrades.temp_cost("ap", 0) == 5, "prvni krok sily paprsku nestoji 5 zlata")
+	_check(Upgrades.temp_cost("ap", 0) == 1, "prvni krok sily paprsku nestoji 1 zlato")
 	_check(Upgrades.value_text("ap", 5, 0) == "1,5x",
 		"text sily paprsku neni 1,5x (%s)" % Upgrades.value_text("ap", 5, 0))
 
 
 func _test_temp_cost() -> void:
 	# CENA ROSTE KVADRATICKY (Oct 2026, viz `Upgrades.temp_cost`): kazdy krok je
-	# 5 * n^2, takze druhy stoji 20 a osmy 320. Linearni cena driv nechala hrace
+	# n^2, takze druhy stoji 4 a osmy 64. Linearni cena driv nechala hrace
 	# koupit pres 80 kroku poskozeni za level (Jan: "kazdy je mrtvy behem
-	# chvilky").
-	_check(Upgrades.temp_cost("ad", 0) == 5, "prvni docasny krok nestoji 5 zlata")
-	_check(Upgrades.temp_cost("ad", 1) == 20, "druhy docasny krok nestoji 20 zlata")
-	_check(Upgrades.temp_cost("ad", 7) == 320, "osmy docasny krok nestoji 320 zlata")
+	# chvilky"). Cisla jsou PETKRAT mensi nez driv (5 * n^2) - Oct 2026 (Jan:
+	# "cena tak rychle neroste do stovek a tisíců. Jde spíš o optický rozdíl.")
+	_check(Upgrades.temp_cost("ad", 0) == 1, "prvni docasny krok nestoji 1 zlato")
+	_check(Upgrades.temp_cost("ad", 1) == 4, "druhy docasny krok nestoji 4 zlata")
+	_check(Upgrades.temp_cost("ad", 7) == 64, "osmy docasny krok nestoji 64 zlata")
 	# Cena musi byt stejna napric kategoriemi - hrac jinak nepochopi, podle
-	# ceho se cena pocita.
-	for id in ["ad", "hp", "am", "gk", "cc"]:
-		_check(Upgrades.temp_cost(id, 2) == 45, "%s: treti krok nestoji 45 zlata" % id)
+	# ceho se cena pocita. ("gk" tu ZAMERNE neni, viz nize.)
+	for id in ["ad", "hp", "am", "cc", "gw", "gl"]:
+		_check(Upgrades.temp_cost(id, 2) == 9, "%s: treti krok nestoji 9 zlata" % id)
+	# ZLATO ZA ZABITI MA PETKRAT DRAZSI KROK. Neni to nekonzistence: jeho krok
+	# je cele +1 zlato za zabiti a cely zlaty obeh je petkrat mensi, takze by
+	# z neho byl jednoznacne nejlepsi nakup ve hre. Pomer "kolik zabiti na
+	# krok" tim zustava PRESNE jako pred zmensenim obehu - proto se hlida on,
+	# ne cena sama.
+	_check(Upgrades.temp_cost("gk", 0) == 5, "krok zlata za zabiti nestoji 5 zlata")
+	_check(Upgrades.temp_cost("gk", 2) == 45, "treti krok zlata za zabiti nestoji 45 zlata")
+	for n in [1, 2, 5, 10, 20]:
+		var pay: float = float(Upgrades.temp_cost("gk", n - 1)) / float(n)
+		_check(absf(pay - 5.0 * float(n)) < 0.0001,
+			"%d. krok zlata za zabiti se nezaplati za %d zabiti (%.1f)" % [n, 5 * n, pay])
+
+
+# ZLATY OBEH JE PETKRAT MENSI (Oct 2026). Jan: "výdělky za zabití poutníků
+# budou úměrně taky nižší. Ať je pocitově upgrade stejně drahý v poměru počet
+# zabitých/nový upgrade ... Jde spíš o optický rozdíl."
+#
+# Kdyby se zmensila JEN cena upgradů a ne vydelek (nebo naopak), zmenil by se
+# pomer "kolik zabiti na upgrade" a hra by se rozjela - presne to se stalo
+# s linearni cenou, po ktere si hrac koupil pres 80 kroku poskozeni. Test proto
+# hlida OBE STRANY a jeste vztah mezi nimi.
+func _test_economy_scale() -> void:
+	_check(Upgrades.temp_cost("ad", 0) == 1, "prvni krok nestoji 1 zlato")
+	_check(Game.START_GOLD == 12, "start zlata neni 12 (%d)" % Game.START_GOLD)
+	# START = 12x CENA PRVNIHO KROKU (driv 60 : 5) - hrac si na zacatku koupi
+	# dva kroky, ne deset.
+	_check(absf(float(Game.START_GOLD) / float(Upgrades.temp_cost("ad", 0)) - 12.0) < 0.001,
+		"start zlata neni 12x cena prvniho kroku")
+	# ZLATO ZA ZABITI (driv 18/10/14/16/14/26, dnes petkrat mene) a POMER MEZI
+	# BARVAMI: zluta zustava nejlevnejsi, stribrna nejdrazsi. Kdyby se barvy
+	# prehodily, zmenilo by se, ktera barva se hracovi vyplati nechat projit.
+	_check(Hue.gold_of(Hue.YELLOW) == 2, "zluta nedava 2 zlata (%d)" % Hue.gold_of(Hue.YELLOW))
+	_check(Hue.gold_of(Hue.RED) == 4, "cervena nedava 4 zlata (%d)" % Hue.gold_of(Hue.RED))
+	_check(Hue.gold_of(Hue.SILVER) == 5, "stribrna nedava 5 zlata (%d)" % Hue.gold_of(Hue.SILVER))
+	_check(Hue.gold_of(Hue.YELLOW) < Hue.gold_of(Hue.RED), "zluta uz neni levnejsi nez cervena")
+	_check(Hue.gold_of(Hue.RED) < Hue.gold_of(Hue.SILVER), "stribrna uz neni drazsi nez cervena")
+	# A TOJE CELY SMYSL: POMER "KOLIK ZABITI NA UPGRADE" SE NESMI POHNUT.
+	# Historicka hodnota je `5n^2 / 18` (cena kroku / zlato za cervenou) a
+	# dnesni cisla musi dat to same - proto se obe strany deli stejnym cislem.
+	# Tolerance 12 % je zaokrouhleni (18/5 = 3,6 -> 4).
+	for n in [1, 2, 5, 8]:
+		var today: float = float(Upgrades.temp_cost("ad", n - 1)) / float(Hue.gold_of(Hue.RED))
+		var before: float = 5.0 * float(n) * float(n) / 18.0
+		_check(absf(today - before) < before * 0.12,
+			"%d. krok stoji %.1f zabiti cervene (driv %.1f) - pomer se pohnul"
+			% [n, today, before])
 
 
 func _test_perm_cost() -> void:

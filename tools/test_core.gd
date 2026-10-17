@@ -836,19 +836,23 @@ func _test_mix_pilgrim() -> void:
 func _test_temp_buy() -> void:
 	# MERI SE NA POSKOZENI ("ad"): kadenci ("as") hra od Oct 2026 vubec nema -
 	# vez sviti laserem a poskozeni je za sekundu, ne za ranu.
+	# CENA KROKU SE BERE Z TABULKY (`Upgrades.TEMP_COST` a `temp_cost`), ne
+	# opsana - Oct 2026 se cely zlaty obeh zmensil petkrat (1, 4, 9, 16 ...).
 	var g: Game = _fresh()
 	g.gold = 100
 	var v0: float = g.val("ad")
 	_check(g.buy_temp("ad"), "prvni krok se neda koupit")
-	_check(g.gold == 95, "prvni krok nestal 5 zlata (zbyva %d)" % g.gold)
+	_check(g.gold == 100 - Upgrades.temp_cost("ad", 0),
+		"prvni krok nestal %d zlata (zbyva %d)" % [Upgrades.temp_cost("ad", 0), g.gold])
 	_check(g.val("ad") > v0, "krok nezmenil hodnotu parametru")
 	_check(g.buy_temp("ad"), "druhy krok se neda koupit")
-	_check(g.gold == 75, "druhy krok nestal 20 zlata (zbyva %d)" % g.gold)
+	_check(g.gold == 100 - Upgrades.temp_cost("ad", 0) - Upgrades.temp_cost("ad", 1),
+		"druhy krok nestal %d zlata (zbyva %d)" % [Upgrades.temp_cost("ad", 1), g.gold])
 	# BEZ ZLATA SE NEKUPUJE.
 	var g2: Game = _fresh()
-	g2.gold = 4
+	g2.gold = 0
 	_check(not g2.buy_temp("ad"), "krok se koupil bez zlata")
-	_check(g2.gold == 4, "zlato se ubralo, i kdyz se nekoupilo")
+	_check(g2.gold == 0, "zlato se ubralo, i kdyz se nekoupilo")
 	# BEZ STROPU: docasny zebricek uz "MAX" nema (Jan, Oct 2026: "já prozatím
 	# nechci žádné stropy"). Kupuje se tak dlouho, dokud je zlato.
 	var g3: Game = _fresh()
@@ -864,13 +868,14 @@ func _test_temp_buy() -> void:
 		"po %d docasnych krocich neni poskozeni %.0f/s (je %.2f)" % [want, cekane, g3.val("ad")])
 	_check(g3.val("ad") > 24.0, "docasny zebricek porad konci na stropu 24")
 	var paid: int = 100000 - g3.gold
-	_check(paid == 5 * (want * (want + 1) * (2 * want + 1) / 6),
+	var sum_n2: int = want * (want + 1) * (2 * want + 1) / 6
+	_check(paid == Upgrades.TEMP_COST * sum_n2,
 		"cena %d docasnych kroku neni %d zlata (%d)"
-		% [want, 5 * (want * (want + 1) * (2 * want + 1) / 6), paid])
+		% [want, Upgrades.TEMP_COST * sum_n2, paid])
 	_check(g3.buy_temp("ad"), "posledni krok se nedal koupit, i kdyz je zlato")
 	# ZIVOTY SE DOSTANOU HNAD, ne az v dalsim levelu.
 	var g4: Game = _fresh()
-	g4.gold = 5
+	g4.gold = Upgrades.temp_cost("hp", 0)
 	var hp0: float = g4.max_hp
 	g4.buy_temp("hp")
 	_check(absf(g4.max_hp - (hp0 + 10.0)) < 0.01, "krok zivotu nezvetsil maximum")
@@ -889,7 +894,9 @@ func _test_perm_shift() -> void:
 		"start po dvou permanentních neni %.0f/s (%.2f)" % [cekany, g.val("ad")])
 	var gold0: int = g.gold
 	_check(g.buy_temp("ad"), "krok po permanentnim upgradu nejde koupit")
-	_check(gold0 - g.gold == 5, "krok po permanentnim upgradu stoJI jinak nez 5 zlata (%d)" % (gold0 - g.gold))
+	_check(gold0 - g.gold == Upgrades.temp_cost("ad", 0),
+		"krok po permanentnim upgradu stoJI jinak nez %d zlata (%d)"
+		% [Upgrades.temp_cost("ad", 0), gold0 - g.gold])
 	var po_kroku: float = Upgrades.value_of("ad", 2, 1)
 	_check(absf(g.val("ad") - po_kroku) < 0.001,
 		"krok se neprisel k posunutemu startu (%.2f, cekano %.0f)" % [g.val("ad"), po_kroku])
@@ -977,7 +984,7 @@ func _test_difficulty() -> void:
 	# prvních levelech bude začínat třeba na 15. Ve vyšších to budou klidně
 	# desítky až stovky."). Strop drzi nekonecnou partii hratelnou.
 	# STRICTNE ROSTOUCI VLNA PO VLNE NELZE: pri padesati vlnach na level a
-	# rozsahu 15..51 (Janova cisla) je hodnot vic nez k dispozici, takze se
+	# rozsahu 15..72 (Janova cisla) je hodnot vic nez k dispozici, takze se
 	# nektere pocty opakuji. Hlida se proto to, na cem opravdu zalezi: prvni
 	# vlna je 15 (Janovo cislo), prvni a pata se lisi a tabulka v ramci levelu
 	# (i mezi levely) roste.
@@ -988,6 +995,19 @@ func _test_difficulty() -> void:
 	_check(g.wave_size(1, 12) >= 100,
 		"ve vysokem levelu nema prvni vlna stovky (%d)" % g.wave_size(1, 12))
 	_check(g.wave_size(Game.WAVES_PER_LEVEL, 99) <= Game.WAVE_SIZES_MAX, "velikost vlny pretekla strop")
+	# STRMOST TABULKY (Jan, Oct 2026: "Nárůst počtu poutníků v jednotlivých
+	# vlnách musí být o něco strmější."). Hlida se POMER prvni a posledni vlny
+	# levelu (driv 3,4x, dnes 4,8x) a to, ze rust je opravdu zrychleny - druha
+	# polovina levelu prida vic poutniku nez prvni. Kdo tabulku srovna zpet na
+	# rovnomerny rust, spadne tady, i kdyz "vsechno roste".
+	var first: int = g.wave_size(1, 1)
+	var last: int = g.wave_size(Game.WAVES_PER_LEVEL, 1)
+	var half: int = g.wave_size(Game.WAVES_PER_LEVEL / 2, 1)
+	_check(float(last) >= float(first) * 4.5,
+		"tabulka neni strma (posledni vlna je %.1fx prvni, ma byt aspon 4,5x)"
+		% (float(last) / float(first)))
+	_check((last - half) > (half - first),
+		"rust se ne-zrychluje (prvni pulka +%d, druha +%d)" % [half - first, last - half])
 
 
 # BARVY PRICHAZEJI PO LEVELECH, NE UPROSTRED BITVY. Jan (Oct 2026): "Už prvním
@@ -1432,12 +1452,25 @@ func _test_boss() -> void:
 	_check(g.pilgrims.size() > 0, "normalni vlna nevysypala ani jednoho poutnika")
 	for p in g.pilgrims:
 		_check(not p.is_boss, "boss se objevil na normalni vlne")
-	# BOSS VLNA: prave jeden, uprostred vlny.
+	# BOSS VLNA: prave jeden, a VYRAZI PRVNI (Jan, Oct 2026: "Boss musí vyrazit
+	# dříve."). Driv stal uprostred vstupu, takze k vezi sel jako posledni a sam.
 	g.pilgrims = []
 	g.wave = Game.BOSS_EVERY_WAVES
 	g._start_wave()
-	var plain: float = g.hp_for(g.kolo(), g.wave, Hue.RED)
-	var plain_speed: float = g.pilgrim_speed() * Hue.speed_mult(Hue.RED)
+	_check(g.boss_at == 0, "boss nevyrazi jako prvni (index %d)" % g.boss_at)
+	# VLNA VSTUPUJE, DOKUD BOSS JDE. Jan: "Ve chvíli, kdy boss dochází k věži,
+	# ještě musí zabývat nějací nepřátelé." Kdyby vstupni okno skoncilo driv nez
+	# bossova cesta, prisel by boss k vezi do prazdneho pole - presne to Jan
+	# kritizoval. Meri se to z ROZVRHU VLNY (zadne hrani partie): pocita se,
+	# kolik poutniku je jeste na ceste ve chvili, kdy boss dorazi k vezi.
+	var boss_travel: float = Game.TRAVEL_S / Game.BOSS_SPEED_MULT
+	var on_way: int = 0
+	for i in range(g.plan.size()):
+		var arrival: float = g.spawn_at[i] + Game.TRAVEL_S / Hue.speed_mult(int(g.plan[i]))
+		if arrival > boss_travel:
+			on_way += 1
+	_check(on_way >= 4, "k vezi dojde boss sam (%d poutniku z %d je na ceste)"
+		% [on_way, g.plan.size()])
 	while g.spawned < g.plan.size():
 		g._spawn_next()
 	var bosses: Array = []
@@ -1452,9 +1485,11 @@ func _test_boss() -> void:
 	_check(absf(b.max_hp - want_hp * Game.BOSS_HP_MULT) < 0.01,
 		"boss nema %dx zivoty (%.1f, ma byt %.1f)"
 		% [int(Game.BOSS_HP_MULT), b.max_hp, want_hp * Game.BOSS_HP_MULT])
-	var want_speed: float = g.pilgrim_speed() * Hue.speed_mult(b.hue) * Game.BOSS_SPEED_MULT
+	# RYCHLOST BOSSE NEZAVISI NA BARVE (Oct 2026) - jinak by se nedalo rict,
+	# kdy dojde k vezi, a cerveny boss by sel sam o pul minuty dele.
+	var want_speed: float = g.pilgrim_speed() * Game.BOSS_SPEED_MULT
 	_check(absf(b.speed - want_speed) < 0.01,
-		"boss nema %d %% rychlosti (%.2f, ma byt %.2f)"
+		"boss nema %d %% zakladni rychlosti (%.2f, ma byt %.2f)"
 		% [int(Game.BOSS_SPEED_MULT * 100.0), b.speed, want_speed])
 	_check(b.size > Game.PILGRIM_SIZE * 1.5,
 		"boss neni vyrazne vetsi nez poutnik (%.2f)" % b.size)

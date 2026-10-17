@@ -55,10 +55,16 @@ const B_SHIFT := "shift"
 #                 modra (rozpadnuti) znamena.
 #   palette     = je barva v palete hracе? Stribrna NENI - proto na ni na
 #                 zacatku nejde mirrit a je to cely jeji smysl.
+#   gold        = zlato za zabiti TOHLE barvy. Oct 2026 (Jan: "výdělky za
+#                 zabití poutníků budou úměrně taky nižší ... jde spíš
+#                 o optický rozdíl") je cely zlaty obeh PETKRAT mensi - viz
+#                 `Game.START_GOLD`: 18/10/14/16/14/26 -> 4/2/3/3/3/5. Pomer
+#                 mezi barvami (zluta nejlevnejsi, stribrna nejdrazsi) se
+#                 NEMENI; kdo hybe jednim cislem, hybe i cenou upgradů.
 const ROWS := [
 	{
 		"name": "Červená", "letter": "R", "color": Color(0.80, 0.22, 0.17),
-		"hp": 2.2, "speed": 0.60, "gold": 18, "behaviour": B_NONE,
+		"hp": 2.2, "speed": 0.60, "gold": 4, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{
@@ -71,17 +77,17 @@ const ROWS := [
 		# a zelena, ktere maji 1,00). Kdo hybe timhle cislem, hybe obtiznosti
 		# i delkou levelu - a MUSI to premerit `tools/balance_sim.gd`.
 		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22),
-		"hp": 0.6, "speed": 1.30, "gold": 10, "behaviour": B_NONE,
+		"hp": 0.6, "speed": 1.30, "gold": 2, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{
 		"name": "Modrá", "letter": "B", "color": Color(0.22, 0.46, 0.80),
-		"hp": 1.0, "speed": 1.00, "gold": 14, "behaviour": B_SPLIT,
+		"hp": 1.0, "speed": 1.00, "gold": 3, "behaviour": B_SPLIT,
 		"unlock_level": 2, "palette": true,
 	},
 	{
 		"name": "Zelená", "letter": "G", "color": Color(0.26, 0.62, 0.30),
-		"hp": 1.2, "speed": 1.00, "gold": 16, "behaviour": B_REGEN,
+		"hp": 1.2, "speed": 1.00, "gold": 3, "behaviour": B_REGEN,
 		"unlock_level": 3, "palette": true,
 	},
 	{
@@ -93,12 +99,12 @@ const ROWS := [
 		# cislem, hybe obtiznosti; hlida to `tools/test_core.gd`
 		# (`_test_hue_speed_order`).
 		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74),
-		"hp": 0.7, "speed": 0.50, "gold": 14, "behaviour": B_VANISH,
+		"hp": 0.7, "speed": 0.50, "gold": 3, "behaviour": B_VANISH,
 		"unlock_level": 4, "palette": true,
 	},
 	{
 		"name": "Stříbrná", "letter": "S", "color": Color(0.78, 0.80, 0.82),
-		"hp": 2.5, "speed": 0.60, "gold": 26, "behaviour": B_SHIFT,
+		"hp": 2.5, "speed": 0.60, "gold": 5, "behaviour": B_SHIFT,
 		"unlock_level": 5, "palette": false,
 	},
 ]
@@ -160,7 +166,6 @@ const SPLIT_HP_FRAC := 0.40
 # vyslo 5,9 px v polomeru). 0,85 drzi kus mensi nez rodic, ale pismeno se do nej
 # vejde - hlida to `test_layout._test_enemy_is_dot_with_letters`.
 const SPLIT_SIZE := 0.85
-const SPLIT_GOLD := 6
 
 # REGENERACE ZELENE: podil maximalnich zivotu za sekundu. Musi byt vyrazne
 # mensi nez kadence veze, jinak je poutnik nesmrtelny.
