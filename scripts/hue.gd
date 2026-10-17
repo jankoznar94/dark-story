@@ -62,8 +62,16 @@ const ROWS := [
 		"unlock_level": 1, "palette": true,
 	},
 	{
+		# ZLUTA JE PORAD NEJRYCHLEJSI BARVA, ale uz ne o tolik. Jan (Oct 2026):
+		# "Tak muzeme zlutou lehce zpomalit." Duvod je michani barev: o michani
+		# rozhoduje ROZDIL casu cesty zlute a cervene (`Game.wave_gap`) - cim
+		# mensi rozdil, tim kratsi vstupni okno staci, aby se barvy u veze
+		# mijely, a tim kratsi je vlna i cely level. 1,60 -> 1,30 snizilo rozdil
+		# na 390x844 z 8,0 s na 6,9 s (zluta zustava o 30 % rychlejsi nez modra
+		# a zelena, ktere maji 1,00). Kdo hybe timhle cislem, hybe obtiznosti
+		# i delkou levelu - a MUSI to premerit `tools/balance_sim.gd`.
 		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22),
-		"hp": 0.6, "speed": 1.60, "gold": 10, "behaviour": B_NONE,
+		"hp": 0.6, "speed": 1.30, "gold": 10, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{

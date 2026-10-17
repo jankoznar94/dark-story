@@ -125,7 +125,7 @@ const KOLO_PER_LEVEL := WAVES_PER_LEVEL
 # se neda obejit (rozhoduje rychlost). Kdyz vlna vstupuje krátce, obe barvy se
 # minou a prepinani barev nema smysl (zmereno 0 %). Kdyz vstupuje DELE nez je
 # ten rozdil, obe barvy jsou v dostrelu porad a hrac musí prepinat prubezne.
-const SPAWN_SPREAD := 2.0
+const SPAWN_SPREAD := 3.0
 # DNO A STROP OKNA: prvni vlny nesmi vstupovat v jednom okamziku a vlna
 # o stovkach poutniku nesmi vstupovat pul minuty.
 const SPAWN_WINDOW_MIN := 6.0
