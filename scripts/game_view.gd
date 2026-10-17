@@ -80,6 +80,15 @@ var _first_index: int = 0
 # DOTAZ PRI ODCHODU Z BOJE. Dokud je otevreny, partie se NEKROKUJE - hrac se
 # nema rozhodovat, zatimco mu umiraji poutnici.
 var leave_ask: bool = false
+# DOTAZ "POKRACOVAT?" - ukazuje se po klepnuti na HRAT, kdyz je na disku
+# rozehrana partie (viz `BattleSave`). Je to stejna mechanika jako `leave_ask`:
+# hrac na dotaz odpovida, klepnuti mimo odpovedi nic nedela.
+var resume_ask: bool = false
+# UKLADANI ROZEHRANE PARTIE: odpočet do dalsiho zapisu. Kadence je 2 s - kdyz
+# prohlizec zalozku na pozadi zahodi, prijde hrac maximalne o dve vteriny hry
+# z dvacetiminutoveho levelu (a ne o cely level, coz byl jeho problem).
+const SAVE_EVERY := 2.0
+var _save_left: float = 0.0
 # DOTAZ NA SMAZANI POSTUPU (tlacitko RESET v menu). Je to jedina akce, ktera
 # maze, takze se na ni VZDY ptá - a stejne jako odchod z boje partii zastavi.
 var reset_ask: bool = false
@@ -114,7 +123,8 @@ func _ready() -> void:
 # ktery dialog je prave otevreny. Bez toho by "ZPET DO HRY" u dotazu na
 # ukonceni neexistovalo (a klepnuti by nikam nevedlo).
 func _sync_dialogs() -> void:
-	layout.dialog_panel(leave_ask or reset_ask or (menu.is_battle() and game.phase == "won"))
+	layout.dialog_panel(leave_ask or reset_ask or resume_ask
+		or (menu.is_battle() and game.phase == "won"))
 
 
 func _refield() -> void:
@@ -183,12 +193,23 @@ func _upg_stats() -> Array:
 # PANEL S UPGRADY TU NENI: stoji mimo herni plochu a hrac pod nim nakupuje ZA
 # POCHODU (Jan, Oct 2026).
 func is_halted() -> bool:
-	return leave_ask or reset_ask or game.is_over()
+	return leave_ask or reset_ask or resume_ask or game.is_over()
 
 
 func _process(dt: float) -> void:
 	if menu.is_battle() and not is_halted():
 		game.step(dt)
+		# UKLADANI ROZEHRANE PARTIE: dokud bitva bezi, stav se kazde dve
+		# vteriny zapise. Neni to "uklid pri odchodu" - kdyz prohlizec zalozku
+		# zahodi, zadny odchod hry se nekona.
+		_save_left -= dt
+		if _save_left <= 0.0:
+			_save_left = SAVE_EVERY
+			_save_battle()
+	# DOHRANA PARTIE SE Z DISKU MAZE: hrac ma po prichodu hrat novou, ne se
+	# vracet do mrtve veze. Kontroluje se i mimo bitvu (hrac muze odejit hned).
+	if game.is_over() and BattleSave.has():
+		BattleSave.clear()
 	_pull_js_state()
 	if layout.pal_rects.size() != game.palette.size():
 		layout.layout_palette(game.palette.size())
@@ -304,6 +325,9 @@ func _tap(pos: Vector2) -> void:
 	if reset_ask:
 		_handle_reset_tap(pos)
 		return
+	if resume_ask:
+		_handle_resume_tap(pos)
+		return
 	if leave_ask:
 		_handle_leave_tap(pos)
 		return
@@ -359,11 +383,63 @@ func _handle_menu_tap(pos: Vector2) -> void:
 
 # NOVA PARTIE. Hra zacina na NEJVYSSIM odemcenem levelu; profil (body
 # i permanentni upgrady) zustava - to je cely smysl permanentnich bonusu.
+#
+# ROZEHRANA PARTIE MA PREDNOST: kdyz je na disku ulozena bitva (hrac se vracel
+# z pozadi), "HRÁT" se nejdriv zeptá, jestli ma pokracovat, nebo zacit znovu.
+# Neni to otrava navic: "HRÁT" je i cesta, jak zacit novou partii, a tiche
+# preskoceni rozjeteho levelu by hrace pripravilo o praci.
 func start_battle() -> void:
+	if BattleSave.has():
+		resume_ask = true
+		leave_ask = false
+		_sync_dialogs()
+		return
+	start_new_battle()
+
+
+# NOVA PARTIE (bez dotazu). Ulozena bitva se maze - hrac si vybral znovu.
+func start_new_battle() -> void:
 	leave_ask = false
+	resume_ask = false
+	BattleSave.clear()
 	game.start_level(game.profile.level)
 	_refield()
 	menu.open_battle()
+	_save_battle()
+
+
+# UKLADANI ROZEHRANE PARTIE. Jedno misto, odkud se uklada - obrazovka jinak
+# nemusi vedet, co vsechno stav hry obsahuje (`Game.to_state`).
+func _save_battle() -> void:
+	if game.is_over():
+		return
+	BattleSave.save(game)
+
+
+# POKRACOVANI V ROZEHRANE PARTII. Plocha se prelozi na AKTUALNI displej (hrac
+# se muze vratit na jinem telefone) a teprve pak se do hry nasadi ulozeny stav -
+# polohy poutniku jsou v pixelech plochy, takze poradi je dane.
+func _do_resume() -> void:
+	resume_ask = false
+	leave_ask = false
+	_refield()
+	if BattleSave.load_into(game):
+		_save_left = SAVE_EVERY
+		menu.open_battle()
+		return
+	# SOUBOR JE PRYC NEBO POSKOZENY: hrac dostane novou partii, ne prazdnou
+	# obrazovku s vezi bez nepritele.
+	start_new_battle()
+
+
+func _handle_resume_tap(pos: Vector2) -> void:
+	if layout.dlg_a.has_point(pos):
+		_do_resume()
+		return
+	if layout.dlg_b.has_point(pos):
+		start_new_battle()
+		return
+	# KLEPNUTI MIMO ODPOVED NIC NEDELA (dotaz neni hlaseni).
 
 
 # VYBER LEVELU. Otevira se na strance s NEJVYSSIM odemcenym levelem - tam hrac
@@ -384,9 +460,14 @@ func _handle_levels_tap(pos: Vector2) -> void:
 		if n > game.profile.level:
 			return
 		leave_ask = false
+		resume_ask = false
+		# VYBRANY LEVEL JE NOVA PARTIE: ulozena rozehrana bitva se maze, jinak
+		# by se hrac po vyberu jineho levelu vracel do te stare.
+		BattleSave.clear()
 		game.start_level(n)
 		_refield()
 		menu.open_battle()
+		_save_battle()
 		return
 	if layout.lvl_back.has_point(pos):
 		menu.open_menu()
@@ -711,6 +792,8 @@ func _draw() -> void:
 		_draw_menu()
 		if reset_ask:
 			_draw_reset()
+		if resume_ask:
+			_draw_resume()
 		return
 	if menu.is_levels():
 		_draw_levels()
@@ -1464,6 +1547,18 @@ func _draw_dialog(title: String, sub: String, a: String, a_col: Color, b: String
 func _draw_leave() -> void:
 	_draw_dialog("Opravdu ukončit rozehranou partii?", "Zlato z levelu propadne, upgrady zůstávají.",
 		"UKONČIT", Color(0.85, 0.42, 0.36), "ZPĚT DO HRY", Color(0.65, 0.78, 0.60))
+
+
+# ROZEHRANA PARTIE SE NASLA NA DISKU (hrac se vratil z pozadi). Text rekne,
+# KDE se vrati - hrac ma poznat, ze neprijde o level, ktery uz rozjel.
+func _draw_resume() -> void:
+	var i: Dictionary = BattleSave.info()
+	var sub: String = "Uložená partie se nenačetla."
+	if not i.is_empty():
+		sub = "Level %d · vlna %d · na ploše %d poutníků." % [
+			int(i["level"]), int(i["wave"]), int(i["pilgrims"])]
+	_draw_dialog("Pokračovat v rozehrané partii?", sub,
+		"POKRAČOVAT", Color(0.65, 0.78, 0.60), "NOVÁ PARTIE", Color(0.72, 0.70, 0.62))
 
 
 func _draw_end() -> void:

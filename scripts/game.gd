@@ -1511,3 +1511,142 @@ func last_note() -> String:
 	if log.is_empty():
 		return ""
 	return String(log[log.size() - 1])
+
+
+# =========================================================================
+# STAV BITVY (ukladani rozehrane partie, viz `BattleSave`)
+# =========================================================================
+#
+# DVE FUNKCE, KTERE PATRI K SOBE. `to_state` a `from_state` jsou jedine misto,
+# kde se stav hry meni na slovnik a zpet - obrazovka ani soubor do toho
+# nesaha, takze se nerozejde to, co se uklada, od toho, co hra opravdu pouziva
+# (stejna zasada jako u `Profile`).
+#
+# UKLADA SE VSECHNO, CO DO PRISTIHO SNIMKU VSTUPUJE: hodiny, faze, plan vlny
+# i s urovnemi, rozestupy vstupu, pozice a casovace poutniku a hlavne STAV
+# GENERATORU NAHODY. Bez nej by se po navratu rozjela jina partie (jina poradi
+# barev, jine uhly vstupu) - hrac by se vratil do jine hry.
+#
+# CO SE NEUKLADA: paprsky (`beams`), zamky (`locks`), zvukove udalosti a prsty
+# na palete. Vsechno to plati jen pro jeden snimek - vynechany snimek neni
+# ztrata, kdezto ulozeny paprsek by se musel "doridit" a mohl by poskodit
+# poutnika, ktery uz je jinde.
+func to_state() -> Dictionary:
+	var ps: Array = []
+	for p in pilgrims:
+		if not p.alive:
+			continue
+		ps.append({
+			"hue": p.hue, "tier": p.tier, "boss": p.is_boss,
+			"x": p.pos.x, "y": p.pos.y, "dx": p.dir.x, "dy": p.dir.y,
+			"hp": p.hp, "max_hp": p.max_hp, "speed": p.speed, "size": p.size,
+			"behaviour": p.behaviour, "behaviours": p.behaviours.duplicate(),
+			"split": p.can_split, "shifting": p.shifting, "was_hit": p.was_hit,
+			"ghost": p.ghost_left, "shift": p.shift_left,
+			"poison_left": p.poison_left, "poison_dps": p.poison_dps,
+			"ice_left": p.ice_left, "ice_frac": p.ice_frac,
+			"burning": p.burning, "burning_now": p.burning_now,
+		})
+	return {
+		"v": 1,
+		"level": level, "wave": wave, "phase": phase,
+		"build_left": build_left, "spawn_left": spawn_left,
+		"gold": gold, "hp": hp, "max_hp": max_hp, "body_earned": body_earned,
+		"temp": temp.duplicate(),
+		"plan": plan.duplicate(), "plan_tier": plan_tier.duplicate(),
+		"spawn_at": spawn_at.duplicate(),
+		"wave_clock": wave_clock, "spawned": spawned, "boss_at": boss_at,
+		"clock": clock, "speed_step": speed_step,
+		"crit_left": crit_left, "crit_wait": crit_wait,
+		"hues": tower.hues.duplicate(),
+		# STAV GENERATORU NAHODY JAKO TEXT: je to 64bitove cislo a text prezije
+		# kazdou cestu souborem bez ohledu na to, jak ho zapise.
+		"rng_seed": str(rng.seed), "rng_state": str(rng.state),
+		"log": log.slice(maxi(0, log.size() - 6), log.size()),
+		"pilgrims": ps,
+	}
+
+
+# OBNOVIT STAV BITVY. Vraci true, kdyz se obnovilo - prazdny nebo cizi stav se
+# neobnovi a hra zustane, jak byla (nikdy "napul nactena").
+#
+# ROZVRZENI (`field_r`, `center`) si drzi obrazovka a MUSI BYT nastavene pred
+# volanim (`set_field`): polohy poutniku jsou v pixelech tehoz displeje, na
+# kterem se ukladalo. Kdo obnovuje partii na jinem displeji, musi pocitat
+# s tim, ze se plocha zmenila - proto se ukladaji polohy a ne "bunka v plose".
+func from_state(d: Dictionary) -> bool:
+	if d.is_empty() or int(d.get("v", 0)) != 1:
+		return false
+	level = int(d["level"])
+	wave = int(d["wave"])
+	phase = String(d["phase"])
+	build_left = float(d["build_left"])
+	spawn_left = float(d["spawn_left"])
+	gold = int(d["gold"])
+	hp = float(d["hp"])
+	max_hp = float(d["max_hp"])
+	body_earned = int(d.get("body_earned", 0))
+	temp = (d.get("temp", {}) as Dictionary).duplicate()
+	plan = (d.get("plan", []) as Array).duplicate()
+	plan_tier = (d.get("plan_tier", []) as Array).duplicate()
+	spawn_at = (d.get("spawn_at", []) as Array).duplicate()
+	wave_clock = float(d.get("wave_clock", 0.0))
+	spawned = int(d.get("spawned", 0))
+	boss_at = int(d.get("boss_at", -1))
+	clock = float(d.get("clock", 0.0))
+	speed_step = int(d.get("speed_step", 0))
+	crit_left = float(d.get("crit_left", 0.0))
+	crit_wait = float(d.get("crit_wait", 0.0))
+	# PAUZA SE NEOBNOVUJE: hrac se vraci do hry, ktera bezi. Kdyby se vratil
+	# do pauzy, hral by dal s prazdnym displejem a nevedel by proc.
+	paused = false
+	locks = []
+	beams = []
+	beams_lit = 0
+	events = []
+	finger_hue = {}
+	finger_at = {}
+	# PALETA SE POCITA Z LEVELU (jedno misto, `refresh_palette`), ale BARVA
+	# VEZE se bere z ulozeneho stavu - hrac si ji zvolil a nesmi o ni prijit.
+	var saved_hues: Array = (d.get("hues", []) as Array).duplicate()
+	refresh_palette()
+	if saved_hues.size() > 0:
+		var ok: bool = true
+		for h in saved_hues:
+			if not palette.has(int(h)):
+				ok = false
+		if ok:
+			tower.hues = saved_hues
+	rng.seed = int(String(d.get("rng_seed", "0")))
+	rng.state = int(String(d.get("rng_state", "0")))
+	log = (d.get("log", []) as Array).duplicate()
+	pilgrims = []
+	for raw in (d.get("pilgrims", []) as Array):
+		if typeof(raw) != TYPE_DICTIONARY:
+			continue
+		var q: Dictionary = raw
+		var p := Pilgrim.new()
+		p.hue = int(q["hue"])
+		p.tier = int(q.get("tier", 0))
+		p.is_boss = bool(q.get("boss", false))
+		p.pos = Vector2(float(q["x"]), float(q["y"]))
+		p.dir = Vector2(float(q.get("dx", 0.0)), float(q.get("dy", 1.0)))
+		p.hp = float(q["hp"])
+		p.max_hp = float(q["max_hp"])
+		p.speed = float(q["speed"])
+		p.size = float(q["size"])
+		p.behaviour = String(q.get("behaviour", Hue.B_NONE))
+		p.behaviours = (q.get("behaviours", [p.behaviour]) as Array).duplicate()
+		p.can_split = bool(q.get("split", true))
+		p.shifting = bool(q.get("shifting", false))
+		p.was_hit = bool(q.get("was_hit", false))
+		p.ghost_left = float(q.get("ghost", 0.0))
+		p.shift_left = float(q.get("shift", 0.0))
+		p.poison_left = float(q.get("poison_left", 0.0))
+		p.poison_dps = float(q.get("poison_dps", 0.0))
+		p.ice_left = float(q.get("ice_left", 0.0))
+		p.ice_frac = float(q.get("ice_frac", 0.0))
+		p.burning = bool(q.get("burning", false))
+		p.burning_now = bool(q.get("burning_now", false))
+		pilgrims.append(p)
+	return true

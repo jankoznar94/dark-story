@@ -33,6 +33,12 @@ const MIN_CHECKS := 80
 func _init() -> void:
 	Profile.allow_save = false
 	Settings.allow_save = false
+	# UKLADANI ROZEHRANE PARTIE SE V TESTECH VYPINA a presmeruje do vlastniho
+	# souboru: obrazovka uklada kazde dve vteriny, takze by testy prepsaly
+	# hracovu skutecnou rozehranou partii.
+	BattleSave.allow_save = false
+	BattleSave.path = "user://test_menu_battle.cfg"
+	BattleSave.clear()
 	_run("menu zacina v menu", _test_starts_in_menu)
 	_run("seznam tlacitek a akci sedi", _test_items_and_actions)
 	_run("obrazovky se prepinaji", _test_views)
@@ -54,6 +60,7 @@ func _process(_delta: float) -> bool:
 	_run("paleta nad panelem prenastavi barvu veze", _test_tap_palette_switches_hue)
 	_run("vyber levelu: klepnuti na vyhrany level ho spusti znovu", _test_tap_level_select)
 	_run("klepnuti na RESET se vzdy zepta a maze cely postup", _test_tap_reset)
+	_run("rozehrana partie se nabidne a klepnuti ji obnovi", _test_tap_resume)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
 	_check(checks >= MIN_CHECKS,
 		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
@@ -434,6 +441,68 @@ func _test_tap_palette_switches_hue() -> void:
 	_check(g.tower.hue == int(g.palette[first]),
 		"druhe klepnuti na paletu nic nezmenilo (%s)" % Hue.name_of(g.tower.hue))
 	v.queue_free()
+
+
+# ROZEHRANA PARTIE (ukladani stavu bitvy). Klepnuti na HRAT se u ni nejdriv
+# zeptá - a POKRACOVAT musi vratit hru do ULOZENE vlny, ne na zacatek levelu.
+func _test_tap_resume() -> void:
+	var v: Node2D = _screen()
+	var g: Game = v.get("game")
+	var m: Menu = v.get("menu")
+	var l: ScreenLayout = v.get("layout")
+	var idx: int = Menu.MENU_ACTIONS.find("battle")
+	# ROZEHRANA PARTIE NA DISKU: slozi se rovnou hra (jako by ji hrac dohral
+	# do treti vlny) a ulozi se do TESTOVACIHO souboru.
+	BattleSave.clear()
+	var saved := Game.new()
+	saved.profile = Profile.new()
+	saved.set_field(300.0, 300.0, Vector2(500.0, 500.0))
+	saved.start_level(2)
+	saved.wave = 3
+	saved.gold = 77
+	for i in range(60 * 12):
+		saved.step(1.0 / 60.0)
+	BattleSave.allow_save = true
+	_check(BattleSave.save(saved), "rozehranou partii se nepodarilo ulozit")
+	BattleSave.allow_save = false
+	_check(m.is_menu(), "test nezacina v menu")
+	# KLEPNUTI NA HRAT SE NEJDRIV ZEPTÁ (hrac muze chtit i novou partii).
+	v.call("_tap", (l.menu_rects[idx] as Rect2).get_center())
+	_check(bool(v.get("resume_ask")), "HRAT se u ulozene partie na nic nezeptalo")
+	_check(m.is_menu(), "HRAT rovnou spustil novou partii, i kdyz je co obnovit")
+	_check(g.wave == 1, "hra se rozjela, i kdyz se hrac jeste nerozhodl (vlna %d)" % g.wave)
+	_check(l.dlg_a.size.x > 0.0 and l.dlg_b.size.x > 0.0,
+		"dotaz na pokracovani nema obe odpovedi")
+	# KLEPNUTI MIMO ODPOVED NIC NEDELA.
+	v.call("_tap", Vector2(2.0, 2.0))
+	_check(bool(v.get("resume_ask")), "klepnuti mimo dotaz ho zavrelo")
+	# POKRACOVAT: hrac se vrati do ULOZENE vlny, ne na zacatek levelu.
+	v.call("_tap", l.dlg_a.get_center())
+	_check(m.is_battle(), "POKRACOVAT neotevrelo bitvu")
+	_check(g.level == saved.level and g.wave == saved.wave,
+		"POKRACOVAT nevratilo hru do ulozene vlny (%d/%d, ma byt %d/%d)"
+		% [g.level, g.wave, saved.level, saved.wave])
+	_check(g.gold == saved.gold, "POKRACOVAT nevratilo zlato (%d, ma byt %d)"
+		% [g.gold, saved.gold])
+	_check(g.pilgrims.size() > 0, "POKRACOVAT nevratilo poutniky na plochu")
+	_check(not BattleSave.has() or BattleSave.info()["level"] == saved.level,
+		"uloziste se cestou pokazilo")
+	v.queue_free()
+	# NOVA PARTIE: ulozena bitva se maze a hra zacne na nejvyssim levelu.
+	var v2: Node2D = _screen()
+	var g2: Game = v2.get("game")
+	var l2: ScreenLayout = v2.get("layout")
+	BattleSave.allow_save = true
+	BattleSave.save(saved)
+	BattleSave.allow_save = false
+	v2.call("_tap", (l2.menu_rects[idx] as Rect2).get_center())
+	v2.call("_tap", l2.dlg_b.get_center())
+	_check(v2.get("menu").is_battle(), "NOVA PARTIE neotevrela bitvu")
+	_check(g2.wave == 1 and g2.level == g2.profile.level,
+		"NOVA PARTIE nezacala novou partii (%d/%d)" % [g2.level, g2.wave])
+	_check(not BattleSave.has(), "NOVA PARTIE nechala ulozenou partii na disku")
+	v2.queue_free()
+	BattleSave.clear()
 
 
 # RESET MAZE CELY POSTUP A VZDY SE NA TO ZEPTÁ. (Jan, Oct 2026: "Přidáme do menu

@@ -95,6 +95,15 @@ jobs:
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "MENU_ALL_PASS=true"
 
+      # UKLADANI ROZEHRANE PARTIE: stav bitvy se ulozi a po navratu z pozadi
+      # se hra musi vratit DO ROZJETE VLNY (a pokracovat stejne, vcetne nahody).
+      - name: Battle save test (rozehrana partie)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_save.gd 2>&1)
+          echo "$OUT" | tail -30
+          echo "$OUT" | grep -q "SAVE_ALL_PASS=true"
+
       - name: Export (Web)
         run: |
           set -e
