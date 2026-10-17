@@ -42,6 +42,7 @@ func _init() -> void:
 	_run("zlato roste s obtiznosti (start i za zabiti)", _test_gold_scales_with_level)
 	_run("nove barvy prichazeji po levelech, ne uprostred bitvy", _test_hue_unlock)
 	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
+	_run("body za permanentni upgrady prichazeji uz v boji", _test_body_during_battle)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
 	_run("fialova je nejpomalejsi barva ve hre", _test_hue_speed_order)
 	_run("stribrna meni po peti vterinach podobu i se schopnostmi barvy",
@@ -842,7 +843,7 @@ func _test_temp_buy() -> void:
 	_check(g.gold == 95, "prvni krok nestal 5 zlata (zbyva %d)" % g.gold)
 	_check(g.val("ad") > v0, "krok nezmenil hodnotu parametru")
 	_check(g.buy_temp("ad"), "druhy krok se neda koupit")
-	_check(g.gold == 85, "druhy krok nestal 10 zlata (zbyva %d)" % g.gold)
+	_check(g.gold == 75, "druhy krok nestal 20 zlata (zbyva %d)" % g.gold)
 	# BEZ ZLATA SE NEKUPUJE.
 	var g2: Game = _fresh()
 	g2.gold = 4
@@ -863,7 +864,9 @@ func _test_temp_buy() -> void:
 		"po %d docasnych krocich neni poskozeni %.0f/s (je %.2f)" % [want, cekane, g3.val("ad")])
 	_check(g3.val("ad") > 24.0, "docasny zebricek porad konci na stropu 24")
 	var paid: int = 100000 - g3.gold
-	_check(paid == 5 * (want * (want + 1) / 2), "cena %d docasnych kroku neni %d zlata (%d)" % [want, 5 * (want * (want + 1) / 2), paid])
+	_check(paid == 5 * (want * (want + 1) * (2 * want + 1) / 6),
+		"cena %d docasnych kroku neni %d zlata (%d)"
+		% [want, 5 * (want * (want + 1) * (2 * want + 1) / 6), paid])
 	_check(g3.buy_temp("ad"), "posledni krok se nedal koupit, i kdyz je zlato")
 	# ZIVOTY SE DOSTANOU HNAD, ne az v dalsim levelu.
 	var g4: Game = _fresh()
@@ -913,8 +916,10 @@ func _test_level_flow() -> void:
 			_check(g.wave == w + 1, "%d. vlna neposunula na dalsi (wave %d)" % [w, g.wave])
 			_check(g.phase == "build", "po vlně neni priprava (faze %s)" % g.phase)
 	_check(g.phase == "won", "po posledni vlne neni level vyhrany (faze %s)" % g.phase)
-	_check(g.body_earned == 30, "za prvni level neni 30 bodu (je %d)" % g.body_earned)
-	_check(g.profile.body == 30, "body se neprisly do profilu (je %d)" % g.profile.body)
+	# BODY ZA KAZDOU ODRAZENOU VLNU (viz `Game.BODY_PER_WAVE`) + odmena za level.
+	var want: int = g.waves_in_level() * Game.BODY_PER_WAVE + Game.BODY_BASE + Game.BODY_PER_LEVEL * 1
+	_check(g.body_earned == want, "za prvni level neni %d bodu (je %d)" % [want, g.body_earned])
+	_check(g.profile.body == want, "body se neprisly do profilu (je %d)" % g.profile.body)
 	_check(g.profile.level == 2 and g.profile.best == 1, "profil nezapsal vyhru (level %d, best %d)"
 		% [g.profile.level, g.profile.best])
 
@@ -1038,19 +1043,54 @@ func _test_replay_no_body() -> void:
 	_check(g.body_earned == 0, "opakovany level dal %d bodu" % g.body_earned)
 	_check(g.profile.body == body0, "opakovany level zmenil body (%d -> %d)" % [body0, g.profile.body])
 	_check(g.profile.best == 5 and g.profile.level == 6, "opakovany level posunul postup")
-	# A NOVY LEVEL DAL PLATI: sesty level jeste vyhrany nebyl.
+	# A NOVY LEVEL DAL PLATI: sesty level jeste vyhrany nebyl. Body za vlnu
+	# (`BODY_PER_WAVE`) se pricitaji k odmene za level.
 	g.next_level()
 	_check(g.level == 4, "dalsi level neni ctvrty (%d)" % g.level)
 	g.start_level(6)
 	_win_now(g)
-	_check(g.body_earned == Game.BODY_BASE + Game.BODY_PER_LEVEL * 6,
-		"novy level nedal %d bodu (dal %d)" % [Game.BODY_BASE + Game.BODY_PER_LEVEL * 6, g.body_earned])
+	var want: int = Game.BODY_PER_WAVE + Game.BODY_BASE + Game.BODY_PER_LEVEL * 6
+	_check(g.body_earned == want,
+		"novy level nedal %d bodu (dal %d)" % [want, g.body_earned])
 	_check(g.profile.best == 6 and g.profile.level == 7, "novy level neposunul postup")
 
 
 # VYHRA LEVELU BEZ CEKANI: prazdna deska znamena, ze vlna je odrazena.
 func _win_now(g: Game) -> void:
 	g.wave = g.waves_in_level()
+	g.phase = "wave"
+	g.plan = []
+	g.spawned = 0
+	g.pilgrims = []
+	g.step(0.02)
+
+
+# BODY PRICHAZEJI PRUBEZNE, NE AZ ZA VYHRANY LEVEL. Jan (Oct 2026): "hráč by
+# měl dostávat body pro permanentní upgrady i během boje. Ne jen po dokončení
+# levelu. Takhle to logicky nedává smysl." V The Tower je to stejne - mince se
+# vydelavaji behem partie a utraceji se az mezi partiemi.
+func _test_body_during_battle() -> void:
+	var g := Game.new()
+	g.profile = Profile.new()
+	g.set_field(300.0, 300.0, Vector2(500.0, 500.0))
+	g.start_level(1)
+	_clear_one_wave(g)
+	_check(g.phase != "won", "jedna vlna uz vyhrala cely level")
+	_check(g.profile.body == Game.BODY_PER_WAVE,
+		"za odrazenou vlnu neprisel bod (je %d)" % g.profile.body)
+	_check(g.body_earned == Game.BODY_PER_WAVE, "body_earned nepocita body za vlnu")
+	_clear_one_wave(g)
+	_check(g.profile.body == 2 * Game.BODY_PER_WAVE,
+		"druha vlna nepridala bod (je %d)" % g.profile.body)
+	# PROHRA BODY NEVZMI - jsou uz v profilu (hrac o ne neprijde, kdyz partii
+	# vzda). V The Tower plati to same.
+	var have: int = g.profile.body
+	g._lose()
+	_check(g.profile.body == have, "prohra smazala body (%d -> %d)" % [have, g.profile.body])
+
+
+# ODRAZENA VLNA BEZ CEKANI: prazdna deska a faze "wave".
+func _clear_one_wave(g: Game) -> void:
 	g.phase = "wave"
 	g.plan = []
 	g.spawned = 0
