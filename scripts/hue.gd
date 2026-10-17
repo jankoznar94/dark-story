@@ -76,8 +76,18 @@ const ROWS := [
 		# na 390x844 z 8,0 s na 6,9 s (zluta zustava o 30 % rychlejsi nez modra
 		# a zelena, ktere maji 1,00). Kdo hybe timhle cislem, hybe obtiznosti
 		# i delkou levelu - a MUSI to premerit `tools/balance_sim.gd`.
+		#
+		# A ZA TU RYCHLOST PLATI ZIVOTY. Jan (Oct 2026): "A žlutí musí mít
+		# o trochu vyšší životy. Vzali jsme jim trochu rychlosti, tak musíme
+		# kompenzovat trochu vyššími životy." Rozhoduje `hp * speed` (cim
+		# rychlejsi barva, tim kratsi dobu je v dostrelu, takze tim min ran
+		# schytá): pred zpomalenim 0,60 * 1,60 = 0,96, po nem 0,60 * 1,30 =
+		# 0,78 - zluta by byla nejlehci barva hry. Presna kompenzace je
+		# 0,60 * 1,60 / 1,30 = 0,74; zvoleno 0,70, aby zluta zustala na urovni
+		# nejkrehci barvy (fialova ma 0,70) a "nejrychlejsi = nejlehci" se
+		# nerozjelo. Hlida to `test_core._test_fastest_is_not_free`.
 		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22),
-		"hp": 0.6, "speed": 1.30, "gold": 2, "behaviour": B_NONE,
+		"hp": 0.7, "speed": 1.30, "gold": 2, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{

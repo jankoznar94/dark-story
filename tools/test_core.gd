@@ -34,7 +34,7 @@ func _init() -> void:
 	_run("neviditelna fialova je imunni (jed ani odraz na ni nedosahnou)", _test_ghost_is_immune)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
-	_run("docasny krok stoji 5xN zlata a hodnota roste", _test_temp_buy)
+	_run("docasny krok stoji N^2 zlata a hodnota roste", _test_temp_buy)
 	_run("permanentni stupen posouva start bitvy", _test_perm_shift)
 	_run("level ma deset vln a za vyhru jsou body", _test_level_flow)
 	_run("dalsi level: zlato znovu, docasne kroky pryc", _test_next_level)
@@ -45,6 +45,8 @@ func _init() -> void:
 	_run("body za permanentni upgrady prichazeji uz v boji", _test_body_during_battle)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
 	_run("fialova je nejpomalejsi barva ve hre", _test_hue_speed_order)
+	_run("nejrychlejsi barva neni zdarma (rychlost se plati zivoty)",
+		_test_fastest_is_not_free)
 	_run("stribrna meni po peti vterinach podobu i se schopnostmi barvy",
 		_test_silver_shift_form)
 	_run("modra podoba stribrne se rozpadne na dve obycejne kapky",
@@ -54,7 +56,7 @@ func _init() -> void:
 	_run("michani dvema prsty zaraz (a pred patym levelem ne)", _test_mix_fingers)
 	_run("kombinovany poutnik: obe barvy, obe schopnosti, prumer sil",
 		_test_mix_pilgrim)
-	_run("boss je na kazde desate vlne (20x zivoty, 30 % rychlosti, 5x zlato)",
+	_run("boss je na kazde desate vlne (tvrdsi, pomalejsi, 5x zlato)",
 		_test_boss)
 	_run("barvy se u veze potkavaji (a stridaji se), ne mijejí",
 		_test_colors_arrive_together)
@@ -1200,6 +1202,39 @@ func _test_hue_speed_order() -> void:
 			continue
 		_check(moved[Hue.VIOLET] < moved[h],
 			"fialova (%f px) neni pomalejsi nez barva %d (%f px)" % [moved[Hue.VIOLET], h, moved[h]])
+
+
+# NEJRYCHLEJSI BARVA NENI ZDARMA. Jan (Oct 2026): "A žlutí musí mít o trochu
+# vyšší životy. Vzali jsme jim trochu rychlosti, tak musíme kompenzovat trochu
+# vyššími životy."
+#
+# ROZHODUJE `hp * speed`, ne jedno z nich: cim rychlejsi barva, tim kratsi dobu
+# stravi v dostrelu, takze tim min ran od veze schyta. Kdyz se zlute vzala
+# rychlost (1,60 -> 1,30 kvuli michani barev), MUSELA dostat vic zivotu
+# (0,60 -> 0,70) - jinak by z nejrychlejsi barvy byla nejlehci barva hry
+# a hrac by ji prestal vnimat jako nepritele.
+func _test_fastest_is_not_free() -> void:
+	var fastest: int = Hue.RED
+	for h in range(Hue.COUNT):
+		if Hue.speed_mult(h) > Hue.speed_mult(fastest):
+			fastest = h
+	_check(fastest == Hue.YELLOW, "nejrychlejsi barva uz neni zluta (je to %s)" % Hue.name_of(fastest))
+	# KONKRETNI CISLA KOMPENZACE (historie se MUSI drzet v testu, jinak by se
+	# pri dalsim zpomaleni zlute na kompenzaci zapomnelo).
+	var before: float = 0.60 * 1.60
+	var now: float = Hue.hp_mult(Hue.YELLOW) * Hue.speed_mult(Hue.YELLOW)
+	_check(now >= before * 0.90,
+		"zluta je po zpomaleni o moc lehci (%.2f proti %.2f pred zpomalenim) - zivoty to nevyvazily"
+		% [now, before])
+	_check(Hue.hp_mult(Hue.YELLOW) >= 0.70,
+		"zluta ma zase malo zivotu (%.2f)" % Hue.hp_mult(Hue.YELLOW))
+	# A ZLUTA NESMI BYT NEJTVRDSI BARVA: "rychla a lehka" musi platit dal,
+	# jinak by hrac nemel duvod resit, kterou barvu vlastne strili.
+	var most: float = 0.0
+	for h in range(Hue.COUNT):
+		most = maxf(most, Hue.hp_mult(h))
+	_check(Hue.hp_mult(Hue.YELLOW) < most,
+		"zluta je nejtvrdsi barva ve hre (%.2f)" % Hue.hp_mult(Hue.YELLOW))
 
 
 # STRIBRNA MENI PODOBU I SE SCHOPNOSTMI BARVY (Jan, Oct 2026: "Nově budou měnit
