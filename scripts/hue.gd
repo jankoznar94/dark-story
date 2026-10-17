@@ -177,6 +177,42 @@ const SPLIT_HP_FRAC := 0.40
 # vejde - hlida to `test_layout._test_enemy_is_dot_with_letters`.
 const SPLIT_SIZE := 0.85
 
+# ---------------------------------------------------- UROVNE POUTNIKA (TIER)
+# Jan (Oct 2026): "kazda barva (nepratele) by nemely mit jen jeden typ
+# nepritele. ... Cervena by mela mit nejmensi, od prvniho levelu, a pak by se
+# mohly objevovat dalsi urovne. Vyssi. Vizualne vetsi, s vyssemi zivoty. ...
+# Poměrově ke svým základním životům. Takových úrovní by byly třeba 3 nebo 4.
+# Bosse nepočítám, to je úroveň sama pro sebe." + "Přidat navíc nad dnešní
+# růst" a "4" urovne (rozhodnuti ze ctyř otázek, Oct 2026).
+#
+# UROVEN JE NASOBEK NAD ZAKLADNÍ HODNOTY TÉ BARVY (`ROWS`), ne nova barva:
+# cervena urovne 3 je porad cervena (barva, pismeno, chovani i zlato), jen ma
+# 2,1x zivotu, je o 24 % vetsi a pada z ni 1,9x zlata. Nesmi se plest ani s
+# `mix` (smes je JINA barva s vlastnim id a pismeny), ani s bossem (`is_boss`
+# = jedina bytost sve vlny, na tierech nezavisla).
+#
+# UROVEN SE ODEMYKA LEVELem a NIZSI UROVNE ZUSTAVAJI: od 7. levelu chodi ve
+# vlne vsechny ctyri vedle sebe, takze hrac vidi, jak rostou. LEVEL 1 JE BEZ
+# ZMENY (vsechno uroven 1) - prvni dojem z hry zustava presne jak byl.
+const TIER_COUNT := 4
+const TIER_UNLOCK := [1, 3, 5, 7]
+# ZIVOTY JDOU NAVIC NAD SOUCASNY RUST (`LEVEL_HP`), takze je hra od 3. levelu
+# tezsi - od 7. levelu ma prumerna vlna o ~48 % vic zivotu. JE TO VEDOME
+# (Janovo rozhodnuti) a cisla se overuji `tools/balance_sim.gd`, ne dojmem.
+# Zlato roste pomaleji nez zivoty (1,39x proti 1,48x), aby vetsi poutnik nebyl
+# zdarma - to je jedina cast, ktera hru ztizuje.
+const TIER_HP := [1.0, 1.5, 2.1, 2.9]
+# VELIKOST KRESBY je druha cesta k informaci "tenhle je tvrdsi" - nezávisí na
+# barve, takze ji precte i hrac s poruchou barvocitu.
+const TIER_SIZE := [1.0, 1.12, 1.24, 1.36]
+const TIER_GOLD := [1.0, 1.4, 1.9, 2.5]
+# CETNOST VE VLNE, kdyz je uroven odemcena (hra ji normalizuje pres soucet
+# odemcenych). Vyssi uroven je vzacnejsi - jinak by od 7. levelu zmizeli malí
+# poutníci a s nimi i cela prvni pulka hry.
+const TIER_WEIGHT := [0.45, 0.30, 0.18, 0.07]
+# JMENO PRO HUD A HLASKY ("objeví se větší poutníci").
+const TIER_NAME := ["menší", "větší", "velcí", "obří"]
+
 # REGENERACE ZELENE: podil maximalnich zivotu za sekundu. Musi byt vyrazne
 # mensi nez kadence veze, jinak je poutnik nesmrtelny.
 const REGEN_FRAC := 0.04
@@ -323,6 +359,52 @@ static func letter_of_pair(a: int, b: int) -> String:
 	if not is_valid(a) or not is_valid(b) or a == b:
 		return letter_of(a)
 	return letter_of(mini(a, b)) + letter_of(maxi(a, b))
+
+
+# ------------------------------------------------------------- UROVNE (TIER)
+# KOLIK UROVNI JE V TOMTO LEVELU ODEMCENO. Nikdy nula - prvni uroven je hra
+# od prvniho levelu (nema smysl, aby hra bezela bez nepritele).
+static func tier_unlocked(level: int) -> int:
+	var n: int = 0
+	for t in range(TIER_COUNT):
+		if int(TIER_UNLOCK[t]) <= level:
+			n += 1
+	return maxi(1, n)
+
+
+# UROVNE, KTERE V TOMTO LEVELU SMI VSTOUPIT. Hra z toho losuje - jedine misto,
+# odkud se seznam bere (obrazovka ani testy si ho neskládaji samy).
+static func tier_pool(level: int) -> Array:
+	var out: Array = []
+	for t in range(tier_unlocked(level)):
+		out.append(t)
+	return out
+
+
+# VAHA UROVNE V TETO VLNE (0 = jeste neni odemcena). Normalizuje si ji hra;
+# tady se nedeli, aby se dala vaha cist primo z tabulky.
+static func tier_weight(t: int, level: int) -> float:
+	if t < 0 or t >= tier_unlocked(level):
+		return 0.0
+	return float(TIER_WEIGHT[t])
+
+
+# NEBEZPECNE PREVODY: uroven mimo tabulku NESMI shodit hru ani potichu zmenit
+# obtiznost - neznama uroven je vzdy ta prvni (zakladni) hodnota.
+static func tier_hp(t: int) -> float:
+	return float(TIER_HP[clampi(t, 0, TIER_COUNT - 1)])
+
+
+static func tier_size(t: int) -> float:
+	return float(TIER_SIZE[clampi(t, 0, TIER_COUNT - 1)])
+
+
+static func tier_gold(t: int) -> float:
+	return float(TIER_GOLD[clampi(t, 0, TIER_COUNT - 1)])
+
+
+static func tier_name(t: int) -> String:
+	return String(TIER_NAME[clampi(t, 0, TIER_COUNT - 1)])
 
 
 # HODNOTY SOUHRNU. U SMESI JE TO PRUMER OBOU BAREV, ne maximum (Jan: "S

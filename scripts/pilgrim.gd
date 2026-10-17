@@ -26,6 +26,12 @@ var behaviour: String = Hue.B_NONE
 var behaviours: Array = [Hue.B_NONE]
 # VELIKOST KRESBY. Modre kusy po rozpadu jsou mensi - hrac to vidi.
 var size: float = 1.0
+# UROVEN (TIER) TÉTO BARVY. Uroven je nasobek NAD zakladni hodnoty barvy
+# (`Hue.tier_hp`, `Hue.tier_size`, `Hue.tier_gold`) - barva, pismeno i chovani
+# zustavaji, meni se jen zivoty, velikost a zlato. Nese si ji POUTNIK, ne hra:
+# vez i rozpadle kusy se pak musi ptat jeho, jinak by se uroven na tech dvou
+# mistech rozešla (boss ma vzdy uroven 1 - je "úroveň sama pro sebe", Jan).
+var tier: int = 1
 # BOSS. Velky, pomaly a vytrvaly poutnik (Jan, Oct 2026: "Taky musime pridat
 # boss fighty." a "Pomaly, extra vydrz, extra velikost, pripadne nejaky stit
 # navic nebo tak."). NENI to nova entita: je to poutnik s jinymi cisly

@@ -58,6 +58,7 @@ func _init() -> void:
 		_test_mix_pilgrim)
 	_run("boss je na kazde desate vlne (tvrdsi, pomalejsi, 5x zlato)",
 		_test_boss)
+	_run("urovne barvy: po levelech, vyssi = vetsi a tvrdsi (boss ne)", _test_tiers)
 	_run("barvy se u veze potkavaji (a stridaji se), ne mijejí",
 		_test_colors_arrive_together)
 	_run("vez si vsimne poutnika, kdyz se dostrelu dotkne jeho HP bar",
@@ -1467,6 +1468,99 @@ func _test_mix_fingers() -> void:
 	# PRES BARVU, KTEROU HRAC NEMA, SE NEMICHA (stribrna v palete nikdy neni).
 	_check(g.finger_down(0, Hue.SILVER) == "none", "vez vzala stribrnou")
 	g.finger_up(0)
+
+
+# UROVNE POUTNIKA (TIER). Hlida se to, co hrac pozna: prvni level je bez
+# zmeny, vyssi uroven je vetsi a tvrdsi, od 7. levelu chodi vsechny ctyri
+# a BOSS ma vzdy uroven 1 (i na levelu, kde chodi urova 4) - jinak by z 20x
+# zivotu bylo 58x.
+func _test_tiers() -> void:
+	var g: Game = _fresh()
+	# LEVEL 1 JE BEZ ZMENY: vsechno uroven 1. Kdyby se sem neco dostalo, prvni
+	# dojem z hry se zmeni, i kdyz se "meni jen vyssi levely".
+	var seen1: Array = []
+	for w in range(1, 6):
+		g.wave = w
+		g._start_wave()
+		for t in g.plan_tier:
+			if not seen1.has(int(t)):
+				seen1.append(int(t))
+	_check(seen1.size() == 1 and int(seen1[0]) == 0,
+		"na prvnim levelu chodi urovne %s (ma byt jen 1)" % [seen1])
+	# ODEMYKANI PO LEV ELECH: 1-2 jeden, 3-4 dva, 5-6 tri, 7+ ctyri.
+	_check(Hue.tier_unlocked(2) == 1, "uroven 2 je odemcena uz ve druhem levelu")
+	_check(Hue.tier_unlocked(3) == 2, "ve tretim levelu nejsou dve urovne")
+	_check(Hue.tier_unlocked(5) == 3, "v patern levelu nejsou tri urovne")
+	_check(Hue.tier_unlocked(7) == 4, "v sedmem levelu nejsou ctyri urovne")
+	_check(Hue.tier_unlocked(20) == Hue.TIER_COUNT,
+		"nad sedmym levelem je urovni %d (ma byt %d)"
+		% [Hue.tier_unlocked(20), Hue.TIER_COUNT])
+	# VYSSI UROVEN = VIC ZIVOTU, VETSÍ KRESBA, VIC ZLATA (vsechno z tabulky).
+	var hp0: float = g.hp_for(1, 1, Hue.RED, 0)
+	var hp3: float = g.hp_for(1, 1, Hue.RED, 3)
+	_check(hp3 > hp0 * 2.5, "uroven 4 nema vyrazne vic zivotu (%.1f vs %.1f)"
+		% [hp3, hp0])
+	_check(Hue.tier_size(3) > Hue.tier_size(0) and Hue.tier_size(1) > Hue.tier_size(0),
+		"vyssi uroven se nekresli vetsi")
+	_check(Hue.tier_gold(3) > Hue.tier_gold(1) and Hue.tier_gold(1) > Hue.tier_gold(0),
+		"z vyssi urovne pada stejne zlato jako ze zakladni")
+	# UROVEN MIMO TABULKU NESMI SHODIT HRU a nesmi vypadnout z tabulky (nejvys
+	# posledni uroven - nikdy silnejsi poutnik, nez tabulka pripousti).
+	_check(Hue.tier_hp(99) == Hue.tier_hp(Hue.TIER_COUNT - 1),
+		"uroven mimo tabulku nema hodnotu posledni urovne")
+	_check(Hue.tier_hp(-3) == Hue.tier_hp(0),
+		"zaporna uroven nema hodnotu zakladni urovne")
+	_check(Hue.tier_weight(3, 1) == 0.0, "uroven 4 se losuje uz na prvnim levelu")
+	# OD SEDMEHO LEVELU CHODI VSECHNY CTYRI UROVNE V TECHE VLNE.
+	var g7: Game = _fresh()
+	g7.start_level(7)
+	var seen: Array = []
+	for w in range(1, Game.WAVES_PER_LEVEL + 1):
+		g7.wave = w
+		g7._start_wave()
+		for t in g7.plan_tier:
+			if not seen.has(int(t)):
+				seen.append(int(t))
+	_check(seen.size() == Hue.TIER_COUNT,
+		"od 7. levelu chodi %d urovni (maji byt %d)" % [seen.size(), Hue.TIER_COUNT])
+	# ... A KAZDA UROVEN JE VE VLNE ZASTOUPENA ROZUMNE (ne jeden obr na vlnu).
+	var counts: Array = [0, 0, 0, 0]
+	var total: int = 0
+	for w in range(1, 11):
+		g7.wave = w
+		g7._start_wave()
+		for t in g7.plan_tier:
+			counts[int(t)] += 1
+			total += 1
+	_check(counts[0] > counts[3] and counts[0] > 0 and counts[3] > 0,
+		"nejcetnejsi neni zakladni uroven (%s)" % [counts])
+	_check(float(counts[1]) / float(maxi(1, total)) > 0.15,
+		"druha uroven je vzacnejsi nez kazda dvacata (%s z %d)" % [counts, total])
+	# BOSS MA VZDY UROVEN 1 a presne 20x zivoty sve barvy.
+	g7.pilgrims = []
+	g7.wave = Game.BOSS_EVERY_WAVES * 2
+	g7._start_wave()
+	while g7.spawned < g7.plan.size():
+		g7._spawn_next()
+	var boss: Pilgrim = null
+	for p in g7.pilgrims:
+		if p.is_boss:
+			boss = p
+	_check(boss != null, "na boss vlne neni boss")
+	if boss == null:
+		return
+	_check(boss.tier == 0, "boss ma uroven %d (ma byt 1)" % (boss.tier + 1))
+	var want: float = g7.hp_for(g7.kolo(), g7.wave, boss.hue, 0) * Game.BOSS_HP_MULT
+	_check(absf(boss.max_hp - want) < 0.01,
+		"boss ma %.1f zivotu, ma byt %.1f (uroven se mu nesmi pocitat)" % [boss.max_hp, want])
+	# UROVEN SE DEDA NA POUTNIKA (kresba i zivoty), ne na celou vlnu.
+	g7.wave = 1
+	var p3: Pilgrim = g7.spawn_at_angle(0.0, Hue.RED, 3)
+	_check(p3.tier == 3, "poutnik si nedrzi uroven")
+	_check(absf(p3.size - Game.PILGRIM_SIZE * Hue.tier_size(3)) < 0.001,
+		"poutnik urovene 4 se kresli ve velikosti %.2f" % p3.size)
+	_check(absf(p3.max_hp - g7.hp_for(g7.kolo(), g7.wave, Hue.RED, 3)) < 0.01,
+		"poutnik urovene 4 nema zivoty sve urovne")
 
 
 # BOSS JE NA KAZDE DESATE VLNE. Jan (Oct 2026): "Taky musime pridat boss fighty."

@@ -308,6 +308,10 @@ var spawn_left: float = 0.0
 # PORADI VSTUPU (barvy, jak opravdu vstupuji na plochu). POZOR: NENI to poradi
 # dorazu - viz `wave_spawn_order`. Kdo kresli "co prijde", at se ptá tady.
 var plan: Array = []
+# UROVEN (TIER) JEDNOTLIVYCH POUTNIKU VLNY - stejny index jako `plan`. Drzi se
+# ZVLAST, aby `plan` zustal jen seznam barev (ctou ho obrazovka i testy) a aby
+# se uroven nemusela pocitat znovu na kazdem miste zvlast.
+var plan_tier: Array = []
 # CAS VSTUPU JEDNOTLIVYCH POUTNIKU VLNY (sekundy od zacatku vlny), stejne
 # dlouhe jako `plan`. Driv tu byl jen jeden odpočet a pevna mezera - s ni se
 # barvy rozpadly na dve skupiny (zluti u veze o deset vterin driv nez cerveni).
@@ -568,6 +572,7 @@ func start_level(n: int) -> void:
 	hp = max_hp
 	gold = int(round(float(START_GOLD) * gold_mult())) + int(round(val("gl")))
 	plan = []
+	plan_tier = []
 	spawn_at = []
 	spawned = 0
 	wave_clock = 0.0
@@ -787,6 +792,9 @@ func _start_wave() -> void:
 	for it in wave_spawn_order(arrivals):
 		plan.append(int(it["h"]))
 		spawn_at.append(float(it["at"]))
+	# UROVNE POUTNIKU VLNY: stejny index jako `plan`, takze barva i uroven
+	# patri jednomu poutnikovi od vstupu az do smrti.
+	plan_tier = roll_tiers(plan.size())
 	spawned = 0
 	spawn_left = 0.0
 	wave_clock = 0.0
@@ -796,6 +804,10 @@ func _start_wave() -> void:
 	boss_at = -1
 	if boss_wave(wave):
 		boss_at = int(round(float(plan.size()) * BOSS_SPAWN_FRAC))
+	# BOSS JE "UROVEN SAMA PRO SEBE" (Jan, Oct 2026) - nema tedy uroven barvy:
+	# kdyby mel tier 4, byl by z 20x zivotu 58x a hrac by na nej nemel sanci.
+	if boss_at >= 0 and boss_at < plan_tier.size():
+		plan_tier[boss_at] = 0
 	if boss_at >= 0:
 		_note("Level %d · vlna %d/%d — BOSS a %d poutníků."
 			% [level, wave, waves_in_level(), plan.size()])
@@ -826,6 +838,13 @@ func _wave_clear() -> void:
 # BARVY, KTERE NEJSOU V PALETE, SE OHLASTI ZVLAST: hrac je nemuze zvolit, takze
 # by jen videl, ze "neco" jde po plose a neslo to zabit.
 func _announce_new_enemies() -> void:
+	# NOVA UROVEN BARVY: je to zmena pravidel (vetsi a tvrdsi poutnici te same
+	# barvy), takze se hlasi stejne jako nova barva - ticha zmena by nechala
+	# hrace hledat, proc mu neco umira pomaleji.
+	if level > 1 and Hue.tier_unlocked(level) > Hue.tier_unlocked(level - 1):
+		var tier: int = Hue.tier_unlocked(level) - 1
+		_note("Objevují se %s poutníci — mají víc životů a padá z nich víc zlata."
+			% Hue.tier_name(tier))
 	var prev: Array = Hue.active_at(level - 1)
 	for h in Hue.active_at(level):
 		if prev.has(h) or Hue.in_palette(h):
@@ -946,6 +965,40 @@ const MIX_SHARE := 0.10
 const MIX_MAX := 2
 
 
+# UROVNE (TIERY) JEDNOTLIVYCH POUTNIKU VLNY. Rovnako dlouhe jako `plan`, stejny
+# index = stejny poutnik. Losuje se VAZENE (vyssi uroven je vzacnejsi), takze
+# od 7. levelu nezmizi malí poutníci - prestali by chodit ti, na ktere ma hrac
+# postavene dalsi rozhodovani.
+#
+# UROVEN JE VLASTNOST VSTUPU, NE VLNY: kdyby mela cely vlnu jednu uroven, hrac
+# by na ni prisel jednim pohledem a hra by se zase zjednodusila.
+func roll_tiers(n: int) -> Array:
+	var out: Array = []
+	var pool: Array = Hue.tier_pool(level)
+	# JEDINA UROVEN = NENI CO LOSOVAT. A hlavne se NESMI spotřebovat nahoda:
+	# kazdy zbytecny `randf()` posune cely zbytek partie (poradi barev ve vlne
+	# i uhly vstupu), takze by se zmenily i prvni dva levely, na kterych se
+	# menit NEMA NIC. Zmereno: bez tehle vetve hlupy hrac dohral level 1 a 2 a
+	# padl az ve tretim, i kdyz uroven 2 zivoty vubec nemeni.
+	if pool.size() <= 1:
+		for i in range(n):
+			out.append(0)
+		return out
+	var total: float = 0.0
+	for t in pool:
+		total += Hue.tier_weight(int(t), level)
+	for i in range(n):
+		var pick: int = int(pool[0])
+		var r: float = rng.randf() * maxf(0.0001, total)
+		for t in pool:
+			r -= Hue.tier_weight(int(t), level)
+			if r <= 0.0:
+				pick = int(t)
+				break
+		out.append(pick)
+	return out
+
+
 # JE TAHLE VLNA BOSS VLNA? Kazda desata - stejne jako v The Tower ("boss waves
 # every 10 waves"). Kdo zmeni tuhle funkci, meni, kolikrat za partii hrac
 # potka bosse; hra i testy se ptaji TOHLE, nikdy na cislo 10.
@@ -995,15 +1048,19 @@ func gold_mult() -> float:
 	return pow(GOLD_LEVEL, float(maxi(0, level - 1)))
 
 
-# ZIVOTY POUTNIKA. Obtiznost roste s levelem (a malo i s vlnou v levelu).
-func hp_for(k: int, wave_n: int, h: int) -> float:
+# ZIVOTY POUTNIKA. Obtiznost roste s levelem (a malo i s vlnou v levelu) a
+# UROVEN BARVY (tier) je nasobek NAD tim - viz `Hue.TIER_HP`. Uroven se sem
+# predava jako parametr (ne cte z hry), protoze ji poutnik zna uz pri vstupu
+# a stribrna si ji pri zmene podoby musi nechat. VYCHOZI JE ZAKLADNI UROVEN
+# (0), aby kazde volani, ktere uroven neresi, dostalo presne stara cisla.
+func hp_for(k: int, wave_n: int, h: int, tier: int = 0) -> float:
 	var lv: int = 1 + (k - 1) / KOLO_PER_LEVEL
 	var lvl_mult: float = pow(LEVEL_HP, float(lv - 1))
 	var wave_mult: float = pow(WAVE_HP, float(maxi(0, wave_n - 1)))
-	return BASE_HP * lvl_mult * wave_mult * Hue.hp_mult(h)
+	return BASE_HP * lvl_mult * wave_mult * Hue.hp_mult(h) * Hue.tier_hp(tier)
 
 
-func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
+func spawn_at_angle(a: float, h: int = -1, tier: int = 0) -> Pilgrim:
 	var pool: Array = spawn_pool()
 	var hue: int = h
 	if not Hue.is_valid(hue):
@@ -1012,12 +1069,14 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 	p.hue = hue
 	p.behaviour = Hue.behaviour_of(hue)
 	p.behaviours = Hue.behaviours_of(hue)
+	p.tier = tier
 	# VELIKOST KRESBY (Jan: o 15 % mensi nez driv) - viz `PILGRIM_SIZE`.
-	# Rozpadly kus modre ji dale zmensi pres `Hue.SPLIT_SIZE`.
-	p.size = PILGRIM_SIZE
+	# UROVEN ji zvetsuje (druha cesta k informaci "tenhle je tvrdsi" - nezávisí
+	# na barve) a rozpadly kus modre ji dale zmensi pres `Hue.SPLIT_SIZE`.
+	p.size = PILGRIM_SIZE * Hue.tier_size(tier)
 	p.pos = center + Vector2(cos(a), sin(a)) * field_r
 	p.dir = (center - p.pos).normalized()
-	p.max_hp = hp_for(kolo(), wave, hue)
+	p.max_hp = hp_for(kolo(), wave, hue, tier)
 	p.hp = p.max_hp
 	p.speed = pilgrim_speed() * Hue.speed_mult(hue)
 	if p.behaviour == Hue.B_SHIFT:
@@ -1035,8 +1094,9 @@ func spawn_at_angle(a: float, h: int = -1) -> Pilgrim:
 
 
 func _spawn_next() -> void:
+	var idx: int = clampi(spawned, 0, plan.size() - 1)
 	var p: Pilgrim = spawn_at_angle(rng.randf() * TAU,
-		int(plan[clampi(spawned, 0, plan.size() - 1)]))
+		int(plan[idx]), int(plan_tier[idx]))
 	if spawned == boss_at:
 		_make_boss(p)
 	spawned += 1
@@ -1048,7 +1108,12 @@ func _spawn_next() -> void:
 # nebo bez zlata te vlny.
 func _make_boss(p: Pilgrim) -> void:
 	p.is_boss = true
-	p.max_hp *= BOSS_HP_MULT
+	# BOSS JE "UROVEN SAMA PRO SEBE" (Jan, Oct 2026): nema uroven barvy, proto
+	# se zivoty pocitaji ZNOVU s urovni 0 (a stejne tak je nastavena uroven ve
+	# `_start_wave`, aby si `plan_tier` a poutnik neodporovaly). Kdyby boss
+	# zdedil uroven 4, bylo by z 20x zivotu 58x a hrac by na nej nemel sanci.
+	p.tier = 0
+	p.max_hp = hp_for(kolo(), wave, p.hue, 0) * BOSS_HP_MULT
 	p.hp = p.max_hp
 	# RYCHLOST SE POCITA ZE ZAKLADU, NE Z POUTNIKA: kdyby se nasobila i jeji
 	# barva (`p.speed` uz `Hue.speed_mult` ma), byl by cerveny boss o vic nez
@@ -1115,7 +1180,7 @@ func _shift(p: Pilgrim) -> void:
 	p.hue = _random_other_hue(p.hue)
 	p.behaviour = Hue.behaviour_of(p.hue)
 	p.behaviours = Hue.behaviours_of(p.hue)
-	p.max_hp = hp_for(kolo(), wave, p.hue)
+	p.max_hp = hp_for(kolo(), wave, p.hue, p.tier)
 	p.hp = maxf(1.0, p.max_hp * frac)
 	# RYCHLOST JE VYHODA ZLUTE, takze nova podoba znamena i novou chuzi.
 	p.speed = pilgrim_speed() * Hue.speed_mult(p.hue)
@@ -1347,7 +1412,9 @@ func _kill(p: Pilgrim) -> void:
 	_event("kill")
 	# BOSS PADA ZA PETINASOBNE ZLATO (The Tower: 5 coinu misto 1) - kdyby padal
 	# za stejne, hrac by se bossum vyhybal a zkouska poskozeni by se nevyplatila.
-	var mult: float = BOSS_GOLD_MULT if p.is_boss else 1.0
+	# UROVEN BARVY ZLATO ZVEDA TAKY (`Hue.TIER_GOLD`): vetsi poutnik = vic prace
+	# = vic penez, jinak by byl jenom otrava navic.
+	var mult: float = BOSS_GOLD_MULT if p.is_boss else Hue.tier_gold(p.tier)
 	gold += int(round(float(Hue.gold_of(p.hue)) * gold_mult() * mult)) \
 		+ int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
@@ -1359,6 +1426,9 @@ func _kill(p: Pilgrim) -> void:
 			q.hue = p.hue
 			q.behaviour = Hue.B_NONE
 			q.can_split = false
+			# KUS SI NESE UROVEN RODICE (a tim i jeho zlato): rozpadly kus je
+			# porad bytost te vlny, ne novy zakladni poutnik.
+			q.tier = p.tier
 			q.size = p.size * Hue.SPLIT_SIZE
 			q.max_hp = maxf(1.0, p.max_hp * Hue.SPLIT_HP_FRAC)
 			q.hp = q.max_hp
