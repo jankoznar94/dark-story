@@ -210,10 +210,23 @@ func _test_perm_cost() -> void:
 	_check(Upgrades.perm_cost("ad", 2) == 1, "treti permanentni stupen nestoji 1 bod")
 	_check(Upgrades.perm_cost("ad", 3) == 2, "ctvrty permanentni stupen nestoji 2 body")
 	# Specialy jsou nove mechaniky, ne cisla - musi byt drazsi.
-	_check(Upgrades.perm_cost("ms", 0) == 3, "multishot nestoji 3 body")
-	_check(Upgrades.perm_cost("rc", 0) == 4, "odraz nestoji 4 body")
+	# MULTISHOT A ODRAZ JSOU NASOBICE POSKOZENI, PROTO JSOU VEDOME DRAHE
+	# (Oct 2026, viz `Upgrades.STATS`): multishot strili na pet cilu zaraz
+	# (5x poskozeni), odraz posle jeden paprsek pres 4 dalsi cile.
+	# S cenou 3 a 4 body si je hrac koupil CELE JESTE V PRVNIM LEVELU.
+	_check(Upgrades.perm_cost("ms", 0) == 50, "multishot nestoji 50 bodu")
+	_check(Upgrades.perm_cost("rc", 0) == 60, "odraz nestoji 60 bodu")
 	_check(Upgrades.perm_cost("ps", 1) == 8, "druhy stupen jedu nestoji 8 bodu")
-	_check(Upgrades.perm_cost("ms", 3) == 12, "ctvrty stupen multishotu nestoji 12 bodu")
+	_check(Upgrades.perm_cost("ms", 3) == 200, "ctvrty stupen multishotu nestoji 200 bodu")
+	# A POMER K OBYCEJNEMU UPGRADU: multiplikator poskozeni musi stat radove
+	# vic nez jedna polozka v ciselne ose (ad stoji 1 bod), jinak se vyplati
+	# koupit ho driv nez poskozeni - a presne to hru rozbiji.
+	_check(Upgrades.perm_cost("ms", 0) >= 10 * Upgrades.perm_cost("ad", 0),
+		"multishot je prilis levny proti poskozeni (%d vs %d)"
+		% [Upgrades.perm_cost("ms", 0), Upgrades.perm_cost("ad", 0)])
+	_check(Upgrades.perm_cost("rc", 0) >= 10 * Upgrades.perm_cost("ad", 0),
+		"odraz je prilis levny proti poskozeni (%d vs %d)"
+		% [Upgrades.perm_cost("rc", 0), Upgrades.perm_cost("ad", 0)])
 
 
 func _test_special_is_perm_only() -> void:

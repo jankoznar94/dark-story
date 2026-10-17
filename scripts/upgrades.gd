@@ -48,7 +48,9 @@ const CATEGORIES := [
 const TEMP_COST := 1
 # CENA PERMANENTNIHO STUPNE: kazde tri urovne stoji o bod vic (1,1,1,2,2,2,...).
 const PERM_EVERY := 3
-# SPECIALY maji vlastni cenu za stupen (nasobek): multishot 3, ostatni 4.
+# SPECIALY maji vlastni cenu za stupen (nasobek). Zaklad 4 maji jed, led a
+# zrychleni; MULTISHOT a ODRAZ maji vlastni, mnohonasobne vyssi cenu primo
+# v tabulce (`"perm_cost"`), protoze nasobi cele poskozeni (viz `STATS`).
 const PERM_COST_STEP := 4
 
 # NEOMEZENY DOCASNY ZEBRICEK. Jan (Oct 2026): "já prozatím nechci žádné stropy.
@@ -128,8 +130,20 @@ const STATS := [
 	{"id": "gl", "label": "Zlato za level", "cat": CAT_ECO, "kind": "plus",
 		"start": 0, "step": 5, "cap": 30, "perm_max": 6, "temp_max": UNLIMITED},
 
+	# CENA JE NASOBEK ZA STUPEN (viz `perm_cost`) a je VEDOME VYSOKA (Oct 2026,
+	# Jan: "Hráč teď stále snadno dojde do fáze, že už žluté nepřátele zabíjí
+	# instantně ... Na jednu stranu za to může odraz laseru. Možná budeme muset
+	# tento upgrade udělat daleko dražší. Aby si ho hráč nemohl dovolit tak brzy.
+	# To samé multi shot.").
+	#
+	# DUVOD CISLA: vez strili na `targets()` cilu ZARAZ a kazdy dostane PLNÉ
+	# `laser_dps` - jeden stupen multishotu je tedy +100 % poskozeni a cely
+	# zebricek 5x. S cenou 3 body si hrac koupil vsechny ctyri stupne (30 bodu)
+	# i cely odraz (40) JESTE V PRVNIM LEVELU: body jsou 1 za vlnu (50 za level)
+	# a level 1 jich da ~80. Dnes stoji prvni stupen 50 bodu, coz je temer cely
+	# prvni level, a cely zebricek 500 (500 = ~prvnich pet levelu dohromady).
 	{"id": "ms", "label": "Víc cílů", "cat": CAT_SPEC, "kind": "int",
-		"start": 1, "step": 1, "cap": 5, "perm_max": 4, "temp_max": 0, "perm_cost": 3},
+		"start": 1, "step": 1, "cap": 5, "perm_max": 4, "temp_max": 0, "perm_cost": 50},
 	# ODRAZ (driv Ricochet). Jan (Oct 2026): "RICOHET přejmenujeme na Odraz a
 	# bude se takhle laser šířit na další nepřátele, podobně jako ricochet, ale
 	# bez projektilů. A každý odraz bude dávat menší poškození. S levelem
@@ -139,9 +153,16 @@ const STATS := [
 	# JEDNA POLOZKA, DVE CISLA: `values[uroven]` = [pocet odrazu, sila odrazu].
 	# Sila je podil poskozeni, ktery si odraz jeste odnese (0,50 = polovinu).
 	# Kdyby to byly dva radky, hrac by musel koupit dvakrat to same.
+	# CENA ZE STEJNEHO DUVODU JAKO U MULTISHOTU (a o neco vyssi - odraz je
+	# silnejsi): jeden paprsek preskoci na dalsi cile a kazdy odraz si odnese
+	# `values[n][1]` poskozeni, takze pri plnem zebricku (4 odrazy, sila 0,80)
+	# da jeden paprsek 1 + 0,8 + 0,64 + 0,51 + 0,41 = 3,4x vic poskozeni nez
+	# paprsek bez odrazu. S multishotem 5 to je pres 16x. Proto 60 / 120 / 180 /
+	# 240 (cely zebricek 600 bodu).
 	{"id": "rc", "label": "Odraz", "cat": CAT_SPEC, "kind": "chain",
 		"start": 0, "step": 1, "cap": 4, "perm_max": 4, "temp_max": 0,
-		"values": [[0, 1.00], [1, 0.50], [2, 0.60], [3, 0.70], [4, 0.80]]},
+		"values": [[0, 1.00], [1, 0.50], [2, 0.60], [3, 0.70], [4, 0.80]],
+		"perm_cost": 60},
 	{"id": "ps", "label": "Jedovatý zásah", "cat": CAT_SPEC, "kind": "levels",
 		"start": 0, "step": 1, "cap": 3, "perm_max": 3, "temp_max": 0,
 		"values": [0.0, 0.20, 0.35, 0.50], "text": "%d/s"},
