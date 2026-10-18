@@ -33,16 +33,22 @@ const CRIT_TINT := 0.45
 # OBVOD PAPRSKU. Drzi se jako PRIDAVEK k sirce paprsku, ne jako nasobek:
 # u tlustsiho paprsku by se nasobenim obrys rozlezl do dvojite cary.
 const BEAM_EDGE := 1.7
-# PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."). Cisla popisuji, jak rychle
-# svetlo po paprsku tece a jak hrube useky jsou - kdo hybe `BEAM_SEG_PX`,
-# hybe poctem kreslicich prikazu za kazdy paprsek (na plose jich sviti vic).
-const BEAM_PULSE_S := 0.85
-const BEAM_PULSES := 1.6
-const BEAM_HALO := 2.9
-const BEAM_HALO_ALPHA := 0.18
-const BEAM_SEG_PX := 2.6
-const BEAM_SEG_MIN := 5
-const BEAM_SEG_MAX := 14
+# PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."): po paprsku jde JEDNA
+# vlna svetla. Cisla popisuji, jak dlouho ji cesta trva a jak je siroka.
+const BEAM_PULSE_S := 2.2      # jedna vlna projde paprskem za 2,2 s
+const BEAM_PULSES := 1.0        # JEDNA vlna na paprsek (vic vlnek = blikani)
+const BEAM_SHARP := 2.0         # jak ostry je vrchol vlny
+const BEAM_STATIONS := 20       # vrcholu pasu (cim vic, tim plynulejsi)
+const BEAM_HALO := 3.4          # sirka obalu v nasobcich paprsku
+const BEAM_HALO_ALPHA := 0.20
+const BEAM_OUTER_MIN := 2.3     # nejvnejsi, nejslabsi zar v klidu
+const BEAM_OUTER_ADD := 3.6     # o kolik se rozsiri ve vlne
+const BEAM_OUTER_ALPHA := 0.09
+const BEAM_GLOW_MIN := 1.5      # obal v klidu
+const BEAM_GLOW_ADD := 2.9      # o kolik se obal rozsiri ve vlne
+const BEAM_CORE_MIN := 0.55     # jadro v klidu
+const BEAM_CORE_ADD := 0.65     # o kolik se jadro rozsiri ve vlne
+const BEAM_TROUGH := 0.30       # jak ztmavne paprsek mimo vlnu
 # PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
 # od sebe poznat tri vrstvy (pole, panel, tab).
 const CARD_BG := Color(0.095, 0.090, 0.100)
@@ -1021,32 +1027,64 @@ func _draw_beams() -> void:
 		if q == null or not q.alive:
 			continue
 		var w: float = maxf(1.0, game.beam_w(int(b["hop"])))
-		# SIROKY, PLOCHY OBAL: dve vrstvy (tmavy obrys + pruhledna barva)
-		# vypadaji jako zareni, ale jsou to jen kruhy a cary - zadny blur.
-		var halo: float = w * BEAM_HALO
-		_beam_line(b["from"], b["to"], GLYPH, halo + BEAM_EDGE)
-		_beam_line(b["from"], b["to"], Color(col.r, col.g, col.b, BEAM_HALO_ALPHA), halo)
-		_beam_pulse(b["from"], b["to"], col, w, phase)
-		draw_circle(b["from"], w * 0.5, col)
-		draw_circle(b["to"], w * 0.5, col)
+		# SIROKY, PLOCHY OBAL: tmavy obrys pod paprskem, aby se barevna cara
+		# neztratila na svetlem poutnikovi nebo na karte.
+		_beam_line(b["from"], b["to"], GLYPH, w * BEAM_HALO + BEAM_EDGE)
+		# PULZ JE PLYNULE PRECHODY BAREV, ne useky: vrcholy pasu maji kazdy
+		# svou barvu a Godot mezi nimi interpoluje (Gouraud), takze na paprsku
+		# nejsou videt zadne svary ani schody. Jeden pruchod svetla po paprsku.
+		_beam_ribbon(b["from"], b["to"], col, w, phase, 2)
+		_beam_ribbon(b["from"], b["to"], col, w, phase, 1)
+		_beam_ribbon(b["from"], b["to"], col, w, phase, 0)
+		draw_circle(b["from"], w * 0.5, col.darkened(0.10))
+		draw_circle(b["to"], w * 0.5, col.darkened(0.10))
 
 
-# TOK SVETLA PO PAPRSKU. Useky jsou stejne dlouhe, ale kazdy ma jinou
-# svetlost podle toho, kde je prave vlna - a vlna putuje k poutnikovi.
-# Kdyby se kreslily kulaté konce i u vnitrnich useku, byla by to spousta
-# kreslicich prikazu za kazdy paprsek (na plose jich muze svitit nekolik
-# desitek), proto kulata zakonceni dostanou jen oba konce paprsku.
-func _beam_pulse(a: Vector2, b: Vector2, col: Color, w: float, phase: float) -> void:
-	var n: int = clampi(int(a.distance_to(b) / maxf(3.0, w * BEAM_SEG_PX)),
-		BEAM_SEG_MIN, BEAM_SEG_MAX)
-	var prev: Vector2 = a
-	for i in n:
-		var p1: Vector2 = a.lerp(b, float(i + 1) / float(n))
-		var s: float = 0.5 + 0.5 * sin((float(i) / float(n) * BEAM_PULSES - phase) * TAU)
-		var f: float = pow(s, 3.0)
-		draw_line(prev, p1, col.lerp(Color(1, 1, 1), 0.10 + 0.78 * f),
-			w * (0.75 + 0.80 * f))
-		prev = p1
+# TOK SVETLA PO PAPRSKU. Paprsek je JEDEN PAS (polygon) a kazdy jeho vrchol
+# ma svou barvu: kde je prave vlna, tam je skoro bily a siroky, jinde ma barvu
+# veze a je uzky. Godot barvy mezi vrcholy interpoluje, takze je prechod
+# plynuly - zadne useky, zadne svary, zadne blikani.
+#
+# PRVNI VERZE BYLA PO USECICH a Jan v ni pulz nevidel ("laser sem tam celý
+# blikne, ale putující pulz tam není"): usek je 2-4 px siroky, takze rozdil
+# svetlosti mezi sousedy splynul a rychla faze (1,9 pruchodu za sekundu) se
+# cetla jako blikani. Ted je na paprsku JEDNA vlna za 2,2 s a meni se i SIRKA
+# svetla, ne jen jeho jas - to je to, co oko na malem displeji vidi.
+func _beam_ribbon(a: Vector2, b: Vector2, col: Color, w: float, phase: float,
+		layer: int) -> void:
+	var nrm: Vector2 = (b - a).orthogonal().normalized()
+	var left := PackedVector2Array()
+	var right := PackedVector2Array()
+	var lcol := PackedColorArray()
+	var rcol := PackedColorArray()
+	for i in BEAM_STATIONS + 1:
+		var t: float = float(i) / float(BEAM_STATIONS)
+		var f: float = pow(0.5 + 0.5 * sin((t * BEAM_PULSES - phase) * TAU), BEAM_SHARP)
+		var half: float
+		var c: Color
+		if layer == 2:
+			half = w * (BEAM_OUTER_MIN + BEAM_OUTER_ADD * f)
+			c = Color(col.r, col.g, col.b, BEAM_OUTER_ALPHA * (0.45 + 1.25 * f))
+		elif layer == 1:
+			half = w * (BEAM_GLOW_MIN + BEAM_GLOW_ADD * f)
+			c = Color(col.r, col.g, col.b, BEAM_HALO_ALPHA * (0.45 + 1.25 * f))
+		else:
+			half = w * (BEAM_CORE_MIN + BEAM_CORE_ADD * f)
+			c = col.darkened(BEAM_TROUGH).lerp(Color(1, 1, 1), f)
+		var p: Vector2 = a.lerp(b, t)
+		left.append(p + nrm * half)
+		right.append(p - nrm * half)
+		lcol.append(c)
+		rcol.append(c)
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	for i in BEAM_STATIONS + 1:
+		pts.append(left[i])
+		cols.append(lcol[i])
+	for i in range(BEAM_STATIONS, -1, -1):
+		pts.append(right[i])
+		cols.append(rcol[i])
+	draw_polygon(pts, cols)
 
 
 # JEDEN SEGMENT PAPRSKU S KULATYMI KONCI. Godot kresli caru s hranatym koncem

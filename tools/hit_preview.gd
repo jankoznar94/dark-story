@@ -23,6 +23,7 @@ var view: Node2D = null
 var overlay: Node2D = null
 var frame: int = 0
 var fx: int = 1
+var clock: float = 0.30
 var out_path: String = "user://fx.png"
 var phase: float = 0.0
 var beams: Array = []
@@ -31,7 +32,9 @@ var shots: Array = []
 
 func _init() -> void:
 	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--fx="):
+		if a.begins_with("--clock="):
+			clock = float(a.split("=")[1])
+		elif a.begins_with("--fx="):
 			fx = int(a.split("=")[1])
 		elif a.begins_with("--out="):
 			out_path = a.split("=")[1]
@@ -107,7 +110,7 @@ func _setup() -> void:
 	# takze by nahled prisel o paprsky. Vypnuty `_process` obrazovky nechá stav
 	# presne tak, jak ho tu postavime - a kresleni funguje dal.
 	view.game.beams = beams
-	view.game.clock = 0.30   # faze pulsu, aby snapshot nebyl na nule
+	view.game.clock = clock  # faze pulsu (0..2,2 = jeden pruchod vlny)
 	view.set_process(false)
 
 
