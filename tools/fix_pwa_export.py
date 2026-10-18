@@ -49,6 +49,49 @@ ORIENTATION = "portrait"
 # hra je hratelna i tak, jen je plocha mensi a barvy hur citelne.
 PORTRAIT_MARK = "ZILY_NA_VYSKU"
 
+# KONTROLA VERZE NA STRANCE. Service worker i network-first navigace jsou ve
+# SW, ale prohlizec muze drzet STARY index.html i stary worker (a u
+# nainstalovane PWA se to nema jak spravit samo). Hrac pak hlasi "porad je to
+# stejne", i kdyz je novy build na serveru. Stranka proto po nacteni porovna
+# svuj otisk s `version.txt`; kdyz se lisi, smaze cache, odregistruje workera
+# a JEDNOU se reloadne (podruhe uz ne - `sessionStorage` brani smycce).
+UPDATE_MARK = "VERZE_SE_KONTROLUJE"
+
+UPDATE_JS = """
+\t<!-- VERZE_SE_KONTROLUJE: stara verze v prohlizeci se sama ozve. -->
+\t<script>
+\t(function () {
+\t  var BUILT = '__VER__';
+\t  if (!('serviceWorker' in navigator)) { return; }
+\t  try {
+\t    navigator.serviceWorker.getRegistrations().then(function (rs) {
+\t      rs.forEach(function (r) { r.update(); });
+\t    });
+\t  } catch (e) {}
+\t  if (!BUILT) { return; }
+\t  fetch('version.txt?ts=' + Date.now(), { cache: 'no-store' })
+\t    .then(function (r) { return r.text(); })
+\t    .then(function (v) {
+\t      v = (v || '').trim();
+\t      if (!v || v === BUILT) { return; }
+\t      if (sessionStorage.getItem('zily_reload') === v) { return; }
+\t      sessionStorage.setItem('zily_reload', v);
+\t      var done = function () { location.reload(); };
+\t      if (window.caches && caches.keys) {
+\t        caches.keys().then(function (ks) {
+\t          return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+\t        }).then(function () {
+\t          return navigator.serviceWorker.getRegistrations();
+\t        }).then(function (rs) {
+\t          return Promise.all(rs.map(function (r) { return r.unregister(); }));
+\t        }).then(done, done);
+\t      } else { done(); }
+\t    })
+\t    .catch(function () {});
+\t}());
+\t</script>
+"""
+
 PORTRAIT_JS = """
 \t<!-- ZILY_NA_VYSKU: hra je na vysku, orientace se drzi tady, ne jen v manifestu. -->
 \t<style>
@@ -257,10 +300,11 @@ def fix_service_worker(out: str, version: str = "") -> bool:
 	return True
 
 
-def fix_index_html(out: str) -> bool:
-	"""Vlozi do index.html zamceni orientace (viz PORTRAIT_JS).
+def fix_index_html(out: str, version: str = "") -> bool:
+	"""Vlozi do index.html zamceni orientace a kontrolu verze.
 
-	Idempotentni: podle znacky PORTRAIT_MARK se pozná, ze uz je hotovo.
+	Idempotentni: podle znacek PORTRAIT_MARK a UPDATE_MARK se pozná, ze uz je
+	hotovo (druhy beh nic nezdvoji).
 	"""
 	html = os.path.join(out, "index.html")
 	if not os.path.isfile(html):
@@ -275,9 +319,16 @@ def fix_index_html(out: str) -> bool:
 		src = src.replace("</body>", PORTRAIT_JS + "\t</body>", 1)
 		with open(html, "w", encoding="utf-8") as f:
 			f.write(src)
+	if UPDATE_MARK not in src:
+		if "</body>" not in src:
+			print("PWA_HTML=fail (v index.html neni </body>)")
+			return False
+		src = src.replace("</body>", UPDATE_JS.replace("__VER__", version) + "\t</body>", 1)
+		with open(html, "w", encoding="utf-8") as f:
+			f.write(src)
 	# Kontrola je na to, co se opravdu pise do souboru.
 	missing = [m for m in [PORTRAIT_MARK, 'id="zily_vyska"',
-		"screen.orientation.lock('portrait')"] if m not in src]
+		"screen.orientation.lock('portrait')", UPDATE_MARK, "version.txt"] if m not in src]
 	if missing:
 		print("PWA_HTML=fail missing=%s" % missing)
 		return False
@@ -290,7 +341,7 @@ def main() -> int:
 	version = sys.argv[2] if len(sys.argv) > 2 else ""
 	ok_m = fix_manifest(out)
 	ok_s = fix_service_worker(out, version)
-	ok_h = fix_index_html(out)
+	ok_h = fix_index_html(out, version)
 	if not (ok_m and ok_s and ok_h):
 		print("FIX_PWA_EXPORT=false")
 		return 1

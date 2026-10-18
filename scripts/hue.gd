@@ -203,8 +203,11 @@ const TIER_UNLOCK := [1, 3, 5, 7]
 # zdarma - to je jedina cast, ktera hru ztizuje.
 const TIER_HP := [1.0, 1.5, 2.1, 2.9]
 # VELIKOST KRESBY je druha cesta k informaci "tenhle je tvrdsi" - nezávisí na
-# barve, takze ji precte i hrac s poruchou barvocitu.
-const TIER_SIZE := [1.0, 1.12, 1.24, 1.36]
+# barve, takze ji precte i hrac s poruchou barvocitu. Oct 2026 (Jan: "velikostni
+# rozdil mezi urovnemi nepřátel se ztratil"): kroky 1,12/1,24/1,36 byly na
+# telefonu nerozeznatelne, dnes 1,28/1,60/1,95 - kazdy stupen je nejmene o
+# ctvrtinu vetsi nez predchozi, takze se velikost cte na prvni pohled.
+const TIER_SIZE := [1.0, 1.28, 1.60, 1.95]
 const TIER_GOLD := [1.0, 1.4, 1.9, 2.5]
 # CETNOST VE VLNE, kdyz je uroven odemcena (hra ji normalizuje pres soucet
 # odemcenych). Vyssi uroven je vzacnejsi - jinak by od 7. levelu zmizeli malí
