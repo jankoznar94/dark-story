@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '84d0955';
+const CACHE_VERSION = '1708d32';
 /** @type {string} */
 const CACHE_PREFIX = 'Žily 2-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
