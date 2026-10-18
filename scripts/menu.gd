@@ -186,18 +186,25 @@ func request_update() -> void:
 	      new Promise((r) => setTimeout(() => r(null), 3000))
 	    ]);
 	    const regs = await navigator.serviceWorker.getRegistrations();
-	    if (regs.length === 0) { note('none'); return 'none'; }
 	    for (const r of regs) { await r.update(); }
 	    // Pres cache zadna sila - registrace se zrusi a znovu zalozi, takze
 	    // se vse stahne znovu ze site. Je to hrubsi, ale funguje i tomu, kdo
 	    // ma hru otevrenou jako nainstalovanou aplikaci, kde zavreni vsech
 	    // panelu neni mozne.
 	    for (const r of regs) { await r.unregister(); }
-	    await navigator.serviceWorker.register('index.service.worker.js', {scope: './'});
+	    if (regs.length > 0) {
+	      await navigator.serviceWorker.register('index.service.worker.js', {scope: './'});
+	    }
 	    const cc = await caches.keys();
 	    for (const k of cc) { await caches.delete(k); }
+	    // NAVIGACE S RAZITKEM. Bez nej vraci stary service worker (nebo HTTP
+	    // cache prohlizece) PORAD ten stary index.html, i kdyz uz je nova verze
+	    // na serveru - presne to Jan videl: "použil jsem Update jako vždy a je
+	    // to stejné". Jiná adresa je v kazde cache nova polozka, takze se
+	    // vzdycky stahuje ze site.
 	    note('hard');
-	    setTimeout(() => location.reload(), 900);
+	    const bust = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now();
+	    setTimeout(() => location.replace(bust), 900);
 	    return 'hard';
 	  } catch (e) {
 	    note('err:' + e);
