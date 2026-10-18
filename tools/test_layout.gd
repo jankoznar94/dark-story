@@ -31,6 +31,7 @@ func _init() -> void:
 	_run("spawnovaci kruh se nemaluje", _test_spawn_ring_not_drawn)
 	_run("laser je cara s obrysem a kresli se nad vezi", _test_beams_are_lines)
 	_run("prstenec poutnika je jeho HP bar a nic jineho", _test_ring_is_hp_bar)
+	_run("uroven barvy se pozna podle preruseni prstence", _test_tier_rings)
 	_run("poutnik je i po zmenseni citelny", _test_pilgrim_stays_readable)
 	_run("zpomalujici paprsek je mrzivy (a zadny krouzek kolem poutnika)",
 		_test_chill_beam)
@@ -160,6 +161,37 @@ func _test_ring_is_hp_bar() -> void:
 	# jako by obkresloval oblicej (Jan: "Ať kruh není nalepený přímo na tvář").
 	_check(Game.RING_FRAC >= 1.45,
 		"prstenec je nalepeny na tvár (RING_FRAC %.2f)" % Game.RING_FRAC)
+
+
+# UROVEN BARVY SE POZNA PODLE PRERUSENI PRSTENCE (Jan, Oct 2026: "Plná čára
+# lvl1, čárkovaná lvl2, tečkovaná lvl3, kombinace čárek a teček lvl4").
+# Velikost uroven necte (12 % mezi stupni), takze preruseni je druha cesta.
+func _test_tier_rings() -> void:
+	var full: float = TAU * 0.7
+	var t0: Array = Shapes.hp_ring_marks(0, full)
+	_check(t0.size() == 1, "lvl1 nema jednu plnou caru (%d)" % t0.size())
+	if t0.size() == 1:
+		_check(absf(t0[0].y - full) < 0.001, "lvl1 nekresli cely zbyvajici oblouk")
+	var t1: Array = Shapes.hp_ring_marks(1, full)
+	var t2: Array = Shapes.hp_ring_marks(2, full)
+	var t3: Array = Shapes.hp_ring_marks(3, full)
+	_check(t1.size() >= 3, "lvl2 nema carkovani (%d)" % t1.size())
+	_check(t2.size() > t1.size(), "lvl3 (tecky) nema vic znacek nez lvl2 (%d vs %d)"
+		% [t2.size(), t1.size()])
+	_check(t3.size() > t2.size(), "lvl4 (carky + tecky) nema nejvic znacek (%d vs %d)"
+		% [t3.size(), t2.size()])
+	# VSECHNY ZNACKY LEZI V OBLOUKU ZBYVAJICICH ZIVOTU - prstenec je HP bar,
+	# takze pri 70 % zivotu nesmi nic svitit v poslednich 30 % kruhu.
+	for arr in [t0, t1, t2, t3]:
+		for m in arr:
+			_check(m.x >= -0.001 and m.y <= full + 0.001,
+				"znacka prstence preleza zbyvajici zivoty (%.2f..%.2f)" % [m.x, m.y])
+	# KAZDA UROVEN MA JINY VZOR: kdyby lvl2 a lvl3 kreslily stejne, hrac by
+	# poznal jen velikost - a to je presne to, co Janovi nestacilo.
+	_check(t1.size() != t2.size() or absf(t1[0].y - t2[0].y) > 0.01,
+		"lvl2 a lvl3 maji stejny vzor")
+	# MRTVA UROVEN NESMI NIC KRESLIT (poutnik na nule zivotu).
+	_check(Shapes.hp_ring_marks(2, 0.0).is_empty(), "poutnik bez zivotu ma porad prstenec")
 
 
 # MRZIVY PAPRSEK. Kdyz vez zpomaluje (Ledovy zasah), paprsek zledovati - dostane

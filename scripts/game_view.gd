@@ -33,6 +33,16 @@ const CRIT_TINT := 0.45
 # OBVOD PAPRSKU. Drzi se jako PRIDAVEK k sirce paprsku, ne jako nasobek:
 # u tlustsiho paprsku by se nasobenim obrys rozlezl do dvojite cary.
 const BEAM_EDGE := 1.7
+# PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."). Cisla popisuji, jak rychle
+# svetlo po paprsku tece a jak hrube useky jsou - kdo hybe `BEAM_SEG_PX`,
+# hybe poctem kreslicich prikazu za kazdy paprsek (na plose jich sviti vic).
+const BEAM_PULSE_S := 0.85
+const BEAM_PULSES := 1.6
+const BEAM_HALO := 2.9
+const BEAM_HALO_ALPHA := 0.18
+const BEAM_SEG_PX := 2.6
+const BEAM_SEG_MIN := 5
+const BEAM_SEG_MAX := 14
 # PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
 # od sebe poznat tri vrstvy (pole, panel, tab).
 const CARD_BG := Color(0.095, 0.090, 0.100)
@@ -867,7 +877,16 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# spojene) nepoznal, na kterou kombinaci ma mirrit - "hráč podle pouhého
 	# odstínu nepozná o kterou kombinaci nepřítele se jedná. Takže na něj nedokáže
 	# zaútočit." Pismena "R"/"RY" reknou kombinaci PRIMO.
-	_dot(p.hue, p.pos, r, true_col, p.is_ghost())
+	# ZASAH PAPRSKEM (Jan, Oct 2026: "Neměli bychom přidat nějaký efekt i na
+	# zasaženého nepřítele? Třeba nějakou zář?"): dokud na poutnika paprsek
+	# sviti, ma v tele ZHAVE JADRO - dva svetlejsi soustredne kruhy STEJNEHO
+	# odstinu. Barva tela se nemeni (barva je informace, na kterou hrac miri),
+	# takze se jen zjasni; iniciály se kresli az NAD jadrem, takze zustavaji
+	# citelne. Zadny dalsi krouzek kolem poutnika - ty Jan nechce.
+	var heat: float = 0.0
+	if p.burning_now and not p.is_ghost():
+		heat = 0.72 + 0.28 * sin(game.clock * 9.0)
+	_dot(p.hue, p.pos, r, true_col, p.is_ghost(), heat)
 	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
@@ -885,9 +904,18 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 		# 24 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
 		# muze byt naraz i nekolik stovek poutniku, tak se pocet usecek drzi
 		# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
-		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5,
-			-PI * 0.5 + TAU * p.hp_frac(), 24,
-			Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
+		#
+		# UROVEN BARVY SE POZNA PODLE PRERUSOVANI PRSTENCE (Jan, Oct 2026:
+		# "Plná čára lvl1, čárkovaná lvl2, tečkovaná lvl3, kombinace čárek
+		# a teček lvl4"). Prerusovani je DRUHA cesta k informaci vedle
+		# velikosti: vyssi uroven je jen o par procent vetsi, takze na
+		# telefonu se to na prvni pohled necte. Geometrii pocita `Shapes`,
+		# aby sla otestovat bez prohlizece.
+		var sweep: float = TAU * p.hp_frac()
+		for m in Shapes.hp_ring_marks(p.tier, sweep):
+			draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5 + m.x, -PI * 0.5 + m.y,
+				clampi(int((m.y - m.x) / TAU * 40.0) + 1, 3, 40),
+				Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
 	# LEDOVY KRYSTAL: namrazovy prstenec KOLEM HP baru. Jan (Oct 2026): "Ten vnější
 	# kruh ještě kolem HP baru byl možná skutečně nejlepší řešení. Jen bych ho
 	# udělal tak, aby více evokoval zmrazení. Předtím spíš evokoval silové pole."
@@ -922,7 +950,8 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 #
 # `hollow` = duch (fialova po prvnim zasahu): jen obrys, ale pismena zustavaji -
 # hrac musi vedet, na co ceka, i kdyz na nej prave mirrit neda.
-func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> void:
+func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false,
+		heat: float = 0.0) -> void:
 	var w: float = maxf(1.6, r * 0.22)
 	# PODIL TELA JE Z `Game.PILGRIM_HIT_FRAC`: na tom samem polomeru konci
 	# paprsek (`Game.pilgrim_hit_r`). Kdyby tu stalo jine cislo, hra by
@@ -931,6 +960,13 @@ func _dot(h: int, p: Vector2, r: float, col: Color, hollow: bool = false) -> voi
 		draw_arc(p, Game.PILGRIM_HIT_FRAC * 0.96 * r, 0.0, TAU, 28, col, w)
 	else:
 		draw_circle(p, Game.PILGRIM_HIT_FRAC * r, col)
+		# ZHAVE JADRO ZASAHU: kresli se POD iniciály, aby pismena zustala
+		# citelna (barva ani nazev barvy se nesmi ztratit).
+		if heat > 0.0:
+			draw_circle(p, Game.PILGRIM_HIT_FRAC * r * 0.64 * heat,
+				col.lerp(Color(1, 1, 1), 0.50))
+			draw_circle(p, Game.PILGRIM_HIT_FRAC * r * 0.34 * heat,
+				col.lerp(Color(1, 1, 1), 0.82))
 	var txt: String = Hue.letter_of(h)
 	if txt == "":
 		return
@@ -968,8 +1004,7 @@ func _draw_beams() -> void:
 	# MRZIVY PAPRSEK. Kdyz vez zpomaluje, paprsek zledovati - vybledne do
 	# zimnava. PRERUSOVANI SE ZRUSILO (Jan, Oct 2026: "Laser je teď čárkovaný...
 	# Nevím proč jsi to změnila. Starý laser byl lepší."): chlad nese BARVA
-	# paprsku a ledovy krystal na cili, paprsek zustava v JEDNOM KUSE. Hrac
-	# o chladu vi i tak, a laser je to, co ma byt: laser.
+	# paprsku a ledovy krystal na cili, paprsek zustava v JEDNOM KUSE.
 	var chill: bool = game.ice_frac() > 0.0
 	if chill:
 		col = col.lerp(Color(0.78, 0.89, 1.0), CHILL_TINT)
@@ -977,16 +1012,41 @@ func _draw_beams() -> void:
 	# astigmatismus a svetla kolem svetla je pro nej to nejhorsi).
 	if game.crit_active():
 		col = col.lerp(Color(1.0, 1.0, 1.0), CRIT_TINT)
+	# PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."): jas po paprsku plyne
+	# od veze k poutnikovi. Neni to prerusovana cara - paprsek zustava v kuse,
+	# meni se jen SVETLOST useku, takze to vypada jako energie, ktera tece.
+	var phase: float = fmod(game.clock / BEAM_PULSE_S, 1.0)
 	for b in game.beams:
 		var q: Pilgrim = b["target"]
 		if q == null or not q.alive:
 			continue
 		var w: float = maxf(1.0, game.beam_w(int(b["hop"])))
-		# TM AVY OBRYS POD PAPRSKEM: na svetlem poutnikovi nebo na karte by se
-		# barevna cara ztratila. Je to obrys, ne druha cara - paprsek zustava
-		# barevny, obrys ho jen oddeluje od podkladu.
-		_beam_line(b["from"], b["to"], GLYPH, w + BEAM_EDGE)
-		_beam_line(b["from"], b["to"], col, w)
+		# SIROKY, PLOCHY OBAL: dve vrstvy (tmavy obrys + pruhledna barva)
+		# vypadaji jako zareni, ale jsou to jen kruhy a cary - zadny blur.
+		var halo: float = w * BEAM_HALO
+		_beam_line(b["from"], b["to"], GLYPH, halo + BEAM_EDGE)
+		_beam_line(b["from"], b["to"], Color(col.r, col.g, col.b, BEAM_HALO_ALPHA), halo)
+		_beam_pulse(b["from"], b["to"], col, w, phase)
+		draw_circle(b["from"], w * 0.5, col)
+		draw_circle(b["to"], w * 0.5, col)
+
+
+# TOK SVETLA PO PAPRSKU. Useky jsou stejne dlouhe, ale kazdy ma jinou
+# svetlost podle toho, kde je prave vlna - a vlna putuje k poutnikovi.
+# Kdyby se kreslily kulaté konce i u vnitrnich useku, byla by to spousta
+# kreslicich prikazu za kazdy paprsek (na plose jich muze svitit nekolik
+# desitek), proto kulata zakonceni dostanou jen oba konce paprsku.
+func _beam_pulse(a: Vector2, b: Vector2, col: Color, w: float, phase: float) -> void:
+	var n: int = clampi(int(a.distance_to(b) / maxf(3.0, w * BEAM_SEG_PX)),
+		BEAM_SEG_MIN, BEAM_SEG_MAX)
+	var prev: Vector2 = a
+	for i in n:
+		var p1: Vector2 = a.lerp(b, float(i + 1) / float(n))
+		var s: float = 0.5 + 0.5 * sin((float(i) / float(n) * BEAM_PULSES - phase) * TAU)
+		var f: float = pow(s, 3.0)
+		draw_line(prev, p1, col.lerp(Color(1, 1, 1), 0.10 + 0.78 * f),
+			w * (0.75 + 0.80 * f))
+		prev = p1
 
 
 # JEDEN SEGMENT PAPRSKU S KULATYMI KONCI. Godot kresli caru s hranatym koncem
