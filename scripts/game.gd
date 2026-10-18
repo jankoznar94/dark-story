@@ -1450,10 +1450,12 @@ func _kill(p: Pilgrim) -> void:
 			q.hue = p.hue
 			q.behaviour = Hue.B_NONE
 			q.can_split = false
-			# KUS SI NESE UROVEN RODICE (a tim i jeho zlato): rozpadly kus je
-			# porad bytost te vlny, ne novy zakladni poutnik.
-			q.tier = p.tier
-			q.size = p.size * Hue.SPLIT_SIZE
+			# KUS JE O JEDEN STUPEN NIZ (Jan, Oct 2026: "Modří poutníci se vždy
+			# budou rozpadat na dva poutníky o 1 level nižší úrovně. Modrý puntík
+			# levelu 1 se pak rozpadne na dva poutníky lvl 0"). UROVEN 0 (index
+			# -1) existuje JEN takhle - `tier_pool` ji nikdy nelosuje.
+			q.tier = p.tier - 1
+			q.size = PILGRIM_SIZE * Hue.tier_size(q.tier) * Hue.SPLIT_SIZE
 			q.max_hp = maxf(1.0, p.max_hp * Hue.SPLIT_HP_FRAC)
 			q.hp = q.max_hp
 			q.speed = p.speed

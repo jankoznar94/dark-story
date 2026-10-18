@@ -216,6 +216,18 @@ const TIER_WEIGHT := [0.45, 0.30, 0.18, 0.07]
 # JMENO PRO HUD A HLASKY ("objeví se větší poutníci").
 const TIER_NAME := ["menší", "větší", "velcí", "obří"]
 
+# NULTY STUPEN (index -1): POUTNIK Z ROZPADU. Jan (Oct 2026): "Modří poutníci
+# se vždy budou rozpadat na dva poutníky o 1 level nižší úrovně. Modrý puntík
+# levelu 1 se pak rozpadne na dva poutníky lvl 0 (to bude výjimka oproti
+# ostatním, ostatní lvl0 nemají)."
+#
+# NIKDY SE NELOSUJE - `tier_pool` vraci jen 0..3, takze se do hry dostane
+# vyhradne rozpadem. Je to nejmensi a nejslabsi poutnik, jaky ve hre existuje.
+const TIER_SPLIT := -1
+const SPLIT_TIER_HP := 0.70
+const SPLIT_TIER_SIZE := 0.88
+const SPLIT_TIER_GOLD := 0.60
+
 # REGENERACE ZELENE: podil maximalnich zivotu za sekundu. Musi byt vyrazne
 # mensi nez kadence veze, jinak je poutnik nesmrtelny.
 const REGEN_FRAC := 0.04
@@ -395,19 +407,32 @@ static func tier_weight(t: int, level: int) -> float:
 # NEBEZPECNE PREVODY: uroven mimo tabulku NESMI shodit hru ani potichu zmenit
 # obtiznost - neznama uroven je vzdy ta prvni (zakladni) hodnota.
 static func tier_hp(t: int) -> float:
+	if t == TIER_SPLIT:
+		return SPLIT_TIER_HP
 	return float(TIER_HP[clampi(t, 0, TIER_COUNT - 1)])
 
 
 static func tier_size(t: int) -> float:
+	if t == TIER_SPLIT:
+		return SPLIT_TIER_SIZE
 	return float(TIER_SIZE[clampi(t, 0, TIER_COUNT - 1)])
 
 
 static func tier_gold(t: int) -> float:
+	if t == TIER_SPLIT:
+		return SPLIT_TIER_GOLD
 	return float(TIER_GOLD[clampi(t, 0, TIER_COUNT - 1)])
 
 
 static func tier_name(t: int) -> String:
+	if t == TIER_SPLIT:
+		return "drobný"
 	return String(TIER_NAME[clampi(t, 0, TIER_COUNT - 1)])
+
+
+# JE TO POUTNIK Z ROZPADU? (nulta uroven, ktera se nikdy nelosuje)
+static func is_split_tier(t: int) -> bool:
+	return t == TIER_SPLIT
 
 
 # HODNOTY SOUHRNU. U SMESI JE TO PRUMER OBOU BAREV, ne maximum (Jan: "S

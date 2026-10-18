@@ -51,6 +51,8 @@ func _init() -> void:
 		_test_silver_shift_form)
 	_run("modra podoba stribrne se rozpadne na dve obycejne kapky",
 		_test_silver_split_form)
+	_run("rozpad snizi uroven o jeden stupen (lvl1 -> dva lvl0)",
+		_test_split_lowers_tier)
 	_run("smes dvou barev je barva: id, dve pismena, vlastni barva", _test_mix_ids)
 	_run("vez vidi jen to, co ma v sade barev (a smes potrebuje obe)", _test_covers)
 	_run("michani dvema prsty zaraz (a pred patym levelem ne)", _test_mix_fingers)
@@ -1311,6 +1313,53 @@ func _test_silver_shift_form() -> void:
 # ROZPAD MODRE PODOBY STRIBRNE (Jan: "modrá = při smrti se rozdělí (pak už se dvě
 # malé kapky chovají standardně)"). Kusy jsou OBYCEJNI poutnici - nemeni podobu
 # a maji chovani `none`, takze z jednoho menice nevznikne nekonecny pocet menicu.
+# ROZPAD SNIZUJE UROVEN (Jan, Oct 2026): "Modří poutníci se vždy budou rozpadat
+# na dva poutníky o 1 level nižší úrovně. Modrý puntík levelu 1 se pak rozpadne
+# na dva poutníky lvl 0 (to bude výjimka oproti ostatním, ostatní lvl0 nemají)."
+func _test_split_lowers_tier() -> void:
+	var g: Game = _fresh()
+	g.tower.hue = Hue.RED
+	g.profile.perm["rc"] = 1
+	var p: Pilgrim = _place(g, Hue.BLUE, g.range_frac() * 0.60, 0.0)
+	p.tier = 0
+	p.size = Game.PILGRIM_SIZE * Hue.tier_size(0)
+	p.max_hp = 50.0
+	p.hp = 50.0
+	g._hurt(p, 60.0)
+	var pieces: Array = []
+	for q in g.pilgrims:
+		if q != p:
+			pieces.append(q)
+	_check(pieces.size() == Hue.SPLIT_PIECES,
+		"modry poutnik se nerozpadl na %d kusy (%d)" % [Hue.SPLIT_PIECES, pieces.size()])
+	for q in pieces:
+		_check(q.tier == Hue.TIER_SPLIT,
+			"kus levelu 1 neni lvl 0 (tier %d)" % q.tier)
+		_check(q.size < p.size, "kus neni mensi nez jeho rodic")
+		_check(q.can_split == false, "kus se deli znovu - rozpad by se nikdy nezastavil")
+	_check(Shapes.hp_ring_marks(pieces[0].tier, TAU * 0.8).size() > 0,
+		"lvl 0 nema HP prstenec")
+	# DRUHY STUPEN: kus je o jeden niz, ne porad stejny.
+	var g2: Game = _fresh()
+	g2.tower.hue = Hue.RED
+	g2.profile.perm["rc"] = 1
+	var p2: Pilgrim = _place(g2, Hue.BLUE, g2.range_frac() * 0.60, 0.0)
+	p2.tier = 2
+	p2.size = Game.PILGRIM_SIZE * Hue.tier_size(2)
+	p2.max_hp = 50.0
+	p2.hp = 50.0
+	g2._hurt(p2, 60.0)
+	for q in g2.pilgrims:
+		if q != p2:
+			_check(q.tier == 1, "kus levelu 3 ma tier %d, cekano 1" % q.tier)
+	# NULTA UROVEN SE NIKDY NELOSUJE - jinak by ji hrac potkal i bez rozpadu.
+	var pool: Array = Hue.tier_pool(12)
+	_check(not pool.has(Hue.TIER_SPLIT),
+		"nulta uroven se losuje ve vlnach (%s)" % str(pool))
+	_check(Hue.tier_size(Hue.TIER_SPLIT) < Hue.tier_size(0),
+		"nulta uroven neni mensi nez prvni")
+
+
 func _test_silver_split_form() -> void:
 	var g: Game = _fresh()
 	# Modra vstupuje do hry ve druhem levelu - v prvnim ji `_random_other_hue`
