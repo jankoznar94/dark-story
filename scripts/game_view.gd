@@ -34,7 +34,7 @@ const CRIT_TINT := 0.45
 # u tlustsiho paprsku by se nasobenim obrys rozlezl do dvojite cary.
 # PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."): po paprsku jde JEDNA
 # vlna svetla. Cisla popisuji, jak dlouho ji cesta trva a jak je siroka.
-const BEAM_PULSE_S := 0.50     # jedna vlna projde paprskem za 0,50 s
+const BEAM_PULSE_S := 0.38     # jedna vlna projde paprskem za 0,38 s
 const BEAM_PULSES := 1.0        # JEDNA vlna na paprsek (vic vlnek = blikani)
 const BEAM_SHARP := 1.7         # jak ostry je vrchol vlny
 const BEAM_STATIONS := 20       # vrcholu pasu (cim vic, tim plynulejsi)
@@ -46,7 +46,11 @@ const BEAM_GLOW_MIN := 0.95     # obal v klidu
 const BEAM_GLOW_ADD := 0.60     # o kolik se obal rozsiri ve vlne
 const BEAM_CORE_MIN := 0.55     # jadro v klidu
 const BEAM_CORE_ADD := 0.25     # o kolik se jadro rozsiri ve vlne
-const BEAM_TROUGH := 0.30       # jak ztmavne paprsek mimo vlnu
+# PODIL BILE V BARVE PAPRSKU MIMO VLNU. Ztmavovani (`darkened`) se ZRUSILO:
+# tmava cervena vypada hnede-oranzove (Jan, Oct 2026: "Barva cerveneho laseru
+# je ted neco mezi oranzovou a hnedou"). Paprsek ma mit BARVU VEZE, takze se
+# nedela tmavsi - svetlejsi je jen ve vlne.
+const BEAM_TROUGH := 0.0
 # PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
 # od sebe poznat tri vrstvy (pole, panel, tab).
 const CARD_BG := Color(0.095, 0.090, 0.100)
@@ -1035,8 +1039,8 @@ func _draw_beams() -> void:
 		_beam_ribbon(b["from"], b["to"], col, w, phase, 2)
 		_beam_ribbon(b["from"], b["to"], col, w, phase, 1)
 		_beam_ribbon(b["from"], b["to"], col, w, phase, 0)
-		draw_circle(b["from"], w * 0.5, col.darkened(0.10))
-		draw_circle(b["to"], w * 0.5, col.darkened(0.10))
+		draw_circle(b["from"], w * 0.5, col)
+		draw_circle(b["to"], w * 0.5, col)
 
 
 # TOK SVETLA PO PAPRSKU. Paprsek je JEDEN PAS (polygon) a kazdy jeho vrchol
@@ -1069,7 +1073,7 @@ func _beam_ribbon(a: Vector2, b: Vector2, col: Color, w: float, phase: float,
 			c = Color(col.r, col.g, col.b, BEAM_HALO_ALPHA * (0.45 + 1.25 * f))
 		else:
 			half = w * (BEAM_CORE_MIN + BEAM_CORE_ADD * f)
-			c = col.darkened(BEAM_TROUGH).lerp(Color(1, 1, 1), f)
+			c = col.lerp(Color(1, 1, 1), BEAM_TROUGH + (0.78 - BEAM_TROUGH) * f)
 		var p: Vector2 = a.lerp(b, t)
 		left.append(p + nrm * half)
 		right.append(p - nrm * half)

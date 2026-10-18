@@ -24,6 +24,7 @@ var overlay: Node2D = null
 var frame: int = 0
 var fx: int = 1
 var clock: float = 0.30
+var red: bool = false
 var out_path: String = "user://fx.png"
 var phase: float = 0.0
 var beams: Array = []
@@ -32,7 +33,9 @@ var shots: Array = []
 
 func _init() -> void:
 	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--clock="):
+		if a == "--red":
+			red = true
+		elif a.begins_with("--clock="):
 			clock = float(a.split("=")[1])
 		elif a.begins_with("--fx="):
 			fx = int(a.split("=")[1])
@@ -70,7 +73,7 @@ func _setup() -> void:
 	var g: Game = view.game
 	g.phase = "build"
 	g.build_left = 99999.0
-	g.tower.hues = [Hue.RED, Hue.YELLOW]
+	g.tower.hues = [Hue.RED] if red else [Hue.RED, Hue.YELLOW]
 	g.pilgrims = []
 	var c: Vector2 = g.center
 	var fr: float = g.field_r
