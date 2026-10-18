@@ -112,7 +112,7 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":1031216,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":1031184,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -246,6 +246,39 @@ const engine = new Engine(GODOT_CONFIG);
 	  document.addEventListener('pointerdown', function () { lock(); refresh(); }, { passive: true });
 	  lock();
 	  refresh();
+	}());
+	</script>
+	
+	<!-- VERZE_SE_KONTROLUJE: stara verze v prohlizeci se sama ozve. -->
+	<script>
+	(function () {
+	  var BUILT = '47830ca';
+	  if (!('serviceWorker' in navigator)) { return; }
+	  try {
+	    navigator.serviceWorker.getRegistrations().then(function (rs) {
+	      rs.forEach(function (r) { r.update(); });
+	    });
+	  } catch (e) {}
+	  if (!BUILT) { return; }
+	  fetch('version.txt?ts=' + Date.now(), { cache: 'no-store' })
+	    .then(function (r) { return r.text(); })
+	    .then(function (v) {
+	      v = (v || '').trim();
+	      if (!v || v === BUILT) { return; }
+	      if (sessionStorage.getItem('zily_reload') === v) { return; }
+	      sessionStorage.setItem('zily_reload', v);
+	      var done = function () { location.reload(); };
+	      if (window.caches && caches.keys) {
+	        caches.keys().then(function (ks) {
+	          return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+	        }).then(function () {
+	          return navigator.serviceWorker.getRegistrations();
+	        }).then(function (rs) {
+	          return Promise.all(rs.map(function (r) { return r.unregister(); }));
+	        }).then(done, done);
+	      } else { done(); }
+	    })
+	    .catch(function () {});
 	}());
 	</script>
 	</body>
