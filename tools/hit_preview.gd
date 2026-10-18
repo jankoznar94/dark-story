@@ -98,10 +98,21 @@ func _setup() -> void:
 		var dir: Vector2 = (p.pos - c).normalized()
 		beams.append({
 			"from": c + dir * g.tower_edge_r(),
-			"to": p.pos - dir * g.pilgrim_hit_r(p),
+			"to": p.pos - dir * g.pilgrim_ring_r(p),
 			"hop": 0,
 			"target": p,
 		})
+	# ODRAZ: z plastu zeleneho poutnika na plast cerveneho (zadny segment
+	# pres telo - tak to dela i hra).
+	var ga: Pilgrim = shots[3]
+	var rb: Pilgrim = shots[0]
+	var d2: Vector2 = (rb.pos - ga.pos).normalized()
+	beams.append({
+		"from": ga.pos + d2 * g.pilgrim_ring_r(ga),
+		"to": rb.pos - d2 * g.pilgrim_ring_r(rb),
+		"hop": 1,
+		"target": rb,
+	})
 	overlay = Node2D.new()
 	overlay.z_index = 100
 	overlay.draw.connect(_paint)

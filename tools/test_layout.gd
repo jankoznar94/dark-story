@@ -90,13 +90,20 @@ func _test_beams_are_lines() -> void:
 	var src: String = _src()
 	_check(src.contains("for b in game.beams"), "paprsky se vubec nekresli")
 	_check(src.contains("game.beam_w("), "paprsek se nekresli jako cara")
-	_check(src.contains("_beam_line(b[\"from\"], b[\"to\"], GLYPH"),
-		"paprsek nema tmavy obrys - na svetlem poutnikovi se ztrati")
+	# ZADNY CTERNY OBRYS (Jan, Oct 2026: "Asi mi vadi ten cerny border kolem
+	# paprsku... je to rusive."). Paprsek dnes konci na HP prstenci, ne na
+	# tele, takze pres svetly puntik nejde a obrys uz nema co oddelovat.
+	_check(not src.contains("_beam_line(b[\"from\"], b[\"to\"], GLYPH"),
+		"kolem paprsku se zase kresli cerny obrys")
+	# PULZ JE JEDEN PAS S GOURAUD BARVAMI (zadne usecky, zadne blikani).
+	_check(src.contains("_beam_ribbon(b[\"from\"], b[\"to\"]"),
+		"paprsek se nekresli jako plynuly svetelny pas")
 	# KULATE ZAKONCENI. Godot kresli caru s hranatym koncem; kdyby se kazdy
 	# konec nedokreslil koleckem, hrac vidi "dva obdelniky vedle sebe" (Jan,
 	# Oct 2026).
-	_check(src.contains("draw_circle(a, w * 0.5, c)") and src.contains("draw_circle(b, w * 0.5, c)"),
-		"paprsek ma hranate konce - v prstenci poutnika je videt svar")
+	_check(src.contains("draw_circle(b[\"from\"], w * 0.5") and
+		src.contains("draw_circle(b[\"to\"], w * 0.5"),
+		"paprsek ma hranate konce - na plasti poutnika je videt svar")
 	# PRSTENEC KOLEM POUTNIKA. Je to hranice, na ktere paprsek konci; kdyby se
 	# nekreslil, hrac vidi caru, ktera se z niceho nic zastavi ve vzduchu.
 	_check(src.contains("game.pilgrim_ring_r(p)"),
@@ -118,8 +125,8 @@ func _test_beams_are_lines() -> void:
 	_check(gsrc.contains("tower_edge_r()"), "paprsek nevychazi z okraje veze")
 	_check(Game.TOWER_ARC_R > 1.0 and Game.TOWER_ARC_W > 0.0,
 		"zivotni oblouk veze nema smysl (%.2f r, %.2f tloustka)" % [Game.TOWER_ARC_R, Game.TOWER_ARC_W])
-	_check(gsrc.contains("pilgrim_hit_r(q)"),
-		"paprsek nekonci na tele cile - hra pouziva prstenec, ne okraj puntika")
+	_check(gsrc.contains("pilgrim_ring_r(q)"),
+		"paprsek nekonci na plasti cile - hra pouziva jine nez HP prstenec")
 	# POZOR: `check_symbols.py` hlida kazdy vyskyt "game.<neco>" v obrazovkach,
 	# takze se ten nazev sklada az za behu - jinak by si nastroj myslel, ze se
 	# obrazovka porad dozaduje projektu, ktere hra uz nema.
@@ -209,13 +216,12 @@ func _test_chill_beam() -> void:
 	# se neprerusuje - kdo vrati `dashed`, vrati tim "carkovany laser".
 	_check(not body.contains("dash"),
 		"mrzivy paprsek se zase kresli prerusovane (carkovany laser)")
-	var st: int = src.find("func _beam_line")
+	var st: int = src.find("func _beam_ribbon")
 	var se: int = src.find("\nfunc ", st + 1)
-	var bl: String = src.substr(st, (se - st) if se > st else 600)
-	_check(bl.contains("draw_line") and bl.contains("draw_circle(a, w * 0.5, c)"),
-		"paprsek nema kulaty konec")
-	_check(not bl.contains("Shapes."),
-		"paprsek si zase pocita prerusovanou caru")
+	var bl: String = src.substr(st, (se - st) if se > st else 900)
+	_check(st >= 0 and bl.contains("draw_polygon"),
+		"pulz se nekresli jako pas s plynulymi prechody")
+	_check(not bl.contains("dash"), "paprsek se zase kresli prerusovane")
 	_check(not src.contains("0.45, 0.72, 0.90"),
 		"svetle modry krouzek kolem poutnika se porad kresli")
 	# CHLAD JE VIDET PRIMO NA POUTNIKOVI (Jan, Oct 2026: "Ten chill effect budeme

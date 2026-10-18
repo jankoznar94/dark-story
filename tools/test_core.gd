@@ -458,8 +458,11 @@ func _test_odraz() -> void:
 	_check(absf(drop_d - g2.laser_dps() * 0.5 * dt) < 0.02,
 		"odraz nedava polovinu poskozeni (%.4f, cekano %.4f)" % [drop_d, g2.laser_dps() * 0.5 * dt])
 	_check(is_equal_approx(other.hp, o0), "odraz zasahl i jinou barvu")
-	_check(g2.beams.size() == 3,
-		"na dva cile v retezu nesviti tri segmenty (%d)" % g2.beams.size())
+	# DVA PAPRSKY, NE TRI: pres telo prvniho cile uz zadny segment nevede
+	# (Jan, Oct 2026: "pres jeho střed je další mini paprsek, který je úplně
+	# zbytečný"). Hlavni paprsek konci na plasti, odraz z plasti vychazi.
+	_check(g2.beams.size() == 2,
+		"na dva cile v retezu nesviti dva paprsky (%d)" % g2.beams.size())
 
 	# DRUHY STUPEN: vic odrazu, mensi penalizace (Jan: "S levelem upgradu se bude
 	# zvyšovat počet odrazů a bude snižovat penalizace za odraz").
@@ -475,6 +478,15 @@ func _test_odraz() -> void:
 # NA PRSTENCI predchozi obeti, ne v novem cili - jinak by to byl druhy paprsek
 # z veze a hrac by nevidel, ze se svetlo siri. Jan (Oct 2026): "Laser by mohl
 # končit (a odraz začínat) na plášti toho kruhu."
+# Lezi usecka bliz k stredu, nez je polomer tela? (vzdalenost stredu od usecky)
+func _segment_hits_body(a: Vector2, b: Vector2, c: Vector2, r: float) -> bool:
+	var ab: Vector2 = b - a
+	var t: float = 0.0
+	if ab.length_squared() > 0.0001:
+		t = clampf((c - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+	return (a + ab * t).distance_to(c) < r - 0.5
+
+
 func _test_odraz_beam_is_visible() -> void:
 	var g: Game = _fresh()
 	g.tower.hue = Hue.RED
@@ -504,20 +516,30 @@ func _test_odraz_beam_is_visible() -> void:
 		% [(first["from"] as Vector2).distance_to(g.center), g.tower_edge_r()])
 	_check(g.tower_edge_r() > g.tower_r, "okraj veze neni vnejsi nez telo veze")
 	var victim: Pilgrim = first["target"]
-	# KONEC PAPRSKU JE NA VIDITELNEM OKRAJI PUNTIKU (Jan, Oct 2026: "Laser
-	# směřuje stále do středu nepřítele. Měl by směřovat spíš na jeho obal.").
-	# `pilgrim_hit_r` je 0,92 r - stejne cislo, jakym obrazovka kresli telo
-	# puntika, takze se paprsek tela opravdu dotkne; prstenec (HP bar, 1,70 r) je
-	# dal a paprsek na nem nekonci.
-	var want_r: float = g.pilgrim_hit_r(victim)
-	_check(want_r < g.pilgrim_ring_r(victim),
-		"konec paprsku neni bliz nez HP bar poutnika")
-	_check(absf(want_r - g.pilgrim_r() * victim.size * Game.PILGRIM_HIT_FRAC) < 0.001,
-		"paprsek nekonci na okraji puntika (%.2f)" % want_r)
-	var last: Dictionary = g.beams[g.beams.size() - 1]
-	_check(absf((last["to"] as Vector2).distance_to((last["target"] as Pilgrim).pos) - want_r) < 0.5,
-		"paprsek nekonci na okraji tela cile (je %.2f od stredu, okraj je %.2f)"
-		% [(last["to"] as Vector2).distance_to((last["target"] as Pilgrim).pos), want_r])
+	# KONEC PAPRSKU JE NA VNEJSIM PLASHTI (Jan, Oct 2026: "Hlavni paprsek ma
+	# koncit na vnejsim plasti prvniho nepritele a odraz ma zacinat opet na
+	# vnejsim plasti"). Plast = HP prstenec (`pilgrim_ring_r`), ne telo puntika.
+	var want_r: float = g.pilgrim_ring_r(victim)
+	_check(want_r > g.pilgrim_hit_r(victim),
+		"konec paprsku neni na plasti (%.2f neni vic nez telo %.2f)"
+		% [want_r, g.pilgrim_hit_r(victim)])
+	_check(absf((first["to"] as Vector2).distance_to(victim.pos) - want_r) < 0.5,
+		"hlavni paprsek nekonci na plasti cile (je %.2f od stredu, plast je %.2f)"
+		% [(first["to"] as Vector2).distance_to(victim.pos), want_r])
+	# ODRAZ ZACINA NA TOM SAMEM PLASHTI - a to na strane k dalsimu cili.
+	_check(second["from"] == second["from"] and
+		absf((second["from"] as Vector2).distance_to(victim.pos) - want_r) < 0.5,
+		"odraz nezacina na plasti prvniho cile (je %.2f od stredu)"
+		% [(second["from"] as Vector2).distance_to(victim.pos)])
+	# ZADNY MINI PAPRSEK PRES TELO: driv existoval jeste segment vstup-vystup
+	# a pres poutnika vedla cara skrz stred ("uplne zbytecny", Jan 2026).
+	for bm in g.beams:
+		if int(bm["hop"]) == 0 and bm["target"] == victim:
+			var sa: Vector2 = bm["from"]
+			var sb: Vector2 = bm["to"]
+			_check(not _segment_hits_body(sa, sb, victim.pos, g.pilgrim_hit_r(victim)),
+				"pres telo cile vede jeste jeden paprsek (mini paprsek skrz stred)")
+	_check(g.beams.size() == 2, "odraz kresli vic car, nez ma (%d)" % g.beams.size())
 
 
 # LASER NENI STRELA, KTERA UZ LETI. Jan (Oct 2026): "Barva laseru bude podle

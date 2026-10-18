@@ -32,14 +32,12 @@ const RING_ALPHA := 0.80
 const CRIT_TINT := 0.45
 # OBVOD PAPRSKU. Drzi se jako PRIDAVEK k sirce paprsku, ne jako nasobek:
 # u tlustsiho paprsku by se nasobenim obrys rozlezl do dvojite cary.
-const BEAM_EDGE := 1.7
 # PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."): po paprsku jde JEDNA
 # vlna svetla. Cisla popisuji, jak dlouho ji cesta trva a jak je siroka.
-const BEAM_PULSE_S := 0.65     # jedna vlna projde paprskem za 0,65 s
+const BEAM_PULSE_S := 0.50     # jedna vlna projde paprskem za 0,50 s
 const BEAM_PULSES := 1.0        # JEDNA vlna na paprsek (vic vlnek = blikani)
 const BEAM_SHARP := 1.7         # jak ostry je vrchol vlny
 const BEAM_STATIONS := 20       # vrcholu pasu (cim vic, tim plynulejsi)
-const BEAM_HALO := 2.4          # sirka tmaveho obrysu (kryje nejvyssi zar)
 const BEAM_HALO_ALPHA := 0.20
 const BEAM_OUTER_MIN := 1.30    # nejvnejsi, nejslabsi zar v klidu
 const BEAM_OUTER_ADD := 0.80    # o kolik se rozsiri ve vlne
@@ -1027,9 +1025,10 @@ func _draw_beams() -> void:
 		if q == null or not q.alive:
 			continue
 		var w: float = maxf(1.0, game.beam_w(int(b["hop"])))
-		# SIROKY, PLOCHY OBAL: tmavy obrys pod paprskem, aby se barevna cara
-		# neztratila na svetlem poutnikovi nebo na karte.
-		_beam_line(b["from"], b["to"], GLYPH, w * BEAM_HALO + BEAM_EDGE)
+		# ZADNY CTERNY OBRYS (Jan, Oct 2026: "Asi mi vadi ten cerny border kolem
+		# paprsku... je to rusive."). Obrys mel smysl, kdyz paprsek koncil na
+		# TELI poutnika a prekryval svetly puntik; dnes konci az na HP prstenci,
+		# takze pres svetlou plochu nejde a staci mu vlastni zare.
 		# PULZ JE PLYNULE PRECHODY BAREV, ne useky: vrcholy pasu maji kazdy
 		# svou barvu a Godot mezi nimi interpoluje (Gouraud), takze na paprsku
 		# nejsou videt zadne svary ani schody. Jeden pruchod svetla po paprsku.
@@ -1100,12 +1099,6 @@ const CHILL_TINT := 0.45
 # a "bily obrys" uz u poutniku jednou byl a Jan ho vracel. Plocha, zadny glow
 # (Jan ma astigmatismus).
 const ICE_RING := Color(0.55, 0.76, 0.96)
-
-
-func _beam_line(a: Vector2, b: Vector2, c: Color, w: float) -> void:
-	draw_line(a, b, c, w)
-	draw_circle(a, w * 0.5, c)
-	draw_circle(b, w * 0.5, c)
 
 
 # VEZ. Misto stupnu ma ZIVOTY: tlusty oblouk kolem tela, barva podle toho,

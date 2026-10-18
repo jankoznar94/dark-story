@@ -1332,25 +1332,25 @@ func _laser(dt: float) -> void:
 			continue
 		var chain: Array = _chain(p)
 		# PAPRSEK ZACINA NA OKRAJI VEZE (`tower_edge_r` - ne ve stredu a ne uvnitr
-		# jejiho prstence) a konci na OKRAJI PUNTIKU cile (`pilgrim_hit_r`). Kdyz
-		# paprsek sviti pres poutnika (odraz na dalsi), projde skrz nej: vstoupi na
-		# blizsi strane tela a vystoupi na te, ktera je bliz k dalsimu cili. Diky tomu
-		# na sebe segmenty presne navazuji a nikde neni "svar" (Jan: "Je to jak dva
-		# obdelniky vedle sebe.").
+		# jejiho prstence) a konci na VNEJSIM PLASHTI cile (`pilgrim_ring_r` = HP
+		# prstenec). Jan (Oct 2026): "Hlavni paprsek ma koncit na vnejsim plasti
+		# prvniho nepritele a odraz ma zacinat opet na vnejsim plasti."
+		#
+		# PRES TELO SE NEKRESLI NIC. Driv tu byl jeste segment vstup-vystup, takze
+		# pres poutnika vedl maly paprsek skrz stred ("uplne zbytecny mini paprsek",
+		# Jan). Ted paprsek na plasti skonci a odraz z plasti (na strane k dalsimu
+		# cili) zase vyjde - mezi tim je poutnik, ne cara.
 		var from_pt: Vector2 = center + (chain[0].pos - center).normalized() * tower_edge_r()
 		for i in range(chain.size()):
 			var q: Pilgrim = chain[i]
-			var rr: float = pilgrim_hit_r(q)
+			var rr: float = pilgrim_ring_r(q)
 			var entry: Vector2 = q.pos - (q.pos - from_pt).normalized() * rr
 			beams.append({"from": from_pt, "to": entry, "target": q, "hop": i,
 				"crit": crit})
 			_burn(q, dps * pow(strength, float(i)) * dt)
 			if i + 1 < chain.size():
 				var nxt: Pilgrim = chain[i + 1]
-				var exit: Vector2 = q.pos + (nxt.pos - q.pos).normalized() * rr
-				beams.append({"from": entry, "to": exit, "target": q, "hop": i,
-					"crit": crit})
-				from_pt = exit
+				from_pt = q.pos + (nxt.pos - q.pos).normalized() * rr
 	# `burning` = svitil paprsek na tohle poutnika i v PREDCHOZIM snimku.
 	# Prelozi se az tady, kdyz je hotove cely paprsek - kdyby se to delalo za
 	# pochodu, zvuk zazehnuti by se ozval u kazdeho odrazu zvlast.
