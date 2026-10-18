@@ -35,19 +35,19 @@ const CRIT_TINT := 0.45
 const BEAM_EDGE := 1.7
 # PULZNI TOK (Jan, Oct 2026: "Zkusme pulzní tok."): po paprsku jde JEDNA
 # vlna svetla. Cisla popisuji, jak dlouho ji cesta trva a jak je siroka.
-const BEAM_PULSE_S := 2.2      # jedna vlna projde paprskem za 2,2 s
+const BEAM_PULSE_S := 1.2      # jedna vlna projde paprskem za 1,2 s
 const BEAM_PULSES := 1.0        # JEDNA vlna na paprsek (vic vlnek = blikani)
 const BEAM_SHARP := 2.0         # jak ostry je vrchol vlny
 const BEAM_STATIONS := 20       # vrcholu pasu (cim vic, tim plynulejsi)
-const BEAM_HALO := 3.4          # sirka obalu v nasobcich paprsku
+const BEAM_HALO := 3.4          # sirka tmaveho obrysu (kryje nejvyssi zar)
 const BEAM_HALO_ALPHA := 0.20
-const BEAM_OUTER_MIN := 2.3     # nejvnejsi, nejslabsi zar v klidu
-const BEAM_OUTER_ADD := 3.6     # o kolik se rozsiri ve vlne
+const BEAM_OUTER_MIN := 1.7     # nejvnejsi, nejslabsi zar v klidu
+const BEAM_OUTER_ADD := 1.7     # o kolik se rozsiri ve vlne
 const BEAM_OUTER_ALPHA := 0.09
-const BEAM_GLOW_MIN := 1.5      # obal v klidu
-const BEAM_GLOW_ADD := 2.9      # o kolik se obal rozsiri ve vlne
+const BEAM_GLOW_MIN := 1.15     # obal v klidu
+const BEAM_GLOW_ADD := 1.35     # o kolik se obal rozsiri ve vlne
 const BEAM_CORE_MIN := 0.55     # jadro v klidu
-const BEAM_CORE_ADD := 0.65     # o kolik se jadro rozsiri ve vlne
+const BEAM_CORE_ADD := 0.40     # o kolik se jadro rozsiri ve vlne
 const BEAM_TROUGH := 0.30       # jak ztmavne paprsek mimo vlnu
 # PANEL: podklad je o stupen svetlejsi nez pole a ramecek tmavy, aby se daly
 # od sebe poznat tri vrstvy (pole, panel, tab).
