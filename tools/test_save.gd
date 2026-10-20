@@ -72,7 +72,7 @@ func _fp(g: Game) -> String:
 			p.hue, p.tier, p.is_boss, p.behaviour,
 			snappedf(p.pos.x, 0.001), snappedf(p.pos.y, 0.001),
 			snappedf(p.hp, 0.001), snappedf(p.max_hp, 0.001),
-			snappedf(p.size, 0.001), snappedf(p.ghost_left, 0.001),
+			snappedf(p.size, 0.001), snappedf(p.shot_left, 0.001),
 			snappedf(p.ice_left, 0.001), snappedf(p.shift_left, 0.001),
 			snappedf(p.poison_left, 0.001), p.burning,
 		])

@@ -44,17 +44,14 @@ const BASE_HP := 20.0
 # a kazda dalsi vlna v levelu jen nepatrne (`WAVE_HP`). Driv to bylo 13 % za
 # vlnu v nekonecne partii - s levelem a resetenym zlatem by to bylo nehratelne.
 const LEVEL_HP := 1.40
-# Vlna v ramci levelu zveda obtiznost jen NECITELNE. INVARIANT: rust ZA CELY
-# LEVEL byl 1,79 (= 1,06^10 z doby deseti vln) -> `WAVE_HP` 1,0117.
-#
-# Oct 2026 (Jan): "Narust obtiznosti mezi vlnami je ted prilis slaby. ... Je
-# velmi snadne se brzy dostat na vysoke upgrady poskozeni a pak je kazdy mrtvy
-# behem chvilky." - proto 1,0117 -> 1,018: za cely level to je 2,4x (misto
-# 1,79x) a rust je na vlnach videt. POZOR, TIM SE INVARIANT MENI VEDOME:
-# rust za level = 2,4x, a s `LEVEL_HP` 1,40 je level-to-level 3,4x (driv 2,5x).
-# Kdo hybe timhle cislem, MUSI premerit `tools/balance_sim.gd` (`--levels=2`).
-# (Zkouseno 1,022 = 2,9x za level: hlupy hrac padl v 49. vlne prvniho levelu -
-# na prvni level je to moc, hrac nema jak rust.)
+# Vlna v ramci levelu zveda obtiznost jen NECITELNE. INVARIANT: krok za vlnu
+# zustava 1,018 (stejna obtiznost vlny jako driv). Oct 2026 (Jan): "Mozna
+# snizime pocet vln jednotlivych levelu na 30. Tech 50 je uz moc dlouha doba."
+# Level se tim ZKRATI, ale obtiznost jednotlivych vln se NEMENI - rust za cely
+# level je 1,018^29 = 1,68 misto 2,40, takze level-to-level je 2,35x (s
+# `LEVEL_HP` 1,40). Kdo by chtel zachovat 2,4x za level, musi krok zvednout na
+# 1,031 - to se ZKOUSELO a hlupy hrac padl uz v 10. vlne prvniho levelu
+# (boss), takze se obtiznost nesmi zvedat spolu se zkracenim.
 const WAVE_HP := 1.018
 # START ZLATA. Jan (Oct 2026): "hráč začíná s příliš mnoho penězi. Je velmi
 # snadné se brzy dostat na vysoké upgrady poškození a pak je každý mrtvý během
@@ -79,14 +76,22 @@ const WAVE_HP := 1.018
 #    Overuje se to simulatorem - pocet koupenych kroku za level musi vyjit
 #    stejne jako pred zmenou.
 const START_GOLD := 12
-# ZLATO ROSTE S OBTIZNOSTI. Zivoty poutniku rostou 1,40x za level; kdyby zlato
-# stalo na miste, hrac by za stejne penize kupoval porad slabsi vez a hra by se
-# zlomila - zmereno simulatorem (`tools/balance_sim.gd --order=damage`): hrac,
-# ktery sype VSECHNO do poskozeni, padl na 6. levelu v prvni vlne, protoze
-# permanentni zebricky uz mel vykoupené a zlato se mu na kazdem levelu vratilo
-# na 150. Zlato za zabiti, za vlnu i na startu levelu proto roste stejnym
-# krokem jako obtiznost.
+# PRUJEM PENEZ V LEVELU. Jan (Oct 2026): "Jeste o trochu snizime prutok penez
+# v levelu. Docasne upgrady se shani snadno a vetsinu casu na hrace neni kladen
+# velky narpor."
+#
+# Snizuje se JEN to, co hrac vydela BEHEM levelu (zlato za zabiti a za vlnu),
+# ne start levelu ani koupene "zlato za zabiti": hrac ma mit horsi pocit z
+# toho, ze mu utika prijem, ne ze ho hra okrada na startu. Hodnota je zamerne
+# jedno cislo - kdyby se snizovaly tri tabulky zvlast, rozejdou se.
+# Mereno `tools/balance_sim.gd` (pocet koupenych docasnych kroku za level).
+const GOLD_INCOME := 0.80
 const GOLD_LEVEL := 1.30
+# ZLATO ROSTE S OBTIZNOSTI: zivoty rostou 1,40x za level, takze i zlato (za
+# zabiti, za vlnu i na startu) musi rust stejnym krokem - jinak by hrac za
+# stejne penize kupoval porad slabsi vez. (Zmereno driv: hrac sypajici vsechno
+# do poskozeni padl na 6. levelu v prvni vlne, protoze zlato se mu vracelo na
+# stejnou startovni hodnotu.)
 const BUILD_TIME := 5.0
 # VELIKOST VLNY (Oct 2026). Jan: "Počet nepřátel v jednotlivých vlnách bude
 # obecně vyšší. V prvních levelech bude začínat třeba na 15. Ve vyšších to budou
@@ -118,23 +123,25 @@ const BUILD_TIME := 5.0
 # Kdo meni pocet vln, musi prodlouzit/zkratit TUHLE tabulku: `wave_size` bere
 # `WAVE_SIZES[vlna]`, takze kratka tabulka by vsechny pozdejsi vlny srovnala
 # na sve posledni cislo (a level by prestal gradovat).
-const WAVE_SIZES := [15, 15, 16, 17, 17, 18, 18, 19, 19, 20,
-	21, 21, 22, 23, 23, 24, 25, 26, 27, 28,
-	28, 29, 30, 31, 32, 33, 34, 36, 37, 38,
-	39, 40, 42, 43, 45, 46, 47, 49, 51, 52,
-	54, 56, 58, 59, 61, 63, 65, 68, 70, 72]
+# TABULKA MA TRICET POLOZEK (Oct 2026, Jan snizil level z 50 vln na 30): vlna
+# 1 zacina na 15 (Janovo cislo) a tricata konci na 72 - stejny rozsah jako
+# driv, ale v mene krocich, takze rust mezi vlnami je o neco strmejsi.
+# Geometricky rust 15 x 4,8^(i/29).
+const WAVE_SIZES := [15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+	26, 27, 29, 30, 32, 34, 36, 38, 40, 42,
+	44, 47, 49, 52, 55, 58, 61, 65, 68, 72]
 const WAVE_SIZE_PER_LEVEL := 1.20
 # STROP VELIKOSTI VLNY: hra je nekonecna, takze pocet musi nekam dojit - na 20.
 # levelu by jinak chodily tisice poutniku a hra by se zadrhla.
 const WAVE_SIZES_MAX := 400
-# ODMENA ZA VLNU. Soucet za CELY LEVEL se drzi na tom, kde byl u deseti vln
-# (320 zlata): s padesati vlnami NESMI bonus za vlnu zustat 10/4, to by dalo
-# 5600 zlata za level a hra by se zlomila - a hrac to vidi, protoze zlato zacina
-# na kazdem levelu znovu. 50*0,8 + 0,02*1275 = 65 zlata za level (driv 327).
+# ODMENA ZA VLNU. Soucet za CELY LEVEL se drzi na tom, kde byl driv (~65
+# zlata): s 30 vlnami 30*1,56 + 0,039*465 = 65. Pomer bonusu k vydelku ze
+# zabiti zustava stejny jako pred zmensenim celeho zlateho obehu.
 # Petkrat mensi cislo je soucast zmenseni celeho zlateho obehu (viz
-# `START_GOLD`) - pomer bonusu k vydelku ze zabiti zustava stejny.
-const WAVE_BONUS := 0.8
-const WAVE_BONUS_PER_WAVE := 0.02
+# `START_GOLD`). Oct 2026 se navic cely prijem behem levelu krati
+# `GOLD_INCOME` (0,80).
+const WAVE_BONUS := 1.56
+const WAVE_BONUS_PER_WAVE := 0.039
 # ODMENA ZA VYHRANY LEVEL V BODECH (Jan schvalil): 25 + 5 * level.
 const BODY_BASE := 25
 const BODY_PER_LEVEL := 5
@@ -149,17 +156,19 @@ const BODY_PER_LEVEL := 5
 #
 # POCITAJI SE JEN V NOVEM LEVELU (`level > profile.best`): jinak by si hrac
 # opakovanim prvniho levelu vykupil cely permanentni zebricek.
-const BODY_PER_WAVE := 1
-# KAZDY LEVEL MA PADESAT VLN. Jan (Oct 2026): "Kazde kolo bude mit 50 levelu, ne?
-# Ted ma stale 10 jako driv." Driv to bylo 3-5 vln podle poradi levelu a pak
-# deset ("Levely by měly mít jen 10 kol"); Oct 2026 se level otevrel na padesat
-# vln. Pozor: kdo hybe timhle cislem, hybe i `WAVE_HP` (rust za level musi
-# zustat 1,79), `WAVE_SIZES` (tabulka musi mit stejne polozek), `WAVE_BONUS`
-# (soucet zlata za level), `SPAWN_GAP_PER_WAVE` (mezera na konci levelu) a
-# `KOLO_PER_LEVEL`, ze ktereho se pocita `kolo()`. Vsechno to hlida
-# `tools/test_core.gd` a meri `tools/balance_sim.gd`.
-const WAVES_PER_LEVEL := 50
-# KOLO SE POCITA VZDY PO CELY LEVEL (dnes padesat vln), takze "kolo" je proste
+# BODY ZA ODRAZENOU VLNU. Oct 2026 se level zkratil z 50 na 30 vln, takze
+# 1 bod za vlnu by dal o 40 % mene permanentnich stupnu za stejnou praci - hra
+# by byla tezsi jen proto, ze je kratsi. Proto 2: 30 vln = 60 bodu za level
+# (driv 50), takze tempo permanentniho zebricku zustava.
+const BODY_PER_WAVE := 2
+# KAZDY LEVEL MA TRICET VLN (Oct 2026: "Mozna snizime pocet vln jednotlivych
+# levelu na 30. Tech 50 je uz moc dlouha doba."). Pozor: kdo hybe timhle
+# cislem, hybe i `WAVE_HP` (rust za level), `WAVE_SIZES` (tabulka musi mit
+# stejne polozek), `WAVE_BONUS` (soucet zlata za level), `BOSS_EVERY_WAVES`
+# (pocet bossu za level) a `KOLO_PER_LEVEL`, ze ktereho se pocita `kolo()`.
+# Vsechno to hlida `tools/test_core.gd` a meri `tools/balance_sim.gd`.
+const WAVES_PER_LEVEL := 30
+# KOLO SE POCITA VZDY PO CELY LEVEL (dnes tricet vln), takze "kolo" je proste
 # poradi vlny pres cely pruchod hrou. Odtud se bere obtiznost (hp_for) i velikost
 # vlny (wave_size) - jedno pocitadlo, ne dve.
 const KOLO_PER_LEVEL := WAVES_PER_LEVEL
@@ -342,6 +351,12 @@ var locks: Array = []
 # PAPRSKY PRO OBRAZOVKU: [{from, target, hop}]. Hra je pocita kazdy snimek
 # znovu (cile se hybou), obrazovka z nich jen kresli - nic si nepocita sama.
 var beams: Array = []
+# STRELY POUTNIKU NA VEZ (fialova, B_RANGED): [{from, to, hue, left}]. Drzi se
+# `ENEMY_BEAM_S` sekund, aby hrac videl, ODKUD mu vez krvaci.
+var enemy_beams: Array = []
+# JAK DLOUHO STRELA POUTNIKA SVITI (sekundy). Neni to projektil - je to
+# stopa, aby hrac videl, odkud rana prisla; po teto dobe zmizi.
+const ENEMY_BEAM_S := 0.25
 # KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
 # merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
 var beams_lit: int = 0
@@ -489,6 +504,13 @@ func range_px() -> float:
 	return range_frac() * field_r
 
 
+# KDE SE ZASTAVI FIALOVA (B_RANGED). Je to VYCHOZI dostrel hrace, ne aktualni:
+# hrac bez upgradu dostrelu na ni musi dosahnout, a kdo si dostrel koupil, ma ji
+# jeste bliz. Necte se z `range_px()` - jinak by kazdy upgrade odsunul cil dal.
+func ranged_stop_px() -> float:
+	return float(Upgrades.stat("ar")["start"]) * field_r
+
+
 func targets() -> int:
 	return int(round(val("ms")))
 
@@ -561,6 +583,7 @@ func start_level(n: int) -> void:
 	pilgrims = []
 	locks = []
 	beams = []
+	enemy_beams = []
 	beams_lit = 0
 	crit_left = 0.0
 	crit_wait = 0.0
@@ -820,7 +843,7 @@ func _start_wave() -> void:
 # KONEC VLNY. Kdyz to byla posledni vlna levelu, level je vyhrany - a to je
 # jedine misto, kde hrac dostane body.
 func _wave_clear() -> void:
-	gold += int(round(float(WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave) * gold_mult())) + int(round(val("gw")))
+	gold += gold_income(float(WAVE_BONUS + WAVE_BONUS_PER_WAVE * wave) * gold_mult()) + int(round(val("gw")))
 	_note("Vlna %d odražena." % wave)
 	# BODY PRUBEZNE, ne az na konci levelu - viz `BODY_PER_WAVE`.
 	if level > profile.best:
@@ -858,8 +881,8 @@ func _behaviour_hint(h: int) -> String:
 			return "Po zabití se rozpadne na dva menší kusy."
 		Hue.B_REGEN:
 			return "Obnovuje si životy — musíš ho stihnout dřív."
-		Hue.B_VANISH:
-			return "Po prvním zásahu na tři vteřiny zmizí a putuje dál."
+		Hue.B_RANGED:
+			return "Zastaví se kousek od věže a odtud na ni střílí."
 		Hue.B_SHIFT:
 			return "Mění každých pět vteřin podobu — bere si schopnost, rychlost i životy té barvy. Na stříbrnou se už nevrátí."
 	return ""
@@ -1048,6 +1071,13 @@ func gold_mult() -> float:
 	return pow(GOLD_LEVEL, float(maxi(0, level - 1)))
 
 
+# PRUJEM PENEZ: kazda odmena, kterou hrac ziska BEHEM levelu, jde pres tuhle
+# funkci (zlato za zabiti i za vlnu). Diky tomu je snizeni prijmu JEDNO cislo
+# (`GOLD_INCOME`) a neda se stat, ze by na nej jedno misto zapomnelo.
+func gold_income(base: float) -> int:
+	return int(round(base * GOLD_INCOME))
+
+
 # ZIVOTY POUTNIKA. Obtiznost roste s levelem (a malo i s vlnou v levelu) a
 # UROVEN BARVY (tier) je nasobek NAD tim - viz `Hue.TIER_HP`. Uroven se sem
 # predava jako parametr (ne cte z hry), protoze ji poutnik zna uz pri vstupu
@@ -1145,10 +1175,26 @@ func _make_boss(p: Pilgrim) -> void:
 # ------------------------------------------------------------------- POHYB
 
 func _move(dt: float) -> void:
+	# STRELY POUTNIKU MAJI KRATKY DOJEZD: jeden snimek by hrac neuhlidal.
+	var live: Array = []
+	for b in enemy_beams:
+		b["left"] = float(b["left"]) - dt
+		if float(b["left"]) > 0.0:
+			live.append(b)
+	enemy_beams = live
 	for p in pilgrims:
 		if not p.alive:
 			continue
 		_advance_behaviour(p, dt)
+		# FIALOVA STRILEJICI Z DALKU: jakmile je na okraji vychoziho dostrelu,
+		# ZASTAVI SE (dal uz nejde) a odtud strili na vez. Je to tlak, ne druhy
+		# zpusob, jak dojit k vezi - hrac ji musi zabit, ne jen prezit.
+		if p.has_behaviour(Hue.B_RANGED) and p.pos.distance_to(center) <= ranged_stop_px():
+			p.shot_left -= dt
+			if p.shot_left <= 0.0:
+				p.shot_left = Hue.RANGED_EVERY
+				_ranged_shot(p)
+			continue
 		p.pos += p.dir * p.speed * p.slow_mult() * dt
 		if p.pos.distance_to(center) <= tower_r:
 			_arrive(p)
@@ -1165,6 +1211,19 @@ func _arrive(p: Pilgrim) -> void:
 		_lose()
 
 
+# FIALOVA STRELA Z DALKU. Stojici poutnik posle kazdych `RANGED_EVERY` sekund
+# strelu na vez. Poskozeni je MALE proti prulomu (ten bere vsechny zbyle
+# zivoty), ale opakovane - ignorovana fialova je smrt pomalu. Uroven poutnika
+# poskozeni mirne zveda (2 + uroven), zbroj veze ho krati stejne jako prulom.
+func _ranged_shot(p: Pilgrim) -> void:
+	var dmg: float = (Hue.RANGED_DMG + float(maxi(0, p.tier))) * (1.0 - armor())
+	hp -= dmg
+	enemy_beams.append({"from": p.pos, "to": center, "hue": p.hue, "left": ENEMY_BEAM_S})
+	_event("hit")
+	if hp <= 0.0:
+		_lose()
+
+
 func _regen(dt: float) -> void:
 	var r: float = regen()
 	if r > 0.0 and hp > 0.0:
@@ -1174,8 +1233,6 @@ func _regen(dt: float) -> void:
 func _advance_behaviour(p: Pilgrim, dt: float) -> void:
 	if p.has_behaviour(Hue.B_REGEN):
 		p.hp = minf(p.max_hp, p.hp + p.max_hp * Hue.REGEN_FRAC * dt)
-	if p.ghost_left > 0.0:
-		p.ghost_left = maxf(0.0, p.ghost_left - dt)
 	if p.shifting:
 		p.shift_left -= dt
 		if p.shift_left <= 0.0:
@@ -1185,7 +1242,7 @@ func _advance_behaviour(p: Pilgrim, dt: float) -> void:
 
 # STRIBRNA MENI PODOBU (Jan, Oct 2026): "Nově budou měnit po 5s. A se změnou
 # podoby budou přebírat i výhody jednotlivých barev. Zelená = léčení, žlutá =
-# rychlost, modrá = při smrti se rozdělí, fialová = po první ráně zmizí, červená
+# rychlost, modrá = při smrti se rozdělí, fialová = střílí z dálky, červená
 # = vysoká odolnost. Měly by se měnit i životy. Hra by měla přepočítávat podle
 # procentuální hodnoty."
 #
@@ -1202,24 +1259,15 @@ func _shift(p: Pilgrim) -> void:
 	p.hp = maxf(1.0, p.max_hp * frac)
 	# RYCHLOST JE VYHODA ZLUTE, takze nova podoba znamena i novou chuzi.
 	p.speed = pilgrim_speed() * Hue.speed_mult(p.hue)
-	# NEVIDITELNOST KONCI SE ZMENOU PODOBY (Jan: "pokud bude neviditelný v době,
-	# kdy má změnit podobu, tak o neviditelnost v rámci změny přijde"). Nove
-	# podoby se take netyka zasah z podoby predchozi - fialova zmizi az po SVEM
-	# prvnim zasahu, ne po tom, ktery dostala jako neco jineho.
-	p.ghost_left = 0.0
-	p.was_hit = false
+	# CASOVAC STRELBY SE ZACINA OD NULY: nova podoba nesmi zdedit "nabito" po
+	# fialove (a fialova nesmi zdedit cizi). Tyká se to i zastaveni - `_move`
+	# ho pocita z polohy, ne z ulozeneho stavu, takze se nema co rozejit.
+	p.shot_left = 0.0
 
 
 # JED A LED SE ODPOCITAVAJI ZVLAST: plati i na poutnika, ktery uz je z dosahu
-# (jed je jed) - jinak by upgrady "po zasahu" nic nedelaly.
-#
-# NEVIDITELNA FIALOVA JE VSAK IMUNNI VUCI VSEMU (Jan, Oct 2026: "Fialoví
-# nepřátelé teď po prvním zásahu sice zmizí, ale po objevení automaticky samo
-# zemřou. Aniž by do nich věž znovu střílela."). Kdyz je poutnik pro vez
-# neviditelny, nesmi ho zabít ani jed: byl to prave jed, ktery tise (bez
-# projektilu) dokoncil prvni zásah presne ve chvili, kdy se poutnik znovu
-# objevil - hrac videl "umrela sama". Zmizeni je TIM ZA NEPRITELNY, co ma
-# znamenat: dokud je duch, neda se mu ublizit.
+# (jed je jed) - jinak by upgrady "po zasahu" nic nedelaly. Dnes uz zadna
+# neviditelna fialova neexistuje, takze `targetable()` je jen "je zivy".
 func _advance_effects(dt: float) -> void:
 	for p in pilgrims:
 		if not p.alive:
@@ -1417,10 +1465,6 @@ func _hurt(p: Pilgrim, amount: float) -> void:
 	p.hp -= amount
 	if p.hp < before and not p.was_hit:
 		p.was_hit = true
-		# FIALOVA: po PRVNIM zasahu zmizi na 3 s (putuje dal, ale vez ji
-		# nevidi, i kdyz ma hrac jeji barvu).
-		if p.has_behaviour(Hue.B_VANISH):
-			p.ghost_left = Hue.VANISH_S
 	if p.hp <= 0.0:
 		_kill(p)
 
@@ -1439,7 +1483,7 @@ func _kill(p: Pilgrim) -> void:
 	# z barev dela neco, co hrac nema jak ovlivnit.
 	var pay_hue: int = Hue.RED if p.is_boss else p.hue
 	var mult: float = BOSS_GOLD_MULT if p.is_boss else Hue.tier_gold(p.tier)
-	gold += int(round(float(Hue.gold_of(pay_hue)) * gold_mult() * mult)) \
+	gold += gold_income(float(Hue.gold_of(pay_hue)) * gold_mult() * mult) \
 		+ int(round(val("gk")))
 	# MODRA: rozpadne se na dva mensi kusy. Hra se tim zhusti presne tam, kde
 	# ma vez nejmene casu. Kusy se dal nedeli a jdou porad ROVNE k vezi.
@@ -1568,7 +1612,7 @@ func to_state() -> Dictionary:
 			"hp": p.hp, "max_hp": p.max_hp, "speed": p.speed, "size": p.size,
 			"behaviour": p.behaviour, "behaviours": p.behaviours.duplicate(),
 			"split": p.can_split, "shifting": p.shifting, "was_hit": p.was_hit,
-			"ghost": p.ghost_left, "shift": p.shift_left,
+			"shot": p.shot_left, "shift": p.shift_left,
 			"poison_left": p.poison_left, "poison_dps": p.poison_dps,
 			"ice_left": p.ice_left, "ice_frac": p.ice_frac,
 			"burning": p.burning, "burning_now": p.burning_now,
@@ -1628,6 +1672,7 @@ func from_state(d: Dictionary) -> bool:
 	paused = false
 	locks = []
 	beams = []
+	enemy_beams = []
 	beams_lit = 0
 	events = []
 	finger_hue = {}
@@ -1666,7 +1711,7 @@ func from_state(d: Dictionary) -> bool:
 		p.can_split = bool(q.get("split", true))
 		p.shifting = bool(q.get("shifting", false))
 		p.was_hit = bool(q.get("was_hit", false))
-		p.ghost_left = float(q.get("ghost", 0.0))
+		p.shot_left = float(q.get("shot", 0.0))
 		p.shift_left = float(q.get("shift", 0.0))
 		p.poison_left = float(q.get("poison_left", 0.0))
 		p.poison_dps = float(q.get("poison_dps", 0.0))

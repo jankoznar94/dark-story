@@ -28,15 +28,14 @@ func _init() -> void:
 	_run("odraz se siri na stejnou barvu, kazdy dostane nejvyse jednou a mene", _test_odraz)
 	_run("paprsek odrazu vychazi z prstence predchozi obeti (odraz je videt)", _test_odraz_beam_is_visible)
 	_run("prepsani barvy paprsek utrhne (laser neni strela, ktera uz leti)", _test_hue_switch_stops_the_beam)
-	_run("zmizele fialove paprsek zhasne (duch je imunni)", _test_vanish_stops_the_beam)
+	_run("fialova se zastavi na okraji vychoziho dostrelu a strile", _test_ranged_stops_and_shoots)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
 	_run("zvukove udalosti: vystrel, zásah, smrt (a jed ne)", _test_sound_events)
-	_run("neviditelna fialova je imunni (jed ani odraz na ni nedosahnou)", _test_ghost_is_immune)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
 	_run("ledovy zasah zpomaluje pohyb", _test_ice)
 	_run("docasny krok stoji N^2 zlata a hodnota roste", _test_temp_buy)
 	_run("permanentni stupen posouva start bitvy", _test_perm_shift)
-	_run("level ma deset vln a za vyhru jsou body", _test_level_flow)
+	_run("level ma tricet vln a za vyhru jsou body", _test_level_flow)
 	_run("dalsi level: zlato znovu, docasne kroky pryc", _test_next_level)
 	_run("obtiznost roste s levelem, barvy po levelech", _test_difficulty)
 	_run("zlato roste s obtiznosti (start i za zabiti)", _test_gold_scales_with_level)
@@ -670,70 +669,62 @@ func _test_sound_events() -> void:
 		"seznam zvukovych udalosti roste bez stropu (%d)" % g3.events.size())
 
 
-# NEVIDITELNA FIALOVA JE IMUNNI VUCI VSEMU. Jan (Oct 2026): "Fialoví nepřátelé
-# teď po prvním zásahu sice zmizí, ale po objevení automaticky samo zemřou.
-# Aniž by do nich věž znovu střílela." Byly to dve TICHE cesty, obe bez
-# projektilu: JED (ticka dal, i kdyz je poutnik duch) a ODRAZ (vybral si ducha
-# za dalsi obet). Zmizeni je pritom cas, kdy na poutnika NEMÁ NIKDO DOSÁHNOUT.
-func _test_ghost_is_immune() -> void:
+# FIALOVA UZ NEMIZI - STRILE Z DALKU. Jan (Oct 2026): "Fialový nepřítel teď po
+# zásahu zmizí a zůstane stát na místě. Tahle mechanika s mizením se mi moc
+# nelíbí. Asi to změníme. Nebude mizet, ale bude útočit na dálku. Z takové
+# range, aby na něj dostal i hráč s výchozí vzdáleností zjišťování. Fialový
+# nepřítel bude střílet akorát z okraje tohoto dosahu. A bude u toho stát na
+# místě. Jakmile bude na dostřel, nebude pokračovat blíže."
+#
+# Test meri TRI veci, na kterych to cele stoji:
+#   (a) zastavi se presne na VYCHOZIM dostrelu, i kdyz ma hrac dostrel koupeny,
+#   (b) dal se uz nepriblizi (zadne "dosel k vezi"),
+#   (c) odtud ubira zivoty veze a kresli se cara, odkud rana prisla.
+func _test_ranged_stops_and_shoots() -> void:
 	var g: Game = _fresh()
-	g.tower.hue = Hue.YELLOW          # vez do poutnika nestrili
-	g.profile.perm["ps"] = 3          # jed 50 % poskozeni rany za sekundu
-	var p: Pilgrim = _place(g, Hue.VIOLET, 0.9)
-	p.speed = 0.0
-	# (test si schvalne dela fialovou schopnost u jine barvy - a schopnosti se
-	# v bitve ctou z `behaviours`, takze se musi nastavit i to)
-	p.behaviour = Hue.B_VANISH
-	p.behaviours = [Hue.B_VANISH]
-	g._burn(p, 10.0)                 # prvni zasah: rozjede jed a fialova zmizi
-	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
-	_check(p.poison_left > 0.0, "jed se pri zasahu vubec nerozjel")
-	var hp0: float = p.hp
-	_tick(g, 1.5)
-	_check(is_equal_approx(p.hp, hp0),
-		"neviditelna fialova ztratila zivoty (o %.2f) - ubira ji jed, i kdyz je duch" % (hp0 - p.hp))
-	# PO OBJEVENI uz ji jed ubirat smi - je zase videt.
-	p.ghost_left = 0.0
-	var hp1: float = p.hp
-	_tick(g, 1.0)
-	_check(p.hp < hp1, "po objeveni fialove ji jed neubira (%.1f)" % p.hp)
-	# ODRAZ SI DUCHE NESMI VYBRAT: dostal by strelu, kterou hrac nikdy nevidel.
-	var g2: Game = _fresh()
-	g2.tower.hue = Hue.RED
-	g2.profile.perm["rc"] = 1
-	var a: Pilgrim = _place(g2, Hue.RED, g2.range_frac() * 0.7)
-	var ghost: Pilgrim = _place(g2, Hue.RED, g2.range_frac() * 0.7)
-	ghost.pos = a.pos + Vector2(50.0, 0.0)
-	for w in [a, ghost]:
-		w.speed = 0.0
-		w.hp = 100000.0
-		w.max_hp = 100000.0
-	ghost.ghost_left = Hue.VANISH_S
-	_check(not g2._chain(a).has(ghost),
-		"odraz si vybral neviditelnou fialovou (dostala by ranu od nikud)")
-
-
-# FIALOVA PO ZNEVIDITELNENI JE VYJIMKA (Jan, Oct 2026): "Když zmizí, projektil
-# zkrátka mine. Doletí na místo impaktu, zmizí a neudělí poškození." Pro
-# vsechny ostatni barvy plati "vystreleno = doleti" (`_test_shot_lands_after_hue_switch`).
-func _test_vanish_stops_the_beam() -> void:
-	var g: Game = _fresh()
-	g.tower.hue = Hue.RED
-	var p: Pilgrim = _place(g, Hue.RED, g.range_frac() * 0.85)
-	p.speed = 0.0
-	p.hp = 1000.0
-	p.max_hp = 1000.0
-	# (test si schvalne dela fialovou schopnost u jine barvy - a schopnosti se
-	# v bitve ctou z `behaviours`, takze se musi nastavit i to)
-	p.behaviour = Hue.B_VANISH
-	p.behaviours = [Hue.B_VANISH]
-	g.step(1.0 / 240.0)
-	_check(p.ghost_left > 0.0, "fialova po prvnim zasahu nezmizela")
-	_check(g.beams.size() == 1, "na cervenou fialovou nesviti paprsek (%d)" % g.beams.size())
-	var hp0: float = p.hp
-	_tick(g, 1.0)
-	_check(is_equal_approx(p.hp, hp0), "zmizele fialove paprsek ubiral dal (o %.2f)" % (hp0 - p.hp))
-	_check(g.beams.is_empty(), "paprsek sviti na ducha - ten je pritom imunni")
+	# Hrac ma DOSTREL KOUPENY - zastaveni se tim NESMI posunout.
+	g.profile.perm["ar"] = 10
+	var stop: float = g.ranged_stop_px()
+	_check(stop > 1.0, "vychozi dostrel neni kladny (%.1f)" % stop)
+	var p: Pilgrim = _place(g, Hue.VIOLET, 0.90, 0.0)
+	_check(p.has_behaviour(Hue.B_RANGED),
+		"fialova nema chovani strelby z dalky (%s)" % str(p.behaviours))
+	var hp0: float = g.hp
+	var saw_beam: bool = false
+	var t: float = 0.0
+	# DOBA CESTY NA DOSTREL: dokud je dal, jde; jakmile je bliz, stoji.
+	while p.pos.distance_to(g.center) > stop and t < 90.0:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+		if not g.enemy_beams.is_empty():
+			saw_beam = true
+	var d: float = p.pos.distance_to(g.center)
+	_check(absf(d - stop) < 5.0,
+		"fialova se nezastavila na vychozim dostrelu (%.1f, ma byt %.1f)" % [d, stop])
+	var hp1: float = g.hp
+	g.step(0.5)
+	_check(p.pos.distance_to(g.center) <= d + 0.01,
+		"fialova po zastaveni pokracuje bliz k vezi (%.1f -> %.1f)"
+		% [d, p.pos.distance_to(g.center)])
+	_check(p.pos.distance_to(g.center) > g.tower_r,
+		"fialova se dostala az k vezi - to neni strelba z dalky")
+	# STRELBA: behem 0,5 s musi padnout aspon jedna rana (kadence 2 s, prvni
+	# hned pri zastaveni), takze vez musi mit min zivotu.
+	_check(g.hp < hp1 or g.hp < hp0, "fialova stoji na dostrelu a nestrili")
+	_check(saw_beam or not g.enemy_beams.is_empty(),
+		"po strale neni videt zadna cara od strelce")
+	# STRELBA JE OPAKOVANA: za dve kadence musi ubrat aspon dve rany.
+	var hp2: float = g.hp
+	g.step(Hue.RANGED_EVERY * 2.0 + 0.1)
+	var lost: float = hp2 - g.hp
+	_check(lost >= Hue.RANGED_DMG,
+		"za dve kadence ubyly jen %.1f zivotu (ma byt aspon %.1f)"
+		% [lost, Hue.RANGED_DMG])
+	# ZADNE MIZENI: fialova je porad videt a zranitelna i po zasahu.
+	g.tower.hue = Hue.VIOLET
+	var before: float = p.hp
+	g.step(0.5)
+	_check(p.hp < before, "fialova po zasahu zustava imunni (mizeni melo zmizet)")
 
 
 func _test_poison() -> void:
@@ -1182,8 +1173,9 @@ func _test_gold_scales_with_level() -> void:
 	var a0: int = a.gold
 	_tick(a, 0.5)
 	var drop1: int = a.gold - a0
-	_check(drop1 == Hue.gold_of(Hue.RED),
-		"zabiti na prvnim levelu neda zakladni zlato (%d, cekano %d)" % [drop1, Hue.gold_of(Hue.RED)])
+	var want1: int = int(round(float(Hue.gold_of(Hue.RED)) * Game.GOLD_INCOME))
+	_check(drop1 == want1,
+		"zabiti na prvnim levelu neda zakladni zlato (%d, cekano %d)" % [drop1, want1])
 
 	var b: Game = _fresh()
 	b.tower.hue = Hue.RED
@@ -1191,7 +1183,7 @@ func _test_gold_scales_with_level() -> void:
 	_check(b.gold_mult() > 1.0, "nasobek zlata na 4. levelu je porad 1,0")
 	_check(b.gold > Game.START_GOLD,
 		"start 4. levelu neni bohatsi nez prvni (%d)" % b.gold)
-	var want: float = float(Hue.gold_of(Hue.RED)) * b.gold_mult()
+	var want: float = float(Hue.gold_of(Hue.RED)) * b.gold_mult() * Game.GOLD_INCOME
 	var p2: Pilgrim = _place(b, Hue.RED, b.range_frac() * 0.5)
 	p2.speed = 0.0
 	p2.hp = 1.0
@@ -1301,13 +1293,12 @@ func _test_silver_shift_form() -> void:
 		"nova podoba si nevzala rychlost sve barvy")
 	_check(p.shifting, "po zmene podoby se stribrna prestala menit")
 
-	# FIALOVA PODOBA: neviditelnost se zmenou konci a nova podoba ma svuj "prvni
-	# zasah" znovu (Jan: "...tak o neviditelnost v rámci změny přijde").
-	p.ghost_left = Hue.VANISH_S
+	# FIALOVA PODOBA: casovac strelby se zmenou podoby restartuje (nova podoba
+	# nesmi zdedit "nabito" po predchozi barve).
+	p.shot_left = 1.0
 	p.was_hit = true
 	g._shift(p)
-	_check(p.ghost_left == 0.0, "neviditelnost prezila zmenu podoby")
-	_check(not p.was_hit, "nova podoba si nese zasah z podoby predchozi")
+	_check(p.shot_left == 0.0, "casovac strelby prezil zmenu podoby")
 
 
 # ROZPAD MODRE PODOBY STRIBRNE (Jan: "modrá = při smrti se rozdělí (pak už se dvě

@@ -27,15 +27,17 @@ const COUNT := 6
 #   none   - nic zvlastniho
 #   split  - po zabiti se rozpadne na dva mensi kusy
 #   regen  - obnovuje si zivoty
-#   vanish - po prvnim zasahu na chvili zmizi (pro vez je neviditelna)
+#   vanish - (ZRUSENO Oct 2026) po prvnim zasahu na chvili zmizi
+#   ranged - zastavi se na okraji vychoziho dostrelu hrace a odtud strili
+#            na vez; dal uz nejde
 #   shift  - kazdych PET SEKUND zmeni podobu: vezme si barvu, jeji schopnost
-#            (leceni / rychlost / rozpad / zmizeni / odolnost), jeji rychlost
-#            i jeji zdravotni pool; zacina jako stribrna a na stribrnou se uz
-#            nevrati
+#            (leceni / rychlost / rozpad / strelba na dalku / odolnost), jeji
+#            rychlost i jeji zdravotni pool; zacina jako stribrna a na stribrnou
+#            se uz nevrati
 const B_NONE := "none"
 const B_SPLIT := "split"
 const B_REGEN := "regen"
-const B_VANISH := "vanish"
+const B_RANGED := "ranged"
 const B_SHIFT := "shift"
 
 # JEDNA TABULKA PRO VSE, CO O BARVE NEKDO VI. Kdo chce jinou obtiznost barev,
@@ -86,8 +88,13 @@ const ROWS := [
 		# 0,60 * 1,60 / 1,30 = 0,74; zvoleno 0,70, aby zluta zustala na urovni
 		# nejkrehci barvy (fialova ma 0,70) a "nejrychlejsi = nejlehci" se
 		# nerozjelo. Hlida to `test_core._test_fastest_is_not_free`.
+		#
+		# Oct 2026 (Jan): "Také trochu zrychluje žlutého nepřítele." 1,30 ->
+		# 1,40. Zivoty zustavaji - zluta je tim o neco tezsi (kratsi doba
+		# v dostrelu), coz je presne ucel. Pomer `hp * speed` je 0,98, takze
+		# test kompenzace dal projde.
 		"name": "Žlutá", "letter": "Y", "color": Color(0.90, 0.78, 0.22),
-		"hp": 0.7, "speed": 1.30, "gold": 2, "behaviour": B_NONE,
+		"hp": 0.7, "speed": 1.40, "gold": 2, "behaviour": B_NONE,
 		"unlock_level": 1, "palette": true,
 	},
 	{
@@ -104,12 +111,14 @@ const ROWS := [
 		# NEJPOMALEJSI BARVA VE HRE (0,50 < 0,60 cervene i stribrne). Jan (Oct
 		# 2026): "Upravime rychlost fialovych nepratel. Budou ze vsech
 		# nejpomalejsi." Pomer 0,50/1,00 znamena, ze fialovy poutnik jde po
-		# stejne ceste dvakrat tak dlouho nez modry - a protoze po prvnim
-		# zasahu na 3 s zmizi, ma hrac vic casu ho vubec najit. Kdo hybe timhle
-		# cislem, hybe obtiznosti; hlida to `tools/test_core.gd`
-		# (`_test_hue_speed_order`).
+		# stejne ceste dvakrat tak dlouho nez modry.
+		#
+		# Oct 2026 (Jan): "Fialový nepřítel teď po zásahu zmizí a zůstane stát
+		# na místě. Tahle mechanika s mizením se mi moc nelíbí. ... Nebude
+		# mizet, ale bude útočit na dálku." Misto B_VANISH ma B_RANGED: zastavi
+		# se na okraji VYCHOZIho dostrelu hrace a odtud strili na vez.
 		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74),
-		"hp": 0.7, "speed": 0.50, "gold": 3, "behaviour": B_VANISH,
+		"hp": 0.7, "speed": 0.50, "gold": 3, "behaviour": B_RANGED,
 		"unlock_level": 4, "palette": true,
 	},
 	{
@@ -194,25 +203,33 @@ const SPLIT_SIZE := 0.85
 # UROVEN SE ODEMYKA LEVELem a NIZSI UROVNE ZUSTAVAJI: od 7. levelu chodi ve
 # vlne vsechny ctyri vedle sebe, takze hrac vidi, jak rostou. LEVEL 1 JE BEZ
 # ZMENY (vsechno uroven 1) - prvni dojem z hry zustava presne jak byl.
+#
+# Oct 2026 (Jan): "Uděláme výraznější skok v obtížnosti mezi jednotlivými
+# úrovněmi nepřátel. Nepřítel úrovně 2 musí být citelně silnější než úrovně 1."
+# Skok je proto vetsi nez driv (1,0 / 1,65 / 2,5 / 3,6 misto 1,0 / 1,5 / 2,1 /
+# 2,9), ale NE dvojnasobny: s 2,0 padl hlupy hrac uz v 1. vlne 3. levelu
+# (zmereno simulatorem), takze "citelne silnejsi" musi zustat hratelne.
+# Zivoty jsou NAD `LEVEL_HP`, takze od 3. levelu je hra citelne tezsi - a proto
+# se to MUSI premerit `tools/balance_sim.gd`, ne posoudit okem.
 const TIER_COUNT := 4
 const TIER_UNLOCK := [1, 3, 5, 7]
-# ZIVOTY JDOU NAVIC NAD SOUCASNY RUST (`LEVEL_HP`), takze je hra od 3. levelu
-# tezsi - od 7. levelu ma prumerna vlna o ~48 % vic zivotu. JE TO VEDOME
-# (Janovo rozhodnuti) a cisla se overuji `tools/balance_sim.gd`, ne dojmem.
-# Zlato roste pomaleji nez zivoty (1,39x proti 1,48x), aby vetsi poutnik nebyl
-# zdarma - to je jedina cast, ktera hru ztizuje.
-const TIER_HP := [1.0, 1.5, 2.1, 2.9]
+const TIER_HP := [1.0, 1.65, 2.5, 3.6]
 # VELIKOST KRESBY je druha cesta k informaci "tenhle je tvrdsi" - nezávisí na
-# barve, takze ji precte i hrac s poruchou barvocitu. Oct 2026 (Jan: "velikostni
-# rozdil mezi urovnemi nepřátel se ztratil"): kroky 1,12/1,24/1,36 byly na
-# telefonu nerozeznatelne, dnes 1,28/1,60/1,95 - kazdy stupen je nejmene o
-# ctvrtinu vetsi nez predchozi, takze se velikost cte na prvni pohled.
-const TIER_SIZE := [1.0, 1.28, 1.60, 1.95]
-const TIER_GOLD := [1.0, 1.4, 1.9, 2.5]
+# barve, takze ji precte i hrac s poruchou barvocitu. Kroky musi byt videt na
+# PRVNI POHLED: 1,0 / 1,40 / 1,90 / 2,45.
+const TIER_SIZE := [1.0, 1.40, 1.90, 2.45]
+# ZLATO roste pomaleji nez zivoty (1,7x proti 2,0x u druhe urovne): vetsi
+# poutnik neni zdarma, ale ani neni kasna - jinak by hrac hledal jen obry.
+const TIER_GOLD := [1.0, 1.70, 2.60, 3.60]
 # CETNOST VE VLNE, kdyz je uroven odemcena (hra ji normalizuje pres soucet
 # odemcenych). Vyssi uroven je vzacnejsi - jinak by od 7. levelu zmizeli malí
 # poutníci a s nimi i cela prvni pulka hry.
-const TIER_WEIGHT := [0.45, 0.30, 0.18, 0.07]
+#
+# Oct 2026: s vetsim skokem zivotu (1,65x) se druha uroven nesmi objevovat v
+# 40 % vlny jako driv (0,30 ze 0,75) - hlupy hrac na tom padal uz v 1. vlne
+# 3. levelu. 0,22 ze 0,77 = 29 % vlny: porad je to "ctvrty poutnik je vetsi",
+# ale ne zed.
+const TIER_WEIGHT := [0.55, 0.22, 0.16, 0.07]
 # JMENO PRO HUD A HLASKY ("objeví se větší poutníci").
 const TIER_NAME := ["menší", "větší", "velcí", "obří"]
 
@@ -232,8 +249,18 @@ const SPLIT_TIER_GOLD := 0.60
 # mensi nez kadence veze, jinak je poutnik nesmrtelny.
 const REGEN_FRAC := 0.04
 
-# FIALOVA: jak dlouho po prvnim zasahu je pro vez neviditelna.
-const VANISH_S := 3.0
+# FIALOVA: vzdalenost, na ktere se zastavi a odtud strili, je VYCHOZI dostrel
+# hrace (`Upgrades` "ar" start = 0,34 pole). Nepocita se z AKTUALNIHO dostrelu:
+# kdyby ano, kazdy upgrade dostrelu odsunul fialovou dal a hrac bez upgradu by
+# na ni nedosahl. Takhle na ni dosahne i hrac s vychozi vezi - a kdo si dostrel
+# koupil, ma ji jeste o kus bliz.
+#
+# Sila strelby je ZAMERNE mala proti zásahu poutnika do veze (ten bere vsechny
+# zbyle zivoty): fialova nema byt druhy boss, ale TLAK. Ignoruje-li ji hrac,
+# vez krvaci; kdo ji vcas prepne a zabije, nepozna ji. Cisla se overuji
+# `tools/test_core` (sonda `_test_ranged_enemy`).
+const RANGED_EVERY := 2.0
+const RANGED_DMG := 2.0
 # STRIBRNA: jak casto meni podobu. Pet vterin (Jan, Oct 2026: "Teď mění podobu
 # po 3s. Nově budou měnit po 5s.") - za tu dobu ji hrac stihne zabit, i kdyz
 # cestou projde dvema podobami.

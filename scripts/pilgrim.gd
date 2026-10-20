@@ -46,10 +46,12 @@ var can_split: bool = true
 # by ji smazala a poutnik by zustal navzdy v te podobe - proto je to zvlastni
 # policko (Jan, Oct 2026).
 var shifting: bool = false
-# UZ BYL ZASAZEN? U fialove se na prvni zasah vaze zmizeni.
+# UZ BYL ZASAZEN? (historie - u fialove se na prvni zasah vazalo zmizeni;
+# dnes uz nic, ale policko zustava kvuli stribrne a ukladani stavu)
 var was_hit: bool = false
-# FIALOVA: kolik sekund jeste bude pro vez neviditelna.
-var ghost_left: float = 0.0
+# FIALOVA (B_RANGED): kolik sekund zbyva do dalsiho vystrelu na vez. Bezi jen
+# kdyz uz stoji na svem miste - dokud jde, nestrili.
+var shot_left: float = 0.0
 # STRIBRNA: za kolik sekund zmeni barvu.
 var shift_left: float = 0.0
 # JED (poison shot): kolik sekund ucinek jeste potrva a kolik poskozeni za
@@ -81,16 +83,10 @@ func slow_mult() -> float:
 	return clampf(1.0 - ice_frac, 0.1, 1.0)
 
 
-# VIDI NA NEJ VEZ VUBEC? Fialova po prvnim zasahu na 3 s zmizi - putuje dal,
-# ale vez ji nevidi, i kdyz ma hrac zvolenou jeji barvu.
+# VIDI NA NEJ VEZ VUBEC? (Dnes vzdy ziva - mechanika mizeni je zrusena;
+# metoda zustava, protoze na ni stoji `tower.sees` a je to jedno misto.)
 func targetable() -> bool:
-	return alive and ghost_left <= 0.0
-
-
-# JE POUTNIK PRIRAVENY? Kresli se jen obrysem, aby hrac videl, kde je, ale
-# poznal, ze na nej ted nema cenu mirrit.
-func is_ghost() -> bool:
-	return alive and ghost_left > 0.0
+	return alive
 
 
 # UMI POUTNIK TOHLE? U smesi se musi ptat TAKHLE - `behaviour` je jen prvni

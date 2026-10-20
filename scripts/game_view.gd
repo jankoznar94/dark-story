@@ -839,6 +839,7 @@ func _draw_battle() -> void:
 	# a musí být z indexem nad zaměřováním"). Paprsek je od Oct 2026 zbran
 	# sama - zadne zaměřování pod nim uz neni.
 	_draw_beams()
+	_draw_enemy_beams()
 	_draw_bar()
 	# PRUH SE SMESI JE NAD PALETOU (kolecko se do pruhu palety nevejde).
 	_draw_mix_strip()
@@ -892,9 +893,9 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# takze se jen zjasni; iniciály se kresli az NAD jadrem, takze zustavaji
 	# citelne. Zadny dalsi krouzek kolem poutnika - ty Jan nechce.
 	var heat: float = 0.0
-	if p.burning_now and not p.is_ghost():
+	if p.burning_now:
 		heat = 0.72 + 0.28 * sin(game.clock * 9.0)
-	_dot(p.hue, p.pos, r, true_col, p.is_ghost(), heat)
+	_dot(p.hue, p.pos, r, true_col, false, heat)
 	# PRSTENEC JE ZAROVEN HP BAR POUTNIKA (Jan, Oct 2026: "Kruhy kolem nepřátel
 	# budou sloužit rovnou jako jejich HP bary."). Oblouk zacina nahore a jde po
 	# smeru hodinovych rucicek - stejne jako zivoty veze; plny kruh = plne
@@ -908,22 +909,21 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# kazdem zasahu a Jan ho videl jako "jeden kruhovy border (svetle modry nebo
 	# bily) kolem jejich zivotu" - byl to HP bar vedle HP baru, ktery tam nema
 	# co delat (Oct 2026).
-	if not p.is_ghost():
-		# 24 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
-		# muze byt naraz i nekolik stovek poutniku, tak se pocet usecek drzi
-		# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
-		#
-		# UROVEN BARVY SE POZNA PODLE PRERUSOVANI PRSTENCE (Jan, Oct 2026:
-		# "Plná čára lvl1, čárkovaná lvl2, tečkovaná lvl3, kombinace čárek
-		# a teček lvl4"). Prerusovani je DRUHA cesta k informaci vedle
-		# velikosti: vyssi uroven je jen o par procent vetsi, takze na
-		# telefonu se to na prvni pohled necte. Geometrii pocita `Shapes`,
-		# aby sla otestovat bez prohlizece.
-		var sweep: float = TAU * p.hp_frac()
-		for m in Shapes.hp_ring_marks(p.tier, sweep):
-			draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5 + m.x, -PI * 0.5 + m.y,
-				clampi(int((m.y - m.x) / TAU * 40.0) + 1, 3, 40),
-				Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
+	# 24 usecek staci: prstenec ma na telefonu ~10 px v polomeru. Na plose
+	# muze byt naraz i nekolik stovek poutniku, tak se pocet usecek drzi
+	# nizko - je to jedina kresba, ktera pribyla KAZDEMU z nich.
+	#
+	# UROVEN BARVY SE POZNA PODLE PRERUSOVANI PRSTENCE (Jan, Oct 2026:
+	# "Plná čára lvl1, čárkovaná lvl2, tečkovaná lvl3, kombinace čárek
+	# a teček lvl4"). Prerusovani je DRUHA cesta k informaci vedle
+	# velikosti: vyssi uroven je jen o par procent vetsi, takze na
+	# telefonu se to na prvni pohled necte. Geometrii pocita `Shapes`,
+	# aby sla otestovat bez prohlizece.
+	var sweep: float = TAU * p.hp_frac()
+	for m in Shapes.hp_ring_marks(p.tier, sweep):
+		draw_arc(p.pos, game.pilgrim_ring_r(p), -PI * 0.5 + m.x, -PI * 0.5 + m.y,
+			clampi(int((m.y - m.x) / TAU * 40.0) + 1, 3, 40),
+			Color(true_col.r, true_col.g, true_col.b, RING_ALPHA), maxf(1.6, r * 0.20))
 	# LEDOVY KRYSTAL: namrazovy prstenec KOLEM HP baru. Jan (Oct 2026): "Ten vnější
 	# kruh ještě kolem HP baru byl možná skutečně nejlepší řešení. Jen bych ho
 	# udělal tak, aby více evokoval zmrazení. Předtím spíš evokoval silové pole."
@@ -935,7 +935,7 @@ func _draw_pilgrim(p: Pilgrim) -> void:
 	# Kresli se po cely chlad (`p.ice_left`), tedy i ty tri sekundy po poslednim
 	# zasahu, kdy uz zadny paprsek nesviti - prave proto musi byt stav videt na
 	# poutnikovi a ne jen na paprsku.
-	if p.ice_left > 0.0 and not p.is_ghost():
+	if p.ice_left > 0.0:
 		draw_polyline(_closed(Shapes.crystal_ring(p.pos, game.pilgrim_ring_r(p))),
 			ICE_RING, maxf(1.6, r * 0.20))
 	# JED A LED SE NEKRESLI JAKO KROUZEK. Jan (Oct 2026): "Kolem nepřátel, do
@@ -1041,6 +1041,23 @@ func _draw_beams() -> void:
 		_beam_ribbon(b["from"], b["to"], col, w, phase, 0)
 		draw_circle(b["from"], w * 0.5, col)
 		draw_circle(b["to"], w * 0.5, col)
+
+
+# STRELA FIALOVE NA VEZ. Plochá cara v barve strelce, ktera behem
+# `ENEMY_BEAM_S` zhasina - hrac musi videt, ZE ho neco zasahlo a ODKUD.
+# Zadny glow ani obrys (Jan: zadne efekty, astigmatismus).
+func _draw_enemy_beams() -> void:
+	if game.enemy_beams.is_empty():
+		return
+	var w: float = maxf(1.0, layout.unit_r * 0.012)
+	for b in game.enemy_beams:
+		var a: Vector2 = b["from"]
+		var t: Vector2 = b["to"]
+		var fade: float = clampf(float(b["left"]) / Game.ENEMY_BEAM_S, 0.0, 1.0)
+		var col: Color = Hue.color_of(int(b["hue"]))
+		col.a = 0.85 * fade
+		draw_line(a, t, col, w)
+		draw_circle(t, w * 1.1, col)
 
 
 # TOK SVETLA PO PAPRSKU. Paprsek je JEDEN PAS (polygon) a kazdy jeho vrchol

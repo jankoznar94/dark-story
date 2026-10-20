@@ -33,10 +33,10 @@ const PERM_ORDER := ["ad", "ar", "ap", "ad", "hp", "am", "ar", "cc", "rg", "cd",
 var levels_limit: int = 8
 # KTERY HRAC SE HRAJE (viz `ALLIN_ORDER`).
 var temp_order: Array = TEMP_ORDER
-# CASOVY STROP PARTIE. Level ma od Oct 2026 PADESAT vln (~11 min za deset vln,
-# takze ~37 min za level) - strop musi byt vysoky, jinak sim skonci "DOHRANO" a
-# nic to nerekne o tom, kde se hra opravdu láme. Pro srovnani s minulosti je
-# lepsi merit `--levels=2` a CAS NA LEVEL, ne kolik levelu se stihne za hodinu.
+# CASOVY STROP PARTIE. Level ma od Oct 2026 TRICET vln (~22 min na level
+# zmereno) - strop musi byt vysoky, jinak sim skonci "DOHRANO" a nic to nerekne
+# o tom, kde se hra opravdu láme. Pro srovnani s minulosti je lepsi merit
+# `--levels=2` a CAS NA LEVEL, ne kolik levelu se stihne za hodinu.
 var time_limit: float = 20000.0
 var _switches: int = 0
 
