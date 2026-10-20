@@ -687,44 +687,60 @@ func _test_ranged_stops_and_shoots() -> void:
 	var stop: float = g.ranged_stop_px()
 	_check(stop > 1.0, "vychozi dostrel neni kladny (%.1f)" % stop)
 	var p: Pilgrim = _place(g, Hue.VIOLET, 0.90, 0.0)
+	p.tier = 0
 	_check(p.has_behaviour(Hue.B_RANGED),
 		"fialova nema chovani strelby z dalky (%s)" % str(p.behaviours))
-	var hp0: float = g.hp
-	var saw_beam: bool = false
 	var t: float = 0.0
 	# DOBA CESTY NA DOSTREL: dokud je dal, jde; jakmile je bliz, stoji.
 	while p.pos.distance_to(g.center) > stop and t < 90.0:
 		g.step(1.0 / 60.0)
 		t += 1.0 / 60.0
-		if not g.enemy_beams.is_empty():
-			saw_beam = true
 	var d: float = p.pos.distance_to(g.center)
 	_check(absf(d - stop) < 5.0,
 		"fialova se nezastavila na vychozim dostrelu (%.1f, ma byt %.1f)" % [d, stop])
-	var hp1: float = g.hp
-	g.step(0.5)
-	_check(p.pos.distance_to(g.center) <= d + 0.01,
-		"fialova po zastaveni pokracuje bliz k vezi (%.1f -> %.1f)"
-		% [d, p.pos.distance_to(g.center)])
+	# PRVNI VYSTREL: strela VZNIKNE, ale poskozeni jeste NENI. Vsechny strely
+	# z cesty sem zahodime a kadenci nastartujeme od nuly - test ma merit JEDNU
+	# strelu, ne zbytek toho, co uz je ve vzduchu.
+	g.enemy_shots = []
+	p.shot_left = 0.0
+	var hp0: float = g.hp
+	g.step(1.0 / 60.0)
+	_check(g.enemy_shots.size() == 1,
+		"po prvni kadence neni ve vzduchu zadna strela (%d)" % g.enemy_shots.size())
+	_check(is_equal_approx(g.hp, hp0),
+		"poskozeni prislo uz pri vystrelu (o %.1f) - ma prijit az na dopad" % (hp0 - g.hp))
+	if g.enemy_shots.is_empty():
+		return
+	var dur: float = float(g.enemy_shots[0]["dur"])
+	_check(absf(dur - Hue.ranged_flight(0)) < 0.001,
+		"doba letu strely neni z tabulky (%.2f)" % dur)
+	# POLOVINA LETU: strela je na ceste, vez jeste zdrava.
+	g.step(dur * 0.5)
+	_check(is_equal_approx(g.hp, hp0), "strela ubrala zivoty uz ve vzduchu")
+	_check(not g.enemy_shots.is_empty(), "strela zmizela driv nez doletela")
+	# DOPAD: teprve ted ubyly zivoty.
+	g.step(dur * 0.5 + 0.02)
+	_check(g.hp < hp0, "strela doletela a neubrala zivoty vezi")
+	# STALE PLATI: po zastaveni uz nejde bliz.
+	var d2: float = p.pos.distance_to(g.center)
+	g.step(0.3)
+	_check(p.pos.distance_to(g.center) <= d2 + 0.01,
+		"fialova po zastaveni pokracuje bliz k vezi")
 	_check(p.pos.distance_to(g.center) > g.tower_r,
 		"fialova se dostala az k vezi - to neni strelba z dalky")
-	# STRELBA: behem 0,5 s musi padnout aspon jedna rana (kadence 2 s, prvni
-	# hned pri zastaveni), takze vez musi mit min zivotu.
-	_check(g.hp < hp1 or g.hp < hp0, "fialova stoji na dostrelu a nestrili")
-	_check(saw_beam or not g.enemy_beams.is_empty(),
-		"po strale neni videt zadna cara od strelce")
-	# STRELBA JE OPAKOVANA: za dve kadence musi ubrat aspon dve rany.
-	var hp2: float = g.hp
-	g.step(Hue.RANGED_EVERY * 2.0 + 0.1)
-	var lost: float = hp2 - g.hp
-	_check(lost >= Hue.RANGED_DMG,
-		"za dve kadence ubyly jen %.1f zivotu (ma byt aspon %.1f)"
-		% [lost, Hue.RANGED_DMG])
 	# ZADNE MIZENI: fialova je porad videt a zranitelna i po zasahu.
 	g.tower.hue = Hue.VIOLET
 	var before: float = p.hp
 	g.step(0.5)
 	_check(p.hp < before, "fialova po zasahu zustava imunni (mizeni melo zmizet)")
+	# VYSSI UROVEN: vic poskozeni, rychlejsi kadence i let. Cisla se berou
+	# z tabulky, ne opsana - kdyby se rozešla, hrac dostane neco jineho.
+	_check(Hue.ranged_dmg(3) > Hue.ranged_dmg(0),
+		"vyssi uroven fialove nedava vic poskozeni")
+	_check(Hue.ranged_every(3) < Hue.ranged_every(0),
+		"vyssi uroven fialove nestrili rychleji")
+	_check(Hue.ranged_flight(3) < Hue.ranged_flight(0),
+		"strela vyssi urovne neni rychlejsi")
 
 
 func _test_poison() -> void:

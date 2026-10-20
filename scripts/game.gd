@@ -351,12 +351,10 @@ var locks: Array = []
 # PAPRSKY PRO OBRAZOVKU: [{from, target, hop}]. Hra je pocita kazdy snimek
 # znovu (cile se hybou), obrazovka z nich jen kresli - nic si nepocita sama.
 var beams: Array = []
-# STRELY POUTNIKU NA VEZ (fialova, B_RANGED): [{from, to, hue, left}]. Drzi se
-# `ENEMY_BEAM_S` sekund, aby hrac videl, ODKUD mu vez krvaci.
-var enemy_beams: Array = []
-# JAK DLOUHO STRELA POUTNIKA SVITI (sekundy). Neni to projektil - je to
-# stopa, aby hrac videl, odkud rana prisla; po teto dobe zmizi.
-const ENEMY_BEAM_S := 0.25
+# STRELY POUTNIKU NA VEZ (fialova, B_RANGED): [{from, pos, to, t, dur, dmg, hue}].
+# Poskozeni se NEDELA pri vystrelu, ale az pri dopadu (`t >= dur`) - Jan: strela
+# leti a hrac ji vidi. Nekresli se z `beams` (ty patri vezi).
+var enemy_shots: Array = []
 # KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
 # merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
 var beams_lit: int = 0
@@ -583,7 +581,7 @@ func start_level(n: int) -> void:
 	pilgrims = []
 	locks = []
 	beams = []
-	enemy_beams = []
+	enemy_shots = []
 	beams_lit = 0
 	crit_left = 0.0
 	crit_wait = 0.0
@@ -707,6 +705,7 @@ func step(dt: float) -> void:
 	_phase_step(dt)
 	_regen(dt)
 	_move(dt)
+	_enemy_shots(dt)
 	_aim()
 	_tick_crit(dt)
 	_laser(dt)
@@ -1175,13 +1174,6 @@ func _make_boss(p: Pilgrim) -> void:
 # ------------------------------------------------------------------- POHYB
 
 func _move(dt: float) -> void:
-	# STRELY POUTNIKU MAJI KRATKY DOJEZD: jeden snimek by hrac neuhlidal.
-	var live: Array = []
-	for b in enemy_beams:
-		b["left"] = float(b["left"]) - dt
-		if float(b["left"]) > 0.0:
-			live.append(b)
-	enemy_beams = live
 	for p in pilgrims:
 		if not p.alive:
 			continue
@@ -1192,7 +1184,7 @@ func _move(dt: float) -> void:
 		if p.has_behaviour(Hue.B_RANGED) and p.pos.distance_to(center) <= ranged_stop_px():
 			p.shot_left -= dt
 			if p.shot_left <= 0.0:
-				p.shot_left = Hue.RANGED_EVERY
+				p.shot_left = Hue.ranged_every(p.tier)
 				_ranged_shot(p)
 			continue
 		p.pos += p.dir * p.speed * p.slow_mult() * dt
@@ -1211,17 +1203,36 @@ func _arrive(p: Pilgrim) -> void:
 		_lose()
 
 
-# FIALOVA STRELA Z DALKU. Stojici poutnik posle kazdych `RANGED_EVERY` sekund
-# strelu na vez. Poskozeni je MALE proti prulomu (ten bere vsechny zbyle
-# zivoty), ale opakovane - ignorovana fialova je smrt pomalu. Uroven poutnika
-# poskozeni mirne zveda (2 + uroven), zbroj veze ho krati stejne jako prulom.
+# FIALOVA STRELA Z DALKU. Stojici poutnik posle kazdych `ranged_every(tier)`
+# sekund strelu na vez. STRELA LETI (`ranged_flight(tier)`) a poskozeni se
+# dela az pri dopadu - hrac vidi, ze neco leti, a muze fialovou zabit driv, nez
+# dorazi. Vyssi uroven = vic poskozeni, rychlejsi kadence i rychlejsi let.
 func _ranged_shot(p: Pilgrim) -> void:
-	var dmg: float = (Hue.RANGED_DMG + float(maxi(0, p.tier))) * (1.0 - armor())
-	hp -= dmg
-	enemy_beams.append({"from": p.pos, "to": center, "hue": p.hue, "left": ENEMY_BEAM_S})
-	_event("hit")
-	if hp <= 0.0:
-		_lose()
+	enemy_shots.append({
+		"from": p.pos, "pos": p.pos, "to": center,
+		"t": 0.0, "dur": Hue.ranged_flight(p.tier),
+		"dmg": Hue.ranged_dmg(p.tier), "hue": p.hue,
+	})
+
+
+# DOPAD STREL POUTNIKU. Poskozeni se pocita az tady, ne pri vystrelu; zbroj
+# veze ho krati stejne jako prulom. Strela, ktera doleti po konci hry, uz nic
+# neudela (`step` po konci nekrokuje, takze se sem ani nedostane).
+func _enemy_shots(dt: float) -> void:
+	var live: Array = []
+	for s in enemy_shots:
+		s["t"] = float(s["t"]) + dt
+		var k: float = clampf(float(s["t"]) / maxf(0.001, float(s["dur"])), 0.0, 1.0)
+		s["pos"] = (s["from"] as Vector2).lerp(s["to"] as Vector2, k)
+		if k < 1.0:
+			live.append(s)
+			continue
+		var dmg: float = float(s["dmg"]) * (1.0 - armor())
+		hp -= dmg
+		_event("hit")
+		if hp <= 0.0:
+			_lose()
+	enemy_shots = live
 
 
 func _regen(dt: float) -> void:
@@ -1672,7 +1683,7 @@ func from_state(d: Dictionary) -> bool:
 	paused = false
 	locks = []
 	beams = []
-	enemy_beams = []
+	enemy_shots = []
 	beams_lit = 0
 	events = []
 	finger_hue = {}

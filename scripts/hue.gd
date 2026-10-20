@@ -255,12 +255,16 @@ const REGEN_FRAC := 0.04
 # na ni nedosahl. Takhle na ni dosahne i hrac s vychozi vezi - a kdo si dostrel
 # koupil, ma ji jeste o kus bliz.
 #
-# Sila strelby je ZAMERNE mala proti zásahu poutnika do veze (ten bere vsechny
-# zbyle zivoty): fialova nema byt druhy boss, ale TLAK. Ignoruje-li ji hrac,
-# vez krvaci; kdo ji vcas prepne a zabije, nepozna ji. Cisla se overuji
-# `tools/test_core` (sonda `_test_ranged_enemy`).
-const RANGED_EVERY := 2.0
-const RANGED_DMG := 2.0
+# TABULKY PODLE UROVNĚ (Jan, Oct 2026): "Vyssi urovne fialoveho nepritele maji
+# zkratka vice zivotu, rychlejsi utok, vyssi poskozeni." Zivoty resi `TIER_HP`,
+# tady je kadence, poskozeni a doba letu strely. Index = tier (0..3); boss ma
+# tier 0, takze nema fialovou strelbu silnejsi - jeho hrozba je prulom.
+#
+# POSKOZENI SE PROVEDE AZ NA DOPAD (Jan): strela leti `RANGED_FLIGHT_S` sekund
+# a teprve pri dopadu ubere zivoty vezi (kracene zbroji). Hrac ji vidi letet.
+const RANGED_DMG := [2.0, 3.0, 4.5, 6.0]
+const RANGED_EVERY := [2.0, 1.7, 1.45, 1.2]
+const RANGED_FLIGHT_S := [1.0, 0.9, 0.8, 0.7]
 # STRIBRNA: jak casto meni podobu. Pet vterin (Jan, Oct 2026: "Teď mění podobu
 # po 3s. Nově budou měnit po 5s.") - za tu dobu ji hrac stihne zabit, i kdyz
 # cestou projde dvema podobami.
@@ -449,6 +453,21 @@ static func tier_gold(t: int) -> float:
 	if t == TIER_SPLIT:
 		return SPLIT_TIER_GOLD
 	return float(TIER_GOLD[clampi(t, 0, TIER_COUNT - 1)])
+
+
+# FIALOVA STRELBA PODLE UROVNE. Jedno misto, odkud se berou vsechna tri cisla
+# (poskozeni, kadence, doba letu) - kdyby si je hra skladala sama, rozejdou se
+# od tabulky. Neznama uroven = prvni (nikdy silnejsi, nez tabulka pripousti).
+static func ranged_dmg(t: int) -> float:
+	return float(RANGED_DMG[clampi(t, 0, TIER_COUNT - 1)])
+
+
+static func ranged_every(t: int) -> float:
+	return float(RANGED_EVERY[clampi(t, 0, TIER_COUNT - 1)])
+
+
+static func ranged_flight(t: int) -> float:
+	return float(RANGED_FLIGHT_S[clampi(t, 0, TIER_COUNT - 1)])
 
 
 static func tier_name(t: int) -> String:

@@ -839,7 +839,7 @@ func _draw_battle() -> void:
 	# a musí být z indexem nad zaměřováním"). Paprsek je od Oct 2026 zbran
 	# sama - zadne zaměřování pod nim uz neni.
 	_draw_beams()
-	_draw_enemy_beams()
+	_draw_enemy_shots()
 	_draw_bar()
 	# PRUH SE SMESI JE NAD PALETOU (kolecko se do pruhu palety nevejde).
 	_draw_mix_strip()
@@ -1043,21 +1043,22 @@ func _draw_beams() -> void:
 		draw_circle(b["to"], w * 0.5, col)
 
 
-# STRELA FIALOVE NA VEZ. Plochá cara v barve strelce, ktera behem
-# `ENEMY_BEAM_S` zhasina - hrac musi videt, ZE ho neco zasahlo a ODKUD.
-# Zadny glow ani obrys (Jan: zadne efekty, astigmatismus).
-func _draw_enemy_beams() -> void:
-	if game.enemy_beams.is_empty():
+# STRELA FIALOVE NA VEZ. Je to PROJEKTIL, ktery leti - poskozeni prijde az na
+# dopad (`Game._enemy_shots`). Kresli se plny puntik v barve strelce a kratka
+# stopa za nim; zadny glow ani obrys (Jan: zadne efekty, astigmatismus).
+func _draw_enemy_shots() -> void:
+	if game.enemy_shots.is_empty():
 		return
-	var w: float = maxf(1.0, layout.unit_r * 0.012)
-	for b in game.enemy_beams:
-		var a: Vector2 = b["from"]
-		var t: Vector2 = b["to"]
-		var fade: float = clampf(float(b["left"]) / Game.ENEMY_BEAM_S, 0.0, 1.0)
-		var col: Color = Hue.color_of(int(b["hue"]))
-		col.a = 0.85 * fade
-		draw_line(a, t, col, w)
-		draw_circle(t, w * 1.1, col)
+	var r: float = maxf(1.6, layout.unit_r * 0.022)
+	for s in game.enemy_shots:
+		var pos: Vector2 = s["pos"]
+		var to: Vector2 = s["to"]
+		var from: Vector2 = s["from"]
+		var col: Color = Hue.color_of(int(s["hue"]))
+		var dir: Vector2 = (to - from).normalized()
+		var trail: Vector2 = pos - dir * r * 4.0
+		draw_line(trail, pos, Color(col.r, col.g, col.b, 0.55), maxf(1.0, r * 0.7))
+		draw_circle(pos, r, col)
 
 
 # TOK SVETLA PO PAPRSKU. Paprsek je JEDEN PAS (polygon) a kazdy jeho vrchol
