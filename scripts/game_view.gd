@@ -134,6 +134,7 @@ func _ready() -> void:
 	_refield()
 	_make_music()
 	_make_sfx()
+	_make_laser()
 	get_viewport().size_changed.connect(_refield)
 
 
@@ -247,6 +248,7 @@ func _process(dt: float) -> void:
 	# se to JEDNOU za snimek (vyber = smazani), takze se zvuk nezopakuje.
 	for ev in game.take_events():
 		_play_sfx(String(ev))
+	_sync_laser(dt)
 	_sync_music()
 	_sync_shop_shape()
 	_sync_dialogs()
@@ -559,21 +561,77 @@ func _make_music() -> void:
 	add_child(music)
 
 
-# =========================================================================
+# ============================================================================
+# SMYCKA PAPRSKU. Jan (Oct 2026): "Zvuk palby laserem se mi moc nelibi. Udela
+# to jen jeden zvuk pri zasahu. U letícího projektilu by to bylo v poradku, ale
+# kdyz je to nepretrzity paprsek, tak by to mohlo delat nejaky kolísavy zvuk
+# po celou dobu trvani."
+#
+# Paprsek uz NENI udalost ("shot" se po zazehnuti uz neposila) - je to STAV:
+# dokud ma hra nejaky paprsek (`game.beams`), smycka hraje. Diky tomu nema
+# zadny odstup mezi zvuky, ktery by ji rozdeloval.
+#
+# Hlasitost se ramuje (fade), protoze `play()` a `stop()` na hrane vzorku
+# lupnou: paprsek se rozsviti a zhasne nekolikrat za sekundu, takze by to byl
+# tep, ne zvuk. Rampa je `LASER_FADE_S`, kratka, aby zvuk sel s paprskem.
+# ============================================================================
+const LASER_PATH := "res://assets/audio/laser.wav"
+const LASER_DB := -17.0
+const LASER_FADE_S := 0.08
+var laser: AudioStreamPlayer = null
+var laser_gain: float = 0.0
+
+
+func _make_laser() -> void:
+	laser = AudioStreamPlayer.new()
+	var s: AudioStream = load(LASER_PATH)
+	if s is AudioStreamWAV:
+		# CELEJ BUFFER, ZADNY TRIM: smycka je vyrobena tak, ze presne 1,000 s
+		# obsahuje cely pocet period (viz `tools/make_sfx.py`), takze spojnice
+		# nesmi nikam posunout.
+		(s as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
+		(s as AudioStreamWAV).loop_begin = 0
+		(s as AudioStreamWAV).loop_end = 0
+	laser.stream = s
+	laser.volume_db = -80.0
+	add_child(laser)
+
+
+# PAPRSEK HRAJE, DOKUD SVITI. `beams` se kazdy snimek preklada znovu, takze
+# prazdny seznam = nic nesviti. Pod pauzou a v menu se hra nekrokuje a seznam
+# paprsku by zustal viset - proto se ptame i na stav hry, ne jen na seznam.
+func _sync_laser(dt: float) -> void:
+	if laser == null or laser.stream == null:
+		return
+	var on: bool = settings.sfx and touched and menu.is_battle() \
+		and not is_halted() and not game.is_paused() and not game.beams.is_empty()
+	laser_gain = move_toward(laser_gain, 1.0 if on else 0.0, dt / maxf(0.001, LASER_FADE_S))
+	if laser_gain <= 0.001:
+		if laser.playing:
+			laser.stop()
+		return
+	if not laser.playing:
+		laser.play()
+	laser.volume_db = LASER_DB + linear_to_db(maxf(0.001, laser_gain))
+
+
+# ============================================================================
 # ZVUKOVE EFEKTY (Jan, Oct 2026: "A střelba a zásah by samozřejmě měly mít
 # také zvukové efekty.")
 #
-# Hra posila UDALOSTI ("shot", "hit", "kill") a obrazovka si z nich dela zvuk.
+# Hra posila UDALOSTI ("hit", "kill") a obrazovka si z nich dela zvuk.
+# Paprsek tu neni - ten je SMYCKA (viz `_sync_laser`), protoze jeden zvuk na
+# zazehnuti u nepretrziteho paprsku nedava smysl.
 #
 # DVE VECI, bez kterych by to hrac nesnesl:
-#   1. ODPOCET MEZI ZVUKY. Pri plne kadenci (20 ran/s) by zvuk vystrelu sel
-#      20x za sekundu a slil se do huceni - `SFX_GAP_S` drzi odstup.
-#   2. BAZEN PREHRAVACU. Jeden prehravac prerusuje sam sebe (druhy vystrel by
+#   1. ODPOCET MEZI ZVUKY. Pri plne kadenci by se zvuk slil do huceni -
+#      `SFX_GAP_S` drzi odstup.
+#   2. BAZEN PREHRAVACU. Jeden prehravac prerusuje sam sebe (druhy zvuk by
 #      utnul prvni). Ctyri staci.
-# =========================================================================
+# ============================================================================
 
-const SFX_DB := {"shot": -14.0, "hit": -10.0, "kill": -8.0}
-const SFX_GAP_S := {"shot": 0.075, "hit": 0.045, "kill": 0.0}
+const SFX_DB := {"hit": -10.0, "kill": -8.0}
+const SFX_GAP_S := {"hit": 0.045, "kill": 0.0}
 const SFX_VOICES := 4
 var sfx_streams: Dictionary = {}
 var sfx_voices: Array = []

@@ -1459,16 +1459,20 @@ func _chain(p: Pilgrim) -> Array:
 # Odraz je porad zasah tou samou zbrani, takze si veze i jed (jen slabsi, proto
 # `laser_dps` v sile, ne v poskozeni - jed se pocita z plne rany veze).
 #
-# ZVUK ZAZEHNUTI ("shot") PATRI SEM: paprsek, ktery sviti na cil pet sekund,
-# nesmi pet sekund tikat. Hra si drzi `burning` a ozve se jen prechod
-# "nesvitil -> sviti" (`beams_lit` je toho pocitadlo, testy si ho ctou).
+# ZADNY ZVUK "VYSTRELU" TADY NENI (Oct 2026). Paprsek neni jednorazova rana,
+# ale nepretrzity svit - zvuk je proto SMYCKA v obrazovce, ktera hraje, dokud
+# je `beams` neprazdny (viz `game_view._sync_laser`). Kdyby hra posilala
+# udalost na kazde zazehnuti, obrazovka by musela stejne koukat na stav, a
+# vznikla by druha pravda o tom, co hraje.
+#
+# `beams_lit` zustava: je to POCITADLO ROZSVICENI (kolikrat paprsek rozsvitil
+# cil, ktery predtim nesvitil) a testy si ho ctou.
 func _burn(p: Pilgrim, amount: float) -> void:
 	if not p.alive or amount <= 0.0:
 		return
 	p.burning_now = true
 	if not p.burning:
 		beams_lit += 1
-		_event("shot")
 	if poison_frac() > 0.0:
 		p.poison_left = POISON_S
 		p.poison_dps = laser_dps() * poison_frac()

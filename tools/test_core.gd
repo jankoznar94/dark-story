@@ -651,15 +651,16 @@ func _test_sound_events() -> void:
 	g.take_events()
 	_tick(g, 2.0)
 	var ev: Array = g.take_events()
-	_check(ev.has("shot"), "zazehnuti paprsku neposlalo zvukovou udalost (%s)" % str(ev))
-	# PAPRSEK NESMI TIKAT: kdyz sviti na cil dve sekundy, zvuk zazehnuti se smi
-	# ozvat JEDNOU. (Driv to byl dopad strely; dnes je to okamzik, kdy paprsek
-	# rozsvitil novy cil.)
-	var lit: int = 0
+	# PAPRSEK NENI UDALOST. Jan (Oct 2026): "Udela to jen jeden zvuk pri
+	# zasahu... kdyz je to nepretrzity paprsek, mel by to byt kolísavy zvuk po
+	# celou dobu trvani." Smycku ridi obrazovka podle `beams` (`_sync_laser`),
+	# takze hra NESMI posilat zadny zvuk na zazehnuti - jinak by se jeden zvuk
+	# na zacatek paprsku vracel.
+	var shots: int = 0
 	for e in ev:
 		if String(e) == "shot":
-			lit += 1
-	_check(lit == 1, "paprsek tika: %d zvuku zazehnuti za 2 s" % lit)
+			shots += 1
+	_check(shots == 0, "paprsek poslal %d jednorazovych zvuku (ma hrat smyckou)" % shots)
 	_check(g.beams_lit == 1, "pocitadlo zazehnuti paprsku neni 1 (%d)" % g.beams_lit)
 	_check(g.take_events().is_empty(), "udalosti se po vybrani nevymazaly")
 	# SMRT POUTNIKA. Vlastni hra: vez DRZI CIL, dokud neumre, takze v predchozi
@@ -692,7 +693,7 @@ func _test_sound_events() -> void:
 	# pamatovat tisice udalosti.
 	var g3: Game = _fresh()
 	for i in range(200):
-		g3._event("shot")
+		g3._event("hit")
 	_check(g3.events.size() <= Game.MAX_EVENTS,
 		"seznam zvukovych udalosti roste bez stropu (%d)" % g3.events.size())
 

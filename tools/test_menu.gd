@@ -62,11 +62,47 @@ func _process(_delta: float) -> bool:
 	_run("klepnuti na RESET se vzdy zepta a maze cely postup", _test_tap_reset)
 	_run("rozehrana partie se nabidne a klepnuti ji obnovi", _test_tap_resume)
 	_run("nastaveni a update se ovladaji klepnutim", _test_tap_settings_and_update)
+	_run("smycka paprsku hraje, dokud neco sviti", _test_laser_loop)
 	_check(checks >= MIN_CHECKS,
 		"probehlo jen %d kontrol z %d - test se nekde prerusil chybou" % [checks, MIN_CHECKS])
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("MENU_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	return true
+
+
+# SMYCKA PAPRSKU (Jan, Oct 2026): "kdyz je to nepretrzity paprsek, tak by to
+# melo delat nejaky kolísavy zvuk po celou dobu trvani." Smycka je STAV, ne
+# udalost: dokud ma hra paprsek, hraje; kdyz zhasne, ztichne. Test hlida obe
+# strany a Take to, ze soubor je presne 1,000 s pri 44100 Hz - na tom stoji
+# to, ze spojnice nesedi na pulku periody a nelupne.
+func _test_laser_loop() -> void:
+	var v: Node2D = _screen()
+	v.set("touched", true)
+	(v.get("settings") as Settings).sfx = true
+	var m: Menu = v.get("menu")
+	m.open_battle()
+	var g: Game = v.get("game")
+	var pl: AudioStreamPlayer = v.get("laser")
+	_check(pl != null and pl.stream != null, "smycka paprsku se nenacetla")
+	if pl == null or pl.stream == null:
+		v.queue_free()
+		return
+	var w: AudioStreamWAV = pl.stream
+	_check(w.loop_mode == AudioStreamWAV.LOOP_FORWARD, "smycka nema LOOP_FORWARD")
+	_check(absf(w.get_length() - 1.0) < 0.001,
+		"smycka nema presne 1 s (%.3f)" % w.get_length())
+	_check(w.mix_rate == 44100, "smycka nema 44100 Hz (ma %d)" % w.mix_rate)
+	# PAPRSEK SVITI -> hraje.
+	g.beams = [{"from": Vector2.ZERO, "to": Vector2.ONE, "target": null, "hop": 0, "crit": false}]
+	v.call("_sync_laser", 0.5)
+	_check(absf(float(v.get("laser_gain")) - 1.0) < 0.01,
+		"paprsek sviti a smycka se nerozjela (gain %.2f)" % float(v.get("laser_gain")))
+	# PAPRSEK ZHASL -> ztichne.
+	g.beams = []
+	v.call("_sync_laser", 0.5)
+	_check(float(v.get("laser_gain")) < 0.01,
+		"paprsek zhasl a smycka hraje dal (gain %.2f)" % float(v.get("laser_gain")))
+	v.queue_free()
 
 
 # ------------------------------------------------------------------ POMOCNE
@@ -591,19 +627,21 @@ func _test_tap_settings_and_update() -> void:
 	# ZVUKY: treti radek je vypne a `_play_sfx` to musi respektovat.
 	var voices: Array = v.get("sfx_voices")
 	_check(voices.size() > 0, "hra si nevytvorila hlasy pro zvukove efekty")
-	_check((v.get("sfx_streams") as Dictionary).size() >= 3,
+	# "shot" tu uz neni - paprsek hraje smyckou, ne jednorazovym zvukem (viz
+	# `_test_laser_loop`). Zbyly jen zasah a smrt.
+	_check((v.get("sfx_streams") as Dictionary).size() >= 2,
 		"nenacetly se vsechny zvukove efekty (%d)" % (v.get("sfx_streams") as Dictionary).size())
 	v.set("touched", true)
 	_check(s.sfx, "nastaveni nezacina se zvuky zapnutymi")
 	v.call("_tap", (l.settings_rows[2] as Rect2).get_center())
 	_check(not s.sfx, "radek zvuku zvuky nevypnul")
-	v.call("_play_sfx", "shot")
+	v.call("_play_sfx", "hit")
 	_check(voices.is_empty() or not (voices[0] as AudioStreamPlayer).playing,
 		"vypnute zvuky presto hraji")
 	s.sfx = true
-	v.call("_play_sfx", "shot")
+	v.call("_play_sfx", "hit")
 	_check(voices.is_empty() or (voices[0] as AudioStreamPlayer).playing,
-		"zapnuty vystrel se neprehraje")
+		"zapnuty zasah se neprehraje")
 	v.call("_tap", l.settings_back.get_center())
 	_check(m.is_menu(), "ZPET z nastaveni nevrátilo do menu")
 	# UPDATE: mimo web se jen oznami, ze neni co aktualizovat.
