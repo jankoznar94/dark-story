@@ -1194,9 +1194,22 @@ func _move(dt: float) -> void:
 
 # POUTNIK DOSEL K VEZI. Ubere tolik, kolik mu zbylo zivotu, zbroj to zkrati.
 # Tohle je jedine misto, kde hrac prichazi o zivoty veze.
+#
+# BOSS NESMI DAT INSTANT KILL (Jan, Oct 2026): "A koukam, ze boss da vzdy
+# instant kill. Pravda? To neni spravne chovani. Mel by dat slusnou slupu, ale
+# ne treba 400 zivotu." Boss ma 20x zivoty (`BOSS_HP_MULT`), takze "tolik, kolik
+# mu zbylo" znamenalo 400+ poskozeni do veze o 100 zivotech = vzdy konec hry.
+# Proto ma STROP: nejvyse `BOSS_LEAK_FRAC` maximalnich zivotu veze. Je to podil,
+# ne pevne cislo - hrac, ktery si koupil zivoty, ma z bossa porad stejne velky
+# problem a strop se s jeho investici posouva. Zbytek poskozovani zustava
+# stejny (`min`): boss, ktereho hrac temer zabil, ubere malo.
+const BOSS_LEAK_FRAC := 0.40
 func _arrive(p: Pilgrim) -> void:
 	p.alive = false
-	var dmg: float = maxf(1.0, p.hp) * (1.0 - armor())
+	var raw: float = maxf(1.0, p.hp)
+	if p.is_boss:
+		raw = minf(raw, max_hp * BOSS_LEAK_FRAC)
+	var dmg: float = raw * (1.0 - armor())
 	hp -= dmg
 	_note("%s došel k věži — %d poškození." % [Hue.name_of(p.hue), int(round(dmg))])
 	if hp <= 0.0:

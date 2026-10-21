@@ -179,6 +179,33 @@ func _test_arrive_damage() -> void:
 	_tick(g2, 1.0)
 	_check(absf((hp2 - g2.hp) - 40.0) < 0.01,
 		"zbroj nezkratila poskozeni (ubralo %.2f, cekano 40)" % (hp2 - g2.hp))
+	# BOSS NESMI DAT INSTANT KILL. Jan (Oct 2026): "A koukam, ze boss da vzdy
+	# instant kill. ... Mel by dat slusnou slupu, ale ne treba 400 zivotu."
+	# Boss ma 20x zivoty, takze "tolik, kolik mu zbylo" byl vzdy konec hry.
+	var g3: Game = _fresh()
+	g3.tower.hue = Hue.YELLOW
+	var b: Pilgrim = _at_tower(g3, Hue.RED)
+	b.is_boss = true
+	b.hp = 4000.0
+	b.max_hp = 4000.0
+	var hp3: float = g3.hp
+	_tick(g3, 1.0)
+	_check(not b.alive, "boss u veze nezmizel")
+	_check(g3.hp > 0.0, "boss u veze dal instant kill (zbylo %.1f z %.1f)" % [g3.hp, hp3])
+	var dealt: float = hp3 - g3.hp
+	_check(absf(dealt - hp3 * Game.BOSS_LEAK_FRAC) < 0.5,
+		"boss u veze ubere %.1f, strop je %.1f zivotu" % [dealt, hp3 * Game.BOSS_LEAK_FRAC])
+	# TEMER MRTVY BOSS URBERE MALO - strop je maximum, ne pevna castka.
+	var g4: Game = _fresh()
+	g4.tower.hue = Hue.YELLOW
+	var b2: Pilgrim = _at_tower(g4, Hue.RED)
+	b2.is_boss = true
+	b2.hp = 5.0
+	b2.max_hp = 4000.0
+	var hp4: float = g4.hp
+	_tick(g4, 1.0)
+	_check(absf((hp4 - g4.hp) - 5.0) < 0.01,
+		"temer mrtvy boss ubere %.1f (ma ubrat sve zbyle zivoty 5)" % (hp4 - g4.hp))
 
 
 func _test_regen() -> void:
