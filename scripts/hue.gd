@@ -108,17 +108,23 @@ const ROWS := [
 		"unlock_level": 3, "palette": true,
 	},
 	{
-		# NEJPOMALEJSI BARVA VE HRE (0,50 < 0,60 cervene i stribrne). Jan (Oct
-		# 2026): "Upravime rychlost fialovych nepratel. Budou ze vsech
-		# nejpomalejsi." Pomer 0,50/1,00 znamena, ze fialovy poutnik jde po
-		# stejne ceste dvakrat tak dlouho nez modry.
+		# NEJPOMALEJSI BARVA BYLA CHYBA. Byla 0,50 (pulka modre), takze fialova
+		# sla na dostrel dvakrat dele - a protoze si ji hrac behem cesty
+		# prepne a sviti na ni, nestihla dojit vubec. Jan (Oct 2026): "Minule
+		# jsem z fialovych nepratel udelali range typ. Musime jim ale vyrazne
+		# zrychlit pohyb, protoze ted nemaji sanci se ani dostat na dostrel."
+		# 0,50 -> 1,30 (2,6x). Musi to byt pod zlutou (1,40) - "nejrychlejsi =
+		# zluta" drzi `test_core._test_fastest_is_not_free`. Zmereno sonda
+		# (hra 5. level, hrac ma dostrel i poskozeni koupene): pri 0,50 se
+		# fialova k dostrelu nedostane NIKDY, pri 1,20 umira 5 px pred nim
+		# a pri 1,30 dojde. Nizsi cislo je tedy jen jina podoba te same chyby.
 		#
 		# Oct 2026 (Jan): "Fialový nepřítel teď po zásahu zmizí a zůstane stát
 		# na místě. Tahle mechanika s mizením se mi moc nelíbí. ... Nebude
 		# mizet, ale bude útočit na dálku." Misto B_VANISH ma B_RANGED: zastavi
 		# se na okraji VYCHOZIho dostrelu hrace a odtud strili na vez.
 		"name": "Fialová", "letter": "V", "color": Color(0.58, 0.34, 0.74),
-		"hp": 0.7, "speed": 0.50, "gold": 3, "behaviour": B_RANGED,
+		"hp": 0.7, "speed": 1.30, "gold": 3, "behaviour": B_RANGED,
 		"unlock_level": 4, "palette": true,
 	},
 	{
@@ -262,7 +268,14 @@ const REGEN_FRAC := 0.04
 #
 # POSKOZENI SE PROVEDE AZ NA DOPAD (Jan): strela leti `RANGED_FLIGHT_S` sekund
 # a teprve pri dopadu ubere zivoty vezi (kracene zbroji). Hrac ji vidi letet.
-const RANGED_DMG := [2.0, 3.0, 4.5, 6.0]
+#
+# Oct 2026 (Jan): "Navic ted davaji prilis male poskozeni. Staci mit Regen
+# 3 HP/s a tri fialovi tuto regeneraci neprebiji." Pomer je to, co se da
+# zkontrolovat: tier 0 da 4,0 / 2,0 s = 2,0 HP/s, takze TRI fialove (6 HP/s)
+# prebiji maximalni permanentni regeneraci (3,0 HP/s) presne dvakrat. Predtim
+# to bylo 1,0 HP/s na kus, tedy 3,0 HP/s dohromady - presne na regeneraci.
+# Vyssi tiery drzi stejny pomer (kadence se zkracuje, poskozeni roste).
+const RANGED_DMG := [4.0, 6.0, 9.0, 12.0]
 const RANGED_EVERY := [2.0, 1.7, 1.45, 1.2]
 const RANGED_FLIGHT_S := [1.0, 0.9, 0.8, 0.7]
 # STRIBRNA: jak casto meni podobu. Pet vterin (Jan, Oct 2026: "Teď mění podobu

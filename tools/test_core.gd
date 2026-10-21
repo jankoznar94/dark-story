@@ -29,6 +29,7 @@ func _init() -> void:
 	_run("paprsek odrazu vychazi z prstence predchozi obeti (odraz je videt)", _test_odraz_beam_is_visible)
 	_run("prepsani barvy paprsek utrhne (laser neni strela, ktera uz leti)", _test_hue_switch_stops_the_beam)
 	_run("fialova se zastavi na okraji vychoziho dostrelu a strile", _test_ranged_stops_and_shoots)
+	_run("tri fialove prebiji maximalni regeneraci veze", _test_ranged_beats_regen)
 	_run("zrychleni hry zrychli cely cas, ne jen pohyb", _test_game_speed_scales_time)
 	_run("zvukove udalosti: vystrel, zásah, smrt (a jed ne)", _test_sound_events)
 	_run("jedovaty zasah dava poskozeni v case", _test_poison)
@@ -43,7 +44,7 @@ func _init() -> void:
 	_run("opakovany level nedava body (a profil se nemaze)", _test_replay_no_body)
 	_run("body za permanentni upgrady prichazeji uz v boji", _test_body_during_battle)
 	_run("pauza zastavi hru (krok nekrokuje)", _test_pause)
-	_run("fialova je nejpomalejsi barva ve hre", _test_hue_speed_order)
+	_run("fialova je dost rychla, aby dosla na dostrel", _test_hue_speed_order)
 	_run("nejrychlejsi barva neni zdarma (rychlost se plati zivoty)",
 		_test_fastest_is_not_free)
 	_run("stribrna meni po peti vterinach podobu i se schopnostmi barvy",
@@ -669,6 +670,22 @@ func _test_sound_events() -> void:
 		"seznam zvukovych udalosti roste bez stropu (%d)" % g3.events.size())
 
 
+# TRI FIALOVE MUSI PREBIT REGENERACI VEZE. Jan (Oct 2026): "Navic ted davaji
+# prilis male poskozeni. Staci mit Regen 3 HP/s a tri fialovi tuto regeneraci
+# neprebiji." Pocita se z tabulek, ne z hlavy: poskozeni za kadenci je
+# `ranged_dmg / ranged_every` a strop regenerace je v `Upgrades` ("rg" cap).
+# Kdyby se nekdy zvedla regenerace nebo snizilo poskozeni, tenhle test to
+# rekne driv, nez si toho hrac vsimne v bitve.
+func _test_ranged_beats_regen() -> void:
+	var dps: float = Hue.ranged_dmg(0) / Hue.ranged_every(0)
+	var regen: float = float(Upgrades.stat("rg")["cap"])
+	_check(regen > 0.0, "regenerace veze nema kladny strop")
+	_check(dps * 3.0 > regen * 1.5,
+		"tri fialove (%.1f HP/s) neprebiji regeneraci %.1f HP/s" % [dps * 3.0, regen])
+	_check(dps > regen * 0.5,
+		"jedna fialova (%.2f HP/s) je proti regeneraci %.1f HP/s bez vyznamu" % [dps, regen])
+
+
 # FIALOVA UZ NEMIZI - STRILE Z DALKU. Jan (Oct 2026): "Fialový nepřítel teď po
 # zásahu zmizí a zůstane stát na místě. Tahle mechanika s mizením se mi moc
 # nelíbí. Asi to změníme. Nebude mizet, ale bude útočit na dálku. Z takové
@@ -1211,11 +1228,17 @@ func _test_gold_scales_with_level() -> void:
 		"zabiti na 4. levelu neda vetsi zlato (%d, cekano %.1f)" % [drop2, want])
 
 
-# FIALOVA JE NEJPOMALEJSI. Jan (Oct 2026): "Upravime rychlost fialovych
-# nepratel. Budou ze vsech nejpomalejsi." Test meri SKUTECNE ujete pixely
-# vsech sesti barev za stejnou dobu - kdyby `Game` nasobek barvy prestal
-# pouzivat, tabulka by lhala dal a test na ni samotnou by to nepoznal.
-# Zivoty jsou zamerne obrovske: vez ma merit POHYB, ne to, kdo umre drive.
+# FIALOVA MUSI DOJIT NA DOSTREL. Byla nejpomalejsi barva hry (0,50 = pulka
+# modre) - to platilo, dokud jen chodila k vezi; od chvile, kdy z dalky strili
+# a zastavuje se na okraji dostrelu, je pomala rychlost smrtelna: hrac si ji
+# behem cesty prepne a fialova umre driv, nez vubec vystrli. Jan (Oct 2026):
+# "Musime jim ale vyrazne zrychlit pohyb, protoze ted nemaji sanci se ani
+# dostat na dostrel."
+#
+# Test meri SKUTECNE ujete pixely vsech sesti barev za stejnou dobu - kdyby
+# `Game` nasobek barvy prestal pouzivat, tabulka by lhala dal a test na ni
+# samotnou by to nepoznal. Zivoty jsou zamerne obrovske: vez ma merit POHYB,
+# ne to, kdo umre drive.
 func _test_hue_speed_order() -> void:
 	var g: Game = _fresh()
 	var live: Array = []
@@ -1230,11 +1253,19 @@ func _test_hue_speed_order() -> void:
 	for i in range(live.size()):
 		moved.append(live[i].pos.distance_to(from[i]))
 	_check(moved[Hue.VIOLET] > 1.0, "fialova se vubec nepohnula (%f px)" % moved[Hue.VIOLET])
-	for h in range(Hue.COUNT):
-		if h == Hue.VIOLET:
-			continue
-		_check(moved[Hue.VIOLET] < moved[h],
-			"fialova (%f px) neni pomalejsi nez barva %d (%f px)" % [moved[Hue.VIOLET], h, moved[h]])
+	# MUSI BYT ASPON TAK RYCHLA JAKO MODRA/ZELENA (1,00): dostrel je dal nez
+	# pulka cesty, takze kazda pomalejsi barva se do nej dostane jen za cenu
+	# dlouhe doby pod paprskem.
+	_check(Hue.speed_mult(Hue.VIOLET) >= 1.0,
+		"fialova je porad pomala (%.2fx) - nedojde na dostrel drive, nez ji vez zabije"
+		% Hue.speed_mult(Hue.VIOLET))
+	# ZLUTA (1,40) je rychlejsi zamerne - "nejrychlejsi barva" je jeji
+	# identita. Fialova se srovnava s MODROU a ZELENOU (1,00): pomalejsi nez
+	# ony znamena, ze se na dostrel dostane jen kdyz ji vez ignoruje.
+	for h in [Hue.BLUE, Hue.GREEN]:
+		_check(moved[Hue.VIOLET] >= moved[h],
+			"fialova (%f px) je pomalejsi nez barva %d (%f px) - nedostane se na dostrel"
+			% [moved[Hue.VIOLET], h, moved[h]])
 
 
 # NEJRYCHLEJSI BARVA NENI ZDARMA. Jan (Oct 2026): "A žlutí musí mít o trochu
