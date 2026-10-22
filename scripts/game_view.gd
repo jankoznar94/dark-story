@@ -325,22 +325,20 @@ func _draw_spears() -> void:
 		]), Color(0.90, 0.88, 0.78))
 
 
-# MIREni: JEN CARA DOZADU (Jan, Oct 2026: "šipku u přední části hrdiny ...
-# dáme pryč. Necháme jen tu čáru dozadu."). Cara vede od bojovnika opacnym
-# smerem, nez poleti ostep - jako napnuta tetiva. Smer strelby hrac cte
-# z toho, kam cara ukazuje (presne naopak).
+# MIREni: PRST UKAZUJE Smer HODU, takze cara vede od bojovnika DOPREDU - presne
+# tam, kam poleti ostep. Nahrazuje puvodni caru "dozadu" z doby opacneho
+# mireni. Je tenka a bez hrotu, aby neprekazela ve vyhledu.
 func _draw_aim() -> void:
 	if not game.aiming:
 		return
 	var c: Vector2 = layout.center
-	var back: Vector2 = -game.aim
+	var fwd: Vector2 = game.aim
 	var ln: float = layout.field_r * 0.85
-	# CARA SE NESMI ZTRATIT ZA OKRAJEM: smerem dolu by jinak zmizela pod
-	# displejem a hrac by nevidel, kam se napina. Orizne se podle mista.
-	if back.y > 0.05:
-		ln = minf(ln, (layout.view.y - 10.0 - c.y) / back.y)
+	# Cara se nesmi ztratit za okrajem displeje.
+	if fwd.y < -0.05:
+		ln = minf(ln, (c.y - layout.bar_h - 10.0) / -fwd.y)
 	ln = maxf(24.0, ln)
-	var endp: Vector2 = c + back * ln
+	var endp: Vector2 = c + fwd * ln
 	draw_line(c, endp, AIM_LINE, maxf(2.0, layout.field_r * 0.006))
 	draw_circle(endp, maxf(3.0, layout.field_r * 0.012), AIM_LINE)
 

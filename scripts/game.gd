@@ -206,16 +206,14 @@ func _level_won() -> void:
 
 # ------------------------------------------------------------------ VSTUP
 
-# MIREni PRES CELOU SIRKU. Driv se uhel pocital z polohy prstu vuci bojovnikovi,
-# takze na malem pruhu pod nim sel smer menit jen hrube (a nahore se vse
-# zlomilo do krajnich poloh). Ted rozhoduje VODOROVNA POLOHA prstu: prst
-# uprostred = strelba vzhuru, prst u kraje = strelba na opacnou stranu.
-# Smer je porad OPAČNY nez ukazuje prst, jen je prevod linearni a pres celou
-# plochu - 180° na temer celou sirku displeje.
+# MIREni PRIMO: PRST UKAZUJE, KAM SE MA HODIT. Driv to bylo opacne ("luk"),
+# ale na mobilu je primy smer citelnejsi - hrac polozi prst na nepritele a
+# ostep tam leti. Prevod zustava linearni pres celou sirku (180° na `aim_span`),
+# takze jemnost je stejna jako u opacneho mireni.
 func aim_at(pos: Vector2) -> void:
 	var span: float = maxf(1.0, aim_span)
 	var dx: float = clampf((pos.x - center.x) / span, -1.0, 1.0)
-	aim = Vector2.from_angle(-PI * 0.5 - dx * PI * 0.5)
+	aim = Vector2.from_angle(-PI * 0.5 + dx * PI * 0.5)
 	aiming = true
 
 
