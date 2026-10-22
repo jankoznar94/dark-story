@@ -326,21 +326,31 @@ func _draw_spears() -> void:
 
 
 # MIREni: PRST UKAZUJE Smer HODU, takze cara vede od bojovnika DOPREDU - presne
-# tam, kam poleti ostep. Nahrazuje puvodni caru "dozadu" z doby opacneho
-# mireni. Je tenka a bez hrotu, aby neprekazela ve vyhledu.
+# tam, kam poleti ostep. Cara jde az na okraj displeje (i nahoru pod horni pruh),
+# aby hrac videl smer mireni i tehdy, kdyz stoji prst uplne na hrane obrazovky.
+# Je tenka a bez hrotu, aby neprekazela ve vyhledu.
 func _draw_aim() -> void:
 	if not game.aiming:
 		return
 	var c: Vector2 = layout.center
 	var fwd: Vector2 = game.aim
-	var ln: float = layout.field_r * 0.85
-	# Cara se nesmi ztratit za okrajem displeje.
-	if fwd.y < -0.05:
-		ln = minf(ln, (c.y - layout.bar_h - 10.0) / -fwd.y)
-	ln = maxf(24.0, ln)
-	var endp: Vector2 = c + fwd * ln
-	draw_line(c, endp, AIM_LINE, maxf(2.0, layout.field_r * 0.006))
-	draw_circle(endp, maxf(3.0, layout.field_r * 0.012), AIM_LINE)
+	var m: float = maxf(6.0, layout.field_r * 0.02)
+	var lo := Vector2(m, layout.bar_h + m)
+	var hi := layout.view - Vector2(m, m)
+	var t: float = INF
+	if fwd.x > 0.0001:
+		t = minf(t, (hi.x - c.x) / fwd.x)
+	elif fwd.x < -0.0001:
+		t = minf(t, (lo.x - c.x) / fwd.x)
+	if fwd.y > 0.0001:
+		t = minf(t, (hi.y - c.y) / fwd.y)
+	elif fwd.y < -0.0001:
+		t = minf(t, (lo.y - c.y) / fwd.y)
+	if not is_finite(t) or t <= 0.0:
+		t = layout.field_r
+	var endp: Vector2 = c + fwd * t
+	draw_line(c, endp, AIM_LINE, maxf(1.5, layout.field_r * 0.004))
+	draw_circle(endp, maxf(2.5, layout.field_r * 0.010), AIM_LINE)
 
 
 func _draw_health() -> void:
