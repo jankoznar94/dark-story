@@ -255,15 +255,30 @@ func _draw_battle() -> void:
 func _draw_warrior() -> void:
 	var c: Vector2 = layout.center
 	var r: float = game.warrior_r()
-	draw_circle(c, r, WARRIOR)
-	draw_arc(c, r * 0.86, 0.0, TAU, 32, WARRIOR_DARK, maxf(2.0, r * 0.18))
-	# SEKERA v ruce: krátká násada a klín. Grafika je zamerne jednoducha, jak
-	# Jan rekl ("Zatím to zobrazíme graficky jen velmi jednoduše").
-	var a: Vector2 = Vector2(0.6, -0.8).normalized()
-	draw_line(c, c + a * r * 1.25, WARRIOR_DARK, maxf(2.0, r * 0.16))
-	var tip: Vector2 = c + a * r * 1.25
-	draw_line(tip - a.orthogonal() * r * 0.35, tip + a.orthogonal() * r * 0.35,
-		Color(0.80, 0.78, 0.72), maxf(2.0, r * 0.20))
+	# BARBAR SE OTACI SE SMEREM STRELEY (Jan, Oct 2026: "Barbar se musí otáčet
+	# s tím jak se točí směr střelby. Nesmí jen staticky stát."). Kresli se
+	# v lokalnich souradnicich, kde "-y" je smer strelby; otoceni ridi `aim`.
+	var rot: float = game.aim.angle() + PI * 0.5
+	draw_set_transform(c, rot, Vector2.ONE)
+	draw_circle(Vector2.ZERO, r, WARRIOR)
+	draw_arc(Vector2.ZERO, r * 0.93, 0.0, TAU, 36, WARRIOR_DARK, maxf(2.0, r * 0.10))
+	# RAMENO s ostepem dopredu: hrot je to, co hrac sleduje, takze musi byt
+	# presne ve smeru letu.
+	var hand: Vector2 = Vector2(0.0, -r * 0.62)
+	draw_line(Vector2(0.0, -r * 0.10), hand, WARRIOR_DARK, maxf(3.0, r * 0.26))
+	var tip: Vector2 = hand + Vector2(0.0, -r * 0.95)
+	draw_line(hand - Vector2(0.0, r * 0.10), tip, SPEAR, maxf(2.5, r * 0.14))
+	# Hrot ostepu: trojuhelnik (plny, bez glow).
+	var w: float = r * 0.20
+	draw_colored_polygon(PackedVector2Array([
+		tip + Vector2(0.0, -r * 0.16),
+		tip + Vector2(-w, r * 0.04),
+		tip + Vector2(w, r * 0.04),
+	]), Color(0.86, 0.82, 0.66))
+	# HLAVA ve smeru pohledu.
+	draw_circle(Vector2(0.0, -r * 0.30), r * 0.26, Color(0.70, 0.52, 0.36))
+	draw_arc(Vector2(0.0, -r * 0.30), r * 0.26, 0.0, TAU, 20, WARRIOR_DARK, maxf(1.5, r * 0.07))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 func _draw_enemies() -> void:

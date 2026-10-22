@@ -49,8 +49,9 @@ func _test_values() -> void:
 func _test_rate() -> void:
 	var a: float = Upgrades.value_of("rate", 0)
 	var b: float = Upgrades.value_of("rate", 10)
-	_check(absf(a - 1.10) < 0.0001, "zakladni interval neni 1,10 s (%.2f)" % a)
-	_check(absf(b - 0.35) < 0.0001, "nejkratsi interval neni 0,35 s (%.2f)" % b)
+	_check(absf(a - 0.88) < 0.0001, "zakladni interval neni 0,88 s (%.2f)" % a)
+	_check(absf(b - 0.28) < 0.0001, "nejkratsi interval neni 0,28 s (%.2f)" % b)
+	_check(a < 1.11, "zaklad neni o 25 %% rychlejsi nez puvodnich 1,10 s (%.2f)" % a)
 	_check(b < a, "upgrade hazeni nezrychlil")
 	_check(absf(Upgrades.value_of("spd", 0) - 1.6) < 0.0001, "zakladni rychlost ostepu neni 1,6")
 
@@ -83,6 +84,6 @@ func _test_texts() -> void:
 		var t: String = Upgrades.value_text(id, 0)
 		_check(t != "", "%s: text je prazdny" % id)
 		_check(not t.contains("."), "%s: tecka misto ceske carky (%s)" % [id, t])
-	_check(Upgrades.value_text("rate", 0) == "1,10 s",
-		"interval se netiskne jako 1,10 s (%s)" % Upgrades.value_text("rate", 0))
+	_check(Upgrades.value_text("rate", 0) == "0,88 s",
+		"interval se netiskne jako 0,88 s (%s)" % Upgrades.value_text("rate", 0))
 	_check(Upgrades.value_text("dmg", 0) == "6", "poskozeni se netiskne jako 6")

@@ -78,19 +78,20 @@ func _test_size(v: Vector2) -> void:
 	_check(l.hud_pause.end.x <= l.hud_menu.position.x, "%s: tlacitka v pruhu se prekryvaji" % tag)
 	_check(l.hud_menu.end.x <= v.x + 0.5, "%s: MENU je mimo displej" % tag)
 	# 5) HRATELNOST: neprítel z horniho okraje stihne dojit k bojovnikovi za
-	#    TRAVEL_S (a to i na tom nejvyssim displeji, kde je cesta nejdelsi).
+	#    svuj cestovni cas (na 1. levelu je nejpomalejsi).
 	var g := Game.new()
 	g.profile = Profile.new()
 	g.set_field(l.field_r, l.center, l.arena)
 	# TEST MODE: zadne vlny, jen ten jeden neprítel, ktery ma dojit.
 	g.phase = "test"
+	var tt: float = g.travel_time()
 	var start := Vector2(l.center.x, l.arena.position.y + l.field_r * 0.06)
 	var e := {"pos": start, "hp": 10.0, "max_hp": 10.0,
-		"speed": start.distance_to(l.center) / Game.TRAVEL_S, "dmg": 1.0, "alive": true}
+		"speed": start.distance_to(l.center) / tt, "dmg": 1.0, "alive": true}
 	g.enemies.append(e)
 	var t: float = 0.0
-	while t < Game.TRAVEL_S + 1.0 and not g.enemies.is_empty():
+	while t < tt + 1.0 and not g.enemies.is_empty():
 		g.step(1.0 / 60.0)
 		t += 1.0 / 60.0
 	_check(g.enemies.is_empty(), "%s: neprítel nedojde k bojovnikovi (%.1f s)" % [tag, t])
-	_check(t <= Game.TRAVEL_S + 0.5, "%s: cesta k bojovnikovi je delsi nez TRAVEL_S (%.1f s)" % [tag, t])
+	_check(t <= tt + 0.5, "%s: cesta k bojovnikovi je delsi nez cestovni cas (%.1f s)" % [tag, t])

@@ -15,7 +15,12 @@ const BASE_HP := 12.0
 const HP_GROWTH := 1.16
 # CESTA NEPRITELE od okraje do stredu. Je to cas, ne rychlost - na jinem
 # displeji musi prijit za stejnou dobu.
-const TRAVEL_S := 9.0
+const TRAVEL_S := 14.0
+# ZACATEK JE POMALEJSI A ZRYCHLUJE S LEVELY (Jan, Oct 2026: "Nepřátelé budou
+# chodit ze začátku pomaleji"): na prvnim levelu jdou 14 s, kazdy dalsi level
+# o 1,2 s min, ale nikdy pod 8 s - jinak by vysoke levely byly nehratelne.
+const TRAVEL_MIN := 8.0
+const TRAVEL_STEP := 1.2
 const SPAWN_GAP := 0.75
 const BUILD_S := 3.0
 const BODY_PER_WAVE := 1
@@ -44,7 +49,7 @@ var body_earned: int = 0
 var enemies: Array = []
 var spears: Array = []
 var aiming: bool = false
-var aim: Vector2 = Vector2.RIGHT
+var aim: Vector2 = Vector2.UP
 var fire_left: float = 0.0
 var spawn_left: float = 0.0
 var spawned: int = 0
@@ -105,7 +110,13 @@ func regen() -> float:
 # bojovnik i nepratele zabirat stejny podil plochy.
 
 func warrior_r() -> float:
-	return field_r * 0.055
+	# BARBAR JE VELKY (Jan, Oct 2026: "Barbar musí být větší") - je to hlavni
+	# objekt na obrazovce a musi byt videt, kam se otoci.
+	return field_r * 0.085
+
+
+func travel_time() -> float:
+	return clampf(TRAVEL_S - float(level - 1) * TRAVEL_STEP, TRAVEL_MIN, TRAVEL_S)
 
 
 func enemy_r() -> float:
@@ -272,7 +283,7 @@ func _spawn() -> void:
 	var p := {
 		"pos": p0,
 		"hp": enemy_hp(wave), "max_hp": enemy_hp(wave),
-		"speed": dist / TRAVEL_S, "dmg": enemy_dmg(wave),
+		"speed": dist / travel_time(), "dmg": enemy_dmg(wave),
 		"alive": true,
 	}
 	enemies.append(p)
