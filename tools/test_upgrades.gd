@@ -22,8 +22,9 @@ func _init() -> void:
 	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
 	_run("soucty: kazdy stat ma start, krok, strop a stropy dava smysl", _test_table_sane)
 	_run("zrychleni hry: 1,0x / 1,5x / 2,0x / 2,5x za body", _test_game_speed)
-	_run("strazce: special, ktery strili na vsechno (30/45/60 % poskozeni veze)",
+	_run("strazci: sloty od 5/10/15 levelu, kazdy stupen silnejsi a rychlejsi",
 		_test_turret)
+	_run("strazce (turret): special v mrizce, 1-3 kusy za body", _test_strazce)
 	_run("texty hodnot jsou cesky a nejsou prazdne", _test_texts)
 	_run("profil: koupe permanentu za body, strop, nedostatek bodu", _test_profile_buy)
 	_run("profil: vyhrany level odemkne dalsi", _test_profile_clear)
@@ -106,35 +107,82 @@ func _test_game_speed() -> void:
 	_check(Upgrades.perm_cost("gs", 0) > 0, "zrychleni hry je zadarmo")
 
 
-# STRAZCE (turret). Jan (Oct 2026): "malý turret, který by způsoboval třeba jen
-# 30% poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
-# nehledě na barvu ... pojistka když hráč nestíhá." a později "místo navyšování
-# poškození ... další dva strážci ... rozmístěný do trojúhelníku".
+# STRAZCI (Oct 2026): VLASTNI SEKCE, ne radek v mrizce upgradu. Jan: "Budou
+# volné sloty, které se budou odemykat s úrovněmi. Od 5 úrovně se odemče první
+# slot, od 10 druhý, od 15 třetí. A pak se budou jednotlivé sloty vylepšovat.
+# Bude se zvětšovat velikost strážce, poškození strážce a rychlost."
 #
-# V TABULCE se hlida jen to, co hrac vidi v menu: je to SPECIAL (v bitve se
-# nekupuje) a hodnota je POCET STRAZCU 0-3. Ze opravdu strili na jinou barvu,
-# maji kazdy svuj cil a stoji v trojuhelniku, hlida
-# `test_core._test_turret_ignores_hue` (tabulka o tom nic nevi - je to pravidlo
-# hry, ne cislo).
+# TADY SE HLIDA TABULKA: odemykani, ceny a to, ze kazdy stupen je silnejsi a
+# rychlejsi. Co dela koule ve hre (krouzeni, zareni, plynuLe poskozeni), hlida
+# `test_core._test_guard_orbits`.
 func _test_turret() -> void:
+	# ODEMYKANI PODLE UROVNE HRACE
+	_check(Upgrades.guard_slots(1) == 0, "slot je odemceny uz na 1. levelu")
+	_check(Upgrades.guard_slots(4) == 0, "slot je odemceny na 4. levelu")
+	_check(Upgrades.guard_slots(5) == 1, "5. level neodemkl prvni slot")
+	_check(Upgrades.guard_slots(9) == 1, "9. level odemkl vic nez jeden slot")
+	_check(Upgrades.guard_slots(10) == 2, "10. level neodemkl druhy slot")
+	_check(Upgrades.guard_slots(14) == 2, "14. level odemkl vic nez dva sloty")
+	_check(Upgrades.guard_slots(15) == 3, "15. level neodemkl treti slot")
+	_check(Upgrades.guard_unlock(0) == 5 and Upgrades.guard_unlock(1) == 10
+		and Upgrades.guard_unlock(2) == 15, "levely odemceni nesedi na 5/10/15")
+	# CENA: kazdy dalsi stupen stoji vic, nad strop uz nic.
+	_check(Upgrades.guard_cost(0) > 0, "postaveni strazce je zadarmo")
+	_check(Upgrades.guard_cost(1) > Upgrades.guard_cost(0),
+		"druhy stupen nestoji vic nez prvni")
+	_check(Upgrades.guard_cost(2) > Upgrades.guard_cost(1),
+		"treti stupen nestoji vic nez druhy")
+	_check(Upgrades.guard_cost(Upgrades.GUARD_MAX) == 0, "nad strop jde koupit dalsi stupen")
+	# KAZDY STUPEN JE SILNEJSI, VETSI A RYCHLEJSI (Jan: "Bude se zvetsovat
+	# velikost strazce, poskozeni strazce a rychlost").
+	var prev_dmg: float = -1.0
+	var prev_ball: float = -1.0
+	var prev_aura: float = -1.0
+	var prev_orbit: float = 1.0e9
+	for lv in range(1, Upgrades.GUARD_MAX + 1):
+		var dmg: float = Upgrades.guard_param(lv, "dmg")
+		var ball: float = Upgrades.guard_param(lv, "ball")
+		var aura: float = Upgrades.guard_param(lv, "aura")
+		var orbit: float = Upgrades.guard_param(lv, "orbit")
+		_check(dmg > prev_dmg, "stupen %d nezvysil poskozeni (%.2f)" % [lv, dmg])
+		_check(ball > prev_ball, "stupen %d nezvetsil kouli (%.3f)" % [lv, ball])
+		_check(aura > prev_aura, "stupen %d nezvetsil zareni (%.3f)" % [lv, aura])
+		_check(orbit < prev_orbit, "stupen %d nezrychlil obeh (%.1f s)" % [lv, orbit])
+		prev_dmg = dmg
+		prev_ball = ball
+		prev_aura = aura
+		prev_orbit = orbit
+	_check(absf(Upgrades.guard_param(1, "dmg") - 0.30) < 0.0001,
+		"prvni stupen nedava 30 %% zakladu (%.2f)" % Upgrades.guard_param(1, "dmg"))
+	# DRAHA: 1. stupen na vychozim dostrelu, 3. na maximalnim.
+	var s: Dictionary = Upgrades.stat("ar")
+	_check(absf(Upgrades.guard_orbit_frac(1) - float(s["start"])) < 0.0001,
+		"1. stupen nekrouzi na vychozim dostrelu")
+	_check(absf(Upgrades.guard_orbit_frac(3) - float(s["cap"])) < 0.0001,
+		"3. stupen nekrouzi na maximalnim dostrelu")
+	_check(absf(Upgrades.guard_orbit_frac(2)
+		- (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
+		"2. stupen nekrouzi presne mezi dostrely")
+	# SATELITY NEJSOU V MRIZCE UPGRADU (maji vlastni obrazovku a vlastni tabulku).
+	_check(Upgrades.stat("sat")["label"] == "sat", "satelit zustal v mrizce upgradu")
+
+
+# STRAZCE (turret "tw") JE ZPET V MRIZCE UPGRADU jako special a je to JINA
+# ZBRAN nez Satelity: stoji, miri paprskem a kupuje se za body v UPRAVACH.
+func _test_strazce() -> void:
 	_check(Upgrades.perm_max("tw") == 3, "strazce nema tri stupne")
 	_check(Upgrades.temp_max("tw") == 0, "strazce jde koupit za zlato v bitve")
 	_check(Upgrades.temp_buyable("tw") == false, "strazce se nabizi v bitve")
 	_check(String(Upgrades.stat("tw")["cat"]) == Upgrades.CAT_SPEC,
 		"strazce neni special")
 	_check(Upgrades.label_of("tw") == "Strážce",
-		"popisek neni \"Strážce\" (%s)" % Upgrades.label_of("tw"))
-	_check(absf(Upgrades.value_of("tw", 0, 0)) < 0.0001, "strazce bez upgradu uz stoji")
+		"popisek neni Strážce (%s)" % Upgrades.label_of("tw"))
 	_check(absf(Upgrades.value_of("tw", 1, 0) - 1.0) < 0.0001,
 		"1. stupen neni jeden strazce (%.2f)" % Upgrades.value_of("tw", 1, 0))
 	_check(absf(Upgrades.value_of("tw", 3, 0) - 3.0) < 0.0001,
 		"3. stupen nejsou tri strazci (%.2f)" % Upgrades.value_of("tw", 3, 0))
 	_check(Upgrades.value_text("tw", 1, 0) == "1",
 		"text strazce neni 1 (%s)" % Upgrades.value_text("tw", 1, 0))
-	_check(Upgrades.value_text("tw", 3, 0) == "3",
-		"text strazce neni 3 (%s)" % Upgrades.value_text("tw", 3, 0))
-	_check(Upgrades.value_text("tw", 0, 0) == "0",
-		"strazce bez upgradu se netiskne jako nula (%s)" % Upgrades.value_text("tw", 0, 0))
 	_check(Upgrades.perm_cost("tw", 0) > 0, "strazce je zadarmo")
 	_check(Upgrades.perm_cost("tw", 1) > Upgrades.perm_cost("tw", 0),
 		"druhy strazce nestoji vic nez prvni")

@@ -17,9 +17,14 @@ extends Node2D
 const BG := Color(0.055, 0.052, 0.062)
 const TOWER_BODY := Color(0.11, 0.105, 0.115)
 const TOWER_DOT := Color(0.90, 0.88, 0.84)
-# STRAZCE (turret) JE NEUTRALNI ZBRAN - necte barvu, takze ani ona nesmi mit
-# barvu hrace. Oceľova seda je jedina barva ve hre, ktera neznamena zadny zivel.
+const GUARD_STEEL := Color(0.80, 0.81, 0.76)
+# STRAZCE (puntiky s paprskem) a SATELITY (koule se zarenim) maji stejnou
+# neutralni barvu - obe jsou zbrane, ktere nectou barvu hrace.
 const TURRET_STEEL := Color(0.80, 0.81, 0.76)
+# ZARENI STRAZCE je PLOCHA, ne glow: Jan ma astigmatismus, takze svetlo kolem
+# svetla je to nejhorsi. Kruh ma nizkou pruhlednost a tenky obrys stejne barvy.
+const GUARD_AURA_FILL := 0.10
+const GUARD_AURA_EDGE := 0.38
 const TEXT := Color(0.86, 0.85, 0.82)
 const DIM := Color(0.50, 0.49, 0.52)
 const BEAM := Color(0.93, 0.91, 0.86)
@@ -369,6 +374,9 @@ func _tap(pos: Vector2) -> void:
 	if menu.is_upgrades():
 		_handle_upgrades_tap(pos)
 		return
+	if menu.is_guards():
+		_handle_guards_tap(pos)
+		return
 	_handle_battle_tap(pos)
 
 
@@ -708,6 +716,12 @@ func _handle_upgrades_tap(pos: Vector2) -> void:
 			upg_cat = i
 			_sync_shop_shape()
 			return
+	# STRAZCI: vlastni obrazovka. Kontrola je PRED mrizkou - tlacitko stoji
+	# mimo panel a klepnuti na nej nesmi projit jako "klepnuti mimo = zpet".
+	if layout.upg_guards.has_point(pos):
+		layout.layout_guards()
+		menu.open_guards()
+		return
 	for i in range(layout.upg_cells.size()):
 		if (layout.upg_cells[i] as Rect2).has_point(pos):
 			var stats: Array = _upg_stats()
@@ -720,6 +734,21 @@ func _handle_upgrades_tap(pos: Vector2) -> void:
 	# KLEPNUTI MIMO PANEL = ZPET (na telefonu je to nejrychlejsi odchod).
 	if not layout.upg_panel.has_point(pos):
 		menu.open_menu()
+
+
+# STRAZCI: kazda karta je cele tlacitko (koupe dalsiho stupne). Zamcena karta
+# nic nedela a rekne, od jakeho levelu se odemkne - klepnuti, ktere "nic
+# neudela a nic nerekne", vypada jako rozbita hra.
+func _handle_guards_tap(pos: Vector2) -> void:
+	for i in range(layout.guard_cards.size()):
+		if (layout.guard_cards[i] as Rect2).has_point(pos):
+			game.profile.buy_guard(i)
+			return
+	if layout.guard_back.has_point(pos):
+		menu.open_upgrades()
+		return
+	# KLEPNUTI MIMO KARTY = ZPET, stejne jako v upravach.
+	menu.open_upgrades()
 
 
 # =========================================================================
@@ -883,6 +912,9 @@ func _draw() -> void:
 	if menu.is_upgrades():
 		_draw_upgrades()
 		return
+	if menu.is_guards():
+		_draw_guards()
+		return
 	_draw_battle()
 
 
@@ -891,10 +923,16 @@ func _draw_battle() -> void:
 		return
 	draw_arc(layout.center, game.range_px(), 0.0, TAU, 96, _range_color(),
 		maxf(2.0, layout.unit_r * 0.014))
+	# ZARENI STRAZCU JE POD POUTNIKY: je to plocha, ktera ma byt videt, ale
+	# nesmi prekryvat nepritele (hrac potrebuje videt barvu a zivoty).
+	_draw_guard_auras()
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
 	_draw_turret()
+	# KOULE SATELITU JSOU NAD VSIM V POLI: jsou male a musi byt videt, i kdyz
+	# zrovna prochazeji poutnikem.
+	_draw_guard_balls()
 	if game.is_paused() and not game.is_over() and not leave_ask:
 		_draw_pause_hint()
 	# LASER SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
@@ -1210,9 +1248,9 @@ func _draw_tower() -> void:
 		_hp_color(frac), maxf(3.0, tr * Game.TOWER_ARC_W))
 
 
-# STRAZCE. Male puntiky v trojuhelniku kolem veze, z kazdeho vychazi paprsek.
-# Jsou OCELOVE SEDE: barva je ve hre vyznam (na co vez miri), takze zbran, ktera
-# barvu necte, nesmi mit barvu zadnou. Plocha, zadny glow (Jan ma astigmatismus).
+# STRAZCE. Male ocelove puntiky v trojuhelniku kolem veze, z kazdeho jde
+# paprsek na jeho cil. Barva ve hre neco ZNAMENA, takze zbran, ktera barvu
+# necte, nesmi mit barvu hrace - proto neutralni seda. Bez glow.
 func _draw_turret() -> void:
 	if not game.turret_active():
 		return
@@ -1221,9 +1259,8 @@ func _draw_turret() -> void:
 		draw_circle(pos, tr, TURRET_STEEL)
 
 
-# PAPRSEK STRAZCE. Neni to pulzni tok veze - je to TENSI, KLYDNEJSI CARA v
-# neutralni ocelove barve, aby hrac na prvni pohled poznal, ktera zbran zasah
-# dela. Konce maji kolecka (Godot kresli caru s hranatym koncem).
+# PAPRSEK STRAZCE: tenka klidna cara (zadny pulz - ten patri vezi), konce
+# zaoblena koleckem, protoze Godot kresli caru s hranatym koncem.
 func _draw_turret_beams() -> void:
 	if game.turret_beams.is_empty():
 		return
@@ -1234,6 +1271,28 @@ func _draw_turret_beams() -> void:
 			continue
 		draw_line(b["from"], b["to"], TURRET_STEEL, w)
 		draw_circle(b["to"], w * 0.5, TURRET_STEEL)
+
+
+# SATELITY. Koule krouzi kolem veze a kolem sebe maji ZARIVY KRUH, ktery
+# poskozuje vsechno, co do nej vstoupi. Kresli se dva kruhy: plocha zar (velmi
+# pruhledna) a tenky obrys, aby hrac videl HRANICI dostrelu. Puntik ve stredu
+# je sama koule.
+func _draw_guard_auras() -> void:
+	if game.guard_orbs.is_empty():
+		return
+	var fill: Color = Color(GUARD_STEEL.r, GUARD_STEEL.g, GUARD_STEEL.b, GUARD_AURA_FILL)
+	var edge: Color = Color(GUARD_STEEL.r, GUARD_STEEL.g, GUARD_STEEL.b, GUARD_AURA_EDGE)
+	for o in game.guard_orbs:
+		draw_circle(o["pos"], o["aura"], fill)
+		draw_arc(o["pos"], o["aura"], 0.0, TAU, 48, edge,
+			maxf(1.5, layout.unit_r * 0.006))
+
+
+func _draw_guard_balls() -> void:
+	if game.guard_orbs.is_empty():
+		return
+	for o in game.guard_orbs:
+		draw_circle(o["pos"], o["ball"], GUARD_STEEL)
 
 
 func _hp_color(frac: float) -> Color:
@@ -1576,6 +1635,21 @@ func _draw_upgrades() -> void:
 		prices.append("MAX" if maxed else "+%d b." % c)
 		afford.append((not maxed) and game.profile.body >= c)
 	_draw_grid(layout.upg_cells, stats, names, values, prices, afford)
+	# TLACITKO NA STRAZCE. Stojí mimo mrizku (viz `ScreenLayout.layout_upgrades`)
+	# a nese POCET ODEMCENYCH SLOTU, aby hrac nemusel otevirat obrazovku, aby
+	# zjistil, jestli ho nejaky ceka.
+	var gr: Rect2 = layout.upg_guards
+	var slots: int = Upgrades.guard_slots(game.profile.level)
+	var built: int = 0
+	for i in range(3):
+		if game.profile.guard_level(i) > 0:
+			built += 1
+	draw_rect(gr, CARD_ROW if slots > 0 else MENU_BG, true)
+	draw_rect(gr, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55 if slots > 0 else 0.25),
+		false, 2.0)
+	_label("SATELITY · %d/%d" % [built, slots], gr,
+		_fit_px("SATELITY · %d/%d" % [built, slots], gr.size.x - 16.0, layout.menu_item_px, 11),
+		Color(0.90, 0.87, 0.80) if slots > 0 else Color(0.52, 0.50, 0.46))
 	var br: Rect2 = layout.upg_back
 	draw_rect(br, MENU_BG, true)
 	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
@@ -1584,6 +1658,70 @@ func _draw_upgrades() -> void:
 
 func upg_title_y() -> float:
 	return maxf(6.0, layout.upg_panel.position.y - float(layout.menu_title_px) * 1.5)
+
+
+# OBRAZOVKA STRAZCU. Tri karty pod sebou - jedna na slot. Karta, ktera jeste
+# neni odemcena, rekne LEVEL, od ktereho se odemkne (aby hrac vedel, kam ma
+# hrat); odemcena karta ukaze, co strazce umi, a cenu dalsiho stupne. Klepnuti
+# na kartu kupuje - zadne potvrzovani, cena je videt na karte.
+func _draw_guards() -> void:
+	_label("SATELITY", Rect2(0.0, layout.guard_title_y, layout.view.x,
+		float(layout.menu_title_px)), layout.menu_title_px, Color(0.90, 0.87, 0.80))
+	_label("body %d" % game.profile.body, Rect2(0.0, layout.guard_title_y + float(layout.menu_title_px) * 0.9,
+		layout.view.x, float(layout.menu_sub_px) * 1.4), layout.menu_sub_px, MENU_EDGE)
+	for i in range(layout.guard_cards.size()):
+		var r: Rect2 = layout.guard_cards[i]
+		var lv: int = game.profile.guard_level(i)
+		var unlocked: bool = Upgrades.guard_slots(game.profile.level) > i
+		var maxed: bool = lv >= Upgrades.GUARD_MAX
+		var cost: int = Upgrades.guard_cost(lv)
+		var afford: bool = unlocked and not maxed and game.profile.body >= cost
+		var edge: Color = MENU_EDGE if unlocked else Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.25)
+		draw_rect(r, CARD_ROW if afford else MENU_BG, true)
+		draw_rect(r, edge, false, 2.0)
+		var pad: float = maxf(8.0, r.size.x * 0.025)
+		var inner: float = r.size.x - 2.0 * pad
+		var title: String = "SATELIT %d" % (i + 1)
+		if unlocked:
+			if lv > 0:
+				title += " · úroveň %d/%d" % [lv, Upgrades.GUARD_MAX]
+			else:
+				title += " · volný"
+		else:
+			title += " · od levelu %d" % Upgrades.guard_unlock(i)
+		var tpx: int = _fit_px(title, inner, int(r.size.y * 0.26), 12)
+		draw_string(ThemeDB.fallback_font,
+			Vector2(r.position.x + pad, r.position.y + r.size.y * 0.30),
+			title, HORIZONTAL_ALIGNMENT_LEFT, inner, tpx,
+			Color(0.90, 0.87, 0.80) if unlocked else Color(0.52, 0.50, 0.46))
+		# DRUHY RADEK: co strazce umi, nebo co stoji postavit.
+		var sub: String
+		if not unlocked:
+			sub = "odemkne se na levelu %d" % Upgrades.guard_unlock(i)
+		elif lv <= 0:
+			sub = "postavit · %d b." % cost
+		else:
+			sub = "poškození %d %% · dosah %d %% · oběh %s s" % [
+				int(round(Upgrades.guard_param(lv, "dmg") * 100.0)),
+				int(round(Upgrades.guard_orbit_frac(lv) * 100.0)),
+				_upg_cz(Upgrades.guard_param(lv, "orbit"), 1)]
+			sub += " · MAX" if maxed else " · +%d b." % cost
+		var spx: int = _fit_px(sub, inner, int(r.size.y * 0.20), 10)
+		draw_string(ThemeDB.fallback_font,
+			Vector2(r.position.x + pad, r.position.y + r.size.y * 0.72),
+			sub, HORIZONTAL_ALIGNMENT_LEFT, inner, spx,
+			Color(0.72, 0.70, 0.62) if afford else Color(0.56, 0.53, 0.48))
+	var br: Rect2 = layout.guard_back
+	draw_rect(br, MENU_BG, true)
+	draw_rect(br, Color(MENU_EDGE.r, MENU_EDGE.g, MENU_EDGE.b, 0.55), false, 2.0)
+	_label("ZPĚT", br, _fit_px("ZPĚT", br.size.x - 16.0, layout.menu_item_px, 13),
+		Color(0.90, 0.87, 0.80))
+
+
+func _upg_cz(v: float, digits: int) -> String:
+	if digits > 0:
+		return (("%." + str(digits) + "f") % v).replace(".", ",")
+	return str(int(round(v)))
 
 
 # =========================================================================

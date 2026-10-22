@@ -34,6 +34,32 @@ const CATEGORIES := [
 	{"id": CAT_SPEC, "label": "SPECIÁL"},
 ]
 
+# SATELITY (Oct 2026). Drive to mel byt novy Strazce, ale Jan rozhodl, ze
+# Strazce zustane jak je a tohle je NOVA zbran vedle nej: "přidáme ty nové
+# sloty a rotující koule. Budou se jmenovat Satelity. Satelit 1, atd."
+#
+# VLASTNI SEKCE, NE RADEK V MRIZCE. Jan: "Pro tento upgrade ale uděláme
+# speciální ui sekci. Budou volné sloty, které se budou odemykat s úrovněmi.
+# Od 5 úrovně se odemče první slot, od 10 druhý, od 15 třetí."
+#
+# ODEMYKA SE UROVNI HRACE (`Profile.level`), NE BODY: body jsou az cena za
+# stupen satelitu. Poradi slotu je poradi v UI shora dolu (Satelit 1, 2, 3).
+const GUARD_UNLOCK := [5, 10, 15]
+const GUARD_MAX := 3
+# STUPNE JEDNOHO STRAZCE (index 0 = 1. stupen). Cena je v BODECH za dosazeni
+# daneho stupne. Kazdy stupen zvetsi kouli i jeji zarivy dosah, zrychli obeh a
+# zvysi poskozeni (Jan: "Bude se zvetsovat velikost strážce, poškození strážce
+# a rychlost").
+#   dmg   - podil ZAKLADNIHO poskozeni veze za sekundu (na vse v dosahu)
+#   aura  - polomer zariveho dosahu jako podil `field_r`
+#   ball  - polomer kreslene koule jako podil `field_r`
+#   orbit - doba jednoho obehu v sekundach (mensi = rychlejsi)
+const GUARD_STEPS := [
+	{"cost": 30, "dmg": 0.30, "aura": 0.055, "ball": 0.013, "orbit": 14.0},
+	{"cost": 60, "dmg": 0.42, "aura": 0.070, "ball": 0.017, "orbit": 11.0},
+	{"cost": 90, "dmg": 0.55, "aura": 0.085, "ball": 0.021, "orbit": 8.5},
+]
+
 # CENA DOCASNEHO KROKU: N-ty krok (od jedne) stoji `TEMP_COST * N * N` zlata.
 # Neni to zavisle na permanentnim stupni - presne jak Jan chtel ("lvl 1
 # dočasného upgradu bude stát vždy například 5 goldů, až začínám na
@@ -177,29 +203,14 @@ const STATS := [
 	# strely, jed i led, casy vln.
 	{"id": "gs", "label": "Zrychlení hry", "cat": CAT_SPEC, "kind": "mult",
 		"start": 1.0, "step": 0.5, "cap": 2.5, "perm_max": 3, "temp_max": 0},
-	# STRAZCE. Jan (Oct 2026): "Přidáme další permanentní upgrade typu speciál
-	# ... byl by to takový malý turret, který by způsoboval třeba jen 30%
-	# poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
-	# nehledě na barvu."
+	# STRAZCE (turret) - PRVNI VERZE, ktera Janovi sedla (Jan, Oct 2026: "ten
+	# strážce není špatný tak, jak je. Uděláme to tedy tak, ze starého strážce
+	# necháme jak je"). Male puntiky v trojuhelniku, kazdy strili paprskem na
+	# nejblizsiho poutnika BEZ OHLEDU NA BARVU, poskozeni je podil ZAKLADU veze
+	# a dostrel je AKTUALNI dostrel veze.
 	#
-	# STUPEN = POCET STRAZCU, ne poskozeni (Jan, Oct 2026: "možná místo
-	# navyšování poškození uděláme to, že se budou dát dokoupit další dva
-	# strážci ... rozmístěný do trojúhelníku"). Kazdy strazce bere porad
-	# stejny podil zakladu (`Game.TURRET_DPS_FRAC`), takze hodnota 1/2/3
-	# znamena "jeden, dva, tri strazci" - a cena za dalsiho roste s jejich
-	# poctem, ne s nejakym nasobkem poskozeni.
-	#
-	# JE TO JINA ZBRAN NEZ PAPRSEK VEZE: strili vzdy na JEDEN cil, barvu necte
-	# vubec a nezalezi na tom, na co je vez prepnuta. Pocita se z ZAKLADNIHO
-	# poskozeni veze (`laser_base`), ne z celkoveho vykonu: multishot a odraz
-	# jsou odmena za to, ze hrac miri SPRAVNE, a strazce je pojistka, ktera
-	# miri za neho (Jan, Oct 2026: "Bez multishotu a ricochetu").
-	#
-	# DOSTREL NECTE Z TABULKY: bere AKTUALNI dostrel veze (`range_px()`), takze
-	# kazdy koupeny radius plati i pro strazce.
-	#
-	# CENA 20 BODU (20 / 40 / 60): prvni strazce po prvnim vyhranem levelu,
-	# ale ne zadarmo vedle poskozeni - je to pojistka, ne zaklad hry.
+	# POZOR: tohle NENI "Satelit" (krouzici koule v `GUARD_STEPS` nize). Jsou to
+	# dve ruzne zbrane: Strazce stoji a miri, Satelit krouzi a ma zareni.
 	{"id": "tw", "label": "Strážce", "cat": CAT_SPEC, "kind": "int",
 		"start": 0, "step": 1, "cap": 3, "perm_max": 3, "temp_max": 0,
 		"perm_cost": 20},
@@ -398,6 +409,49 @@ static func perm_cost(id: String, bought: int) -> int:
 		return int(s.get("perm_cost", PERM_COST_STEP)) * (n + 1)
 	return 1 + n / PERM_EVERY
 
+
+
+# ---------------------------------------------------------------- STRAZCI
+
+# KOLIK SLOTU JE ODEMCENYCH pri dane urovni hrace (0-3). Pocita se z tabulky,
+# nikdy se neuklada - jinak by se stav na disku mohl rozejit s pravidlem.
+static func guard_slots(player_level: int) -> int:
+	var n: int = 0
+	for l in GUARD_UNLOCK:
+		if player_level >= int(l):
+			n += 1
+	return n
+
+
+static func guard_unlock(i: int) -> int:
+	return int(GUARD_UNLOCK[clampi(i, 0, GUARD_UNLOCK.size() - 1)])
+
+
+# CENA DALSIHO STUPNE. `have` = kolik stupnu slot uz ma (0 = jeste nestoji).
+static func guard_cost(have: int) -> int:
+	var n: int = clampi(have, 0, GUARD_MAX)
+	if n >= GUARD_MAX:
+		return 0
+	return int(GUARD_STEPS[n]["cost"])
+
+
+static func guard_param(level: int, key: String) -> float:
+	if level <= 0:
+		return 0.0
+	var st: Dictionary = GUARD_STEPS[clampi(level - 1, 0, GUARD_STEPS.size() - 1)]
+	return float(st.get(key, 0.0))
+
+
+# KDE STRAZCE KROUZI: 1. stupen na VYCHOZIM dostrelu veze, posledni na
+# MAXIMALNIM, prostredni presne mezi nimi (Jan, Oct 2026). Bere se z tabulky
+# `ar` (start a cap), takze se to nemuze rozejit s tim, co hrac vidi jako
+# "Dostřel".
+static func guard_orbit_frac(level: int) -> float:
+	var s: Dictionary = stat("ar")
+	var a: float = float(s["start"])
+	var b: float = float(s["cap"])
+	var t: float = float(clampi(level, 1, GUARD_MAX) - 1) / float(GUARD_MAX - 1)
+	return lerpf(a, b, t)
 
 # SOUHRN PRO KONZOLI/TESTY: "as 3/6+2" (permanentni/docasne).
 static func summary(perm: Dictionary, temp: Dictionary) -> String:

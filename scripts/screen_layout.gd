@@ -135,6 +135,12 @@ var upg_cell_count: int = 4
 var upg_cells: Array = []
 var upg_back: Rect2 = Rect2()
 var upg_note_y: float = 0.0
+# TLACITKO "STRAZCI" pod mrizkou upgradu: otevre vlastni obrazovku slotu.
+var upg_guards: Rect2 = Rect2()
+# OBRAZOVKA STRAZCU: tri karty slotu a tlacitko zpet.
+var guard_cards: Array = []
+var guard_back: Rect2 = Rect2()
+var guard_title_y: float = 0.0
 var pal_rects: Array = []
 # MENU
 var menu_rects: Array = []
@@ -245,6 +251,7 @@ func update(v: Vector2) -> void:
 	layout_menu(Menu.MENU_ITEMS.size())
 	layout_levels()
 	layout_settings()
+	layout_guards()
 
 
 # SIRKA TEXTU VE SKUTECNEM FONTU. Kdo meri jinak nez kresli, meri neco jineho
@@ -489,11 +496,20 @@ func layout_upgrades() -> void:
 		upg_tabs = []
 		upg_cells = []
 		upg_back = Rect2()
+		upg_guards = Rect2()
 		return
 	var side: float = maxf(10.0, view.x * 0.05)
 	var top_limit: float = maxf(46.0, view.y * 0.10)
 	var btn: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.09))
-	var bottom: float = view.y - btn - maxf(26.0, view.y * 0.05)
+	# TLACITKO SATELITU JE VEDLE ZPET (Jan: "speciální ui sekce"). Dve tlacitka
+	# v jednom radku drzi panelu stejnou vysku jako driv - kdyby mela vlastni
+	# radek, zmensila by se mrizka upgradu (a v bitve neni kam uhnout).
+	var gpx: float = minf(440.0, view.x * 0.86)
+	var gx: float = (view.x - gpx) * 0.5
+	var gap2: float = maxf(6.0, view.y * 0.012)
+	var back_y: float = view.y - btn - maxf(20.0, view.y * 0.04)
+	var half_w: float = (gpx - gap2) * 0.5
+	var bottom: float = back_y - gap2
 	var w: float = view.x - 2.0 * side
 	var avail: float = maxf(1.0, bottom - top_limit)
 	var h: float = minf(card_panel_size(w, upg_cell_count).y, avail)
@@ -502,9 +518,33 @@ func layout_upgrades() -> void:
 	upg_tabs = card["tabs"]
 	upg_tab_icons = card["tab_icons"]
 	upg_cells = card["cells"]
-	upg_back = Rect2((view.x - minf(440.0, view.x * 0.86)) * 0.5, bottom + 6.0,
-		minf(440.0, view.x * 0.86), btn)
+	upg_guards = Rect2(gx, back_y, half_w, btn)
+	upg_back = Rect2(gx + half_w + gap2, back_y, half_w, btn)
 	upg_note_y = upg_panel.position.y - float(font_px) * 1.7
+
+
+# OBRAZOVKA STRAZCU: tri velke karty pod sebou (kazda je cele tlacitko) a
+# ZPET. Karta musi mit dotykovou vysku i na malem displeji, proto se vyska
+# pocita z mista, ktere zbylo - ne naopak.
+func layout_guards() -> void:
+	guard_cards = []
+	guard_back = Rect2()
+	guard_title_y = 0.0
+	if view.x < 1.0 or view.y < 1.0:
+		return
+	var w: float = clampf(view.x * 0.88, 240.0, 660.0)
+	var btn: float = minf(MENU_BTN_MAX, maxf(MENU_BTN_MIN, view.y * 0.09))
+	var gap: float = maxf(8.0, view.y * 0.016)
+	var top: float = maxf(46.0, view.y * 0.13)
+	var bottom: float = view.y - btn - maxf(16.0, view.y * 0.03)
+	var h: float = minf(view.y * 0.20, (bottom - top - gap * 2.0) / 3.0)
+	var total: float = h * 3.0 + gap * 2.0
+	var y0: float = top + maxf(0.0, (bottom - top - total) * 0.5)
+	var x: float = (view.x - w) * 0.5
+	for i in range(3):
+		guard_cards.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
+	guard_back = Rect2(x, bottom + gap, w, btn)
+	guard_title_y = y0 - view.y * 0.075
 
 
 # DIALOG. Jedno misto pro "opravdu ukoncit", "level vyhran" i "konec" - kdo by

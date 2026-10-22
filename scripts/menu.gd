@@ -14,7 +14,7 @@ extends RefCounted
 # jen tehdy, kdyz je hra normalne otevrena (ne v anonymnim okne) a ma manifest
 # + service worker. Oboji web export Godotu prida.
 
-enum View { MENU, LEVELS, SETTINGS, BATTLE, UPGRADES }
+enum View { MENU, LEVELS, SETTINGS, BATTLE, UPGRADES, GUARDS }
 
 const TITLE := "ŽILY 2"
 const SUBTITLE := "jedna věž uprostřed, poutníci ze všech stran"
@@ -78,6 +78,18 @@ func open_upgrades() -> void:
 
 func is_upgrades() -> bool:
 	return view == View.UPGRADES
+
+
+# STRAZCI MAJI VLASTNI OBRAZOVKU (Jan, Oct 2026: "Pro tento upgrade ale
+# uděláme speciální ui sekci"). Neni to tab v mrizce upgradu: slot se odemyka
+# urovni hrace a kazdy ma vlastni stupne, coz se do radku "popisek - hodnota -
+# cena" nevejde.
+func open_guards() -> void:
+	view = View.GUARDS
+
+
+func is_guards() -> bool:
+	return view == View.GUARDS
 
 
 func is_menu() -> bool:

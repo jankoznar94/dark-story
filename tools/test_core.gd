@@ -18,9 +18,10 @@ func _init() -> void:
 	_run("regenerace dolici zivoty veze", _test_regen)
 	_run("nula zivotu = prohra", _test_lose)
 	_run("vez vidi jen svou barvu", _test_only_own_hue)
-	_run("strazce strili na nejblizsiho bez ohledu na barvu (a jen se specialem)",
-		_test_turret_ignores_hue)
-	_run("tri strazci stoji v trojuhelniku a deli si cile", _test_three_guards)
+	_run("strazce: paprskem na nejblizsiho bez ohledu na barvu", _test_strazce_turret)
+	_run("satelit: koule krouzi podle stupne a poskozuje vse v dosahu",
+		_test_guard_orbits)
+	_run("tri satelity: kazdy ma svou fazi a vlastni zareni", _test_three_guards)
 	_run("laser ubira plynule, hned a bez kadence", _test_laser_burns_continuously)
 	_run("paprsek se po smrti cile prepoji na dalsi", _test_laser_retargets_after_death)
 	_run("paprsek ma sirku a odraz je tensi", _test_beam_width)
@@ -256,27 +257,18 @@ func _test_only_own_hue() -> void:
 	_check(g.locks.size() == 1 and g.locks[0] == r, "vez zamirila na vic nez svoji barvu")
 
 
-# STRAZCE (turret, special "tw"). Jan (Oct 2026): "útocil by automaticky vždy na
-# nejbližšího nepřítele, nehledě na barvu ... pojistka když hráč nestíhá."
-# a "Strazce by mel pocitat poskozeni procentualne ze ZAKLADNIHO poskozeni veze.
-# Bez multishotu a ricochetu."
-#
-# MERI SE CTYRI VECI, ktere by se daly snadno rozbit:
-#  1. bez specialu strazce NEEXISTUJE (zadny paprsek, zadne poskozeni),
-#  2. se specialem zasahne poutnika JINE barvy (vez cervena, poutnik zluty),
-#  3. poskozeni je podil ZAKLADU (`laser_base`), ne celeho vykonu -
-#     multishot a odraz do nej nesmi vstoupit,
-#  4. dostrel je AKTUALNI dostrel veze, ne vychozi.
-func _test_turret_ignores_hue() -> void:
-	# 1) BEZ SPECIAL
+# STRAZCE (turret "tw"): puntiky, ktere stoji a miri paprskem. Jan si tuhle
+# verzi nechal ("ten strážce není špatný tak, jak je") a Satelity jsou vedle ni
+# druha zbran. MERI SE: bez specialu nic, s nim zasahne JINOU barvu, poskozeni
+# je podil ZAKLADU a cilem je nejblizsi poutnik.
+func _test_strazce_turret() -> void:
 	var off: Game = _fresh()
-	var q: Pilgrim = _place(off, Hue.YELLOW, off.range_frac() * 0.6)
+	var q: Pilgrim = _place(off, Hue.YELLOW, 0.20)
 	q.speed = 0.0
 	var hp0: float = q.hp
 	_tick(off, 0.5)
 	_check(is_equal_approx(q.hp, hp0), "strazce bez specialu poskozuje poutniky")
 	_check(off.turret_beams.is_empty(), "strazce bez specialu sviti paprskem")
-	# 2) SE SPECIALEM, JINA BARVA
 	var g: Game = _fresh()
 	g.profile.perm["tw"] = 1
 	g.tower.hue = Hue.RED
@@ -298,95 +290,137 @@ func _test_turret_ignores_hue() -> void:
 		% g.turret_beams.size())
 	_check(g.beams.is_empty(), "vez cervena sviti na zluteho poutnika")
 	_check(g.turret_locks.has(y), "strazce nemiri na nejblizsiho poutnika")
-	# 3) MULTISHOT A ODRAZ DO POSKOZENI NEVSTUPUJI. S plnym multishotem a
-	# odrazem stoupne vykon veze nekolikanasobne, strazce ale zustava na
-	# zakladu - jinak by z pojistky byla druha hlavni zbran.
+	# MULTISHOT A ODRAZ DO POSKOZENI NEVSTUPUJI.
 	var base_dps: float = g.turret_dps()
 	g.profile.perm["ms"] = Upgrades.perm_max("ms")
 	g.profile.perm["rc"] = Upgrades.perm_max("rc")
 	_check(absf(g.turret_dps() - base_dps) < 0.0001,
 		"multishot/odraz zvedly poskozeni strazce (%.2f -> %.2f)"
 		% [base_dps, g.turret_dps()])
-	# 4) DOSTREL: poutnik na 45 % polomeru je mimo VYCHOZI dostrel (34 %),
-	# ale uvnitr plneho (60 %). Bez upgradu ho strazce nesmi zasahnout.
-	y.alive = false
-	var far: Pilgrim = _place(g, Hue.YELLOW, 0.45)
-	far.speed = 0.0
-	far.hp = 500.0
-	far.max_hp = 500.0
-	_tick(g, 0.2)
-	_check(is_equal_approx(far.hp, 500.0), "strazce strili mimo aktualni dostrel")
-	_check(not g.turret_locks.has(far), "strazce zamirila poutnika mimo dostrel")
-	g.profile.perm["ar"] = Upgrades.perm_max("ar")
-	_tick(g, 0.2)
-	_check(far.hp < 500.0, "strazce ignoruje koupeny radius (dostrel)")
-	# 5) STUPNE NAVYSUJI POCET, NE POSKOZENI (Jan, Oct 2026): kazdy strazce
-	# bere porad stejny podil zakladu, treti stupen proste stoji tri.
+	# TRETI STUPEN = TRI STRAZCI, poskozeni jednoho se nemění.
 	g.profile.perm["tw"] = 3
 	_check(g.turret_count() == 3, "3. stupen nedava tri strazce (%d)" % g.turret_count())
 	_check(absf(g.turret_dps() - g.laser_base() * 0.30) < 0.0001,
 		"poskozeni jednoho strazce se s poctem zmenilo (%.2f)" % g.turret_dps())
 
-# TRI STRAZCI (Jan, Oct 2026): "místo navyšování poškození uděláme to, že se
-# budou dát dokoupit další dva strážci. Každý bude mít jinou pozici na věži.
-# Budou rozmístěný do trojúhelníku."
+
+# SATELITI (koule, Oct 2026). Jan: "Strážce odteď bude kulička, která bude
+# kroužit kolem věže v pravidelném kruhu ... záření, které poškozuje vše, co je
+# v jeho dosahu." + "Lvl 1 bude kroužit na minimálním (výchozím) rádiusu
+# zjišťování. Lvl 3 bude kroužit na maximálním rádiusu zjišťování."
 #
-# Meri se geometrie (rovnostranny trojuhelnik kolem veze) a to, ze si strazci
-# cile NEDELI na jednoho: tri ruzne barvy v dostrelu = tri paprsky na tri ruzne
-# poutniky. Kdyby vsechny mirit na nejblizsiho, byla by trojice jen drahy
-# multishot.
+# MERI SE:
+#  1. bez slotu zadny strazce neexistuje (zadna koule, zadne poskozeni),
+#  2. koule poskozuje PLYNULE (za snimek, ne jednorazove) a bez ohledu na
+#     barvu - vez cervena, poutnik zluty,
+#  3. poskozeni je podil ZAKLADU, ne celeho vykonu (multishot/odraz nic),
+#  4. draha 1. stupne je vychozi dostrel a 3. stupne maximalni.
+func _test_guard_orbits() -> void:
+	# 1) BEZ SLOTU
+	var off: Game = _fresh()
+	var q: Pilgrim = _place(off, Hue.YELLOW, 0.30)
+	q.speed = 0.0
+	var hp0: float = q.hp
+	_tick(off, 0.5)
+	_check(is_equal_approx(q.hp, hp0), "bez slotu strazce poskozuje poutniky")
+	_check(off.guard_orbs.is_empty(), "bez slotu existuje koule strazce")
+	# 2) PRVNI SLOT AZ OD 5. LEVELU (Jan: "Od 5 úrovně se odemče první slot")
+	var g: Game = _fresh()
+	g.profile.level = 4
+	g.profile.guards[0] = 1
+	_tick(g, 0.2)
+	_check(g.guard_orbs.is_empty(), "slot je aktivni driv nez na 5. levelu")
+	g.profile.level = 5
+	var y: Pilgrim = _place(g, Hue.YELLOW, 0.30)
+	y.speed = 0.0
+	y.hp = 500.0
+	y.max_hp = 500.0
+	_tick(g, 0.25)
+	_check(g.guard_orbs.size() == 1, "odemceny slot nema prave jednu kouli (%d)"
+		% g.guard_orbs.size())
+	_check(y.hp < 500.0, "koule neposkozuje poutnika v jine barve")
+	# 3) PLYNULE: stejne poskozeni za sekundu, ne narazove.
+	var before: float = y.hp
+	var dt: float = 1.0 / 240.0
+	g.step(dt)
+	var per_frame: float = before - y.hp
+	var dps: float = g.guard_dps(1)
+	_check(per_frame > 0.0 and per_frame < dps * dt * 3.0,
+		"poskozeni neni plynule (%.4f za snimek, dps %.2f)" % [per_frame, dps])
+	# 4) PODIL ZAKLADU: multishot a odraz do nej nevstupuji.
+	var base_dps: float = g.guard_dps(1)
+	g.profile.perm["ms"] = Upgrades.perm_max("ms")
+	g.profile.perm["rc"] = Upgrades.perm_max("rc")
+	_check(absf(g.guard_dps(1) - base_dps) < 0.0001,
+		"multishot/odraz zvedly poskozeni strazce (%.2f -> %.2f)"
+		% [base_dps, g.guard_dps(1)])
+	# 5) DRAHA: 1. stupen = vychozi dostrel, 3. = maximalni, 2. presne mezi.
+	var s: Dictionary = Upgrades.stat("ar")
+	var low: float = float(s["start"]) * g.field_r
+	var high: float = float(s["cap"]) * g.field_r
+	var o1: Vector2 = g.guard_pos(0, 1)
+	var o3: Vector2 = g.guard_pos(0, 3)
+	_check(absf(o1.distance_to(g.center) - low) < 0.5,
+		"1. stupen nekrouzi na vychozim dostrelu (%.1f vs %.1f)"
+		% [o1.distance_to(g.center), low])
+	_check(absf(o3.distance_to(g.center) - high) < 0.5,
+		"3. stupen nekrouzi na maximalnim dostrelu (%.1f vs %.1f)"
+		% [o3.distance_to(g.center), high])
+	_check(absf(Upgrades.guard_orbit_frac(2) - (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
+		"2. stupen nekrouzi presne mezi dostrely")
+	# 6) KROUZI: pozice se v case meni a zustava na sve draze.
+	var p0: Vector2 = g.guard_pos(0, 1)
+	g.clock += 3.5
+	var p1: Vector2 = g.guard_pos(0, 1)
+	_check(p0.distance_to(p1) > 1.0, "koule stoji na miste")
+	_check(absf(p1.distance_to(g.center) - low) < 0.5, "koule vybocila ze sve drahy")
+
+
+# TRI SLOTY (Jan: "Od 5 úrovně se odemče první slot, od 10 druhý, od 15 třetí").
+# Kazdy slot je vlastni strazce s vlastni fazi, takze tri koule nekrouzi
+# v zástupu; kazda ma svuj zarivy kruh a poskozuje vsechno v nem.
 func _test_three_guards() -> void:
 	var g: Game = _fresh()
-	g.profile.perm["tw"] = 3
-	g.tower.hue = Hue.RED
-	_check(g.turret_count() == 3, "tri koupene strazce nedaji tri strazce (%d)"
-		% g.turret_count())
-	# GEOMETRIE: tri pozice, vsechny stejne daleko od stredu, 120 stupnu od sebe.
-	var pos: Array = g.turret_positions()
-	_check(pos.size() == 3, "tri strazci nemaji tri pozice (%d)" % pos.size())
-	if pos.size() == 3:
-		var d0: float = (pos[0] as Vector2).distance_to(g.center)
-		for p in pos:
-			_check(absf((p as Vector2).distance_to(g.center) - d0) < 0.01,
-				"strazci nestoji ve stejne vzdalenosti od veze")
-		var a0: float = ((pos[1] as Vector2) - g.center).angle()
-		var a1: float = ((pos[2] as Vector2) - g.center).angle()
+	g.profile.level = 15
+	for i in range(3):
+		g.profile.guards[i] = 1
+	_check(g.guard_orbits() == 3, "15. level neodemkl tri sloty (%d)" % g.guard_orbits())
+	_tick(g, 0.2)
+	_check(g.guard_orbs.size() == 3, "tri sloty nedaji tri koule (%d)"
+		% g.guard_orbs.size())
+	# FAZE: koule stoji na ruznych mistech (120 stupnu od sebe).
+	if g.guard_orbs.size() == 3:
+		var a0: float = ((g.guard_orbs[0]["pos"] as Vector2) - g.center).angle()
+		var a1: float = ((g.guard_orbs[1]["pos"] as Vector2) - g.center).angle()
 		var diff: float = absf(fposmod(a1 - a0, TAU))
 		_check(absf(diff - TAU / 3.0) < 0.05,
-			"dva strazci nejsou 120 stupnu od sebe (%.1f)" % rad_to_deg(diff))
-	# TRI RUZNE BARVY V DOSTRELU: kazdy strazce si vezme sveho.
-	var ps: Array = [
-		_place(g, Hue.YELLOW, 0.20, 0.0),
-		_place(g, Hue.BLUE, 0.22, PI * 0.75),
-		_place(g, Hue.GREEN, 0.24, PI * 1.35),
-	]
-	for p in ps:
+			"dve koule nejsou 120 stupnu od sebe (%.1f)" % rad_to_deg(diff))
+	# ZARENI POSKOZUJE VSECHNO V DOSAHU: tri poutnici v jednom kruhu.
+	var aura: float = g.guard_aura(1)
+	var c0: Vector2 = g.guard_orbs[0]["pos"]
+	var ps: Array = []
+	for k in range(3):
+		var p: Pilgrim = _place(g, Hue.YELLOW, 0.30)
+		p.pos = c0 + Vector2(cos(TAU * float(k) / 3.0), sin(TAU * float(k) / 3.0)) * aura * 0.5
 		p.speed = 0.0
 		p.hp = 500.0
 		p.max_hp = 500.0
-	_tick(g, 0.2)
-	_check(g.turret_beams.size() == 3, "tri strazci nevyrazeji tri paprsky (%d)"
-		% g.turret_beams.size())
-	var targets: Array = []
-	for b in g.turret_beams:
-		if not targets.has(b["target"]):
-			targets.append(b["target"])
-	_check(targets.size() == 3, "strazci se deli o cile (%d ruznych cilu)"
-		% targets.size())
-	var hurt: int = 0
-	for p in ps:
-		if p.hp < 500.0:
-			hurt += 1
-	_check(hurt == 3, "strazci nezasahli vsechny tri barvy (%d ze 3)" % hurt)
-	# S JEDINYM POUTNIKEM SE DVA STRAZCI SEJDOU: lepsi nez aby stali.
-	for p in ps:
-		p.alive = false
-	var only: Pilgrim = _place(g, Hue.YELLOW, 0.25)
-	only.speed = 0.0
-	only.hp = 500.0
-	only.max_hp = 500.0
+		ps.append(p)
+	var before: Array = [ps[0].hp, ps[1].hp, ps[2].hp]
 	_tick(g, 0.1)
-	_check(g.turret_beams.size() == 3, "strazci prestali strilet, kdyz je jeden cil")
+	var hurt: int = 0
+	for k in range(3):
+		if ps[k].hp < float(before[k]):
+			hurt += 1
+	_check(hurt == 3, "zareni neposkozuje vsechno v dosahu (%d ze 3)" % hurt)
+	# MIMO DOSAH SE NIC NEDEJE.
+	var out: Pilgrim = _place(g, Hue.YELLOW, 0.30)
+	out.pos = c0 + Vector2(aura * 2.5, 0.0)
+	out.speed = 0.0
+	out.hp = 500.0
+	out.max_hp = 500.0
+	_tick(g, 0.1)
+	_check(is_equal_approx(out.hp, 500.0), "zareni poskozuje i mimo svuj dosah")
 
 
 

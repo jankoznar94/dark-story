@@ -26,6 +26,10 @@ var perm: Dictionary = {}
 # NEJVYSsi ODEMCENY LEVEL (od jedne) a nejlepsi VYHRANY level (nula = zadny).
 var level: int = 1
 var best: int = 0
+# SATELITY: uroven kazdeho ze tri slotu (0 = jeste nestoji, 1-3 = stupen).
+# Ktery slot je vubec odemceny, se NEPLATE - pocita se z `level`
+# (`Upgrades.guard_slots`), takze se stav nemuze rozejit s pravidlem.
+var guards: Array = [0, 0, 0]
 
 
 func perm_level(id: String) -> int:
@@ -43,6 +47,32 @@ func buy_perm(id: String) -> bool:
 		return false
 	body -= cost
 	perm[id] = have + 1
+	save()
+	return true
+
+
+func guard_level(i: int) -> int:
+	if i < 0 or i >= guards.size():
+		return 0
+	return clampi(int(guards[i]), 0, Upgrades.GUARD_MAX)
+
+
+# KOUPE STUPNE STRAZCE ZA BODY. Vraci true, kdyz se opravdu koupil. Odemceny
+# slot je podminka - bez ni by sel koupit strazce do slotu, ktery hrac jeste
+# nema (a UI by ukazovalo neco jineho, nez co plati).
+func buy_guard(i: int) -> bool:
+	if i < 0 or i >= guards.size():
+		return false
+	if Upgrades.guard_slots(level) <= i:
+		return false
+	var have: int = guard_level(i)
+	if have >= Upgrades.GUARD_MAX:
+		return false
+	var cost: int = Upgrades.guard_cost(have)
+	if cost <= 0 or body < cost:
+		return false
+	body -= cost
+	guards[i] = have + 1
 	save()
 	return true
 
@@ -67,6 +97,7 @@ func reset() -> void:
 	perm = {}
 	level = 1
 	best = 0
+	guards = [0, 0, 0]
 	save()
 
 
@@ -78,6 +109,7 @@ func save() -> void:
 	cfg.set_value(SECTION, "level", level)
 	cfg.set_value(SECTION, "best", best)
 	cfg.set_value(SECTION, "perm", perm)
+	cfg.set_value(SECTION, "guards", guards)
 	cfg.save(PATH)
 
 
@@ -90,6 +122,11 @@ func load_from_disk() -> void:
 	body = maxi(0, int(cfg.get_value(SECTION, "body", 0)))
 	level = maxi(1, int(cfg.get_value(SECTION, "level", 1)))
 	best = maxi(0, int(cfg.get_value(SECTION, "best", 0)))
+	var g: Variant = cfg.get_value(SECTION, "guards", [0, 0, 0])
+	guards = [0, 0, 0]
+	if typeof(g) == TYPE_ARRAY:
+		for i in range(mini(3, (g as Array).size())):
+			guards[i] = clampi(int(g[i]), 0, Upgrades.GUARD_MAX)
 	var p: Variant = cfg.get_value(SECTION, "perm", {})
 	perm = {}
 	if typeof(p) == TYPE_DICTIONARY:
