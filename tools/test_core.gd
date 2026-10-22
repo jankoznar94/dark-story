@@ -64,39 +64,37 @@ func _tick(g: Game, sec: float, dt: float = 1.0 / 120.0) -> void:
 		t += dt
 
 
-# 1) PRST UKAZUJE, KAM SE HAZE. Bojovnik stoji na spodku a haze JEN DOPREDU
-#    (nahoru); 180° je rozlozeno lineárně pres celou sirku displeje.
+# 1) PRST PRED BOJOVNIKEM UKAZUJE PRIMO SMER HODU. Bojovnik stoji na spodku a
+#    haze jen dopredu; uhel je oriznuty na 180°.
 func _test_aim_opposite() -> void:
 	var g: Game = _fresh()
-	g.aim_at(Vector2(g.center.x + g.aim_span, g.center.y))
+	g.aim_at(g.center + Vector2(0.0, -400.0))
+	_check(g.aim.y < -0.99 and absf(g.aim.x) < 0.01,
+		"prst nad bojovnikem neznamena strelbu vzhuru (%.2f, %.2f)" % [g.aim.x, g.aim.y])
+	g.aim_at(g.center + Vector2(400.0, 0.0))
 	_check(g.aim.x > 0.99 and absf(g.aim.y) < 0.01,
-		"kraj vpravo neznamena strelbu vpravo (%.2f, %.2f)" % [g.aim.x, g.aim.y])
-	g.aim_at(Vector2(g.center.x - g.aim_span, g.center.y))
+		"prst vpravo neznamena strelbu vpravo (%.2f, %.2f)" % [g.aim.x, g.aim.y])
+	g.aim_at(g.center + Vector2(-400.0, 0.0))
 	_check(g.aim.x < -0.99 and absf(g.aim.y) < 0.01,
-		"kraj vlevo neznamena strelbu vlevo (%.2f, %.2f)" % [g.aim.x, g.aim.y])
-	# PRST UPROSTRED = STRELBA VZHURU, i kdyz je vysoko nad bojovnikem. To je
-	# cely point opravy: mirit se da z velke plochy, ne z pruhu pod barbarem.
-	g.aim_at(Vector2(g.center.x, g.center.y - 400.0))
-	_check(absf(g.aim.x) < 0.01 and g.aim.y < -0.99,
-		"prst uprostred nahore neznamena strelbu vzhuru (%.2f, %.2f)" % [g.aim.x, g.aim.y])
-	# VYSKA PRSTU NIC NEDELA - stejne X = stejny smer.
-	var a1: Vector2 = g.aim
-	g.aim_at(Vector2(g.center.x + 40.0, g.center.y + 60.0))
-	g.aim_at(Vector2(g.center.x + 40.0, g.center.y - 400.0))
-	_check(g.aim.distance_to(Vector2.from_angle(-PI * 0.5 + (40.0 / g.aim_span) * PI * 0.5)) < 0.001
-		and a1.distance_to(g.aim) > 0.001, "vyska prstu meni smer strelby")
-	# JEMNOST: 1 % sirky luku = necele 2° - na velke plose se miri detailne.
-	g.aim_at(Vector2(g.center.x, g.center.y - 300.0))
+		"prst vlevo neznamena strelbu vlevo (%.2f, %.2f)" % [g.aim.x, g.aim.y])
+	# SIKMO: smer je presne tam, kde prst lezi.
+	g.aim_at(g.center + Vector2(g.field_r, -g.field_r))
+	_check(g.aim.x > 0.6 and g.aim.y < -0.6, "sikmy smer neodpovida prstu (%.2f, %.2f)"
+		% [g.aim.x, g.aim.y])
+	# VZDALENOST PRSTU NIC NEMENI - rozhoduje jen uhel.
+	g.aim_at(g.center + Vector2(0.3 * g.field_r, -0.3 * g.field_r))
+	var near: Vector2 = g.aim
+	g.aim_at(g.center + Vector2(2.0 * g.field_r, -2.0 * g.field_r))
+	_check(near.distance_to(g.aim) < 0.001, "vzdalenost prstu meni smer strelby")
+	# PRST ZA BOJOVNIKEM: smer se ohne na horizontalu, nikdy se neotoci dozadu.
+	g.aim_at(g.center + Vector2(0.2 * g.field_r, 300.0))
+	_check(g.aim.y <= 0.001, "smer strelby se otocil dozadu (%.2f, %.2f)" % [g.aim.x, g.aim.y])
+	# JEMNOST PRI MIRENI VZHURU: 7 px do strany na 400 px = necele 1,2°.
+	g.aim_at(g.center + Vector2(0.0, -400.0))
 	var up: Vector2 = g.aim
-	g.aim_at(Vector2(g.center.x + g.aim_span * 0.01, g.center.y - 300.0))
+	g.aim_at(g.center + Vector2(7.0, -400.0))
 	var moved: float = rad_to_deg(absf(up.angle_to(g.aim)))
-	_check(moved < 1.2, "1 %% sirky pohne smerem o %.2f° - moc hrube" % moved)
-	# ...a cely rozsah je opravdu 180°.
-	g.aim_at(Vector2(g.center.x - g.aim_span, g.center.y))
-	var left_aim: Vector2 = g.aim
-	g.aim_at(Vector2(g.center.x + g.aim_span, g.center.y))
-	_check(absf(absf(rad_to_deg(left_aim.angle_to(g.aim))) - 180.0) < 1.5,
-		"cely rozsah neni 180° (%.1f°)" % rad_to_deg(left_aim.angle_to(g.aim)))
+	_check(moved < 1.2, "7 px pohne smerem o %.2f° - moc hrube" % moved)
 
 
 # 2) BEZ PRSTU SE NEHAZI.
@@ -117,7 +115,7 @@ func _test_fire_only_while_aiming() -> void:
 
 func _test_spear_hits() -> void:
 	var g: Game = _fresh()
-	g.aim_at(Vector2(g.center.x - g.aim_span, g.center.y))
+	g.aim_at(g.center + Vector2(-400.0, 0.0))
 	var e: Dictionary = _place(g, 0.30, PI, 50.0)
 	g.step(1.0 / 120.0)
 	_check(g.spears.size() > 0, "po mireni neleti zadny ostep")
@@ -136,7 +134,7 @@ func _test_spear_hits() -> void:
 func _test_ricochet() -> void:
 	var g: Game = _fresh()
 	g.profile.perm["ric"] = 2
-	g.aim_at(Vector2(g.center.x - g.aim_span, g.center.y))
+	g.aim_at(g.center + Vector2(-400.0, 0.0))
 	var a: Dictionary = _place(g, 0.30, PI, 30.0)
 	var b: Dictionary = _place(g, 0.30, PI * 0.9, 30.0)
 	_tick(g, 0.7)
@@ -182,6 +180,6 @@ func _test_multishot() -> void:
 	var g: Game = _fresh()
 	# perm 2 = zaklad 1 + 2 = 3 ostepy v jednom hodu.
 	g.profile.perm["shots"] = 2
-	g.aim_at(Vector2(g.center.x - g.aim_span, g.center.y))
+	g.aim_at(g.center + Vector2(-400.0, 0.0))
 	g.step(1.0 / 120.0)
 	_check(g.spears.size() == 3, "tri ostepy v hodu nejsou tri (%d)" % g.spears.size())

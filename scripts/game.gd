@@ -49,10 +49,6 @@ var body_earned: int = 0
 var enemies: Array = []
 var spears: Array = []
 var aiming: bool = false
-# SIRKA "LUKU": na kolik pixelu do strany se mapuje celych 180°. Je to skoro
-# cela sirka displeje, aby sel smer menit jemne - pri starem pocitani uhlu
-# z polohy prstu byl pouzitelny jen maly pruh POD bojovnikem.
-var aim_span: float = 250.0
 var aim: Vector2 = Vector2.UP
 var fire_left: float = 0.0
 var spawn_left: float = 0.0
@@ -82,10 +78,6 @@ func set_field(r: float, c: Vector2, a: Rect2 = Rect2()) -> void:
 		arena = a
 	else:
 		arena = Rect2(c.x - r * 2.0, c.y - r * 2.2, r * 4.0, r * 2.2)
-	# CELYCH 180° se rozlozi na temer celou sirku displeje. Hrac tak nemusi
-	# mirit v uzouckem pruhu pod bojovnikem - prst muze mit kdekoliv a smer
-	# meni plynule po velke plose.
-	aim_span = maxf(field_r, arena.size.x * 0.46)
 
 
 # ------------------------------------------------------------------ PARAMETRY
@@ -206,14 +198,17 @@ func _level_won() -> void:
 
 # ------------------------------------------------------------------ VSTUP
 
-# MIREni PRIMO: PRST UKAZUJE, KAM SE MA HODIT. Driv to bylo opacne ("luk"),
-# ale na mobilu je primy smer citelnejsi - hrac polozi prst na nepritele a
-# ostep tam leti. Prevod zustava linearni pres celou sirku (180° na `aim_span`),
-# takze jemnost je stejna jako u opacneho mireni.
+# MIREni PRIMO PRSTEM PRED BOJOVNIKEM: smer je presne ten, kterym prst lezi
+# od barbara (Jan, Oct 2026: "bude střílet tam, kam ukazuje prst. Přímo").
+# Uhel se orizne na 180° dopredu, takze se nikdy neotoci zpet k sobe.
 func aim_at(pos: Vector2) -> void:
-	var span: float = maxf(1.0, aim_span)
-	var dx: float = clampf((pos.x - center.x) / span, -1.0, 1.0)
-	aim = Vector2.from_angle(-PI * 0.5 + dx * PI * 0.5)
+	var d: Vector2 = pos - center
+	if d.length() <= 0.001:
+		aiming = true
+		return
+	var rel: float = wrapf(d.angle() + PI * 0.5, -PI, PI)
+	rel = clampf(rel, -PI * 0.5, PI * 0.5)
+	aim = Vector2.from_angle(-PI * 0.5 + rel)
 	aiming = true
 
 
