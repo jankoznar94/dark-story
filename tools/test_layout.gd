@@ -45,8 +45,13 @@ func _test_size(v: Vector2) -> void:
 	_check(l.center.x + l.field_r <= v.x + 0.5, "%s: kruh preteka vpravo" % tag)
 	_check(l.center.y - l.field_r >= l.bar_h - 0.5, "%s: kruh leze pod horni pruh" % tag)
 	_check(l.center.y + l.field_r <= v.y + 0.5, "%s: kruh preteka dole" % tag)
-	# 2) MENU: dve velka tlacitka, v displeji, dotyková.
-	_check(l.menu_rects.size() == 2, "%s: menu nema dve tlacitka" % tag)
+	# 2) MENU: tlacitka HRAT / VYLEPSENI / UPDATE, v displeji, dotyková.
+	_check(l.menu_rects.size() == Menu.ITEMS.size(), "%s: menu nema vsechna tlacitka (%d)"
+		% [tag, l.menu_rects.size()])
+	_check(Menu.ITEMS.size() == Menu.ACTIONS.size() and Menu.ITEMS.size() == Menu.SUBS.size(),
+		"%s: jmena, podtitulky a akce menu nemaji stejnou delku" % tag)
+	_check(Menu.ACTIONS.has("update"), "%s: v menu chybi tlacitko UPDATE" % tag)
+	_check(l.menu_note_y + float(l.font_px) * 1.6 <= v.y, "%s: hlaska pod menu je mimo displej" % tag)
 	for r in l.menu_rects:
 		var rr: Rect2 = r
 		_check(rr.size.y >= 44.0, "%s: tlacitko menu je nizsi nez 44 px" % tag)

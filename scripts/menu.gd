@@ -1,18 +1,33 @@
 class_name Menu
 extends RefCounted
 
-# KTERA OBRAZOVKA JE OTEVRENA. Hra sama o sobe nic nekresli ani necte vstup -
-# tady je jen stav, aby se podle nej dalo kreslit i klepat.
+# KTERA OBRAZOVKA JE OTEVRENA + AKTUALIZACE PWA. Hra sama nic nekresli ani
+# necte vstup - tady je jen stav, podle ktereho se kresli a klepe.
+#
+# TLACITKO UPDATE (Jan, Oct 2026: "ve hře musí být taky tlačítko Update. Jako
+# v Zily2. Abych mohl ručně aktualizovat service workera"): posle prohlizeci
+# dotaz, ktery odregistruje service workera, smaze cache a nacte hru znovu
+# s razitkem v adrese. Bez toho zustane nainstalovane PWA stara verze, dokud
+# se nezavrou vsechny panely - a to u PWA nejde.
+#
+# Mimo web (desktop) tlacitko jen rekne, ze neni co aktualizovat.
 
 enum View { MENU, BATTLE, UPGRADES }
 
 # Polozky menu. Akce se vyhodnocuji PRES JMENO, ne podle poradi.
-const ITEMS := ["HRÁT", "VYLEPŠENÍ"]
-const SUBS := ["hraj od nejvyššího levelu", "permanentní upgrady za body"]
-const ACTIONS := ["battle", "upgrades"]
+const ITEMS := ["HRÁT", "VYLEPŠENÍ", "UPDATE"]
+const SUBS := ["hraj od nejvyššího levelu", "permanentní upgrady za body", "stáhnout novou verzi"]
+const ACTIONS := ["battle", "upgrades", "update"]
+
+# GLOBALNI PROMENNE, KTERYMI PROHLIZEC MLUVI S HROU. Hra si je sama VYCTE
+# (`pull_js_state`) - callback z JS do GDScriptu v prohlizeci nedojde.
+const JS_BUILD := "__thrower_build"
+const JS_UPDATE := "__thrower_update"
 
 var view: int = View.MENU
+var web: bool = false
 var build_id: String = "dev"
+var update_note: String = ""
 
 
 func open_menu() -> void:
@@ -37,3 +52,117 @@ func is_battle() -> bool:
 
 func is_upgrades() -> bool:
 	return view == View.UPGRADES
+
+
+# JavaScriptovy singleton. NIKDY jako globalni identifikator: desktop export si
+# webove tridy nesmi vubec vsimnout.
+func _jb() -> Object:
+	return Engine.get_singleton("JavaScriptBridge")
+
+
+func _window() -> Object:
+	var jb: Object = _jb()
+	if jb == null:
+		return null
+	return jb.call("get_interface", "window")
+
+
+# Nacte otisk buildu (version.txt vedle index.html). Vysledek si hra VYCTE
+# pozdeji (`pull_js_state`) - ne callbackem.
+func load_build_id() -> void:
+	build_id = "dev"
+	if not web:
+		return
+	var jb: Object = _jb()
+	if jb == null:
+		return
+	var js := """
+	(() => {
+	  fetch('version.txt', {cache: 'no-store'})
+	    .then(r => r.ok ? r.text() : '?')
+	    .then(t => { window.%s = ((t || '').trim().slice(0, 12) || '?'); })
+	    .catch(() => { window.%s = '?'; });
+	  return true;
+	})()
+	""" % [JS_BUILD, JS_BUILD]
+	jb.call("eval", js, true)
+
+
+# STAV Z PROHLIZECE. Hra si ho prevzme nekolikrat za sekundu. Vraci true, kdyz
+# se neco zmenilo (obrazovka se pak prekresli).
+func pull_js_state() -> bool:
+	if not web:
+		return false
+	var w: Object = _window()
+	if w == null:
+		return false
+	var changed: bool = false
+	var b: Variant = w.get(JS_BUILD)
+	if b != null and typeof(b) == TYPE_STRING and String(b) != "" and String(b) != build_id:
+		build_id = String(b)
+		changed = true
+	var u: Variant = w.get(JS_UPDATE)
+	if u != null and typeof(u) == TYPE_STRING and String(u) != "":
+		apply_update_note(String(u))
+		# Hlaska se prevezme JEDNOU, jinak by se porad vracela.
+		w.set(JS_UPDATE, "")
+		changed = true
+	return changed
+
+
+# RUCNI AKTUALIZACE. Nejdriv normalni cesta (nova verze uz ceka ve service
+# workeru), pak odregistrovani + znovuzalozeni registrace a smazani cache.
+func request_update() -> void:
+	update_note = ""
+	if not web:
+		update_note = "Aktualizace je jen pro webovou verzi."
+		return
+	var jb: Object = _jb()
+	if jb == null:
+		update_note = "Prohlížeč neumí aktualizaci na pozadí."
+		return
+	var js := """
+	(async () => {
+	  const note = (c) => { window.%s = c; };
+	  try {
+	    if (!('serviceWorker' in navigator)) { note('n/a'); return 'n/a'; }
+	    // SERVICE WORKER SE REGISTRUJE ASYNC: kdyz hrac klepne hned po startu,
+	    // je seznam registraci jeste prazdny. Cekame na aktivni registraci,
+	    // ale S LIMITEM - `serviceWorker.ready` bez registrace visi vecne.
+	    await Promise.race([
+	      navigator.serviceWorker.ready,
+	      new Promise((r) => setTimeout(() => r(null), 3000))
+	    ]);
+	    const regs = await navigator.serviceWorker.getRegistrations();
+	    for (const r of regs) { await r.update(); }
+	    for (const r of regs) { await r.unregister(); }
+	    if (regs.length > 0) {
+	      await navigator.serviceWorker.register('index.service.worker.js', {scope: './'});
+	    }
+	    const cc = await caches.keys();
+	    for (const k of cc) { await caches.delete(k); }
+	    // NAVIGACE S RAZITKEM: bez nej vraci stary worker nebo HTTP cache
+	    // porad stary index.html. Jina adresa je v kazde cache nova polozka.
+	    note('hard');
+	    const bust = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now();
+	    setTimeout(() => location.replace(bust), 900);
+	    return 'hard';
+	  } catch (e) {
+	    note('err:' + e);
+	    return 'err:' + e;
+	  }
+	})()
+	""" % JS_UPDATE
+	jb.call("eval", js, false)
+
+
+func apply_update_note(code: String) -> void:
+	match code:
+		"hard":
+			update_note = "Cache smazána — restartuji…"
+		"none":
+			update_note = "Není co aktualizovat."
+		"n/a":
+			update_note = "Prohlížeč neumí aktualizaci na pozadí."
+		_:
+			update_note = "Aktualizace se nepodařila: " + code

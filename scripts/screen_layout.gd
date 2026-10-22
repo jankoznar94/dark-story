@@ -83,13 +83,17 @@ func layout_menu() -> void:
 	var w: float = clampf(view.x * 0.80, 240.0, 560.0)
 	var h: float = btn_size() * 1.5
 	var gap: float = maxf(10.0, view.y * 0.02)
-	var total: float = h * 2.0 + gap
-	var y0: float = view.y * 0.52
+	var n: int = Menu.ITEMS.size()
+	var total: float = h * float(n) + gap * float(n - 1)
+	# BLOK TLACITEK POD NADPISEM A CELY V DISPLEJI: na 390 px vysky se tri
+	# tlacitka uz nevejdou, kdyby začínala v polovine.
+	var y0: float = maxf(view.y * 0.28, view.y * 0.5 - total * 0.5 + view.y * 0.06)
+	y0 = minf(y0, view.y - total - float(font_px) * 3.0)
 	var x: float = (view.x - w) * 0.5
-	for i in range(2):
+	for i in range(n):
 		menu_rects.append(Rect2(x, y0 + (h + gap) * float(i), w, h))
-	menu_title_y = view.y * 0.12
-	menu_note_y = y0 + total + gap * 1.5
+	menu_title_y = view.y * 0.10
+	menu_note_y = y0 + total + gap * 1.2
 
 
 func layout_upgrades() -> void:

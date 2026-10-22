@@ -35,10 +35,13 @@ var menu := Menu.new()
 var _touch: Dictionary = {}
 var _mouse_down: bool = false
 var _mouse_pos: Vector2 = Vector2.ZERO
+var _js_t: float = 0.0
 
 
 func _ready() -> void:
 	game.profile.load_from_disk()
+	menu.web = OS.has_feature("web")
+	menu.load_build_id()
 	layout.update(get_viewport_rect().size)
 	_apply_field()
 	get_viewport().size_changed.connect(_on_resize)
@@ -56,6 +59,14 @@ func _apply_field() -> void:
 func _process(dt: float) -> void:
 	if menu.is_battle() and not game.is_over() and not game.paused:
 		game.step(dt)
+	# STAV Z PROHLIZECE (otisk buildu, hlaska k Update) se cte nekolikrat za
+	# sekundu - cteni vlastnosti okna je levne, ale ne kazdy snimek.
+	_js_t += dt
+	if _js_t >= 0.25:
+		_js_t = 0.0
+		menu.pull_js_state()
+	# Hra je kreslena rucne, takze se musi kazdy snimek vyzadat prekresleni.
+	queue_redraw()
 
 
 # =========================================================================
@@ -139,6 +150,8 @@ func _open_action(a: String) -> void:
 	elif a == "upgrades":
 		layout.layout_upgrades()
 		menu.open_upgrades()
+	elif a == "update":
+		menu.request_update()
 
 
 # =========================================================================
@@ -174,6 +187,10 @@ func _draw_menu() -> void:
 			int(maxf(11.0, r.size.y * 0.17)), DIM)
 	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_note_y, layout.view.x,
 		float(layout.font_px) * 1.5), layout.font_px, GOLD)
+	if not menu.update_note.is_empty():
+		_label(menu.update_note, Rect2(0.0, layout.menu_note_y + float(layout.font_px) * 1.6,
+			layout.view.x, float(layout.font_px) * 1.5),
+			int(maxf(11.0, float(layout.font_px) * 0.85)), Color(0.80, 0.72, 0.50))
 	_label("build %s" % menu.build_id,
 		Rect2(0.0, layout.view.y - float(layout.font_px) * 2.2, layout.view.x,
 			float(layout.font_px)), int(maxf(10.0, float(layout.font_px) * 0.75)), DIM)
