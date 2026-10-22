@@ -20,6 +20,7 @@ func _init() -> void:
 	_run("vez vidi jen svou barvu", _test_only_own_hue)
 	_run("strazce strili na nejblizsiho bez ohledu na barvu (a jen se specialem)",
 		_test_turret_ignores_hue)
+	_run("tri strazci stoji v trojuhelniku a deli si cile", _test_three_guards)
 	_run("laser ubira plynule, hned a bez kadence", _test_laser_burns_continuously)
 	_run("paprsek se po smrti cile prepoji na dalsi", _test_laser_retargets_after_death)
 	_run("paprsek ma sirku a odraz je tensi", _test_beam_width)
@@ -296,7 +297,7 @@ func _test_turret_ignores_hue() -> void:
 	_check(g.turret_beams.size() == 1, "zamerena strazce nema prave jeden paprsek (%d)"
 		% g.turret_beams.size())
 	_check(g.beams.is_empty(), "vez cervena sviti na zluteho poutnika")
-	_check(g.turret_lock == y, "strazce nemiri na nejblizsiho poutnika")
+	_check(g.turret_locks.has(y), "strazce nemiri na nejblizsiho poutnika")
 	# 3) MULTISHOT A ODRAZ DO POSKOZENI NEVSTUPUJI. S plnym multishotem a
 	# odrazem stoupne vykon veze nekolikanasobne, strazce ale zustava na
 	# zakladu - jinak by z pojistky byla druha hlavni zbran.
@@ -315,14 +316,78 @@ func _test_turret_ignores_hue() -> void:
 	far.max_hp = 500.0
 	_tick(g, 0.2)
 	_check(is_equal_approx(far.hp, 500.0), "strazce strili mimo aktualni dostrel")
-	_check(g.turret_lock != far, "strazce zamirila poutnika mimo dostrel")
+	_check(not g.turret_locks.has(far), "strazce zamirila poutnika mimo dostrel")
 	g.profile.perm["ar"] = Upgrades.perm_max("ar")
 	_tick(g, 0.2)
 	_check(far.hp < 500.0, "strazce ignoruje koupeny radius (dostrel)")
-	# 5) PLNY STUPEN: podil roste s tabulkou, ne s poctem poutniku.
+	# 5) STUPNE NAVYSUJI POCET, NE POSKOZENI (Jan, Oct 2026): kazdy strazce
+	# bere porad stejny podil zakladu, treti stupen proste stoji tri.
 	g.profile.perm["tw"] = 3
-	_check(absf(g.turret_dps() - g.laser_base() * 0.60) < 0.0001,
-		"3. stupen strazce nedava 60 %% zakladu")
+	_check(g.turret_count() == 3, "3. stupen nedava tri strazce (%d)" % g.turret_count())
+	_check(absf(g.turret_dps() - g.laser_base() * 0.30) < 0.0001,
+		"poskozeni jednoho strazce se s poctem zmenilo (%.2f)" % g.turret_dps())
+
+# TRI STRAZCI (Jan, Oct 2026): "místo navyšování poškození uděláme to, že se
+# budou dát dokoupit další dva strážci. Každý bude mít jinou pozici na věži.
+# Budou rozmístěný do trojúhelníku."
+#
+# Meri se geometrie (rovnostranny trojuhelnik kolem veze) a to, ze si strazci
+# cile NEDELI na jednoho: tri ruzne barvy v dostrelu = tri paprsky na tri ruzne
+# poutniky. Kdyby vsechny mirit na nejblizsiho, byla by trojice jen drahy
+# multishot.
+func _test_three_guards() -> void:
+	var g: Game = _fresh()
+	g.profile.perm["tw"] = 3
+	g.tower.hue = Hue.RED
+	_check(g.turret_count() == 3, "tri koupene strazce nedaji tri strazce (%d)"
+		% g.turret_count())
+	# GEOMETRIE: tri pozice, vsechny stejne daleko od stredu, 120 stupnu od sebe.
+	var pos: Array = g.turret_positions()
+	_check(pos.size() == 3, "tri strazci nemaji tri pozice (%d)" % pos.size())
+	if pos.size() == 3:
+		var d0: float = (pos[0] as Vector2).distance_to(g.center)
+		for p in pos:
+			_check(absf((p as Vector2).distance_to(g.center) - d0) < 0.01,
+				"strazci nestoji ve stejne vzdalenosti od veze")
+		var a0: float = ((pos[1] as Vector2) - g.center).angle()
+		var a1: float = ((pos[2] as Vector2) - g.center).angle()
+		var diff: float = absf(fposmod(a1 - a0, TAU))
+		_check(absf(diff - TAU / 3.0) < 0.05,
+			"dva strazci nejsou 120 stupnu od sebe (%.1f)" % rad_to_deg(diff))
+	# TRI RUZNE BARVY V DOSTRELU: kazdy strazce si vezme sveho.
+	var ps: Array = [
+		_place(g, Hue.YELLOW, 0.20, 0.0),
+		_place(g, Hue.BLUE, 0.22, PI * 0.75),
+		_place(g, Hue.GREEN, 0.24, PI * 1.35),
+	]
+	for p in ps:
+		p.speed = 0.0
+		p.hp = 500.0
+		p.max_hp = 500.0
+	_tick(g, 0.2)
+	_check(g.turret_beams.size() == 3, "tri strazci nevyrazeji tri paprsky (%d)"
+		% g.turret_beams.size())
+	var targets: Array = []
+	for b in g.turret_beams:
+		if not targets.has(b["target"]):
+			targets.append(b["target"])
+	_check(targets.size() == 3, "strazci se deli o cile (%d ruznych cilu)"
+		% targets.size())
+	var hurt: int = 0
+	for p in ps:
+		if p.hp < 500.0:
+			hurt += 1
+	_check(hurt == 3, "strazci nezasahli vsechny tri barvy (%d ze 3)" % hurt)
+	# S JEDINYM POUTNIKEM SE DVA STRAZCI SEJDOU: lepsi nez aby stali.
+	for p in ps:
+		p.alive = false
+	var only: Pilgrim = _place(g, Hue.YELLOW, 0.25)
+	only.speed = 0.0
+	only.hp = 500.0
+	only.max_hp = 500.0
+	_tick(g, 0.1)
+	_check(g.turret_beams.size() == 3, "strazci prestali strilet, kdyz je jeden cil")
+
 
 
 # LASER NEMA ANI LET, ANI KADENCI. Jan (Oct 2026): "Vrátíme se k laseru místo

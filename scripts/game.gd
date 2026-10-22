@@ -279,20 +279,28 @@ const ICE_S := 3.0
 # Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
 # odraz za každého unikátního nepřítele").
 const ODRAZ_RANGE_FRAC := 0.55
-# STRAZCE (turret). Mala vežicka stojici na okraji veze. Je to DRUHA ZBRAN:
-# strili na nejblizsiho poutnika BEZ OHLEDU NA BARVU, takze je to pojistka pro
-# hrace, ktery nestiha prepinat. Barvu necte vubec (`Game._turret`), takze ji
-# nemuze ovlivnit ani paleta, ani michani.
+# STRAZCE (turret). Male puntiky stojici na okraji veze. Je to DRUHA ZBRAN:
+# kazdy strili na nejblizsiho poutnika BEZ OHLEDU NA BARVU, takze je to pojistka
+# pro hrace, ktery nestiha prepinat. Barvu necte vubec (`Game._turret`), takze
+# ji nemuze ovlivnit ani paleta, ani michani.
 #
-# STOJÍ NA PEVNEM MISTE (vpravo nahoru), neobiha vez: hrac ma mit jednu
-# kotvu, kam se diva, a paprsek, ktery z ni jde, je tak vzdy videt.
-const TURRET_ANGLE := -PI * 0.25
+# JSOU AZ TRI A STOJI V TROJUHELNIKU (Jan, Oct 2026): "se budou dát dokoupit
+# další dva strážci. Každý bude mít jinou pozici na věži. Budou rozmístěný do
+# trojúhelníku. Budou to malé puntíky a z nich bude vycházet paprsek."
+# Uhly jsou 120 stupnu od sebe (rovnostranny trojuhelnik) a prvni stoji NAHORU,
+# aby ho hrac nasel na stejnem miste, kam se diva nejvic.
+const TURRET_ANGLES := [-PI * 0.5, PI / 6.0, PI * 5.0 / 6.0]
 # Vzdalenost od stredu veze = nasobek `tower_r` (1,85 = tesne za zivotnim
 # obloukem veze, ktery konci na 1,34 r).
 const TURRET_DIST := 1.85
-# Polomer tela turretu = nasobek `tower_r` (0,40 = zhruba tretina veze).
-# VETSIT SE NESMI: turret je "maly" a vetsi by hracovi splynul s vezi.
-const TURRET_BODY := 0.40
+# Polomer puntiku = nasobek `tower_r`. MUSI zustat MALY: strazce je doplnek,
+# ne druha vez (Jan: "Budou to malé puntíky").
+const TURRET_BODY := 0.26
+# POSKOZENI JEDNOHO STRAZCE = podil ZAKLADNIHO poskozeni veze (`laser_base`).
+# Kazdy strazce ma sve cislo nezavisle na tom, kolik jich je - tri strazci tedy
+# daji 3 x 30 % zakladu. Kdo chce, aby se poskozeni s poctem nedelilo, meni
+# TADY (a nic jineho).
+const TURRET_DPS_FRAC := 0.30
 
 # ------------------------------------------------------------------ ROZVRZENI
 
@@ -369,12 +377,12 @@ var beams: Array = []
 # Poskozeni se NEDELA pri vystrelu, ale az pri dopadu (`t >= dur`) - Jan: strela
 # leti a hrac ji vidi. Nekresli se z `beams` (ty patri vezi).
 var enemy_shots: Array = []
-# STRAZCE (turret, special "tw"): jeji paprsek a cil. Paprsek je jen JEDEN
-# ({from, to, target}) - strazce nema multishot ani odraz, takze si ji obrazovka
-# nemusi pocitat sama. `turret_lock` je poutnik, na ktereho prave miri; drzi se
-# dokud je zivy a v dostrelu, aby paprsek nekmital mezi dvema stejne blizkymi.
+# STRAZCE (turret, special "tw"): jejich paprsky a cile. Paprsku je tolik, kolik
+# je strazcu (0-3) - kazdy {from, to, target, guard}, takze si obrazovka nic
+# nepocita sama. `turret_locks` je pole cilu po strazcich; drzi se, dokud je
+# poutnik zivy a v dostrelu, aby paprsek nekmital mezi dvema stejne blizkymi.
 var turret_beams: Array = []
-var turret_lock: Pilgrim = null
+var turret_locks: Array = []
 # KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
 # merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
 var beams_lit: int = 0
@@ -574,15 +582,18 @@ func pilgrim_speed() -> float:
 # JE TO SPECIAL ("tw"), takze se kupuje JEN v menu za body a na kazdem levelu
 # plati od zacatku. `temp_max` 0 znamena, ze se v bitve nekupuje - strazce neni
 # dalsi cislo v zebricku, je to druha zbran.
-func turret_frac() -> float:
-	return val("tw")
+#
+# STUPEN = POCET STRAZCU (0-3), ne poskozeni. Kazdy strazce bere porad stejny
+# podil zakladu (`TURRET_DPS_FRAC`).
+func turret_count() -> int:
+	return clampi(int(round(val("tw"))), 0, Upgrades.perm_max("tw"))
 
 
 func turret_active() -> bool:
-	return turret_frac() > 0.0
+	return turret_count() > 0
 
 
-# POSKOZENI STRAZCE ZA SEKUNDU. Jan (Oct 2026): "Strazce by mel pocitat
+# POSKOZENI JEDNOHO STRAZCE ZA SEKUNDU. Jan (Oct 2026): "Strazce by mel pocitat
 # poskozeni procentualne ze ZAKLADNIHO poskozeni veze. Bez multishotu a
 # ricochetu."
 #
@@ -591,15 +602,21 @@ func turret_active() -> bool:
 # zadne jedne rane, ale v tom, ze jich vez vede vic najednou. Strazce vede
 # jednu zbran na jeden cil, takze se o ne neopira. Diky tomu zustava pojistkou:
 # kdo investuje do sireni paprsku, dostane odmenu jen z miry, ne z automaticky
-# mireného turretu.
+# mireneho strazce.
 func turret_dps() -> float:
-	return laser_base() * turret_frac()
+	return laser_base() * TURRET_DPS_FRAC
 
 
-# KDE STRAZCE STOJI. Pevny bod mimo zivotni oblouk veze, takze hrac vidi dve
-# zbrane oddelene - a paprsek strazce nikdy neprochazi telem veze.
-func turret_pos() -> Vector2:
-	return center + Vector2(cos(TURRET_ANGLE), sin(TURRET_ANGLE)) * tower_r * TURRET_DIST
+# KDE STRAZCI STOJI: rovnostranny trojuhelnik kolem veze, mimo jeji zivotni
+# oblouk. Prvni je nahore, dalsi dva vpravo-dolu a vlevo-dolu (120 stupnu).
+# Vraci presne tolik pozic, kolik je koupeno strazcu.
+func turret_positions() -> Array:
+	var out: Array = []
+	var n: int = turret_count()
+	for i in range(n):
+		var a: float = float(TURRET_ANGLES[i % TURRET_ANGLES.size()])
+		out.append(center + Vector2(cos(a), sin(a)) * tower_r * TURRET_DIST)
+	return out
 
 
 func turret_radius() -> float:
@@ -644,7 +661,7 @@ func start_level(n: int) -> void:
 	beams = []
 	enemy_shots = []
 	turret_beams = []
-	turret_lock = null
+	turret_locks = []
 	beams_lit = 0
 	crit_left = 0.0
 	crit_wait = 0.0
@@ -1508,41 +1525,77 @@ func _laser(dt: float) -> void:
 # druha hlavni zbran. Jed a led nedava, je to cista rana. Cil se drzi,
 # dokud je zivy a v dostrelu - jinak by paprsek kmital mezi dvema poutniky
 # a hrac by nevidel, na co vlastne miri.
+#
+# KAZDY STRAZCE MA SVUJ CIL (Oct 2026): tri paprsky na jednoho poutnika by byly
+# jen drahy zpusob, jak zvysit poskozeni jednoho cile - a hrac ma tri strazce
+# prave proto, aby mu pojistka pokryla vic barev naraz. Strazce proto bere
+# nejblizsiho poutnika, ktereho jeste nema JINY strazce; kdyz je v dostrelu
+# min poutniku nez strazcu, dva se sejdou na stejnem (lepsi nez aby treti
+# strazce stal a nic nedelal).
 func _turret(dt: float) -> void:
 	turret_beams = []
-	if not turret_active():
-		turret_lock = null
+	var n: int = turret_count()
+	if n <= 0:
+		turret_locks = []
 		return
 	var r: float = range_px()
-	if turret_lock != null and (not turret_lock.alive or not turret_lock.targetable()
-			or not in_range(turret_lock, r)):
-		turret_lock = null
-	if turret_lock == null:
-		var best: Pilgrim = null
-		var best_d: float = 1.0e18
-		for p in pilgrims:
-			if not p.alive or not p.targetable() or not in_range(p, r):
-				continue
-			var d: float = p.pos.distance_squared_to(center)
-			if d < best_d:
-				best_d = d
-				best = p
-		turret_lock = best
-	if turret_lock == null:
-		return
-	var target: Pilgrim = turret_lock
-	var from_pt: Vector2 = turret_pos()
-	var to_pt: Vector2 = target.pos
-	var dir: Vector2 = to_pt - from_pt
-	if dir.length() <= 0.001:
-		return
-	dir = dir.normalized()
-	# PAPRSEK VYCHAZI Z OKRAJE TURRETU a konci na TELI poutnika - stejna
-	# pravidla jako u paprsku veze, jen mensi (turret je mala vec).
-	from_pt += dir * turret_radius()
-	to_pt -= dir * pilgrim_hit_r(target)
-	turret_beams.append({"from": from_pt, "to": to_pt, "target": target})
-	_hurt(target, turret_dps() * dt)
+	# 1) DRZET STARE CILE, dokud jsou platne. Kdyby se cile pocitaly kazdy
+	# snimek znovu, paprsek by pri kazdem priblizeni jineho poutnika preskocil.
+	var chosen: Array = []
+	for i in range(n):
+		var prev: Pilgrim = null
+		if i < turret_locks.size():
+			prev = turret_locks[i]
+		if prev != null and prev.alive and prev.targetable() and in_range(prev, r) \
+				and not chosen.has(prev):
+			chosen.append(prev)
+		else:
+			chosen.append(null)
+	# 2) DOPLNIT CHYBEJICI: nejblizsi volny poutnik, jinak nejblizsi vubec.
+	for i in range(n):
+		if chosen[i] != null:
+			continue
+		var best: Pilgrim = _turret_pick(chosen, r, true)
+		if best == null:
+			best = _turret_pick(chosen, r, false)
+		chosen[i] = best
+	turret_locks = chosen
+	var pos_list: Array = turret_positions()
+	for i in range(n):
+		var target: Pilgrim = turret_locks[i]
+		if target == null or not target.alive:
+			continue
+		var from_pt: Vector2 = pos_list[i]
+		var to_pt: Vector2 = target.pos
+		var dir: Vector2 = to_pt - from_pt
+		if dir.length() <= 0.001:
+			continue
+		dir = dir.normalized()
+		# PAPRSEK VYCHAZI Z OKRAJE PUNTIKU a konci na TELI poutnika - stejna
+		# pravidla jako u paprsku veze, jen mensi (strazce je mala vec).
+		from_pt += dir * turret_radius()
+		to_pt -= dir * pilgrim_hit_r(target)
+		turret_beams.append({"from": from_pt, "to": to_pt, "target": target,
+			"guard": i})
+		_hurt(target, turret_dps() * dt)
+
+
+# NEJBLIZSI POUTNIK V DOSTRELU PRO STRAZCE. `only_free` vynecha ty, ktere uz ma
+# jiny strazce; bez nej se vraci nejblizsi vubec (fallback, kdyz je poutniku
+# mene nez strazcu).
+func _turret_pick(taken: Array, r: float, only_free: bool) -> Pilgrim:
+	var best: Pilgrim = null
+	var best_d: float = 1.0e18
+	for p in pilgrims:
+		if not p.alive or not p.targetable() or not in_range(p, r):
+			continue
+		if only_free and taken.has(p):
+			continue
+		var d: float = p.pos.distance_squared_to(center)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
 
 
 # ODRAZ. Paprsek preskoci na nejblizsiho dalsiho poutnika, na ktereho se v tom
@@ -1817,7 +1870,7 @@ func from_state(d: Dictionary) -> bool:
 	beams = []
 	enemy_shots = []
 	turret_beams = []
-	turret_lock = null
+	turret_locks = []
 	beams_lit = 0
 	events = []
 	finger_hue = {}

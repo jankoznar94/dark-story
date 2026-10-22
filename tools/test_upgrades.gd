@@ -108,28 +108,36 @@ func _test_game_speed() -> void:
 
 # STRAZCE (turret). Jan (Oct 2026): "malý turret, který by způsoboval třeba jen
 # 30% poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
-# nehledě na barvu ... pojistka když hráč nestíhá."
+# nehledě na barvu ... pojistka když hráč nestíhá." a později "místo navyšování
+# poškození ... další dva strážci ... rozmístěný do trojúhelníku".
 #
 # V TABULCE se hlida jen to, co hrac vidi v menu: je to SPECIAL (v bitve se
-# nekupuje), prvni stupen dava 30 % a kazdy dalsi vic. Ze opravdu strili na
-# jinou barvu, hlida `test_core._test_turret_ignores_hue` (tabulka o tom nic
-# nevi - je to pravidlo hry, ne cislo).
+# nekupuje) a hodnota je POCET STRAZCU 0-3. Ze opravdu strili na jinou barvu,
+# maji kazdy svuj cil a stoji v trojuhelniku, hlida
+# `test_core._test_turret_ignores_hue` (tabulka o tom nic nevi - je to pravidlo
+# hry, ne cislo).
 func _test_turret() -> void:
 	_check(Upgrades.perm_max("tw") == 3, "strazce nema tri stupne")
 	_check(Upgrades.temp_max("tw") == 0, "strazce jde koupit za zlato v bitve")
 	_check(Upgrades.temp_buyable("tw") == false, "strazce se nabizi v bitve")
 	_check(String(Upgrades.stat("tw")["cat"]) == Upgrades.CAT_SPEC,
 		"strazce neni special")
-	_check(absf(Upgrades.value_of("tw", 0, 0)) < 0.0001, "strazce bez upgradu uz strili")
-	_check(absf(Upgrades.value_of("tw", 1, 0) - 0.30) < 0.0001,
-		"1. stupen strazce neni 30 %% (%.2f)" % Upgrades.value_of("tw", 1, 0))
-	_check(absf(Upgrades.value_of("tw", 3, 0) - 0.60) < 0.0001,
-		"3. stupen strazce neni 60 %% (%.2f)" % Upgrades.value_of("tw", 3, 0))
-	_check(Upgrades.value_text("tw", 1, 0) == "30 %",
-		"text strazce neni 30 %% (%s)" % Upgrades.value_text("tw", 1, 0))
-	_check(Upgrades.value_text("tw", 0, 0) == "—",
-		"strazce bez upgradu se netiskne jako prazdna (%s)" % Upgrades.value_text("tw", 0, 0))
+	_check(Upgrades.label_of("tw") == "Strážce",
+		"popisek neni \"Strážce\" (%s)" % Upgrades.label_of("tw"))
+	_check(absf(Upgrades.value_of("tw", 0, 0)) < 0.0001, "strazce bez upgradu uz stoji")
+	_check(absf(Upgrades.value_of("tw", 1, 0) - 1.0) < 0.0001,
+		"1. stupen neni jeden strazce (%.2f)" % Upgrades.value_of("tw", 1, 0))
+	_check(absf(Upgrades.value_of("tw", 3, 0) - 3.0) < 0.0001,
+		"3. stupen nejsou tri strazci (%.2f)" % Upgrades.value_of("tw", 3, 0))
+	_check(Upgrades.value_text("tw", 1, 0) == "1",
+		"text strazce neni 1 (%s)" % Upgrades.value_text("tw", 1, 0))
+	_check(Upgrades.value_text("tw", 3, 0) == "3",
+		"text strazce neni 3 (%s)" % Upgrades.value_text("tw", 3, 0))
+	_check(Upgrades.value_text("tw", 0, 0) == "0",
+		"strazce bez upgradu se netiskne jako nula (%s)" % Upgrades.value_text("tw", 0, 0))
 	_check(Upgrades.perm_cost("tw", 0) > 0, "strazce je zadarmo")
+	_check(Upgrades.perm_cost("tw", 1) > Upgrades.perm_cost("tw", 0),
+		"druhy strazce nestoji vic nez prvni")
 
 
 func _test_perm_shifts_start() -> void:

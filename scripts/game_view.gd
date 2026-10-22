@@ -1210,28 +1210,18 @@ func _draw_tower() -> void:
 		_hp_color(frac), maxf(3.0, tr * Game.TOWER_ARC_W))
 
 
-# STRAZCE (turret). Mala vežicka na kraji veze - tmave telo jako vez, ale SVETLY
-# neutralni prstenec: barva je ve hre vyznam (na co vez miri), takze zbran, ktera
-# barvu necte, nesmi mit barvu zadnou. Ramecek je plochy, zadny glow (Jan ma
-# astigmatismus).
+# STRAZCE. Male puntiky v trojuhelniku kolem veze, z kazdeho vychazi paprsek.
+# Jsou OCELOVE SEDE: barva je ve hre vyznam (na co vez miri), takze zbran, ktera
+# barvu necte, nesmi mit barvu zadnou. Plocha, zadny glow (Jan ma astigmatismus).
 func _draw_turret() -> void:
 	if not game.turret_active():
 		return
-	var pos: Vector2 = game.turret_pos()
 	var tr: float = game.turret_radius()
-	# HLAVEN: vždy smeruje na cil; kdyz strazce nic nevidi, stoji ven z veze.
-	var aim: Vector2 = Vector2(cos(Game.TURRET_ANGLE), sin(Game.TURRET_ANGLE))
-	var target: Pilgrim = game.turret_lock
-	if target != null and target.alive:
-		var d: Vector2 = target.pos - pos
-		if d.length() > 0.001:
-			aim = d.normalized()
-	draw_line(pos, pos + aim * tr * 1.9, TURRET_STEEL, maxf(2.0, tr * 0.62))
-	draw_circle(pos, tr, TOWER_BODY)
-	draw_arc(pos, tr * 0.82, 0.0, TAU, 24, TURRET_STEEL, maxf(1.6, tr * 0.34))
+	for pos in game.turret_positions():
+		draw_circle(pos, tr, TURRET_STEEL)
 
 
-# PAPRSEK HLIDKY. Neni to pulzni tok veze - je to TENSI, KLYDNEJSI CARA v
+# PAPRSEK STRAZCE. Neni to pulzni tok veze - je to TENSI, KLYDNEJSI CARA v
 # neutralni ocelove barve, aby hrac na prvni pohled poznal, ktera zbran zasah
 # dela. Konce maji kolecka (Godot kresli caru s hranatym koncem).
 func _draw_turret_beams() -> void:
@@ -1243,7 +1233,6 @@ func _draw_turret_beams() -> void:
 		if target == null or not target.alive:
 			continue
 		draw_line(b["from"], b["to"], TURRET_STEEL, w)
-		draw_circle(b["from"], w * 0.5, TURRET_STEEL)
 		draw_circle(b["to"], w * 0.5, TURRET_STEEL)
 
 
