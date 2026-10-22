@@ -442,15 +442,20 @@ static func guard_param(level: int, key: String) -> float:
 	return float(st.get(key, 0.0))
 
 
-# KDE STRAZCE KROUZI: 1. stupen na VYCHOZIM dostrelu veze, posledni na
-# MAXIMALNIM, prostredni presne mezi nimi (Jan, Oct 2026). Bere se z tabulky
-# `ar` (start a cap), takze se to nemuze rozejit s tim, co hrac vidi jako
-# "Dostřel".
-static func guard_orbit_frac(level: int) -> float:
+# KDE SATELIT KROUZI: DRAHA JE VLASTNOST SLOTU, NE STUPNE (Jan, Oct 2026:
+# "S každým vylepšením se zvětšuje jeho rádius. To je špatně. Má se zvětšovat
+# satelit a má se zrychlovat jeho pohyb, ale jeho cesta má zůstávat stejně
+# dlouhá. Každý satelit má svoji oběžnou dráhu.").
+#
+# Satelit 1 krouzi na VYCHOZIM dostrelu veze, Satelit 3 na MAXIMALNIM a
+# Satelit 2 presne mezi nimi - stejne rozdeleni, jake Jan chtel puvodne, jen
+# navazane na slot misto na stupen. Stupen meni kouli, zareni, poskozeni a
+# rychlost; drahu NIKDY.
+static func guard_orbit_frac(slot: int) -> float:
 	var s: Dictionary = stat("ar")
 	var a: float = float(s["start"])
 	var b: float = float(s["cap"])
-	var t: float = float(clampi(level, 1, GUARD_MAX) - 1) / float(GUARD_MAX - 1)
+	var t: float = float(clampi(slot, 0, GUARD_MAX - 1)) / float(GUARD_MAX - 1)
 	return lerpf(a, b, t)
 
 # SOUHRN PRO KONZOLI/TESTY: "as 3/6+2" (permanentni/docasne).

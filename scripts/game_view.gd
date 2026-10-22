@@ -1701,9 +1701,9 @@ func _draw_guards() -> void:
 		elif lv <= 0:
 			sub = "postavit · %d b." % cost
 		else:
-			sub = "poškození %d %% · dosah %d %% · oběh %s s" % [
+			sub = "poškození %d %% · dráha %d %% · oběh %s s" % [
 				int(round(Upgrades.guard_param(lv, "dmg") * 100.0)),
-				int(round(Upgrades.guard_orbit_frac(lv) * 100.0)),
+				int(round(Upgrades.guard_orbit_frac(i) * 100.0)),
 				_upg_cz(Upgrades.guard_param(lv, "orbit"), 1)]
 			sub += " · MAX" if maxed else " · +%d b." % cost
 		var spx: int = _fit_px(sub, inner, int(r.size.y * 0.20), 10)

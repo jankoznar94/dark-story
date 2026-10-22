@@ -354,20 +354,28 @@ func _test_guard_orbits() -> void:
 	_check(absf(g.guard_dps(1) - base_dps) < 0.0001,
 		"multishot/odraz zvedly poskozeni strazce (%.2f -> %.2f)"
 		% [base_dps, g.guard_dps(1)])
-	# 5) DRAHA: 1. stupen = vychozi dostrel, 3. = maximalni, 2. presne mezi.
+	# 5) DRAHA: kazdy SLOT ma svou stalou drahu - 1. na vychozim dostrelu,
+	# 3. na maximalnim - a STUPEN ji nesmi pohnout (Jan, Oct 2026: "S každým
+	# vylepšením se zvětšuje jeho rádius. To je špatně ... jeho cesta má
+	# zůstávat stejně dlouhá").
 	var s: Dictionary = Upgrades.stat("ar")
 	var low: float = float(s["start"]) * g.field_r
 	var high: float = float(s["cap"]) * g.field_r
 	var o1: Vector2 = g.guard_pos(0, 1)
-	var o3: Vector2 = g.guard_pos(0, 3)
+	var o1b: Vector2 = g.guard_pos(0, 3)
+	var o3: Vector2 = g.guard_pos(2, 1)
 	_check(absf(o1.distance_to(g.center) - low) < 0.5,
-		"1. stupen nekrouzi na vychozim dostrelu (%.1f vs %.1f)"
+		"1. satelit nekrouzi na vychozim dostrelu (%.1f vs %.1f)"
 		% [o1.distance_to(g.center), low])
 	_check(absf(o3.distance_to(g.center) - high) < 0.5,
-		"3. stupen nekrouzi na maximalnim dostrelu (%.1f vs %.1f)"
+		"3. satelit nekrouzi na maximalnim dostrelu (%.1f vs %.1f)"
 		% [o3.distance_to(g.center), high])
-	_check(absf(Upgrades.guard_orbit_frac(2) - (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
-		"2. stupen nekrouzi presne mezi dostrely")
+	_check(absf(o1b.distance_to(g.center) - low) < 0.5,
+		"vylepseni posunulo drahu satelitu (%.1f vs %.1f)"
+		% [o1b.distance_to(g.center), low])
+	_check(absf(Upgrades.guard_orbit_frac(1)
+		- (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
+		"2. satelit nekrouzi presne mezi dostrely")
 	# 6) KROUZI: pozice se v case meni a zustava na sve draze.
 	var p0: Vector2 = g.guard_pos(0, 1)
 	g.clock += 3.5

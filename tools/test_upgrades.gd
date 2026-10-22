@@ -154,15 +154,16 @@ func _test_turret() -> void:
 		prev_orbit = orbit
 	_check(absf(Upgrades.guard_param(1, "dmg") - 0.30) < 0.0001,
 		"prvni stupen nedava 30 %% zakladu (%.2f)" % Upgrades.guard_param(1, "dmg"))
-	# DRAHA: 1. stupen na vychozim dostrelu, 3. na maximalnim.
+	# DRAHA JE PODLE SLOTU: satelit 1 na vychozim dostrelu, 3. na maximalnim,
+	# 2. presne mezi (a stupen ji NEMENI - hlida `test_core`).
 	var s: Dictionary = Upgrades.stat("ar")
-	_check(absf(Upgrades.guard_orbit_frac(1) - float(s["start"])) < 0.0001,
-		"1. stupen nekrouzi na vychozim dostrelu")
-	_check(absf(Upgrades.guard_orbit_frac(3) - float(s["cap"])) < 0.0001,
-		"3. stupen nekrouzi na maximalnim dostrelu")
-	_check(absf(Upgrades.guard_orbit_frac(2)
+	_check(absf(Upgrades.guard_orbit_frac(0) - float(s["start"])) < 0.0001,
+		"1. satelit nekrouzi na vychozim dostrelu")
+	_check(absf(Upgrades.guard_orbit_frac(2) - float(s["cap"])) < 0.0001,
+		"3. satelit nekrouzi na maximalnim dostrelu")
+	_check(absf(Upgrades.guard_orbit_frac(1)
 		- (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
-		"2. stupen nekrouzi presne mezi dostrely")
+		"2. satelit nekrouzi presne mezi dostrely")
 	# SATELITY NEJSOU V MRIZCE UPGRADU (maji vlastni obrazovku a vlastni tabulku).
 	_check(Upgrades.stat("sat")["label"] == "sat", "satelit zustal v mrizce upgradu")
 

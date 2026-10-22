@@ -583,7 +583,9 @@ func pilgrim_speed() -> float:
 # zrychluji se zrychlenim hry a po nacteni ulozene partie jsou presne tam, kde
 # maji byt - bez dalsiho ukladaneho stavu.
 func guard_pos(i: int, level: int) -> Vector2:
-	var orbit: float = Upgrades.guard_orbit_frac(level) * field_r
+	# DRAHA PODLE SLOTU, NE PODLE STUPNE (Jan, Oct 2026: "Každý satelit má
+	# svoji oběžnou dráhu"). Stupen meni jen rychlost obehu.
+	var orbit: float = Upgrades.guard_orbit_frac(i) * field_r
 	var period: float = maxf(1.0, Upgrades.guard_param(level, "orbit"))
 	var ang: float = TAU * fmod(clock / period, 1.0) + float(GUARD_PHASE[i % GUARD_PHASE.size()])
 	return center + Vector2(cos(ang), sin(ang)) * orbit
