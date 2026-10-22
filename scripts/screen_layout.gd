@@ -101,7 +101,7 @@ func layout_upgrades() -> void:
 	var w: float = clampf(view.x * 0.86, 260.0, 620.0)
 	var h: float = btn_size()
 	var gap: float = maxf(8.0, view.y * 0.012)
-	var top: float = view.y * 0.14
+	var top: float = maxf(view.y * 0.14, float(title_px) * 2.45)
 	var bottom: float = view.y - h - maxf(18.0, view.y * 0.04)
 	var n: int = Upgrades.STATS.size()
 	# NA SIROKEM DISPLEJI DVA SLOUPCE. Sedm radku po 44 px se na 360 px vysky
@@ -121,8 +121,8 @@ func layout_upgrades() -> void:
 		var row: int = i % rows
 		upg_rows.append(Rect2(x + (cw + gap) * float(col), top + (rh + gap) * float(row), cw, rh))
 	upg_back = Rect2(x, view.y - h - maxf(18.0, view.y * 0.04), w, h)
-	upg_title_y = top - view.y * 0.08
-	upg_note_y = top - view.y * 0.045
+	upg_title_y = top - float(title_px) * 2.2
+	upg_note_y = top - float(font_px) * 1.55
 
 
 func layout_dialog() -> void:

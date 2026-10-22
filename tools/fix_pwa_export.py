@@ -40,14 +40,13 @@ NAV_MARK = "NAVIGACE JE VZDY ZE SITE"
 # v kazde verzi Godotu jiny a spatna hodnota se projevi jen tim, ze se PWA
 # spusti na sirku (coz je u teto hry necitelna plocha). Zapisuje se proto
 # natvrdo jako retezec.
-ORIENTATION = "portrait"
+ORIENTATION = "landscape"
 
-# Hra je na VYSKU. Orientace se zamyka na strance, ne jen v manifestu:
+# Hra je NA SIRKU. Orientace se zamyka na strance, ne jen v manifestu:
 # prohlizec pouzije manifest jen ve chvili spusteni nainstalovane aplikace,
 # behem nacitani enginu se orientace vraci k senzoru. Kdyz displej zustane
-# na sirku, je dole tenky pruh s jednou vetou - zadna podlozka pres hru,
-# hra je hratelna i tak, jen je plocha mensi a barvy hur citelne.
-PORTRAIT_MARK = "ZILY_NA_VYSKU"
+# na vysku, je hra v uzouckem pruhu - proto se v portraitu zobrazi vyzva.
+ORIENT_MARK = "HRA_NA_SIRKU"
 
 # KONTROLA VERZE NA STRANCE. Service worker i network-first navigace jsou ve
 # SW, ale prohlizec muze drzet STARY index.html i stary worker (a u
@@ -93,28 +92,28 @@ UPDATE_JS = """
 """
 
 PORTRAIT_JS = """
-\t<!-- ZILY_NA_VYSKU: hra je na vysku, orientace se drzi tady, ne jen v manifestu. -->
+\t<!-- HRA_NA_SIRKU: hra je na sirku, orientace se drzi tady, ne jen v manifestu. -->
 \t<style>
-\t  #zily_vyska { display: none; position: fixed; left: 0; right: 0; bottom: 0;
+\t  #zily_na_sirku { display: none; position: fixed; left: 0; right: 0; bottom: 0;
 \t    z-index: 2147483647; background: #14120f; color: #e8e2d4;
 \t    font: 14px/1.5 sans-serif; text-align: center; padding: 8px 12px; }
-\t  body.zily_landscape #zily_vyska { display: block; }
+\t  body.zily_portrait #zily_na_sirku { display: block; }
 \t</style>
-\t<div id="zily_vyska">Hraje se na výšku — otoč telefon.</div>
+\t<div id="zily_na_sirku">Hraje se na šířku — otoč telefon.</div>
 \t<script>
 \t(function () {
-\t  function landscape() { return window.innerWidth > window.innerHeight; }
+\t  function portrait() { return window.innerHeight > window.innerWidth; }
 \t  function lock() {
 \t    try {
 \t      if (screen.orientation && screen.orientation.lock) {
-\t        var p = screen.orientation.lock('portrait');
+\t        var p = screen.orientation.lock('landscape');
 \t        if (p && p.catch) { p.catch(function () {}); }
 \t      }
 \t    } catch (e) {}
 \t  }
 \t  function refresh() {
 \t    if (document.body) {
-\t      document.body.classList.toggle('zily_landscape', landscape());
+\t      document.body.classList.toggle('zily_portrait', portrait());
 \t    }
 \t  }
 \t  window.addEventListener('resize', refresh);
@@ -312,23 +311,23 @@ def fix_index_html(out: str, version: str = "") -> bool:
 		return False
 	with open(html, "r", encoding="utf-8") as f:
 		src = f.read()
-	if PORTRAIT_MARK not in src:
+	if ORIENT_MARK not in src:
 		if "</body>" not in src:
 			print("PWA_HTML=fail (v index.html neni </body>)")
 			return False
-		src = src.replace("</body>", PORTRAIT_JS + "\t</body>", 1)
+		src = src.replace("</body>", PORTRAIT_JS + "	</body>", 1)
 		with open(html, "w", encoding="utf-8") as f:
 			f.write(src)
 	if UPDATE_MARK not in src:
 		if "</body>" not in src:
 			print("PWA_HTML=fail (v index.html neni </body>)")
 			return False
-		src = src.replace("</body>", UPDATE_JS.replace("__VER__", version) + "\t</body>", 1)
+		src = src.replace("</body>", UPDATE_JS.replace("__VER__", version) + "	</body>", 1)
 		with open(html, "w", encoding="utf-8") as f:
 			f.write(src)
 	# Kontrola je na to, co se opravdu pise do souboru.
-	missing = [m for m in [PORTRAIT_MARK, 'id="zily_vyska"',
-		"screen.orientation.lock('portrait')", UPDATE_MARK, "version.txt"] if m not in src]
+	missing = [m for m in [ORIENT_MARK, 'id="zily_na_sirku"',
+		"screen.orientation.lock('landscape')", UPDATE_MARK, "version.txt"] if m not in src]
 	if missing:
 		print("PWA_HTML=fail missing=%s" % missing)
 		return False

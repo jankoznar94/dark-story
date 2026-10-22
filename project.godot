@@ -11,10 +11,10 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
-window/size/viewport_width=600
-window/size/viewport_height=900
+window/size/viewport_width=900
+window/size/viewport_height=600
 window/stretch/mode="disabled"
-window/handheld/orientation=1
+window/handheld/orientation=0
 
 [input_devices]
 

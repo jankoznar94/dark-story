@@ -61,6 +61,9 @@ func _test_size(v: Vector2) -> void:
 			and rr.position.y >= -0.5 and rr.end.y <= v.y + 0.5, "%s: radek upgradu je mimo displej" % tag)
 	_check(l.upg_back.size.y >= 44.0, "%s: ZPET je nizsi nez 44 px" % tag)
 	_check(l.upg_back.end.y <= v.y + 0.5, "%s: ZPET je mimo displej" % tag)
+	_check(l.upg_title_y >= 0.0, "%s: nadpis upgradu je nad displejem" % tag)
+	_check(l.upg_note_y + float(l.font_px) * 1.2 <= l.upg_panel.position.y + 0.5,
+		"%s: pocet bodu se prekryva s radky" % tag)
 	# 4) HORNI PRUH: tlacitka se vejdou a neprekryvaji se.
 	_check(l.hud_menu.size.y >= 30.0, "%s: tlacitko MENU je moc male" % tag)
 	_check(l.hud_pause.end.x <= l.hud_menu.position.x, "%s: tlacitka v pruhu se prekryvaji" % tag)
