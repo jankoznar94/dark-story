@@ -49,6 +49,10 @@ var body_earned: int = 0
 var enemies: Array = []
 var spears: Array = []
 var aiming: bool = false
+# SIRKA "LUKU": na kolik pixelu do strany se mapuje celych 180°. Je to skoro
+# cela sirka displeje, aby sel smer menit jemne - pri starem pocitani uhlu
+# z polohy prstu byl pouzitelny jen maly pruh POD bojovnikem.
+var aim_span: float = 250.0
 var aim: Vector2 = Vector2.UP
 var fire_left: float = 0.0
 var spawn_left: float = 0.0
@@ -78,6 +82,10 @@ func set_field(r: float, c: Vector2, a: Rect2 = Rect2()) -> void:
 		arena = a
 	else:
 		arena = Rect2(c.x - r * 2.0, c.y - r * 2.2, r * 4.0, r * 2.2)
+	# CELYCH 180° se rozlozi na temer celou sirku displeje. Hrac tak nemusi
+	# mirit v uzouckem pruhu pod bojovnikem - prst muze mit kdekoliv a smer
+	# meni plynule po velke plose.
+	aim_span = maxf(field_r, arena.size.x * 0.46)
 
 
 # ------------------------------------------------------------------ PARAMETRY
@@ -198,17 +206,16 @@ func _level_won() -> void:
 
 # ------------------------------------------------------------------ VSTUP
 
-# PRST NA DISPLEJI = NAPNUTY LUK. Smer strelby je PRESNE OPAČNY nez smer
-# k prstu, proto `center - pos`. Bojovnik ale haze JEN DOPREDU (nahoru):
-# uhel se orizne na 180°, takze se nikdy neotoci zpet k sobe.
+# MIREni PRES CELOU SIRKU. Driv se uhel pocital z polohy prstu vuci bojovnikovi,
+# takze na malem pruhu pod nim sel smer menit jen hrube (a nahore se vse
+# zlomilo do krajnich poloh). Ted rozhoduje VODOROVNA POLOHA prstu: prst
+# uprostred = strelba vzhuru, prst u kraje = strelba na opacnou stranu.
+# Smer je porad OPAČNY nez ukazuje prst, jen je prevod linearni a pres celou
+# plochu - 180° na temer celou sirku displeje.
 func aim_at(pos: Vector2) -> void:
-	var d: Vector2 = center - pos
-	if d.length() <= 0.001:
-		aiming = true
-		return
-	var rel: float = wrapf(d.angle() + PI * 0.5, -PI, PI)
-	rel = clampf(rel, -PI * 0.5, PI * 0.5)
-	aim = Vector2.from_angle(-PI * 0.5 + rel)
+	var span: float = maxf(1.0, aim_span)
+	var dx: float = clampf((pos.x - center.x) / span, -1.0, 1.0)
+	aim = Vector2.from_angle(-PI * 0.5 - dx * PI * 0.5)
 	aiming = true
 
 
