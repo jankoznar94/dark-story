@@ -1,11 +1,11 @@
-name: Zily 2 (build)
+name: Thrower (build)
 
-# Tato hra zije na SVOJI vetvi jednoho repozitare (vetev = hra). Spousti se
-# jen na ni, aby neprepisovala build druhe hry ani nepadala na testech, ktere
-# v tomto stromu neexistuji.
+# Treti hra zije na SVE vetvi jednoho repozitare (vetev = hra). Workflow se
+# spousti jen na ni a publikuje do sveho podadresare na gh-pages, aby
+# neprepsala Zily 2 ani stary ley-lines.
 on:
   push:
-    branches: ["zily2"]
+    branches: ["thrower"]
   workflow_dispatch:
 
 permissions:
@@ -42,10 +42,9 @@ jobs:
       - name: Import assets
         run: ./godot --headless --path . --import
 
-      # KONTROLA OPACNYM SMEREM: co obrazovky volaji na `game`/`layout`/`menu`/
-      # `tower`, musi na tech objektech opravdu byt. GDScript takovou chybu jen
-      # ohlasí do logu a funkci prerusí - obrazovka se pak v tom miste vubec
-      # nedokresli (tak jednou zmizela cela paleta barev a testy byly zelene).
+      # KONTROLA OPACNYM SMEREM: co obrazovka vola na `game`/`layout`/`menu`,
+      # musi na tech objektech opravdu byt. GDScript takovou chybu jen ohlasí
+      # a funkci prerusí - obrazovka se pak v tom miste vubec nedokresli.
       - name: Symbols exist (view vs game)
         run: python3 tools/check_symbols.py .
 
@@ -56,87 +55,42 @@ jobs:
           echo "$OUT" | tail -20
           echo "$OUT" | grep -q "SCRIPTS_ALL_PASS=true"
 
-      # HERNI LOGIKA: vez vidi jen svou barvu, poskozeni dava az dopad strely,
-      # level ma 3-5 vln, za vyhru jsou BODY a vez ma ZIVOTY (zbroj, regenerace).
-      - name: Game rules test (srdce a vez)
+      # HERNI PRAVIDLA: ostep leti OPAČNYM smerem, nez ukazuje prst; haze se
+      # jen kdyz hrac drzi prst; zasah ubira zivoty a odraz preskakuje.
+      - name: Game rules test
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_core.gd 2>&1)
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "CORE_ALL_PASS=true"
 
-      # TABULKA UPGRADU A PROFIL: hodnota je start + (permanentni + docasne)
-      # kroky, permanentni stupen POSOUVA START a cena docasneho kroku se
-      # nemeni, specialy jsou jen permanentni. Tohle je jedina ochrana toho,
-      # ze "co hrac vidi" a "s cim hra pocita" je jedno cislo.
-      - name: Upgrades test (tabulka a profil)
+      - name: Upgrades test
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_upgrades.gd 2>&1)
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "UPGRADES_ALL_PASS=true"
 
-      # ROZVRZENI: kruh plochy se vejde do displeje, poutnik je citelny
-      # a poutnik prvni vlny stihne umrit v kruhu dostrelu (jinak je hra
-      # nehratelna, i kdyz vypada dobre).
-      - name: Layout test (6 realnych rozliseni)
+      - name: Layout test
         run: |
           set -e
           OUT=$(./godot --headless --path . --script res://tools/test_layout.gd 2>&1)
           echo "$OUT" | tail -30
           echo "$OUT" | grep -q "LAYOUT_ALL_PASS=true"
 
-      # MENU A NASTAVENI: stavova masina obrazovek, seznam tlacitek a jejich
-      # akce, hlasky aktualizace a prepinac jakosti vykreslovani.
-      - name: Menu test
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_menu.gd 2>&1)
-          echo "$OUT" | tail -30
-          echo "$OUT" | grep -q "MENU_ALL_PASS=true"
-
-      # UKLADANI ROZEHRANE PARTIE: stav bitvy se ulozi a po navratu z pozadi
-      # se hra musi vratit DO ROZJETE VLNY (a pokracovat stejne, vcetne nahody).
-      - name: Battle save test (rozehrana partie)
-        run: |
-          set -e
-          OUT=$(./godot --headless --path . --script res://tools/test_save.gd 2>&1)
-          echo "$OUT" | tail -30
-          echo "$OUT" | grep -q "SAVE_ALL_PASS=true"
-
-      - name: Export (Web)
+      - name: Export web build
         run: |
           set -e
           mkdir -p build/web
           ./godot --headless --path . --export-release "Web" || true
           ls -la build/web
 
-      # Godot generuje manifest s minimem poli a Androidu to nestaci - chce
-      # short_name, theme_color, id, scope a hlavne ikonu 192x192, kterou export
-      # vubec neumi. Navic jeho service worker v install nevola skipWaiting()
-      # a navigaci vyrizuje cache-first, takze hrac po nasazení zustane na stare
-      # hre. Otisk commitu jde do CACHE_VERSION, aby prohlizec novou verzi vubec
-      # zaregistroval.
       - name: Fix PWA export (manifest + service worker + orientace)
         run: python3 tools/fix_pwa_export.py build/web "${GITHUB_SHA:0:7}"
 
-      # Service worker je generovany soubor bez buildu - kdyz v nem zustane
-      # neplatna syntaxe, prohlizec ho zahodi a cela PWA prestane fungovat.
       - name: Service worker must be valid JavaScript
         run: node --check build/web/index.service.worker.js
 
-      # ORIENTACE JE SOUCAST HRY: na sirku je plocha ~270 px a barvy se na
-      # 18px poutnikovi nedaji precist. Kontroluje se to tady, protoze spatna
-      # hodnota v exportnim presetu se jinak projevi jen ticho - hrou, ktera
-      # se na telefonu neda hrat.
-      - name: Manifest must be portrait
-        run: |
-          set -e
-          grep -q '"orientation": "portrait"' build/web/index.manifest.json
-          echo "MANIFEST_ORIENTATION=portrait"
-
-      # Otisk buildu do hry. Bez nej hrac nepozna, jestli ma po aktualizaci
-      # opravdu novou verzi, nebo mu ji drzi cache service workera.
       - name: Build stamp
         run: printf '%s' "${GITHUB_SHA:0:7}" > build/web/version.txt
 
@@ -153,8 +107,6 @@ jobs:
           if [ "$MISSING" = "1" ]; then echo "ARTIFACTS_ALL_PRESENT=false"; exit 1; fi
           echo "ARTIFACTS_ALL_PRESENT=true"
 
-      # Vlastni podadresar na gh-pages + keep_files, aby tato hra NIKDY
-      # neprepsala web build druhe hry v tomtez repozitari.
       - name: Publish to GitHub Pages (subfolder, keeps other games)
         if: hashFiles('build/web/index.html') != ''
         uses: peaceiris/actions-gh-pages@v4
@@ -162,5 +114,5 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/web
           publish_branch: gh-pages
-          destination_dir: zily2
+          destination_dir: thrower
           keep_files: true

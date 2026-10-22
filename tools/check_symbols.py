@@ -23,7 +23,6 @@ OWNERS = {
     "game": "game.gd",
     "layout": "screen_layout.gd",
     "menu": "menu.gd",
-    "settings": "settings.gd",
     "profile": "profile.gd",
 }
 
@@ -80,18 +79,20 @@ def main() -> int:
                     problems.append("%s:%d  %s.%s  (chybi v %s)  | %s"
                                     % (f.relative_to(ROOT), i + 1, var, name, fname, line))
 
-    # game.tower.<x> zvlast (tower.gd)
-    tower_members = members_of(SCRIPTS / "tower.gd")
-    for f in files:
-        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
-        for i, raw in enumerate(lines):
-            if raw.strip().startswith("#"):
-                continue
-            for name in re.findall(r"\btower\.(\w+)", raw):
-                if name in tower_members or name in SKIP_NAMES:
+    # game.tower.<x> zvlast (tower.gd) - jen kdyz takovy skript existuje.
+    tower_path = SCRIPTS / "tower.gd"
+    if tower_path.exists():
+        tower_members = members_of(tower_path)
+        for f in files:
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            for i, raw in enumerate(lines):
+                if raw.strip().startswith("#"):
                     continue
-                problems.append("%s:%d  tower.%s  (chybi v tower.gd)"
-                                % (f.relative_to(ROOT), i + 1, name))
+                for name in re.findall(r"\btower\.(\w+)", raw):
+                    if name in tower_members or name in SKIP_NAMES:
+                        continue
+                    problems.append("%s:%d  tower.%s  (chybi v tower.gd)"
+                                    % (f.relative_to(ROOT), i + 1, name))
 
     if problems:
         print("CHYBI_%d" % len(problems))

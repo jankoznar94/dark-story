@@ -1,33 +1,19 @@
 extends SceneTree
 
-# TEST TABULKY UPGRADU A PROFILU. Vystup: UPGRADES_ALL_PASS=true / false
-#
-# Tohle je jedina ochrana toho, ze "co hrac vidi" a "co hra opravdu pouziva"
-# je jedno cislo. Kdyby si obrazovka pocitala hodnotu sama, hrac by videl
-# neco jineho, nez s cim hra pocita - a nikdo by si toho nevsiml.
+# TABULKA UPGRADU A PROFIL (jen permanentni - Jan: "Dočasné upgrady by úplně
+# zmizely."). Vystup: UPGRADES_ALL_PASS=true
 
 var fails: Array = []
 var checks: int = 0
 
 
 func _init() -> void:
-	Upgrades.STATS.size()  # nacti tridu
-	Profile.allow_save = false   # testy NESMI prepsat hracuv postup
-	_run("hodnota je start + (permanentni + docasne) kroky, orezana stropem", _test_value)
-	_run("permanentni stupen posouva start, cena docasneho kroku se NEMENI", _test_perm_shifts_start)
-	_run("docasna cena je N^2 a uroven ceny je vlastnost statu", _test_temp_cost)
-	_run("zlaty obeh je petkrat mensi a pomer zustal", _test_economy_scale)
-	_run("sila paprsku je nasobici osa (1,0x - 1,5x a v bitve dal)", _test_beam_power)
-	_run("permanentni cena roste a specialy jsou drazsi", _test_perm_cost)
-	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
-	_run("soucty: kazdy stat ma start, krok, strop a stropy dava smysl", _test_table_sane)
-	_run("zrychleni hry: 1,0x / 1,5x / 2,0x / 2,5x za body", _test_game_speed)
-	_run("strazci: sloty od 5/10/15 levelu, kazdy stupen silnejsi a rychlejsi",
-		_test_turret)
-	_run("strazce (turret): special v mrizce, 1-3 kusy za body", _test_strazce)
-	_run("texty hodnot jsou cesky a nejsou prazdne", _test_texts)
-	_run("profil: koupe permanentu za body, strop, nedostatek bodu", _test_profile_buy)
-	_run("profil: vyhrany level odemkne dalsi", _test_profile_clear)
+	Profile.allow_save = false
+	_run("hodnoty jsou start + stupne a oriznou se stropem", _test_values)
+	_run("rychlost hazeni se s upgradem ZKRACUJE", _test_rate)
+	_run("cena roste po trech urovnich", _test_cost)
+	_run("profil: koupe za body, bez bodu ne, strop drzi", _test_profile)
+	_run("texty jsou cesky a nejsou prazdne", _test_texts)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("UPGRADES_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -47,377 +33,56 @@ func _check(cond: bool, msg: String) -> void:
 		print("       FAIL: %s" % msg)
 
 
-func _test_value() -> void:
-	# KADENCE ("as") UZ NEEXISTUJE (Jan, Oct 2026: "Vrátíme se k laseru místo
-	# projektilů. Tím pádem zrušíme úplně Attack speed upgrady."). Kdyby radek
-	# v tabulce zustal, hrac by v panelu videl upgrade, ktery nic nedela.
-	_check(Upgrades.stat("as")["label"] == "as",
-		"tabulka porad zna zruseny upgrade Attack speed")
-	# POSKOZENI RANY je parametr hrace ("Ještě musíme přidat upgrade pro Attack
-	# damage") a plati pro nej to same: permanentni strop, docasne bez stropu.
-	# Od Oct 2026 je to poskozeni ZA SEKUNDU (vez sviti laserem).
-	_check(absf(Upgrades.value_of("ad", 0, 0) - 14.0) < 0.0001, "zakladni poskozeni neni 14")
-	_check(absf(Upgrades.value_of("ad", 0, 1) - 16.0) < 0.0001, "krok poskozeni neni +2")
-	_check(absf(Upgrades.value_of("ad", 7, 0) - 28.0) < 0.0001, "poskozeni na 7. permanentním neni 28")
-	_check(Upgrades.value_of("ad", 7, 20) > Upgrades.value_of("ad", 7, 0),
-		"docasne kroky poskozeni nic nepridaly")
-	# ODRAZ: jedna polozka, dve cisla - pocet odrazu a jejich sila. S kazdym
-	# stupnem musi rict vic odrazu a vetsi silu, jinak by hrac platil za nic.
-	var c0: Vector2 = Upgrades.chain_of("rc", 0, 0)
-	_check(c0.x == 0.0, "zakladni vez uz ma odraz (%d)" % int(c0.x))
-	var prev_n: int = 0
-	var prev_s: float = -1.0
-	for i in range(1, Upgrades.perm_max("rc") + 1):
-		var c: Vector2 = Upgrades.chain_of("rc", i, 0)
-		_check(c.x > prev_n, "stupen %d nepridal odraz (%d)" % [i, int(c.x)])
-		_check(c.y > prev_s, "stupen %d neprisel s lepsi silou odrazu (%.2f)" % [i, c.y])
-		_check(c.y > 0.0 and c.y <= 1.0, "sila odrazu na stupni %d neni podil (%.2f)" % [i, c.y])
-		prev_n = int(c.x)
-		prev_s = c.y
-	_check(absf(Upgrades.value_of("rc", 2, 0) - 2.0) < 0.0001,
-		"value_of u odrazu nevraci pocet odrazu (%.1f)" % Upgrades.value_of("rc", 2, 0))
-	_check(Upgrades.value_text("rc", 0, 0) == "—",
-		"odraz bez upgradu se netiskne jako prazdny (%s)" % Upgrades.value_text("rc", 0, 0))
-	_check(Upgrades.value_text("rc", 2, 0) == "2 odrazy · 60 % zásahu",
-		"text odrazu neni cesky (%s)" % Upgrades.value_text("rc", 2, 0))
-	# Rostouci parametr: dostrel 34 % -> 40 % po sesti krocich.
-	_check(absf(Upgrades.value_of("ar", 6, 0) - 0.40) < 0.0001, "dostrel po 6 krocích neni 40 %")
-	_check(absf(Upgrades.value_of("ar", 99, 99) - 0.60) < 0.0001, "dostrel neni na stropu 60 %")
-	# DOSTREL JE JEN PERMANENTNI (Jan, Oct 2026: "Rádius vyndáme z dočasných
-	# upgradů a bude jen v permanentních").
-	_check(Upgrades.temp_max("ar") == 0, "dostrel jde koupit i za zlato v bitve")
-	# Jed/led jdou po urovnich, ne po primce.
-	_check(absf(Upgrades.value_of("ps", 0, 0)) < 0.0001, "jed bez upgradu neni nula")
-	_check(absf(Upgrades.value_of("ps", 1, 0) - 0.20) < 0.0001, "jed na 1. stupni neni 20 %")
-	_check(absf(Upgrades.value_of("ps", 3, 0) - 0.50) < 0.0001, "jed na maximu neni 50 %")
-
-
-# ZRYCHLENI HRY (Jan, Oct 2026: "Přidáme do speciálních permanentních upgradů
-# novou mechaniku. Zrychlení hry. 1.5x, 2x, 2.5x."). Je to SPECIAL: v bitve se
-# nekupuje, plati se body a posouva tempo CELE hry (`Game.time_scale`).
-func _test_game_speed() -> void:
-	_check(Upgrades.perm_max("gs") == 3, "zrychleni hry nema tri stupne")
-	_check(Upgrades.temp_max("gs") == 0, "zrychleni hry jde koupit za zlato v bitve")
-	_check(absf(Upgrades.value_of("gs", 0, 0) - 1.0) < 0.0001, "zakladni tempo neni 1,0x")
-	_check(absf(Upgrades.value_of("gs", 1, 0) - 1.5) < 0.0001, "1. stupen tempa neni 1,5x")
-	_check(absf(Upgrades.value_of("gs", 2, 0) - 2.0) < 0.0001, "2. stupen tempa neni 2,0x")
-	_check(absf(Upgrades.value_of("gs", 3, 0) - 2.5) < 0.0001, "3. stupen tempa neni 2,5x")
-	_check(Upgrades.value_text("gs", 2, 0) == "2,0x",
-		"tempo se hracovi netiskne jako 2,0x (%s)" % Upgrades.value_text("gs", 2, 0))
-	_check(Upgrades.perm_cost("gs", 0) > 0, "zrychleni hry je zadarmo")
-
-
-# STRAZCI (Oct 2026): VLASTNI SEKCE, ne radek v mrizce upgradu. Jan: "Budou
-# volné sloty, které se budou odemykat s úrovněmi. Od 5 úrovně se odemče první
-# slot, od 10 druhý, od 15 třetí. A pak se budou jednotlivé sloty vylepšovat.
-# Bude se zvětšovat velikost strážce, poškození strážce a rychlost."
-#
-# TADY SE HLIDA TABULKA: odemykani, ceny a to, ze kazdy stupen je silnejsi a
-# rychlejsi. Co dela koule ve hre (krouzeni, zareni, plynuLe poskozeni), hlida
-# `test_core._test_guard_orbits`.
-func _test_turret() -> void:
-	# ODEMYKANI PODLE UROVNE HRACE
-	_check(Upgrades.guard_slots(1) == 0, "slot je odemceny uz na 1. levelu")
-	_check(Upgrades.guard_slots(4) == 0, "slot je odemceny na 4. levelu")
-	_check(Upgrades.guard_slots(5) == 1, "5. level neodemkl prvni slot")
-	_check(Upgrades.guard_slots(9) == 1, "9. level odemkl vic nez jeden slot")
-	_check(Upgrades.guard_slots(10) == 2, "10. level neodemkl druhy slot")
-	_check(Upgrades.guard_slots(14) == 2, "14. level odemkl vic nez dva sloty")
-	_check(Upgrades.guard_slots(15) == 3, "15. level neodemkl treti slot")
-	_check(Upgrades.guard_unlock(0) == 5 and Upgrades.guard_unlock(1) == 10
-		and Upgrades.guard_unlock(2) == 15, "levely odemceni nesedi na 5/10/15")
-	# CENA: kazdy dalsi stupen stoji vic, nad strop uz nic.
-	_check(Upgrades.guard_cost(0) > 0, "postaveni strazce je zadarmo")
-	_check(Upgrades.guard_cost(1) > Upgrades.guard_cost(0),
-		"druhy stupen nestoji vic nez prvni")
-	_check(Upgrades.guard_cost(2) > Upgrades.guard_cost(1),
-		"treti stupen nestoji vic nez druhy")
-	_check(Upgrades.guard_cost(Upgrades.GUARD_MAX) == 0, "nad strop jde koupit dalsi stupen")
-	# KAZDY STUPEN JE SILNEJSI, VETSI A RYCHLEJSI (Jan: "Bude se zvetsovat
-	# velikost strazce, poskozeni strazce a rychlost").
-	var prev_dmg: float = -1.0
-	var prev_ball: float = -1.0
-	var prev_aura: float = -1.0
-	var prev_orbit: float = 1.0e9
-	for lv in range(1, Upgrades.GUARD_MAX + 1):
-		var dmg: float = Upgrades.guard_param(lv, "dmg")
-		var ball: float = Upgrades.guard_param(lv, "ball")
-		var aura: float = Upgrades.guard_param(lv, "aura")
-		var orbit: float = Upgrades.guard_param(lv, "orbit")
-		_check(dmg > prev_dmg, "stupen %d nezvysil poskozeni (%.2f)" % [lv, dmg])
-		_check(ball > prev_ball, "stupen %d nezvetsil kouli (%.3f)" % [lv, ball])
-		_check(aura > prev_aura, "stupen %d nezvetsil zareni (%.3f)" % [lv, aura])
-		_check(orbit < prev_orbit, "stupen %d nezrychlil obeh (%.1f s)" % [lv, orbit])
-		prev_dmg = dmg
-		prev_ball = ball
-		prev_aura = aura
-		prev_orbit = orbit
-	_check(absf(Upgrades.guard_param(1, "dmg") - 0.30) < 0.0001,
-		"prvni stupen nedava 30 %% zakladu (%.2f)" % Upgrades.guard_param(1, "dmg"))
-	# DRAHA JE PODLE SLOTU: satelit 1 na vychozim dostrelu, 3. na maximalnim,
-	# 2. presne mezi (a stupen ji NEMENI - hlida `test_core`).
-	var s: Dictionary = Upgrades.stat("ar")
-	_check(absf(Upgrades.guard_orbit_frac(0) - float(s["start"])) < 0.0001,
-		"1. satelit nekrouzi na vychozim dostrelu")
-	_check(absf(Upgrades.guard_orbit_frac(2) - float(s["cap"])) < 0.0001,
-		"3. satelit nekrouzi na maximalnim dostrelu")
-	_check(absf(Upgrades.guard_orbit_frac(1)
-		- (float(s["start"]) + float(s["cap"])) * 0.5) < 0.0001,
-		"2. satelit nekrouzi presne mezi dostrely")
-	# SATELITY NEJSOU V MRIZCE UPGRADU (maji vlastni obrazovku a vlastni tabulku).
-	_check(Upgrades.stat("sat")["label"] == "sat", "satelit zustal v mrizce upgradu")
-
-
-# STRAZCE (turret "tw") JE ZPET V MRIZCE UPGRADU jako special a je to JINA
-# ZBRAN nez Satelity: stoji, miri paprskem a kupuje se za body v UPRAVACH.
-func _test_strazce() -> void:
-	_check(Upgrades.perm_max("tw") == 3, "strazce nema tri stupne")
-	_check(Upgrades.temp_max("tw") == 0, "strazce jde koupit za zlato v bitve")
-	_check(Upgrades.temp_buyable("tw") == false, "strazce se nabizi v bitve")
-	_check(String(Upgrades.stat("tw")["cat"]) == Upgrades.CAT_SPEC,
-		"strazce neni special")
-	_check(Upgrades.label_of("tw") == "Strážce",
-		"popisek neni Strážce (%s)" % Upgrades.label_of("tw"))
-	_check(absf(Upgrades.value_of("tw", 1, 0) - 1.0) < 0.0001,
-		"1. stupen neni jeden strazce (%.2f)" % Upgrades.value_of("tw", 1, 0))
-	_check(absf(Upgrades.value_of("tw", 3, 0) - 3.0) < 0.0001,
-		"3. stupen nejsou tri strazci (%.2f)" % Upgrades.value_of("tw", 3, 0))
-	_check(Upgrades.value_text("tw", 1, 0) == "1",
-		"text strazce neni 1 (%s)" % Upgrades.value_text("tw", 1, 0))
-	_check(Upgrades.perm_cost("tw", 0) > 0, "strazce je zadarmo")
-	_check(Upgrades.perm_cost("tw", 1) > Upgrades.perm_cost("tw", 0),
-		"druhy strazce nestoji vic nez prvni")
-
-
-func _test_perm_shifts_start() -> void:
-	# TOHLE JE CELY SMYSL PERMANENTNICH UPGRADU (Jan: "Když bude permanentní
-	# upgrade lvl 2, tak budu začínat na střela/0.9s. Cena dočasných upgradů ale
-	# zůstává."). Kdyby se cena posunula s permanentem, hrac by byl potrestany
-	# za to, ze si v menu neco koupil.
+func _test_values() -> void:
+	_check(absf(Upgrades.value_of("dmg", 0) - 6.0) < 0.0001, "zakladni poskozeni neni 6")
+	_check(absf(Upgrades.value_of("dmg", 7) - 27.0) < 0.0001, "poskozeni na maximu neni 27")
+	_check(absf(Upgrades.value_of("dmg", 99) - 27.0) < 0.0001, "poskozeni preleze strop")
+	_check(Upgrades.value_of("shots", 0) == 1.0, "zaklad neni jeden ostep")
+	_check(Upgrades.value_of("shots", 3) == 4.0, "maximum neni ctyri ostepy")
+	_check(absf(Upgrades.value_of("hp", 0) - 100.0) < 0.0001, "zaklad zivota neni 100")
+	_check(absf(Upgrades.value_of("hp", 6) - 220.0) < 0.0001, "maximum zivota neni 220")
 	for s in Upgrades.STATS:
 		var id: String = String(s["id"])
-		if not Upgrades.temp_buyable(id):
-			continue
-		var c0: int = Upgrades.temp_cost(id, 0)
-		var c1: int = Upgrades.temp_cost(id, 0)
-		_check(c0 == c1 and c0 > 0, "%s: cena prvniho kroku neni konstantni" % id)
-		# Hodnota po N krocich je stejna, at je permanent 0 nebo 3 (posun je
-		# jen jiny start).
-		var a: float = Upgrades.value_of(id, 0, 3) - Upgrades.value_of(id, 0, 0)
-		var b: float = Upgrades.value_of(id, 3, 3) - Upgrades.value_of(id, 3, 0)
-		_check(absf(a - b) < 0.0001, "%s: krok se posunul s permanentnim stupnem" % id)
-	var d: float = Upgrades.value_of("ad", 2, 0) - Upgrades.value_of("ad", 0, 0)
-	_check(absf(d - 4.0) < 0.0001, "dva permanentni stupne neposunuly start o 4/s (%.3f)" % d)
+		_check(Upgrades.perm_max(id) > 0, "%s: nema stupne" % id)
 
 
-# SILA PAPRSKU ("ap") JE NASOBICI OSA - jediny parametr, ktery nasobi paprsek
-# jako celek. Vznikl proto, ze s projektily skoncila i kadence a hrac nemel
-# cim drzet krok s rustem zivotu (Jan, Oct 2026: "...vlastně chybí jeden
-# modifikátor a hráč nestíhá věž vylepšovat...").
-func _test_beam_power() -> void:
-	# V MENU JE MALY ZEBRICEK: 1,0x az 1,5x za body.
-	_check(absf(Upgrades.value_of("ap", 0, 0) - 1.0) < 0.0001, "zakladni sila paprsku neni 1,0x")
-	_check(absf(Upgrades.value_of("ap", 5, 0) - 1.5) < 0.0001,
-		"sila paprsku na poslednim permanentním neni 1,5x (%.2f)" % Upgrades.value_of("ap", 5, 0))
-	_check(Upgrades.perm_max("ap") == 5, "sila paprsku nema pet permanentnich stupnu")
-	# A V BITVE POKRACUJE DAL: kazdy dalsi krok za zlato prida 0,10 na nasobek.
-	_check(absf(Upgrades.value_of("ap", 5, 4) - 1.9) < 0.0001,
-		"docasne kroky nepokracuji v nasobeni (%.2f)" % Upgrades.value_of("ap", 5, 4))
-	_check(Upgrades.temp_buyable("ap"), "sila paprsku se v bitve neda koupit")
-	_check(Upgrades.temp_cost("ap", 0) == 1, "prvni krok sily paprsku nestoji 1 zlato")
-	_check(Upgrades.value_text("ap", 5, 0) == "1,5x",
-		"text sily paprsku neni 1,5x (%s)" % Upgrades.value_text("ap", 5, 0))
+func _test_rate() -> void:
+	var a: float = Upgrades.value_of("rate", 0)
+	var b: float = Upgrades.value_of("rate", 10)
+	_check(absf(a - 1.10) < 0.0001, "zakladni interval neni 1,10 s (%.2f)" % a)
+	_check(absf(b - 0.35) < 0.0001, "nejkratsi interval neni 0,35 s (%.2f)" % b)
+	_check(b < a, "upgrade hazeni nezrychlil")
+	_check(absf(Upgrades.value_of("spd", 0) - 1.6) < 0.0001, "zakladni rychlost ostepu neni 1,6")
 
 
-func _test_temp_cost() -> void:
-	# CENA ROSTE KVADRATICKY (Oct 2026, viz `Upgrades.temp_cost`): kazdy krok je
-	# n^2, takze druhy stoji 4 a osmy 64. Linearni cena driv nechala hrace
-	# koupit pres 80 kroku poskozeni za level (Jan: "kazdy je mrtvy behem
-	# chvilky"). Cisla jsou PETKRAT mensi nez driv (5 * n^2) - Oct 2026 (Jan:
-	# "cena tak rychle neroste do stovek a tisíců. Jde spíš o optický rozdíl.")
-	_check(Upgrades.temp_cost("ad", 0) == 1, "prvni docasny krok nestoji 1 zlato")
-	_check(Upgrades.temp_cost("ad", 1) == 4, "druhy docasny krok nestoji 4 zlata")
-	_check(Upgrades.temp_cost("ad", 7) == 64, "osmy docasny krok nestoji 64 zlata")
-	# Cena musi byt stejna napric kategoriemi - hrac jinak nepochopi, podle
-	# ceho se cena pocita. ("gk" tu ZAMERNE neni, viz nize.)
-	for id in ["ad", "hp", "am", "cc", "gw", "gl"]:
-		_check(Upgrades.temp_cost(id, 2) == 9, "%s: treti krok nestoji 9 zlata" % id)
-	# ZLATO ZA ZABITI MA PETKRAT DRAZSI KROK. Neni to nekonzistence: jeho krok
-	# je cele +1 zlato za zabiti a cely zlaty obeh je petkrat mensi, takze by
-	# z neho byl jednoznacne nejlepsi nakup ve hre. Pomer "kolik zabiti na
-	# krok" tim zustava PRESNE jako pred zmensenim obehu - proto se hlida on,
-	# ne cena sama.
-	_check(Upgrades.temp_cost("gk", 0) == 5, "krok zlata za zabiti nestoji 5 zlata")
-	_check(Upgrades.temp_cost("gk", 2) == 45, "treti krok zlata za zabiti nestoji 45 zlata")
-	for n in [1, 2, 5, 10, 20]:
-		var pay: float = float(Upgrades.temp_cost("gk", n - 1)) / float(n)
-		_check(absf(pay - 5.0 * float(n)) < 0.0001,
-			"%d. krok zlata za zabiti se nezaplati za %d zabiti (%.1f)" % [n, 5 * n, pay])
+func _test_cost() -> void:
+	_check(Upgrades.perm_cost("dmg", 0) == 1, "prvni stupen nestoji 1 bod")
+	_check(Upgrades.perm_cost("dmg", 2) == 1, "treti stupen nestoji 1 bod")
+	_check(Upgrades.perm_cost("dmg", 3) == 2, "ctvrty stupen nestoji 2 body")
 
 
-# ZLATY OBEH JE PETKRAT MENSI (Oct 2026). Jan: "výdělky za zabití poutníků
-# budou úměrně taky nižší. Ať je pocitově upgrade stejně drahý v poměru počet
-# zabitých/nový upgrade ... Jde spíš o optický rozdíl."
-#
-# Kdyby se zmensila JEN cena upgradů a ne vydelek (nebo naopak), zmenil by se
-# pomer "kolik zabiti na upgrade" a hra by se rozjela - presne to se stalo
-# s linearni cenou, po ktere si hrac koupil pres 80 kroku poskozeni. Test proto
-# hlida OBE STRANY a jeste vztah mezi nimi.
-func _test_economy_scale() -> void:
-	_check(Upgrades.temp_cost("ad", 0) == 1, "prvni krok nestoji 1 zlato")
-	_check(Game.START_GOLD == 12, "start zlata neni 12 (%d)" % Game.START_GOLD)
-	# START = 12x CENA PRVNIHO KROKU (driv 60 : 5) - hrac si na zacatku koupi
-	# dva kroky, ne deset.
-	_check(absf(float(Game.START_GOLD) / float(Upgrades.temp_cost("ad", 0)) - 12.0) < 0.001,
-		"start zlata neni 12x cena prvniho kroku")
-	# ZLATO ZA ZABITI (driv 18/10/14/16/14/26, dnes petkrat mene) a POMER MEZI
-	# BARVAMI: zluta zustava nejlevnejsi, stribrna nejdrazsi. Kdyby se barvy
-	# prehodily, zmenilo by se, ktera barva se hracovi vyplati nechat projit.
-	_check(Hue.gold_of(Hue.YELLOW) == 2, "zluta nedava 2 zlata (%d)" % Hue.gold_of(Hue.YELLOW))
-	_check(Hue.gold_of(Hue.RED) == 4, "cervena nedava 4 zlata (%d)" % Hue.gold_of(Hue.RED))
-	_check(Hue.gold_of(Hue.SILVER) == 5, "stribrna nedava 5 zlata (%d)" % Hue.gold_of(Hue.SILVER))
-	_check(Hue.gold_of(Hue.YELLOW) < Hue.gold_of(Hue.RED), "zluta uz neni levnejsi nez cervena")
-	_check(Hue.gold_of(Hue.RED) < Hue.gold_of(Hue.SILVER), "stribrna uz neni drazsi nez cervena")
-	# A TOJE CELY SMYSL: POMER "KOLIK ZABITI NA UPGRADE" SE NESMI POHNUT.
-	# Historicka hodnota je `5n^2 / 18` (cena kroku / zlato za cervenou) a
-	# dnesni cisla musi dat to same - proto se obe strany deli stejnym cislem.
-	# Tolerance 12 % je zaokrouhleni (18/5 = 3,6 -> 4).
-	for n in [1, 2, 5, 8]:
-		var today: float = float(Upgrades.temp_cost("ad", n - 1)) / float(Hue.gold_of(Hue.RED))
-		var before: float = 5.0 * float(n) * float(n) / 18.0
-		_check(absf(today - before) < before * 0.12,
-			"%d. krok stoji %.1f zabiti cervene (driv %.1f) - pomer se pohnul"
-			% [n, today, before])
-
-
-func _test_perm_cost() -> void:
-	_check(Upgrades.perm_cost("ad", 0) == 1, "prvni permanentni stupen nestoji 1 bod")
-	_check(Upgrades.perm_cost("ad", 2) == 1, "treti permanentni stupen nestoji 1 bod")
-	_check(Upgrades.perm_cost("ad", 3) == 2, "ctvrty permanentni stupen nestoji 2 body")
-	# Specialy jsou nove mechaniky, ne cisla - musi byt drazsi.
-	# MULTISHOT A ODRAZ JSOU NASOBICE POSKOZENI, PROTO JSOU VEDOME DRAHE
-	# (Oct 2026, viz `Upgrades.STATS`): multishot strili na pet cilu zaraz
-	# (5x poskozeni), odraz posle jeden paprsek pres 4 dalsi cile.
-	# S cenou 3 a 4 body si je hrac koupil CELE JESTE V PRVNIM LEVELU.
-	_check(Upgrades.perm_cost("ms", 0) == 50, "multishot nestoji 50 bodu")
-	_check(Upgrades.perm_cost("rc", 0) == 60, "odraz nestoji 60 bodu")
-	_check(Upgrades.perm_cost("ps", 1) == 8, "druhy stupen jedu nestoji 8 bodu")
-	_check(Upgrades.perm_cost("ms", 3) == 200, "ctvrty stupen multishotu nestoji 200 bodu")
-	# A POMER K OBYCEJNEMU UPGRADU: multiplikator poskozeni musi stat radove
-	# vic nez jedna polozka v ciselne ose (ad stoji 1 bod), jinak se vyplati
-	# koupit ho driv nez poskozeni - a presne to hru rozbiji.
-	_check(Upgrades.perm_cost("ms", 0) >= 10 * Upgrades.perm_cost("ad", 0),
-		"multishot je prilis levny proti poskozeni (%d vs %d)"
-		% [Upgrades.perm_cost("ms", 0), Upgrades.perm_cost("ad", 0)])
-	_check(Upgrades.perm_cost("rc", 0) >= 10 * Upgrades.perm_cost("ad", 0),
-		"odraz je prilis levny proti poskozeni (%d vs %d)"
-		% [Upgrades.perm_cost("rc", 0), Upgrades.perm_cost("ad", 0)])
-
-
-func _test_special_is_perm_only() -> void:
-	for s in Upgrades.stats_in(Upgrades.CAT_SPEC):
-		var id: String = String(s["id"])
-		_check(Upgrades.temp_max(id) == 0, "%s (special) jde koupit za zlato v bitve" % id)
-		_check(Upgrades.temp_cost(id, 0) == 0, "%s: special ma cenu v zlate" % id)
-		_check(Upgrades.perm_max(id) > 0, "%s: special nema permanentni stupne" % id)
-	# NAOPAK: zadna kategorie, ktera se v bitve nabizi, nesmi zustat bez
-	# docasneho kroku - svitil by v ni prazdny tab.
-	for cat in [Upgrades.CAT_OFF, Upgrades.CAT_DEF, Upgrades.CAT_ECO]:
-		var buyable: int = 0
-		for s in Upgrades.stats_in(cat):
-			if Upgrades.temp_buyable(String(s["id"])):
-				buyable += 1
-		_check(buyable > 0, "%s: celou kategorii nelze v bitve koupit" % cat)
-	# DOSTREL JE PERM-ONLY, ale NENI special: ma vlastni permanentni zebricek a
-	# v bitve se vubec nenabizi (`game_view._shop_stats`, hlida `test_layout`).
-	_check(Upgrades.temp_max("ar") == 0, "dostrel jde koupit za zlato v bitve")
-	_check(Upgrades.temp_cost("ar", 0) == 0, "dostrel ma cenu v zlate")
-	_check(Upgrades.perm_max("ar") > 0, "dostrel nema permanentni stupne")
-
-
-func _test_table_sane() -> void:
-	for s in Upgrades.STATS:
-		var id: String = String(s["id"])
-		_check(Upgrades.perm_max(id) > 0, "%s: nema permanentni stupne" % id)
-		var start: float = float(s["start"])
-		var step: float = float(s["step"])
-		var cap: float = float(s["cap"])
-		_check(absf(step) > 0.00001, "%s: krok je nula (upgrade nic nedela)" % id)
-		# STROP PLATI NA PERMANENTNI ZEBRICEK (`perm_max`), ne na soucet
-		# s docasnymi kroky: ty jsou od Oct 2026 neomezene.
-		var n: int = Upgrades.perm_max(id)
-		# U "levels" je strop POCET STUPNU (0,20/0,35/0,50 neni primka), takze
-		# se porovnava pocet, ne hodnota.
-		if String(s["kind"]) == "levels" or String(s["kind"]) == "chain":
-			_check(n == int(cap), "%s: stupnu je %d, ale strop tabulky je %d" % [id, n, int(cap)])
-			continue
-		# Strop permanentniho zebricku musi byt dosazitelny presne na hranici,
-		# jinak by cast tabulky byla nedosazitelna a hrac by platil za nic.
-		var v: float = Upgrades.value_of(id, Upgrades.perm_max(id), 0)
-		if start < cap:
-			_check(v >= cap - 0.0001, "%s: permanentni zebricek nedosahne stropu (%.3f z %.3f)" % [id, v, cap])
-			_check(absf(start + step * float(n) - cap) < 0.0001,
-				"%s: maximum permanentniho zebricku (perm %d) neni presne strop (%.3f vs %.3f)"
-				% [id, n, start + step * float(n), cap])
-		else:
-			_check(v <= cap + 0.0001, "%s: permanentni zebricek preleze strop (%.3f z %.3f)" % [id, v, cap])
-			_check(absf(start + step * float(n) - cap) < 0.0001,
-				"%s: maximum permanentniho zebricku neni presne strop (%.3f vs %.3f)" % [id, start + step * float(n), cap])
-		# NEOMEZENY DOCASNY ZEBRICEK: musi mit cenu (jinak se neda koupit)
-		# a NIKDY nesmi hlasit strop - prave to dělalo "MAX" uprostred bitvy.
-		if Upgrades.temp_unlimited(id):
-			_check(Upgrades.temp_cost(id, 0) > 0, "%s: neomezeny docasny zebricek je zadarmo" % id)
-			_check(not Upgrades.temp_is_maxed(id, 9999), "%s: neomezeny zebricek hlasi strop" % id)
-			_check(Upgrades.temp_buyable(id), "%s: neomezeny zebricek se v bitve nenabizi" % id)
-		else:
-			_check(int(Upgrades.temp_max(id)) == 0, "%s: docasny zebricek neni ani neomezeny, ani perm-only" % id)
-	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 5, "kategorie utok nema 5 parametru")
-	_check(Upgrades.stats_in(Upgrades.CAT_DEF).size() == 3, "kategorie obrana nema 3 parametry")
-	_check(Upgrades.stats_in(Upgrades.CAT_ECO).size() == 3, "kategorie ekonomika nema 3 parametry")
-	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 6, "kategorie special nema 6 parametru")
-	_check(Upgrades.CATEGORIES.size() == 4, "kategorii neni ctvero")
+func _test_profile() -> void:
+	var p := Profile.new()
+	p.body = 10
+	_check(p.buy_perm("dmg"), "koupe za dost bodu se nepovedla")
+	_check(p.perm_level("dmg") == 1 and p.body == 9, "stupen se nezapsal nebo se neodecetl")
+	var q := Profile.new()
+	_check(not q.buy_perm("dmg"), "koupe bez bodu prosla")
+	q.body = 1000
+	for i in range(Upgrades.perm_max("hp")):
+		q.buy_perm("hp")
+	_check(q.perm_level("hp") == Upgrades.perm_max("hp"), "profil nema plny pocet stupnu")
+	_check(not q.buy_perm("hp"), "nad strop se da koupit dalsi stupen")
+	q.clear_level(3)
+	_check(q.best == 3 and q.level == 4, "vyhrany level neodemkl dalsi")
 
 
 func _test_texts() -> void:
 	for s in Upgrades.STATS:
 		var id: String = String(s["id"])
-		var t: String = Upgrades.value_text(id, 0, 0)
-		_check(t != "", "%s: hodnota se vytiskne prazdna" % id)
-		_check(not t.contains("."), "%s: hodnota ma tecku misto ceske carky (%s)" % [id, t])
-		_check(String(s["label"]) != "", "%s: popisek je prazdny" % id)
-	_check(Upgrades.value_text("ad", 0, 1) == "16", "text poskozeni neni 16")
-	_check(Upgrades.value_text("ar", 6, 0) == "40 %", "text dostrelu neni 40 %")
-
-
-func _test_profile_buy() -> void:
-	var p := Profile.new()
-	p.body = 10
-	_check(p.perm_level("ad") == 0, "novy profil uz ma upgrade")
-	_check(p.buy_perm("ad"), "koupe za dost bodu se nepovedla")
-	_check(p.perm_level("ad") == 1, "stupen se nezapisal")
-	_check(p.body == 9, "body se neodecetly (zbyva %d)" % p.body)
-	# PRVNI TRI STUPNE STOJI PO JEDNOM BODU (1 + (n-1)/3).
-	_check(p.buy_perm("ad") and p.buy_perm("ad"), "druhy nebo treti stupen nejde")
-	_check(p.body == 7, "tri stupne nestaly 3 body (zbyva %d)" % p.body)
-	_check(Upgrades.perm_cost("ad", 3) == 2, "ctvrty stupen nestoji 2 body")
-	_check(p.buy_perm("ad"), "ctvrty stupen za 2 body nejde")
-	_check(p.body == 5, "ctvrty stupen nestal 2 body (zbyva %d)" % p.body)
-	# BEZ BODU SE NEKUPUJE. Cerstvy profil, aby do toho nekecal stav vyse.
-	var q := Profile.new()
-	_check(not q.buy_perm("ar"), "koupe bez bodu prosla")
-	# STROP: na maximu se dalsi stupen koupit neda, i kdyz ma hrac body.
-	q.body = 1000
-	for i in range(Upgrades.perm_max("ar")):
-		q.buy_perm("ar")
-	_check(q.perm_level("ar") == Upgrades.perm_max("ar"), "profil nema plny pocet stupnu")
-	_check(not q.buy_perm("ar"), "nad strop se da koupit dalsi stupen")
-
-
-func _test_profile_clear() -> void:
-	var p := Profile.new()
-	p.clear_level(3)
-	_check(p.best == 3, "vyhrany level se nezapsal do nejlepsich")
-	_check(p.level == 4, "vyhrany level neodemkl dalsi")
-	# Nizsi level se neuklada zpet.
-	p.clear_level(2)
-	_check(p.best == 3 and p.level == 4, "opakovana vyhra nizsiho levelu poskodila postup")
+		var t: String = Upgrades.value_text(id, 0)
+		_check(t != "", "%s: text je prazdny" % id)
+		_check(not t.contains("."), "%s: tecka misto ceske carky (%s)" % [id, t])
+	_check(Upgrades.value_text("rate", 0) == "1,10 s",
+		"interval se netiskne jako 1,10 s (%s)" % Upgrades.value_text("rate", 0))
+	_check(Upgrades.value_text("dmg", 0) == "6", "poskozeni se netiskne jako 6")

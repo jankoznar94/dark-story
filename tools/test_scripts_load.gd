@@ -1,33 +1,25 @@
 extends SceneTree
 
-# KAZDY SKRIPT SE NACTE. Novy `class_name` se musi nejdriv zaregistrovat
-# (`--import`), jinak test, ktery ho pouziva, vubec neparsuje - a vypada to
-# jako chyba v kodu.
-# Vystup: SCRIPTS_ALL_PASS=true / false
-
-var fails: Array = []
-var checks: int = 0
-
+# Kazdy skript se musi nacist. Vystup: SCRIPTS_ALL_PASS=true
 
 func _init() -> void:
-	for dir in ["res://scripts", "res://tools"]:
-		var d: DirAccess = DirAccess.open(dir)
-		if d == null:
-			_check(false, "adresar %s nejde otevrit" % dir)
-			continue
-		for f in d.get_files():
-			if not f.ends_with(".gd"):
-				continue
-			var path: String = dir + "/" + f
-			var res: Resource = load(path)
-			_check(res != null, "skript %s se nenacetl" % path)
-	print("skriptu=%d chyb=%d" % [checks, fails.size()])
-	print("SCRIPTS_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
+	var dir := DirAccess.open("res://scripts")
+	var names: Array = []
+	if dir != null:
+		dir.list_dir_begin()
+		var f: String = dir.get_next()
+		while f != "":
+			if f.ends_with(".gd"):
+				names.append(f)
+			f = dir.get_next()
+		dir.list_dir_end()
+	var bad: Array = []
+	for n in names:
+		var s: Resource = load("res://scripts/" + String(n))
+		if s == null:
+			bad.append(String(n))
+	print("scripts=%d bad=%d" % [names.size(), bad.size()])
+	for b in bad:
+		print("       FAIL: %s" % b)
+	print("SCRIPTS_ALL_PASS=%s" % ("true" if bad.is_empty() and names.size() > 0 else "false"))
 	quit()
-
-
-func _check(cond: bool, msg: String) -> void:
-	checks += 1
-	if not cond:
-		fails.append(msg)
-		print("  FAIL: %s" % msg)

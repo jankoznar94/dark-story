@@ -1,11 +1,10 @@
-; Zily 2 — srdce a vez. Novy smer (viz skill ley-lines-gamedev,
-; references/new-direction-heart.md).
+; Thrower — barbar ve stredu, ostepy opacnym smerem, nez ukazuje prst.
 config_version=5
 
 [application]
 
-config/name="Žily 2"
-config/description="Srdce a věž — jedna věž ve středu kruhové plochy, která vidí jen svou barvu."
+config/name="Thrower"
+config/description="Barbar ve středu háže oštěpy opačným směrem, než ukazuje prst."
 config/icon="res://icons/icon_512.png"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
