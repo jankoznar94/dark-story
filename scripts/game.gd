@@ -15,12 +15,12 @@ const BASE_HP := 12.0
 const HP_GROWTH := 1.16
 # CESTA NEPRITELE od okraje do stredu. Je to cas, ne rychlost - na jinem
 # displeji musi prijit za stejnou dobu.
-const TRAVEL_S := 14.0
+const TRAVEL_S := 20.0
 # ZACATEK JE POMALEJSI A ZRYCHLUJE S LEVELY (Jan, Oct 2026: "Nepřátelé budou
-# chodit ze začátku pomaleji"): na prvnim levelu jdou 14 s, kazdy dalsi level
-# o 1,2 s min, ale nikdy pod 8 s - jinak by vysoke levely byly nehratelne.
-const TRAVEL_MIN := 8.0
-const TRAVEL_STEP := 1.2
+# chodit ze začátku pomaleji", pak "stále chodí příliš rychle"): na prvnim
+# levelu jdou 20 s, kazdy dalsi o 1 s min, ale nikdy pod 12 s.
+const TRAVEL_MIN := 12.0
+const TRAVEL_STEP := 1.0
 const SPAWN_GAP := 0.75
 const BUILD_S := 3.0
 const BODY_PER_WAVE := 1
@@ -56,6 +56,11 @@ var spawned: int = 0
 var plan: int = 0
 var clock: float = 0.0
 var paused: bool = false
+# ZASAH: jak dlouho (s) blika bojovnik po zasahu a kolik mu to ubralo. Obrazovka
+# z toho kresli cerveny obrys a "-X" nad hlavou - hrac musi VIDET, ze dostal
+# rano, ne jen ze mu nekde ubylo cislo.
+var hit_flash: float = 0.0
+var hit_amount: float = 0.0
 var log: Array = []
 var hits: int = 0
 var kills: int = 0
@@ -217,6 +222,7 @@ func step(dt: float) -> void:
 	if is_over() or paused:
 		return
 	clock += dt
+	hit_flash = maxf(0.0, hit_flash - dt)
 	_regen(dt)
 	_phase(dt)
 	_fire(dt)
@@ -327,6 +333,8 @@ func _move_enemies(dt: float) -> void:
 			# DORAZIL: ubere zivoty a zmizi. Zbroj ani barvy tu nejsou - jedina
 			# obrana je zabit ho driv.
 			hp -= float(e["dmg"])
+			hit_amount = float(e["dmg"])
+			hit_flash = 0.45
 			e["alive"] = false
 			continue
 		e["pos"] = pos + d / dd * float(e["speed"]) * dt

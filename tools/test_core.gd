@@ -137,8 +137,13 @@ func _test_enemy_hits_warrior() -> void:
 	var e: Dictionary = _place(g, 0.02, 0.0, 100.0)
 	e["speed"] = g.field_r / 9.0
 	var hp0: float = g.hp
-	_tick(g, 1.0)
+	var t: float = 0.0
+	while t < 1.0 and g.hp >= hp0:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
 	_check(g.hp < hp0, "nepritel u bojovnika neubere zivoty")
+	_check(g.hit_flash > 0.0, "zásah nerozsviti varovani bojovnika")
+	_check(g.hit_amount > 0.0, "zásah nema cislo poskozeni")
 	_check(g.enemies.is_empty(), "nepritel po dorazu nezmizi")
 
 

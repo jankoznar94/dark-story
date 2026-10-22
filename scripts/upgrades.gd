@@ -23,12 +23,11 @@ const STATS := [
 	{"id": "dmg", "label": "Poškození", "cat": CAT_OFF, "kind": "int",
 		"start": 6, "step": 3, "cap": 27, "perm_max": 7},
 	# RYCHLOST HAZENI. Je to DOBA MEZI HODY, takze mensi je lepsi; krok je
-	# zaporny a `value_of` ho orizne smerem ke stropu. Zaklad je o 25 %
-	# rychlejsi nez puvodnich 1,10 s (Jan, Oct 2026: "Výchozí rychlost střelby
-	# bude o 25% rychlejší než teď"), proto 1,10 / 1,25 = 0,88 s a stejne
-	# zkraceny krok i strop.
+	# zaporny a `value_of` ho orizne smerem ke stropu. Zaklad 0,75 s - po
+	# prvnim zrychleni (1,10 -> 0,88) jeste o kus rychlejsi (Jan, Oct 2026:
+	# "Ještě trochu zrychlime výchozí rychlost střelby").
 	{"id": "rate", "label": "Rychlost házení", "cat": CAT_OFF, "kind": "time",
-		"start": 0.88, "step": -0.06, "cap": 0.28, "perm_max": 10},
+		"start": 0.75, "step": -0.05, "cap": 0.25, "perm_max": 10},
 	# POCET OSTRU V JEDNOM HODU. Kazdy leti malinko jinam (vedle sebe).
 	{"id": "shots", "label": "Víc oštěpů", "cat": CAT_OFF, "kind": "count",
 		"start": 1, "step": 1, "cap": 4, "perm_max": 3},

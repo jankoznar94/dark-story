@@ -243,6 +243,7 @@ func _draw_battle() -> void:
 	_draw_aim()
 	_draw_spears()
 	_draw_warrior()
+	_draw_health()
 	_draw_bar()
 	if game.is_over():
 		_draw_end()
@@ -295,12 +296,33 @@ func _draw_enemies() -> void:
 
 func _draw_spears() -> void:
 	var sr: float = game.spear_r()
+	var ln: float = maxf(26.0, game.field_r * 0.11)
 	for s in game.spears:
 		var pos: Vector2 = s["pos"]
 		var dir: Vector2 = s["dir"]
-		var tail: Vector2 = pos - dir * sr * 5.0
-		draw_line(tail, pos, SPEAR, maxf(2.0, sr * 1.6))
-		draw_circle(pos, sr * 1.1, SPEAR)
+		var side: Vector2 = dir.orthogonal()
+		var tail: Vector2 = pos - dir * ln
+		# STOPA: tri kratke useky za ostepem, kazdy bledsi. Je to jen plocha s
+		# nizkou pruhlednosti - zadny glow, ktery Janovi vadi.
+		for i in range(3):
+			var t0: Vector2 = tail - dir * (ln * 0.55 * float(i + 1))
+			var t1: Vector2 = tail - dir * (ln * 0.55 * float(i))
+			draw_line(t0, t1, Color(SPEAR.r, SPEAR.g, SPEAR.b, 0.30 - 0.09 * float(i)),
+				maxf(1.5, sr * (1.5 - 0.35 * float(i))))
+		# NASADA: tlustsi, tmavsi drevo.
+		draw_line(tail, pos - dir * ln * 0.20, Color(0.62, 0.49, 0.32), maxf(3.0, sr * 2.0))
+		# OMOTAVKA u hrotu - jedina drobnost, ale ostep pak vypada jako
+		# vyrobek, ne jako cara.
+		var bind: Vector2 = pos - dir * ln * 0.34
+		draw_line(bind - side * sr * 1.7, bind + side * sr * 1.7,
+			Color(0.42, 0.36, 0.26), maxf(2.0, sr * 1.0))
+		# HROT: svetly klinek, presne ve smeru letu.
+		var hw: float = sr * 2.3
+		draw_colored_polygon(PackedVector2Array([
+			pos + dir * ln * 0.10,
+			pos - dir * ln * 0.17 + side * hw,
+			pos - dir * ln * 0.17 - side * hw,
+		]), Color(0.90, 0.88, 0.78))
 
 
 # MIREni: JEN CARA DOZADU (Jan, Oct 2026: "šipku u přední části hrdiny ...
@@ -321,6 +343,29 @@ func _draw_aim() -> void:
 	var endp: Vector2 = c + back * ln
 	draw_line(c, endp, AIM_LINE, maxf(2.0, layout.field_r * 0.006))
 	draw_circle(endp, maxf(3.0, layout.field_r * 0.012), AIM_LINE)
+
+
+func _draw_health() -> void:
+	var c: Vector2 = layout.center
+	var r: float = game.warrior_r()
+	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
+	var w: float = r * 3.2
+	var h: float = maxf(8.0, r * 0.26)
+	var bar := Rect2(c.x - w * 0.5, c.y + r * 1.10, w, h)
+	draw_rect(bar, Color(0.09, 0.085, 0.095), true)
+	draw_rect(Rect2(bar.position, Vector2(w * frac, h)), _hp_color(frac), true)
+	draw_rect(bar, EDGE, false, maxf(1.5, h * 0.22))
+	# ZASAH: cerveny obrys kolem bojovnika a "-X" nad hlavou. Hrac musi videt,
+	# ze prisel o zivoty - cislo v hornim pruhu je daleko a snadno se prehledne.
+	if game.hit_flash > 0.0:
+		var k: float = clampf(game.hit_flash / 0.45, 0.0, 1.0)
+		draw_arc(c, r * 1.10, 0.0, TAU, 40, Color(0.88, 0.32, 0.26, 0.95 * k),
+			maxf(3.0, r * 0.14))
+		_label("-%d" % int(round(game.hit_amount)),
+			Rect2(c.x - r * 1.5, c.y - r * 2.4, r * 3.0, float(layout.font_px) * 1.5),
+			int(clampf(r * 0.55, 13.0, 30.0)), Color(0.90, 0.40, 0.32, 0.45 + 0.55 * k))
+		draw_rect(Rect2(Vector2(1.0, 1.0), layout.view - Vector2(2.0, 2.0)),
+			Color(0.80, 0.24, 0.20, 0.30 * k), false, 8.0)
 
 
 func _draw_bar() -> void:
