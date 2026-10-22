@@ -10,7 +10,7 @@ extends RefCounted
 # směr šípů." Barvy NEEXISTUJI: cilem je ten, kdo stoji v draze oštěpu.
 
 const WAVES_PER_LEVEL := 10
-const BASE_HP := 18.0
+const BASE_HP := 12.0
 # RUST OBTIZNOSTI: kazda vlna o 16 % vic zivotu. Kolo = vlna pres cely pruchod.
 const HP_GROWTH := 1.16
 # CESTA NEPRITELE od okraje do stredu. Je to cas, ne rychlost - na jinem
@@ -120,7 +120,7 @@ func enemy_dmg(w: int) -> float:
 
 
 func wave_size(w: int) -> int:
-	return 5 + 2 * w
+	return 4 + 2 * w
 
 
 # ------------------------------------------------------------------ ZIVOT HRY
