@@ -52,12 +52,16 @@ func update(v: Vector2) -> void:
 	bar_h = maxf(48.0, v.y * BAR_FRAC)
 	font_px = int(clampf(minf(v.x, v.y) * 0.042, 13.0, 26.0))
 	title_px = int(clampf(minf(v.x, v.y) * 0.075, 22.0, 44.0))
-	# HERNI PLOCHA je ctverec pod hornim pruhem. Kruh se do nej musi vejit
-	# CELY - hrac nesmi mit nepritele za okrajem displeje.
+	# BOJOVNIK STOJI NA SPODKU (Jan, Oct 2026: "bude bojovník stát na spodku
+	# obrazovky a bude koukat jen jedním směrem. Dopředu."). Hra je zase na
+	# vysku. Plocha nad nim je cela herni prostor - ne kruh, ne stred.
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, v.y - bar_h))
-	center = arena.position + arena.size * 0.5
-	var short: float = minf(arena.size.x, arena.size.y)
-	field_r = maxf(40.0, short * PLAY_R)
+	var margin: float = maxf(64.0, v.y * 0.12)
+	center = Vector2(v.x * 0.5, v.y - margin)
+	# POLOMER uz neni draha obehu, jen meritko velikosti (bojovnik, nepratele,
+	# ostepy) a dosah odrazu. Odecita se od sirky displeje.
+	field_r = maxf(40.0, v.x * 0.45)
+	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, center.y - bar_h))
 	_hud()
 	layout_menu()
 	layout_upgrades()

@@ -64,17 +64,27 @@ func _tick(g: Game, sec: float, dt: float = 1.0 / 120.0) -> void:
 		t += dt
 
 
-# 1) OPAČNÝ SMĚR. Prst vpravo od bojovnika -> ostep leti vlevo.
+# 1) PRST = LUK. Bojovnik stoji na spodku a haze JEN DOPREDU (nahoru):
+#    uhel je oriznuty na 180°, nikdy se neotoci zpet k sobe.
 func _test_aim_opposite() -> void:
 	var g: Game = _fresh()
 	g.aim_at(g.center + Vector2(0.4 * g.field_r, 0.0))
 	_check(g.aim.x < -0.99 and absf(g.aim.y) < 0.01,
 		"prst vpravo neznamena strelbu vlevo (%.2f, %.2f)" % [g.aim.x, g.aim.y])
 	g.aim_at(g.center + Vector2(0.0, -0.4 * g.field_r))
-	_check(g.aim.y > 0.99, "prst nahore neznamena strelbu dolu (%.2f)" % g.aim.y)
+	_check(g.aim.y <= 0.001, "smer strelby se otocil dozadu (%.2f, %.2f)" % [g.aim.x, g.aim.y])
 	g.aim_at(g.center + Vector2(-0.3, 0.3) * g.field_r)
 	_check(g.aim.x > 0.6 and g.aim.y < -0.6, "sikmy smer neni opacny (%.2f, %.2f)"
 		% [g.aim.x, g.aim.y])
+	# 180°: prst presne pod bojovnikem = strelba presne vzhuru.
+	g.aim_at(g.center + Vector2(0.0, 0.4 * g.field_r))
+	_check(absf(g.aim.x) < 0.01 and g.aim.y < -0.99,
+		"prst pod bojovnikem neznamena strelbu vzhuru (%.2f, %.2f)" % [g.aim.x, g.aim.y])
+	# KRAJNI MEZ: prst daleko vlevo (nad urovni bojovnika) nesmi otocit strelbu
+	# dozadu - zustane na horizontale.
+	g.aim_at(g.center + Vector2(-0.9 * g.field_r, -0.1))
+	_check(g.aim.y <= 0.001 and g.aim.x > 0.0,
+		"krajni uhel neni oriznuty na 180° (%.2f, %.2f)" % [g.aim.x, g.aim.y])
 
 
 # 2) BEZ PRSTU SE NEHAZI.
@@ -97,7 +107,7 @@ func _test_spear_hits() -> void:
 	var g: Game = _fresh()
 	g.aim_at(g.center + Vector2(0.4 * g.field_r, 0.0))
 	var e: Dictionary = _place(g, 0.30, PI, 50.0)
-	_tick(g, 0.1)
+	g.step(1.0 / 120.0)
 	_check(g.spears.size() > 0, "po mireni neleti zadny ostep")
 	var dir_ok: bool = true
 	for s in g.spears:
@@ -105,7 +115,9 @@ func _test_spear_hits() -> void:
 		if d.x > -0.8:
 			dir_ok = false
 	_check(dir_ok, "ostep neleti opacnym smerem nez prst")
-	_tick(g, 0.6)
+	# NEPRATELE JSOU VELCI, takze ostep do nich narazi driv, nez doleti dal -
+	# protoze po zasahu zanika, kontroluje se zivot, ne pocet ostepu.
+	_tick(g, 0.7)
 	_check(float(e["hp"]) < 50.0, "ostep neubral nepríteli zivoty (%.1f)" % float(e["hp"]))
 
 

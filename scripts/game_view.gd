@@ -53,7 +53,7 @@ func _on_resize() -> void:
 
 
 func _apply_field() -> void:
-	game.set_field(layout.field_r, layout.center)
+	game.set_field(layout.field_r, layout.center, layout.arena)
 
 
 func _process(dt: float) -> void:
@@ -234,10 +234,11 @@ func _draw_upgrades() -> void:
 
 func _draw_battle() -> void:
 	var c: Vector2 = layout.center
-	var fr: float = layout.field_r
-	# KRUH, KTERY HRAC VIDI: kam az nepratele chodi. Je to jen jemna linka -
-	# neni to dostrel (ten ma kazdy ostep svuj, leti pres celou plochu).
-	draw_arc(c, fr, 0.0, TAU, 72, Color(0.30, 0.29, 0.33), maxf(1.5, fr * 0.004))
+	# SPODNI CARA POD BOJOVNIKEM: hranice, na ktere stoji. Neni to dostrel ani
+	# mrizka - jen aby obrazovka nekoncila ve vzduchu.
+	var gy: float = c.y + game.warrior_r() * 1.6
+	draw_line(Vector2(0.0, gy), Vector2(layout.view.x, gy),
+		Color(0.22, 0.21, 0.24), maxf(1.5, layout.view.x * 0.004))
 	_draw_enemies()
 	_draw_aim()
 	_draw_spears()
@@ -247,7 +248,7 @@ func _draw_battle() -> void:
 		_draw_end()
 	elif game.phase == "build":
 		_label("Připrav se — %.0f" % maxf(0.0, game.build_left),
-			Rect2(0.0, c.y - fr - float(layout.font_px) * 2.6, layout.view.x,
+			Rect2(0.0, c.y - float(layout.font_px) * 6.0, layout.view.x,
 				float(layout.font_px) * 1.6), layout.font_px, DIM)
 
 
@@ -287,24 +288,24 @@ func _draw_spears() -> void:
 		draw_circle(pos, sr * 1.1, SPEAR)
 
 
-# MIREni: cara od prstu k bojovnikovi (tenka, tlumena) a SIPKA opacnym smerem
-# (svetla, se spickou) - hrac musi na prvni pohled videt, kam to poleti.
+# MIREni: JEN CARA DOZADU (Jan, Oct 2026: "šipku u přední části hrdiny ...
+# dáme pryč. Necháme jen tu čáru dozadu."). Cara vede od bojovnika opacnym
+# smerem, nez poleti ostep - jako napnuta tetiva. Smer strelby hrac cte
+# z toho, kam cara ukazuje (presne naopak).
 func _draw_aim() -> void:
 	if not game.aiming:
 		return
 	var c: Vector2 = layout.center
-	var finger: Vector2 = c - game.aim * layout.field_r
-	draw_line(finger, c, AIM_LINE, maxf(1.5, layout.field_r * 0.004))
-	var a: Vector2 = c - finger
-	if a.length() <= 0.001:
-		return
-	a = a.normalized()
-	var ln: float = layout.field_r * 0.55
-	var endp: Vector2 = c + a * ln
-	draw_line(c, endp, AIM_ARROW, maxf(2.0, layout.field_r * 0.006))
-	var side: Vector2 = a.orthogonal() * layout.field_r * 0.02
-	draw_line(endp, endp - a * layout.field_r * 0.045 + side, AIM_ARROW, maxf(2.0, layout.field_r * 0.006))
-	draw_line(endp, endp - a * layout.field_r * 0.045 - side, AIM_ARROW, maxf(2.0, layout.field_r * 0.006))
+	var back: Vector2 = -game.aim
+	var ln: float = layout.field_r * 0.85
+	# CARA SE NESMI ZTRATIT ZA OKRAJEM: smerem dolu by jinak zmizela pod
+	# displejem a hrac by nevidel, kam se napina. Orizne se podle mista.
+	if back.y > 0.05:
+		ln = minf(ln, (layout.view.y - 10.0 - c.y) / back.y)
+	ln = maxf(24.0, ln)
+	var endp: Vector2 = c + back * ln
+	draw_line(c, endp, AIM_LINE, maxf(2.0, layout.field_r * 0.006))
+	draw_circle(endp, maxf(3.0, layout.field_r * 0.012), AIM_LINE)
 
 
 func _draw_bar() -> void:

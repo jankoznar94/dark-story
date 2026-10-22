@@ -30,6 +30,9 @@ const SPREAD := 0.10
 var profile: Profile = Profile.new()
 var field_r: float = 300.0
 var center: Vector2 = Vector2(500.0, 500.0)
+# HERNI PLOCHA nad bojovnikem (bez horniho pruhu). Nepratele se rodi u horniho
+# okraje a jdou dolu na bojovnika; ostepy leti opacne a mimo plochu zanikaji.
+var arena: Rect2 = Rect2()
 var level: int = 1
 var wave: int = 1
 var phase: String = "build"
@@ -58,9 +61,13 @@ func _init() -> void:
 	rng.seed = 20261022
 
 
-func set_field(r: float, c: Vector2) -> void:
+func set_field(r: float, c: Vector2, a: Rect2 = Rect2()) -> void:
 	field_r = maxf(40.0, r)
 	center = c
+	if a.size.x > 0.0 and a.size.y > 0.0:
+		arena = a
+	else:
+		arena = Rect2(c.x - r * 2.0, c.y - r * 2.2, r * 4.0, r * 2.2)
 
 
 # ------------------------------------------------------------------ PARAMETRY
@@ -102,7 +109,10 @@ func warrior_r() -> float:
 
 
 func enemy_r() -> float:
-	return field_r * 0.030
+	# NEPRATELE JSOU VELCI (Jan, Oct 2026: "nepřátelé musí být podstatně větší,
+	# aby bylo snadnější je trefit"). Sirka displeje, ne vyska - na vysku by
+	# byli na dlouhem telefonu mensi nez na sirokem.
+	return field_r * 0.065
 
 
 func spear_r() -> float:
@@ -173,13 +183,16 @@ func _level_won() -> void:
 # ------------------------------------------------------------------ VSTUP
 
 # PRST NA DISPLEJI = NAPNUTY LUK. Smer strelby je PRESNE OPAČNY nez smer
-# k prstu, proto `center - pos` (a ne `pos - center`).
+# k prstu, proto `center - pos`. Bojovnik ale haze JEN DOPREDU (nahoru):
+# uhel se orizne na 180°, takze se nikdy neotoci zpet k sobe.
 func aim_at(pos: Vector2) -> void:
 	var d: Vector2 = center - pos
 	if d.length() <= 0.001:
 		aiming = true
 		return
-	aim = d.normalized()
+	var rel: float = wrapf(d.angle() + PI * 0.5, -PI, PI)
+	rel = clampf(rel, -PI * 0.5, PI * 0.5)
+	aim = Vector2.from_angle(-PI * 0.5 + rel)
 	aiming = true
 
 
@@ -250,11 +263,16 @@ func _next_wave() -> void:
 
 
 func _spawn() -> void:
-	var a: float = rng.randf_range(0.0, TAU)
+	# NEPRATELE JDOU SHORA: rodi se u horniho okraje plochy, ne kolem dokola.
+	# Sireni po cele sirce, aby se hrac nemohl jen schovat do jednoho rohu.
+	var span: float = minf(arena.size.x * 0.42, field_r * 0.95)
+	var x: float = center.x + rng.randf_range(-span, span)
+	var p0 := Vector2(clampf(x, 8.0, arena.end.x - 8.0), arena.position.y + field_r * 0.06)
+	var dist: float = p0.distance_to(center)
 	var p := {
-		"pos": center + Vector2(cos(a), sin(a)) * field_r * 1.05,
+		"pos": p0,
 		"hp": enemy_hp(wave), "max_hp": enemy_hp(wave),
-		"speed": field_r / TRAVEL_S, "dmg": enemy_dmg(wave),
+		"speed": dist / TRAVEL_S, "dmg": enemy_dmg(wave),
 		"alive": true,
 	}
 	enemies.append(p)
@@ -274,7 +292,12 @@ func _fire(dt: float) -> void:
 	if n > 1:
 		step = SPREAD / float(n - 1)
 	for i in range(n):
-		var a: float = aim.angle() - SPREAD * 0.5 + step * float(i)
+		# JEDEN OSTEP LETI PRESNE TAM, KAM HRAC MIRI. Rozestup se pridava jen
+		# u vicenasobne strelby - jinak by se jednoducha rana vzdy ukradla
+		# o pulku rozestupu do strany.
+		var a: float = aim.angle()
+		if n > 1:
+			a += -SPREAD * 0.5 + step * float(i)
 		spears.append({
 			"pos": center + Vector2(cos(a), sin(a)) * (warrior_r() + spear_r()),
 			"dir": Vector2(cos(a), sin(a)),
@@ -304,7 +327,10 @@ func _move_spears(dt: float) -> void:
 			continue
 		var pos: Vector2 = s["pos"] + (s["dir"] as Vector2) * spear_speed() * dt
 		s["pos"] = pos
-		if pos.distance_to(center) > field_r * 1.25:
+		# OSTEP ZANIKA, KDYZ VYJDE Z PLOCHY. Plati pro kazdou strelu, i pro
+		# odrazenou - jinak by "odraz" do strany litel donekonecna. Plocha je
+		# o kousek vetsi nez obrazovka, aby ostep do strany doletel az za okraj.
+		if not arena.grow(field_r * 0.15).has_point(pos):
 			s["alive"] = false
 			continue
 		var hit: Dictionary = _first_hit(pos, s["hit"])

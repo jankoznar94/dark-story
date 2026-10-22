@@ -39,12 +39,16 @@ func _test_size(v: Vector2) -> void:
 	var tag: String = "%dx%d" % [int(v.x), int(v.y)]
 	var l := ScreenLayout.new()
 	l.update(v)
-	# 1) KRUH CELY NA DISPLEJI a pod hornim pruhem.
-	_check(l.field_r > 40.0, "%s: plocha nema polomer" % tag)
-	_check(l.center.x - l.field_r >= -0.5, "%s: kruh preteka vlevo" % tag)
-	_check(l.center.x + l.field_r <= v.x + 0.5, "%s: kruh preteka vpravo" % tag)
-	_check(l.center.y - l.field_r >= l.bar_h - 0.5, "%s: kruh leze pod horni pruh" % tag)
-	_check(l.center.y + l.field_r <= v.y + 0.5, "%s: kruh preteka dole" % tag)
+	# 1) BOJOVNIK NA SPODKU, hra na vysku. Plocha nad nim je cela herni prostor.
+	_check(l.field_r > 40.0, "%s: plocha nema meritko" % tag)
+	_check(l.center.x > v.x * 0.3 and l.center.x < v.x * 0.7,
+		"%s: bojovnik neni uprostred vodorovne (%.0f)" % [tag, l.center.x])
+	_check(l.center.y > v.y * 0.70, "%s: bojovnik nestoji na spodku (%.0f z %.0f)"
+		% [tag, l.center.y, v.y])
+	_check(l.center.y < v.y - 8.0, "%s: bojovnik je prilis u okraje" % tag)
+	_check(l.arena.position.y >= l.bar_h - 0.5, "%s: plocha zacina pod pruhem" % tag)
+	_check(l.arena.end.y <= l.center.y + 0.5, "%s: plocha presahuje bojovnika" % tag)
+	_check(l.arena.size.y > v.y * 0.3, "%s: plocha je moc nizka" % tag)
 	# 2) MENU: tlacitka HRAT / VYLEPSENI / UPDATE, v displeji, dotyková.
 	_check(l.menu_rects.size() == Menu.ITEMS.size(), "%s: menu nema vsechna tlacitka (%d)"
 		% [tag, l.menu_rects.size()])
@@ -73,14 +77,16 @@ func _test_size(v: Vector2) -> void:
 	_check(l.hud_menu.size.y >= 30.0, "%s: tlacitko MENU je moc male" % tag)
 	_check(l.hud_pause.end.x <= l.hud_menu.position.x, "%s: tlacitka v pruhu se prekryvaji" % tag)
 	_check(l.hud_menu.end.x <= v.x + 0.5, "%s: MENU je mimo displej" % tag)
-	# 5) HRATELNOST: neprítel stihne dojit od okraje k bojovnikovi za TRAVEL_S.
+	# 5) HRATELNOST: neprítel z horniho okraje stihne dojit k bojovnikovi za
+	#    TRAVEL_S (a to i na tom nejvyssim displeji, kde je cesta nejdelsi).
 	var g := Game.new()
 	g.profile = Profile.new()
-	g.set_field(l.field_r, l.center)
+	g.set_field(l.field_r, l.center, l.arena)
 	# TEST MODE: zadne vlny, jen ten jeden neprítel, ktery ma dojit.
 	g.phase = "test"
-	var e := {"pos": l.center + Vector2(l.field_r, 0.0), "hp": 10.0, "max_hp": 10.0,
-		"speed": l.field_r / Game.TRAVEL_S, "dmg": 1.0, "alive": true}
+	var start := Vector2(l.center.x, l.arena.position.y + l.field_r * 0.06)
+	var e := {"pos": start, "hp": 10.0, "max_hp": 10.0,
+		"speed": start.distance_to(l.center) / Game.TRAVEL_S, "dmg": 1.0, "alive": true}
 	g.enemies.append(e)
 	var t: float = 0.0
 	while t < Game.TRAVEL_S + 1.0 and not g.enemies.is_empty():
