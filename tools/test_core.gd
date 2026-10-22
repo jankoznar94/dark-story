@@ -18,6 +18,8 @@ func _init() -> void:
 	_run("regenerace dolici zivoty veze", _test_regen)
 	_run("nula zivotu = prohra", _test_lose)
 	_run("vez vidi jen svou barvu", _test_only_own_hue)
+	_run("strazce strili na nejblizsiho bez ohledu na barvu (a jen se specialem)",
+		_test_turret_ignores_hue)
 	_run("laser ubira plynule, hned a bez kadence", _test_laser_burns_continuously)
 	_run("paprsek se po smrti cile prepoji na dalsi", _test_laser_retargets_after_death)
 	_run("paprsek ma sirku a odraz je tensi", _test_beam_width)
@@ -251,6 +253,76 @@ func _test_only_own_hue() -> void:
 	_check(r.hp < r.max_hp, "poutnik ve barve veze nedostal poskozeni")
 	_check(is_equal_approx(y.hp, y_hp), "vez poskodila poutnika v jine barve")
 	_check(g.locks.size() == 1 and g.locks[0] == r, "vez zamirila na vic nez svoji barvu")
+
+
+# STRAZCE (turret, special "tw"). Jan (Oct 2026): "útocil by automaticky vždy na
+# nejbližšího nepřítele, nehledě na barvu ... pojistka když hráč nestíhá."
+# a "Strazce by mel pocitat poskozeni procentualne ze ZAKLADNIHO poskozeni veze.
+# Bez multishotu a ricochetu."
+#
+# MERI SE CTYRI VECI, ktere by se daly snadno rozbit:
+#  1. bez specialu strazce NEEXISTUJE (zadny paprsek, zadne poskozeni),
+#  2. se specialem zasahne poutnika JINE barvy (vez cervena, poutnik zluty),
+#  3. poskozeni je podil ZAKLADU (`laser_base`), ne celeho vykonu -
+#     multishot a odraz do nej nesmi vstoupit,
+#  4. dostrel je AKTUALNI dostrel veze, ne vychozi.
+func _test_turret_ignores_hue() -> void:
+	# 1) BEZ SPECIAL
+	var off: Game = _fresh()
+	var q: Pilgrim = _place(off, Hue.YELLOW, off.range_frac() * 0.6)
+	q.speed = 0.0
+	var hp0: float = q.hp
+	_tick(off, 0.5)
+	_check(is_equal_approx(q.hp, hp0), "strazce bez specialu poskozuje poutniky")
+	_check(off.turret_beams.is_empty(), "strazce bez specialu sviti paprskem")
+	# 2) SE SPECIALEM, JINA BARVA
+	var g: Game = _fresh()
+	g.profile.perm["tw"] = 1
+	g.tower.hue = Hue.RED
+	var y: Pilgrim = _place(g, Hue.YELLOW, g.range_frac() * 0.6)
+	y.speed = 0.0
+	y.hp = 500.0
+	y.max_hp = 500.0
+	_check(g.turret_active(), "koupeny strazce neni aktivni")
+	_check(absf(g.turret_dps() - g.laser_base() * 0.30) < 0.0001,
+		"1. stupen strazce nedava 30 %% zakladu (%.2f z %.2f)"
+		% [g.turret_dps(), g.laser_base()])
+	var dt: float = 1.0 / 240.0
+	var before: float = y.hp
+	g.step(dt)
+	_check(y.hp < before, "strazce nezasahl poutnika v jine barve")
+	_check(absf((before - y.hp) - g.turret_dps() * dt) < 0.02,
+		"strazce ubral %.4f, cekano %.4f" % [before - y.hp, g.turret_dps() * dt])
+	_check(g.turret_beams.size() == 1, "zamerena strazce nema prave jeden paprsek (%d)"
+		% g.turret_beams.size())
+	_check(g.beams.is_empty(), "vez cervena sviti na zluteho poutnika")
+	_check(g.turret_lock == y, "strazce nemiri na nejblizsiho poutnika")
+	# 3) MULTISHOT A ODRAZ DO POSKOZENI NEVSTUPUJI. S plnym multishotem a
+	# odrazem stoupne vykon veze nekolikanasobne, strazce ale zustava na
+	# zakladu - jinak by z pojistky byla druha hlavni zbran.
+	var base_dps: float = g.turret_dps()
+	g.profile.perm["ms"] = Upgrades.perm_max("ms")
+	g.profile.perm["rc"] = Upgrades.perm_max("rc")
+	_check(absf(g.turret_dps() - base_dps) < 0.0001,
+		"multishot/odraz zvedly poskozeni strazce (%.2f -> %.2f)"
+		% [base_dps, g.turret_dps()])
+	# 4) DOSTREL: poutnik na 45 % polomeru je mimo VYCHOZI dostrel (34 %),
+	# ale uvnitr plneho (60 %). Bez upgradu ho strazce nesmi zasahnout.
+	y.alive = false
+	var far: Pilgrim = _place(g, Hue.YELLOW, 0.45)
+	far.speed = 0.0
+	far.hp = 500.0
+	far.max_hp = 500.0
+	_tick(g, 0.2)
+	_check(is_equal_approx(far.hp, 500.0), "strazce strili mimo aktualni dostrel")
+	_check(g.turret_lock != far, "strazce zamirila poutnika mimo dostrel")
+	g.profile.perm["ar"] = Upgrades.perm_max("ar")
+	_tick(g, 0.2)
+	_check(far.hp < 500.0, "strazce ignoruje koupeny radius (dostrel)")
+	# 5) PLNY STUPEN: podil roste s tabulkou, ne s poctem poutniku.
+	g.profile.perm["tw"] = 3
+	_check(absf(g.turret_dps() - g.laser_base() * 0.60) < 0.0001,
+		"3. stupen strazce nedava 60 %% zakladu")
 
 
 # LASER NEMA ANI LET, ANI KADENCI. Jan (Oct 2026): "Vrátíme se k laseru místo

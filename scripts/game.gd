@@ -279,6 +279,20 @@ const ICE_S := 3.0
 # Na kazdeho se v jednom paprsku dostane nejvyce jednou (Jan: "vždy jen jeden
 # odraz za každého unikátního nepřítele").
 const ODRAZ_RANGE_FRAC := 0.55
+# STRAZCE (turret). Mala vežicka stojici na okraji veze. Je to DRUHA ZBRAN:
+# strili na nejblizsiho poutnika BEZ OHLEDU NA BARVU, takze je to pojistka pro
+# hrace, ktery nestiha prepinat. Barvu necte vubec (`Game._turret`), takze ji
+# nemuze ovlivnit ani paleta, ani michani.
+#
+# STOJÍ NA PEVNEM MISTE (vpravo nahoru), neobiha vez: hrac ma mit jednu
+# kotvu, kam se diva, a paprsek, ktery z ni jde, je tak vzdy videt.
+const TURRET_ANGLE := -PI * 0.25
+# Vzdalenost od stredu veze = nasobek `tower_r` (1,85 = tesne za zivotnim
+# obloukem veze, ktery konci na 1,34 r).
+const TURRET_DIST := 1.85
+# Polomer tela turretu = nasobek `tower_r` (0,40 = zhruba tretina veze).
+# VETSIT SE NESMI: turret je "maly" a vetsi by hracovi splynul s vezi.
+const TURRET_BODY := 0.40
 
 # ------------------------------------------------------------------ ROZVRZENI
 
@@ -355,6 +369,12 @@ var beams: Array = []
 # Poskozeni se NEDELA pri vystrelu, ale az pri dopadu (`t >= dur`) - Jan: strela
 # leti a hrac ji vidi. Nekresli se z `beams` (ty patri vezi).
 var enemy_shots: Array = []
+# STRAZCE (turret, special "tw"): jeji paprsek a cil. Paprsek je jen JEDEN
+# ({from, to, target}) - strazce nema multishot ani odraz, takze si ji obrazovka
+# nemusi pocitat sama. `turret_lock` je poutnik, na ktereho prave miri; drzi se
+# dokud je zivy a v dostrelu, aby paprsek nekmital mezi dvema stejne blizkymi.
+var turret_beams: Array = []
+var turret_lock: Pilgrim = null
 # KOLIK PAPRSKU SE ZA CELOU BITVU ROZSVITILO. Neni to kosmetika: je to jedine
 # merko toho, ze vez opravdu "vystrelila" (kadence uz neexistuje).
 var beams_lit: int = 0
@@ -545,6 +565,47 @@ func pilgrim_speed() -> float:
 	return maxf(0.001, (field_r - tower_r) / TRAVEL_S)
 
 
+# --------------------------------------------------------------- STRAZCE (turret)
+#
+# Jan (Oct 2026): "byl by to takový malý turret, který by způsoboval třeba jen
+# 30% poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
+# nehledě na barvu ... Byla by to taková ta pojistka když hráč nestíhá."
+#
+# JE TO SPECIAL ("tw"), takze se kupuje JEN v menu za body a na kazdem levelu
+# plati od zacatku. `temp_max` 0 znamena, ze se v bitve nekupuje - strazce neni
+# dalsi cislo v zebricku, je to druha zbran.
+func turret_frac() -> float:
+	return val("tw")
+
+
+func turret_active() -> bool:
+	return turret_frac() > 0.0
+
+
+# POSKOZENI STRAZCE ZA SEKUNDU. Jan (Oct 2026): "Strazce by mel pocitat
+# poskozeni procentualne ze ZAKLADNIHO poskozeni veze. Bez multishotu a
+# ricochetu."
+#
+# Zaklad = `laser_base()` (poskozeni x sila paprsku) - NE `laser_dps()`, ktere
+# do prumeru zapocitava kritiku, a uz vubec ne multishot/odraz: ty nejsou v
+# zadne jedne rane, ale v tom, ze jich vez vede vic najednou. Strazce vede
+# jednu zbran na jeden cil, takze se o ne neopira. Diky tomu zustava pojistkou:
+# kdo investuje do sireni paprsku, dostane odmenu jen z miry, ne z automaticky
+# mireného turretu.
+func turret_dps() -> float:
+	return laser_base() * turret_frac()
+
+
+# KDE STRAZCE STOJI. Pevny bod mimo zivotni oblouk veze, takze hrac vidi dve
+# zbrane oddelene - a paprsek strazce nikdy neprochazi telem veze.
+func turret_pos() -> Vector2:
+	return center + Vector2(cos(TURRET_ANGLE), sin(TURRET_ANGLE)) * tower_r * TURRET_DIST
+
+
+func turret_radius() -> float:
+	return tower_r * TURRET_BODY
+
+
 # ------------------------------------------------------------------ LEVELY
 
 # KOLO = poradi vlny pres cely pruchod hrou (pocita se po peti vlnach na level).
@@ -582,6 +643,8 @@ func start_level(n: int) -> void:
 	locks = []
 	beams = []
 	enemy_shots = []
+	turret_beams = []
+	turret_lock = null
 	beams_lit = 0
 	crit_left = 0.0
 	crit_wait = 0.0
@@ -709,6 +772,7 @@ func step(dt: float) -> void:
 	_aim()
 	_tick_crit(dt)
 	_laser(dt)
+	_turret(dt)
 	_advance_effects(dt)
 	_prune()
 
@@ -1430,6 +1494,57 @@ func _laser(dt: float) -> void:
 		p.burning = p.burning_now
 
 
+# STRAZCE: DRUHA ZBRAN VEDLE PAPRSKU. Jan (Oct 2026): "útocil by automaticky
+# vždy na nejbližšího nepřítele, nehledě na barvu ... pojistka když hráč
+# nestíhá."
+#
+# TADY SE BARVA NECTE VUBEC - ani `tower.sees`, ani paleta. Prave proto je to
+# pojistka: hrac muze mit prebito na cervenou a strazce si vezme zlutou, ktera
+# mu utika. SEDOU (stribrnou) zasahne taky - je to jedina zbran ve hre, ktera
+# na ni dosahne.
+#
+# Poskozeni je PODIL ZAKLADU veze (`turret_dps` = `laser_base` x podil) -
+# multishot a odraz do nej NEVSTUPUJI, takze ze strazce zustava pojistka a ne
+# druha hlavni zbran. Jed a led nedava, je to cista rana. Cil se drzi,
+# dokud je zivy a v dostrelu - jinak by paprsek kmital mezi dvema poutniky
+# a hrac by nevidel, na co vlastne miri.
+func _turret(dt: float) -> void:
+	turret_beams = []
+	if not turret_active():
+		turret_lock = null
+		return
+	var r: float = range_px()
+	if turret_lock != null and (not turret_lock.alive or not turret_lock.targetable()
+			or not in_range(turret_lock, r)):
+		turret_lock = null
+	if turret_lock == null:
+		var best: Pilgrim = null
+		var best_d: float = 1.0e18
+		for p in pilgrims:
+			if not p.alive or not p.targetable() or not in_range(p, r):
+				continue
+			var d: float = p.pos.distance_squared_to(center)
+			if d < best_d:
+				best_d = d
+				best = p
+		turret_lock = best
+	if turret_lock == null:
+		return
+	var target: Pilgrim = turret_lock
+	var from_pt: Vector2 = turret_pos()
+	var to_pt: Vector2 = target.pos
+	var dir: Vector2 = to_pt - from_pt
+	if dir.length() <= 0.001:
+		return
+	dir = dir.normalized()
+	# PAPRSEK VYCHAZI Z OKRAJE TURRETU a konci na TELI poutnika - stejna
+	# pravidla jako u paprsku veze, jen mensi (turret je mala vec).
+	from_pt += dir * turret_radius()
+	to_pt -= dir * pilgrim_hit_r(target)
+	turret_beams.append({"from": from_pt, "to": to_pt, "target": target})
+	_hurt(target, turret_dps() * dt)
+
+
 # ODRAZ. Paprsek preskoci na nejblizsiho dalsiho poutnika, na ktereho se v tom
 # samem paprsku jeste nedostalo - a to i mimo dostrel (je to odraz, ne
 # zamereni). "Stejna barva" neni zvlast podminka: vez jinou barvu nevidi
@@ -1701,6 +1816,8 @@ func from_state(d: Dictionary) -> bool:
 	locks = []
 	beams = []
 	enemy_shots = []
+	turret_beams = []
+	turret_lock = null
 	beams_lit = 0
 	events = []
 	finger_hue = {}

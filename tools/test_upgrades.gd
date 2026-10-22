@@ -22,6 +22,8 @@ func _init() -> void:
 	_run("kategorie: special nema docasne kroky", _test_special_is_perm_only)
 	_run("soucty: kazdy stat ma start, krok, strop a stropy dava smysl", _test_table_sane)
 	_run("zrychleni hry: 1,0x / 1,5x / 2,0x / 2,5x za body", _test_game_speed)
+	_run("strazce: special, ktery strili na vsechno (30/45/60 % poskozeni veze)",
+		_test_turret)
 	_run("texty hodnot jsou cesky a nejsou prazdne", _test_texts)
 	_run("profil: koupe permanentu za body, strop, nedostatek bodu", _test_profile_buy)
 	_run("profil: vyhrany level odemkne dalsi", _test_profile_clear)
@@ -102,6 +104,32 @@ func _test_game_speed() -> void:
 	_check(Upgrades.value_text("gs", 2, 0) == "2,0x",
 		"tempo se hracovi netiskne jako 2,0x (%s)" % Upgrades.value_text("gs", 2, 0))
 	_check(Upgrades.perm_cost("gs", 0) > 0, "zrychleni hry je zadarmo")
+
+
+# STRAZCE (turret). Jan (Oct 2026): "malý turret, který by způsoboval třeba jen
+# 30% poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
+# nehledě na barvu ... pojistka když hráč nestíhá."
+#
+# V TABULCE se hlida jen to, co hrac vidi v menu: je to SPECIAL (v bitve se
+# nekupuje), prvni stupen dava 30 % a kazdy dalsi vic. Ze opravdu strili na
+# jinou barvu, hlida `test_core._test_turret_ignores_hue` (tabulka o tom nic
+# nevi - je to pravidlo hry, ne cislo).
+func _test_turret() -> void:
+	_check(Upgrades.perm_max("tw") == 3, "strazce nema tri stupne")
+	_check(Upgrades.temp_max("tw") == 0, "strazce jde koupit za zlato v bitve")
+	_check(Upgrades.temp_buyable("tw") == false, "strazce se nabizi v bitve")
+	_check(String(Upgrades.stat("tw")["cat"]) == Upgrades.CAT_SPEC,
+		"strazce neni special")
+	_check(absf(Upgrades.value_of("tw", 0, 0)) < 0.0001, "strazce bez upgradu uz strili")
+	_check(absf(Upgrades.value_of("tw", 1, 0) - 0.30) < 0.0001,
+		"1. stupen strazce neni 30 %% (%.2f)" % Upgrades.value_of("tw", 1, 0))
+	_check(absf(Upgrades.value_of("tw", 3, 0) - 0.60) < 0.0001,
+		"3. stupen strazce neni 60 %% (%.2f)" % Upgrades.value_of("tw", 3, 0))
+	_check(Upgrades.value_text("tw", 1, 0) == "30 %",
+		"text strazce neni 30 %% (%s)" % Upgrades.value_text("tw", 1, 0))
+	_check(Upgrades.value_text("tw", 0, 0) == "—",
+		"strazce bez upgradu se netiskne jako prazdna (%s)" % Upgrades.value_text("tw", 0, 0))
+	_check(Upgrades.perm_cost("tw", 0) > 0, "strazce je zadarmo")
 
 
 func _test_perm_shifts_start() -> void:
@@ -289,7 +317,7 @@ func _test_table_sane() -> void:
 	_check(Upgrades.stats_in(Upgrades.CAT_OFF).size() == 5, "kategorie utok nema 5 parametru")
 	_check(Upgrades.stats_in(Upgrades.CAT_DEF).size() == 3, "kategorie obrana nema 3 parametry")
 	_check(Upgrades.stats_in(Upgrades.CAT_ECO).size() == 3, "kategorie ekonomika nema 3 parametry")
-	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 5, "kategorie special nema 5 parametru")
+	_check(Upgrades.stats_in(Upgrades.CAT_SPEC).size() == 6, "kategorie special nema 6 parametru")
 	_check(Upgrades.CATEGORIES.size() == 4, "kategorii neni ctvero")
 
 

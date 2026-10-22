@@ -177,6 +177,26 @@ const STATS := [
 	# strely, jed i led, casy vln.
 	{"id": "gs", "label": "Zrychlení hry", "cat": CAT_SPEC, "kind": "mult",
 		"start": 1.0, "step": 0.5, "cap": 2.5, "perm_max": 3, "temp_max": 0},
+	# STRAZCE. Jan (Oct 2026): "Přidáme další permanentní upgrade typu speciál
+	# ... byl by to takový malý turret, který by způsoboval třeba jen 30%
+	# poškození, ale útočil by automaticky vždy na nejbližšího nepřítele,
+	# nehledě na barvu."
+	#
+	# JE TO JINA ZBRAN NEZ PAPRSEK VEZE: strili vzdy na JEDEN cil, barvu necte
+	# vubec a nezalezi na tom, na co je vez prepnuta. Pocita se z ZAKLADNIHO
+	# poskozeni veze (`laser_base`), ne z celkoveho vykonu: multishot a odraz
+	# jsou odmena za to, ze hrac miri SPRAVNE, a strazce je pojistka, ktera
+	# miri za neho - kdyby z nich tezil, byl by z pojistky druhý hlavni laser
+	# (Jan, Oct 2026: "Bez multishotu a ricochetu").
+	#
+	# DOSTREL NECTE Z TABULKY: bere AKTUALNI dostrel veze (`range_px()`), takze
+	# kazdy koupeny radius plati i pro strazce.
+	#
+	# CENA 20 BODU (20 / 40 / 60): prvni stupen ma hrac po prvnim vyhranem
+	# levelu, ale ne zadarmo vedle poskozeni - je to pojistka, ne zaklad hry.
+	{"id": "tw", "label": "Strážce", "cat": CAT_SPEC, "kind": "levels",
+		"start": 0, "step": 1, "cap": 3, "perm_max": 3, "temp_max": 0,
+		"values": [0.0, 0.30, 0.45, 0.60], "text": "%", "perm_cost": 20},
 ]
 
 

@@ -17,6 +17,9 @@ extends Node2D
 const BG := Color(0.055, 0.052, 0.062)
 const TOWER_BODY := Color(0.11, 0.105, 0.115)
 const TOWER_DOT := Color(0.90, 0.88, 0.84)
+# STRAZCE (turret) JE NEUTRALNI ZBRAN - necte barvu, takze ani ona nesmi mit
+# barvu hrace. Oceľova seda je jedina barva ve hre, ktera neznamena zadny zivel.
+const TURRET_STEEL := Color(0.80, 0.81, 0.76)
 const TEXT := Color(0.86, 0.85, 0.82)
 const DIM := Color(0.50, 0.49, 0.52)
 const BEAM := Color(0.93, 0.91, 0.86)
@@ -891,12 +894,14 @@ func _draw_battle() -> void:
 	for p in game.pilgrims:
 		_draw_pilgrim(p)
 	_draw_tower()
+	_draw_turret()
 	if game.is_paused() and not game.is_over() and not leave_ask:
 		_draw_pause_hint()
 	# LASER SE KRESLI NAD VSIM V POLI (Jan: "Projektily musí být výraznější
 	# a musí být z indexem nad zaměřováním"). Paprsek je od Oct 2026 zbran
 	# sama - zadne zaměřování pod nim uz neni.
 	_draw_beams()
+	_draw_turret_beams()
 	_draw_enemy_shots()
 	_draw_bar()
 	# PRUH SE SMESI JE NAD PALETOU (kolecko se do pruhu palety nevejde).
@@ -1203,6 +1208,43 @@ func _draw_tower() -> void:
 	# vychazi paprsek (`Game.tower_edge_r`), takze se ta dve cisla nesmi rozejit.
 	draw_arc(c, tr * Game.TOWER_ARC_R, -PI * 0.5, -PI * 0.5 + TAU * frac, 64,
 		_hp_color(frac), maxf(3.0, tr * Game.TOWER_ARC_W))
+
+
+# STRAZCE (turret). Mala vežicka na kraji veze - tmave telo jako vez, ale SVETLY
+# neutralni prstenec: barva je ve hre vyznam (na co vez miri), takze zbran, ktera
+# barvu necte, nesmi mit barvu zadnou. Ramecek je plochy, zadny glow (Jan ma
+# astigmatismus).
+func _draw_turret() -> void:
+	if not game.turret_active():
+		return
+	var pos: Vector2 = game.turret_pos()
+	var tr: float = game.turret_radius()
+	# HLAVEN: vždy smeruje na cil; kdyz strazce nic nevidi, stoji ven z veze.
+	var aim: Vector2 = Vector2(cos(Game.TURRET_ANGLE), sin(Game.TURRET_ANGLE))
+	var target: Pilgrim = game.turret_lock
+	if target != null and target.alive:
+		var d: Vector2 = target.pos - pos
+		if d.length() > 0.001:
+			aim = d.normalized()
+	draw_line(pos, pos + aim * tr * 1.9, TURRET_STEEL, maxf(2.0, tr * 0.62))
+	draw_circle(pos, tr, TOWER_BODY)
+	draw_arc(pos, tr * 0.82, 0.0, TAU, 24, TURRET_STEEL, maxf(1.6, tr * 0.34))
+
+
+# PAPRSEK HLIDKY. Neni to pulzni tok veze - je to TENSI, KLYDNEJSI CARA v
+# neutralni ocelove barve, aby hrac na prvni pohled poznal, ktera zbran zasah
+# dela. Konce maji kolecka (Godot kresli caru s hranatym koncem).
+func _draw_turret_beams() -> void:
+	if game.turret_beams.is_empty():
+		return
+	var w: float = maxf(1.2, game.beam_w(3))
+	for b in game.turret_beams:
+		var target = b["target"]
+		if target == null or not target.alive:
+			continue
+		draw_line(b["from"], b["to"], TURRET_STEEL, w)
+		draw_circle(b["from"], w * 0.5, TURRET_STEEL)
+		draw_circle(b["to"], w * 0.5, TURRET_STEEL)
 
 
 func _hp_color(frac: float) -> Color:
