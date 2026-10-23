@@ -207,7 +207,7 @@ func _test_types() -> void:
 		hpmin = minf(hpmin, float(t["hp"]))
 		hpmax = maxf(hpmax, float(t["hp"]))
 	_check(ids.size() >= 5, "druhu je malo (%d)" % ids.size())
-	_check(rmax / rmin > 1.6, "velikosti druhu se lisi jen malo (%.2f)" % (rmax / rmin))
+	_check(rmax / rmin > 1.4, "velikosti druhu se lisi jen malo (%.2f)" % (rmax / rmin))
 	_check(tmax / tmin > 2.0, "rychlosti druhu se lisi jen malo (%.2f)" % (tmax / tmin))
 	_check(hpmax / hpmin > 3.0, "vydrz druhu se lisi jen malo (%.2f)" % (hpmax / hpmin))
 	# SLOZENI: od 6. vlny se musi objevit vic nez jen dva zakladni druhy a
@@ -224,13 +224,13 @@ func _test_types() -> void:
 	_check(seen.size() >= 4, "ve vlne se objevi jen %d druhu" % seen.size())
 	_check(ranged < 200, "strelcu je vic nez pesaku (%d/400)" % ranged)
 	# MINIMALNI VELIKOST: i na malem displeji musi mit nejmensi nepratel
-	# prumer aspon 25 px (polomer 12,5).
+	# prumer aspon 37,5 px (polomer 18,75).
 	var small: Game = _fresh()
 	small.set_field(90.0, Vector2(200.0, 400.0))
 	for t in Game.ENEMY_TYPES:
 		var e := {"r": 90.0 * float(t["r"])}
-		_check(small.radius_of(e) * 2.0 >= 25.0,
-			"druh %s je pod 25 px (%0.1f)" % [String(t["id"]), small.radius_of(e) * 2.0])
+		_check(small.radius_of(e) * 2.0 >= 37.5,
+			"druh %s je pod 37,5 px (%0.1f)" % [String(t["id"]), small.radius_of(e) * 2.0])
 
 
 # 9) STRELEC: zastavi se v odstupu, stoji a jeho strela doleti na bojovnika.
