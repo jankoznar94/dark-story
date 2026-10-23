@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = 'aeaace6';
+const CACHE_VERSION = '3495067';
 /** @type {string} */
 const CACHE_PREFIX = 'Thrower-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -116,7 +116,11 @@ self.addEventListener(
 					// dozvedel stary otisk buildu - hra vypadala, ze se neaktualizovala.
 					// Kdyz sit neni, spadneme na cache a pak na offline stranku.
 					try {
-						const fresh = await fetch(event.request);
+						// KOD HRY (.pck, .wasm) SE NESMI PTAT HTTP CACHE. GitHub Pages
+						// posila cache-control: max-age=600, takze jeste deset minut po
+						// nasazeni vratil prohlizec stary .pck - menu hlasilo novy build
+						// a hra bezela stara (presne tak zmizely zony v bitve).
+						const fresh = await fetch(event.request, { cache: isCode ? 'no-store' : 'default' });
 						if (fresh && fresh.ok) {
 							cache.put(event.request, fresh.clone());
 							return fresh;
