@@ -31,10 +31,10 @@ const RICO_RANGE_FRAC := 0.55
 const RICO_FALLOFF := 0.6
 # ROZESTUP VIC OSTREPU (celkem, v radiánech).
 const SPREAD := 0.10
-# MINIMALNI POLOMER NEPRITELE v pixelech (prumer 37,5 px). Jan: "Nejmensi z nich
-# musi mit minimalne prumer kruhu 37,5 px." Podil field_r na malem displeji pada
+# MINIMALNI POLOMER NEPRITELE v pixelech (prumer 15 px). Jan: "Nejmensi z nich
+# musi mit minimalne prumer kruhu 15 px." Podil field_r na malem displeji pada
 # pod to, takze se velikost dorovnava nahoru.
-const MIN_ENEMY_R := 18.75
+const MIN_ENEMY_R := 7.5
 
 # DRUHY NEPRATEL (Jan, Oct 2026: "Různé velikosti, různá rychlost, různá výdrž.
 # Někteří budou střílet ... většina bude na blízko.")
@@ -49,18 +49,18 @@ const MIN_ENEMY_R := 18.75
 # Vetsina je na blizko; strelci jsou vzacni a stoji daleko, takze je hrac musi
 # dobehnout ostepem, ne je nechat dojit.
 const ENEMY_TYPES := [
-	{"id": "cobra", "name": "Kobra", "img": "desert_cobra", "r": 0.155,
+	{"id": "cobra", "name": "Kobra", "img": "desert_cobra", "r": 0.065,
 		"travel": 0.60, "hp": 0.55, "dmg": 0.55, "ranged": false},
-	{"id": "nomad", "name": "Poutník", "img": "desert_nomad", "r": 0.168,
+	{"id": "nomad", "name": "Poutník", "img": "desert_nomad", "r": 0.072,
 		"travel": 1.00, "hp": 1.00, "dmg": 1.00, "ranged": false},
-	{"id": "treant", "name": "Stromák", "img": "ent", "r": 0.182,
+	{"id": "treant", "name": "Stromák", "img": "ent", "r": 0.090,
 		"travel": 1.35, "hp": 1.90, "dmg": 1.45, "ranged": false},
-	{"id": "kolos", "name": "Kolos", "img": "desert_beetle", "r": 0.200,
+	{"id": "kolos", "name": "Kolos", "img": "desert_beetle", "r": 0.105,
 		"travel": 1.70, "hp": 2.40, "dmg": 1.90, "ranged": false},
-	{"id": "ghost", "name": "Přízrak", "img": "ghost", "r": 0.158,
+	{"id": "ghost", "name": "Přízrak", "img": "ghost", "r": 0.066,
 		"travel": 1.15, "hp": 0.85, "dmg": 0.50, "ranged": true,
 		"stop": 0.68, "shot_cd": 2.6, "shot_dmg": 0.55, "shot_spd": 0.50},
-	{"id": "pyro", "name": "Ohnivec", "img": "fire_ghost", "r": 0.168,
+	{"id": "pyro", "name": "Ohnivec", "img": "fire_ghost", "r": 0.076,
 		"travel": 1.30, "hp": 1.15, "dmg": 0.60, "ranged": true,
 		"stop": 0.52, "shot_cd": 3.2, "shot_dmg": 0.90, "shot_spd": 0.60},
 ]
