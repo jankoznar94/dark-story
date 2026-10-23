@@ -280,12 +280,6 @@ func _draw_upgrades() -> void:
 
 
 func _draw_battle() -> void:
-	var c: Vector2 = layout.center
-	# SPODNI CARA POD BOJOVNIKEM: hranice, na ktere stoji. Neni to dostrel ani
-	# mrizka - jen aby obrazovka nekoncila ve vzduchu.
-	var gy: float = c.y + game.warrior_r() * 1.6
-	draw_line(Vector2(0.0, gy), Vector2(layout.view.x, gy),
-		Color(0.22, 0.21, 0.24), maxf(1.5, layout.view.x * 0.004))
 	_draw_enemies()
 	_draw_aim()
 	_draw_spears()
@@ -297,7 +291,7 @@ func _draw_battle() -> void:
 		_draw_end()
 	elif game.phase == "build":
 		_label("Připrav se — %.0f" % maxf(0.0, game.build_left),
-			Rect2(0.0, c.y - float(layout.font_px) * 6.0, layout.view.x,
+			Rect2(0.0, layout.center.y - float(layout.font_px) * 6.0, layout.view.x,
 				float(layout.font_px) * 1.6), layout.font_px, DIM)
 
 
@@ -455,8 +449,8 @@ func _draw_aim() -> void:
 	# rozptyl zuzuje, ale nesmi mu to zavazet ve vyhledu.
 	if game.shots() > 1:
 		var half: float = Game.SPREAD * game.spread_scale * 0.5
-		var faint := Color(AIM_LINE.r, AIM_LINE.g, AIM_LINE.b, 0.34)
-		var w: float = maxf(1.0, layout.field_r * 0.0025)
+		var faint := Color(AIM_LINE.r, AIM_LINE.g, AIM_LINE.b, 0.62)
+		var w: float = maxf(1.2, layout.field_r * 0.0035)
 		for s in [-1.0, 1.0]:
 			draw_line(c, c + fwd.rotated(s * half) * t, faint, w)
 
@@ -467,7 +461,9 @@ func _draw_health() -> void:
 	var frac: float = clampf(game.hp / maxf(1.0, game.max_hp), 0.0, 1.0)
 	var w: float = r * 3.2
 	var h: float = maxf(8.0, r * 0.26)
-	var bar := Rect2(c.x - w * 0.5, c.y + r * 1.10, w, h)
+	# ZIVOTY NAD HLAVOU (Jan, Oct 2026: barbar je u spodni hrany, pod nim uz
+	# zadny pruh neni - pruh by se orezal).
+	var bar := Rect2(c.x - w * 0.5, c.y - r * 1.95 - h, w, h)
 	draw_rect(bar, Color(0.09, 0.085, 0.095), true)
 	draw_rect(Rect2(bar.position, Vector2(w * frac, h)), _hp_color(frac), true)
 	draw_rect(bar, EDGE, false, maxf(1.5, h * 0.22))

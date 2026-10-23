@@ -13,6 +13,7 @@ var _simmed: bool = false
 var _steps: int = 780
 var _size: Vector2 = Vector2(600.0, 900.0)
 var _active: bool = false
+var _shots: int = 0
 
 
 func _init() -> void:
@@ -26,6 +27,8 @@ func _init() -> void:
 			_size = Vector2(float(s[0]), float(s[1]))
 		elif a == "--active":
 			_active = true
+		elif a.begins_with("--shots="):
+			_shots = int(a.split("=")[1])
 
 
 func _process(_d: float) -> bool:
@@ -58,6 +61,8 @@ func _layout() -> void:
 	view.menu.open_battle()
 	var g = view.game
 	g.start_level(1)
+	if _shots > 1:
+		g.profile.perm["shots"] = _shots - 1
 	g.wave = 5
 	g.phase = "build"
 	g.build_left = 0.01
@@ -83,4 +88,8 @@ func _sim() -> void:
 		else:
 			g.release()
 		g.step(1.0 / 60.0)
-	g.release()
+	# Po simulaci znovu "polozit prst", aby snimek ukazal mireni a rozptyl.
+	if _active:
+		g.aim_at(g.center + Vector2(g.field_r * 0.35, -g.field_r * 0.75))
+	else:
+		g.release()

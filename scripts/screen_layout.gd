@@ -58,15 +58,12 @@ func update(v: Vector2) -> void:
 	bar_h = maxf(48.0 * u, v.y * BAR_FRAC)
 	font_px = int(clampf(minf(v.x, v.y) * 0.048, 14.0 * u, 34.0 * u))
 	title_px = int(clampf(minf(v.x, v.y) * 0.088, 24.0 * u, 56.0 * u))
-	# BOJOVNIK STOJI NA SPODKU (Jan, Oct 2026: "bude bojovník stát na spodku
-	# obrazovky a bude koukat jen jedním směrem. Dopředu."). Hra je zase na
-	# vysku. Plocha nad nim je cela herni prostor - ne kruh, ne stred.
-	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, v.y - bar_h))
-	var margin: float = maxf(64.0 * u, v.y * 0.12)
-	center = Vector2(v.x * 0.5, v.y - margin)
-	# POLOMER uz neni draha obehu, jen meritko velikosti (bojovnik, nepratele,
-	# ostepy) a dosah odrazu. Odecita se od sirky displeje.
+	# BOJOVNIK STOJI UPLNE DOLE (Jan, Oct 2026: "můžeme Barbara posunout až
+	# úplně dolů na krk displeje. Ten blok pod ním být nemusí."). Pod nim uz
+	# neni zadny pruh - telo se dotyka spodni hrany, takze se hraje na co
+	# nejvetsi plose. Polomer se musi spocitat driv, nez se pouzije.
 	field_r = maxf(40.0, v.x * 0.45)
+	center = Vector2(v.x * 0.5, v.y - field_r * 0.085 * 1.02)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, center.y - bar_h))
 	_hud()
 	layout_menu()
