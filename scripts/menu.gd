@@ -124,33 +124,35 @@ func request_update() -> void:
 	var js := """
 	(async () => {
 	  const note = (c) => { window.%s = c; };
+	  const bust = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now();
+	  let gone = false;
+	  const go = () => { if (!gone) { gone = true; location.replace(bust); } };
+	  // POJISTKA: at se deje cokoli, do 2,5 s se stranka restartuje. Driv se
+	  // tu cekalo na `serviceWorker.ready` a na `r.update()` - pri PRVNIM
+	  // nacteni (worker se jeste instaloval) to viselo a hra zustala seknuta,
+	  // dokud ji clovek nezavrel. Restart je to, co hru opraví, tak ho nikdy
+	  // nedrzime za asynchronni operaci.
+	  setTimeout(go, 2500);
+	  note('hard');
 	  try {
-	    if (!('serviceWorker' in navigator)) { note('n/a'); return 'n/a'; }
-	    // SERVICE WORKER SE REGISTRUJE ASYNC: kdyz hrac klepne hned po startu,
-	    // je seznam registraci jeste prazdny. Cekame na aktivni registraci,
-	    // ale S LIMITEM - `serviceWorker.ready` bez registrace visi vecne.
-	    await Promise.race([
-	      navigator.serviceWorker.ready,
-	      new Promise((r) => setTimeout(() => r(null), 3000))
-	    ]);
 	    const regs = await navigator.serviceWorker.getRegistrations();
-	    for (const r of regs) { await r.update(); }
-	    for (const r of regs) { await r.unregister(); }
-	    if (regs.length > 0) {
-	      await navigator.serviceWorker.register('index.service.worker.js', {scope: './'});
+	    for (const r of regs) {
+	      // ODREGISTROVAT SE NESMI: pri prvni instalaci to necha prohlizec
+	      // cekat na worker, ktery uz nikdy nedobehne. Staci rict workeru,
+	      // at si stahne novou verzi - novy se sam ujme rizeni (skipWaiting).
+	      r.update().catch(() => {});
 	    }
-	    const cc = await caches.keys();
-	    for (const k of cc) { await caches.delete(k); }
-	    // NAVIGACE S RAZITKEM: bez nej vraci stary worker nebo HTTP cache
-	    // porad stary index.html. Jina adresa je v kazde cache nova polozka.
-	    note('hard');
-	    const bust = location.href.split('#')[0].split('?')[0] + '?v=' + Date.now();
-	    setTimeout(() => location.replace(bust), 900);
-	    return 'hard';
-	  } catch (e) {
-	    note('err:' + e);
-	    return 'err:' + e;
-	  }
+	  } catch (e) {}
+	  try {
+	    // Mazani cache s limitem: kdyz se browser zasekne, jdeme dal.
+	    const cc = await Promise.race([
+	      caches.keys(),
+	      new Promise((res) => setTimeout(() => res([]), 1200))
+	    ]);
+	    for (const k of cc) { caches.delete(k).catch(() => {}); }
+	  } catch (e) {}
+	  setTimeout(go, 350);
+	  return 'hard';
 	})()
 	""" % JS_UPDATE
 	jb.call("eval", js, false)
