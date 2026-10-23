@@ -38,6 +38,9 @@ var _mouse_pos: Vector2 = Vector2.ZERO
 var _js_t: float = 0.0
 # Cas posledniho doteku (ms). Brani dvojimu zpracovani doteku jako mysi.
 var _touch_ms: int = -100000
+# OZVA klepnuti: kratky krouzek v miste doteku. Je to zaroven diagnostika -
+# kdyz klepnuti na tlacitko nezanecha krouzek, dotek se do hry vubec nedostal.
+var _tap_fx: Array = []
 # PORTRETY NEPRATEL: nactou se jednou pri startu. Kruhove PNG (pruhledne okoli)
 # pripravi tools/prepare_monsters.py z portretu Dungeon Recall.
 var _tex: Dictionary = {}
@@ -80,6 +83,10 @@ func _process(dt: float) -> void:
 		_js_t = 0.0
 		menu.pull_js_state()
 	# Hra je kreslena rucne, takze se musi kazdy snimek vyzadat prekresleni.
+	for i in range(_tap_fx.size() - 1, -1, -1):
+		_tap_fx[i]["t"] = float(_tap_fx[i]["t"]) + dt
+		if float(_tap_fx[i]["t"]) > 0.30:
+			_tap_fx.remove_at(i)
 	queue_redraw()
 
 
@@ -129,6 +136,7 @@ func _active_pos() -> Vector2:
 
 
 func _press(pos: Vector2) -> void:
+	_tap_fx.append({"pos": pos, "t": 0.0})
 	if menu.is_menu():
 		# TOLERANCE PRO PRST: klepnuti nemusi padnout presne do obdelniku.
 		# U velkych tlacitek to nic nezkazi a na telefonu to zachrani minuti
@@ -190,6 +198,11 @@ func _draw() -> void:
 		_draw_upgrades()
 	else:
 		_draw_battle()
+	for fx in _tap_fx:
+		var k: float = clampf(float(fx["t"]) / 0.30, 0.0, 1.0)
+		var c: Vector2 = fx["pos"]
+		draw_arc(c, 10.0 * layout.ui_scale + 22.0 * layout.ui_scale * k, 0.0, TAU, 24,
+			Color(0.82, 0.70, 0.42, 0.55 * (1.0 - k)), maxf(1.5, 2.5 * layout.ui_scale))
 
 
 func _draw_menu() -> void:

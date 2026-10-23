@@ -16,7 +16,7 @@ func _process(_d: float) -> bool:
 		root.add_child(view)
 		return false
 	if frame == 2:
-		view.layout.update(Vector2(390.0, 844.0))
+		view.layout.update(Vector2(1077.0, 2375.0))
 		view._apply_field()
 		view.menu.open_menu()
 		print("rects=", view.layout.menu_rects.size())

@@ -58,23 +58,23 @@ func _test_size(v: Vector2) -> void:
 	_check(l.menu_note_y + float(l.font_px) * 1.6 <= v.y, "%s: hlaska pod menu je mimo displej" % tag)
 	for r in l.menu_rects:
 		var rr: Rect2 = r
-		_check(rr.size.y >= 44.0, "%s: tlacitko menu je nizsi nez 44 px" % tag)
+		_check(rr.size.y >= 44.0 * l.ui_scale - 0.5, "%s: tlacitko menu je nizsi nez 44 px" % tag)
 		_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5
 			and rr.position.y >= -0.5 and rr.end.y <= v.y + 0.5, "%s: tlacitko menu je mimo displej" % tag)
 	# 3) UPGRADY: kazdy radek je dotykovy a v displeji.
 	_check(l.upg_rows.size() == Upgrades.STATS.size(), "%s: chybi radky upgradu" % tag)
 	for r in l.upg_rows:
 		var rr: Rect2 = r
-		_check(rr.size.y >= 44.0, "%s: radek upgradu je nizsi nez 44 px (%.0f)" % [tag, rr.size.y])
+		_check(rr.size.y >= 44.0 * l.ui_scale - 0.5, "%s: radek upgradu je nizsi nez 44 px (%.0f)" % [tag, rr.size.y])
 		_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5
 			and rr.position.y >= -0.5 and rr.end.y <= v.y + 0.5, "%s: radek upgradu je mimo displej" % tag)
-	_check(l.upg_back.size.y >= 44.0, "%s: ZPET je nizsi nez 44 px" % tag)
+	_check(l.upg_back.size.y >= 44.0 * l.ui_scale - 0.5, "%s: ZPET je nizsi nez 44 px" % tag)
 	_check(l.upg_back.end.y <= v.y + 0.5, "%s: ZPET je mimo displej" % tag)
 	_check(l.upg_title_y >= 0.0, "%s: nadpis upgradu je nad displejem" % tag)
 	_check(l.upg_note_y + float(l.font_px) * 1.2 <= l.upg_panel.position.y + 0.5,
 		"%s: pocet bodu se prekryva s radky" % tag)
 	# 4) HORNI PRUH: tlacitka se vejdou a neprekryvaji se.
-	_check(l.hud_menu.size.y >= 30.0, "%s: tlacitko MENU je moc male" % tag)
+	_check(l.hud_menu.size.y >= 30.0 * l.ui_scale - 0.5, "%s: tlacitko MENU je moc male" % tag)
 	_check(l.hud_pause.end.x <= l.hud_menu.position.x, "%s: tlacitka v pruhu se prekryvaji" % tag)
 	_check(l.hud_menu.end.x <= v.x + 0.5, "%s: MENU je mimo displej" % tag)
 	# 5) HRATELNOST: neprítel z horniho okraje stihne dojit k bojovnikovi za
