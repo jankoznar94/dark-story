@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1e31676';
+const CACHE_VERSION = '0084474';
 /** @type {string} */
 const CACHE_PREFIX = 'Thrower-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -102,11 +102,15 @@ self.addEventListener(
 		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 		const local = url.startsWith(base) ? url.replace(base, '') : '';
 		const isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
-		if (isNavigate || isCacheable) {
+		// KOD HRY JE VZDY ZE SITE: .pck a .wasm se nikdy neserviruji z cache,
+		// dokud je sit. Jinak hrac po kazdem nasazeni hraje starou hru a v menu
+		// mu sviti novy build.
+		const isCode = local === 'index.pck' || local === 'index.wasm';
+		if (isNavigate || isCode || isCacheable) {
 			event.respondWith((async () => {
 				// Try to use cache first
 				const cache = await caches.open(CACHE_NAME);
-				if (isNavigate) {
+				if (isNavigate || isCode) {
 					// NAVIGACE JE VZDY ZE SITE. Godot tu mel cache-first, takze
 					// hrac po nasazeni nove verze dostal stary index.html a z menu se
 					// dozvedel stary otisk buildu - hra vypadala, ze se neaktualizovala.
