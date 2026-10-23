@@ -7,7 +7,7 @@ extends RefCounted
 const BAR_FRAC := 0.078
 const BAR_MIN := 44.0
 const BTN_MIN := 44.0
-const BTN_MAX := 64.0
+const BTN_MAX := 74.0
 const MARGIN_FRAC := 0.05
 const PLAY_R := 0.46          # podil kratsi strany plochy, ktery je herni kruh
 
@@ -77,7 +77,7 @@ func _hud() -> void:
 
 
 func btn_size() -> float:
-	return minf(BTN_MAX, maxf(BTN_MIN, view.y * 0.075))
+	return minf(BTN_MAX, maxf(BTN_MIN, view.y * 0.084))
 
 
 func layout_menu() -> void:

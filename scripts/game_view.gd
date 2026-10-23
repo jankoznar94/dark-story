@@ -192,11 +192,11 @@ func _draw_menu() -> void:
 		draw_rect(r, PANEL, true)
 		draw_rect(r, accent, false, 3.0)
 		var item: String = String(Menu.ITEMS[i])
-		_label(item, Rect2(r.position.x, r.position.y + r.size.y * 0.12, r.size.x, r.size.y * 0.54),
-			int(minf(float(layout.title_px) * 0.72, r.size.y * 0.46)), Color(0.90, 0.87, 0.80))
+		_label(item, Rect2(r.position.x, r.position.y + r.size.y * 0.08, r.size.x, r.size.y * 0.58),
+			int(minf(float(layout.title_px) * 0.82, r.size.y * 0.56)), Color(0.90, 0.87, 0.80))
 		_label(String(Menu.SUBS[i]),
-			Rect2(r.position.x + 10.0, r.position.y + r.size.y * 0.64, r.size.x - 20.0, r.size.y * 0.34),
-			int(maxf(15.0, r.size.y * 0.21)), DIM)
+			Rect2(r.position.x + 10.0, r.position.y + r.size.y * 0.63, r.size.x - 20.0, r.size.y * 0.35),
+			int(maxf(18.0, r.size.y * 0.27)), DIM)
 	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_note_y, layout.view.x,
 		float(layout.font_px) * 1.5), layout.font_px, GOLD)
 	if not menu.update_note.is_empty():
@@ -205,7 +205,7 @@ func _draw_menu() -> void:
 			int(maxf(11.0, float(layout.font_px) * 0.85)), Color(0.80, 0.72, 0.50))
 	_label("build %s" % menu.build_id,
 		Rect2(0.0, layout.view.y - float(layout.font_px) * 2.2, layout.view.x,
-			float(layout.font_px)), int(maxf(12.0, float(layout.font_px) * 0.80)), DIM)
+			float(layout.font_px) * 1.3), int(maxf(14.0, float(layout.font_px) * 0.95)), DIM)
 
 
 func _draw_upgrades() -> void:
