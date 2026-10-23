@@ -41,14 +41,14 @@ var dlg_box: Rect2 = Rect2()
 var dlg_a: Rect2 = Rect2()
 var dlg_b: Rect2 = Rect2()
 
-# DVE KULATE ZONY (Jan, Oct 2026): leva = rozptyl, prava = mireni. Sedí vedle
-# bojovnika po stranach, aby prst nezakryval to, co se haze. Kresli se maly
-# krouzek (prumer ~30 px na telefonu), ale chytá se vetsi okoli - na 30 px by
-# se prst trefil jen nahodou.
-const PAD_DIA_FRAC := 0.15      # podil sirky displeje = prumer zony
-var pad_r: float = 0.0
-var pad_l_pos: Vector2 = Vector2.ZERO
-var pad_r_pos: Vector2 = Vector2.ZERO
+# DVA PASKY (Jan, Oct 2026: "mozna je blbost je delat kruhove ... prava
+# horizontalni, leva vertikalni. Levy jde jen nahoru a dolu, pravy jen doleva
+# a doprava"). Kazda osa je jen jedna, takze se neda minout smerem:
+#   PRASKA VLEVO  = svisly pasek, rozptyl multishotu (nahoru uzsi, dolu sirsi)
+#   PASEK VPRAVO  = vodorovny pasek, mireni (vlevo/vpravo)
+# Drzi se u kraju displeje vedle bojovnika, aby prst nezakryval hriste.
+var strip_l: Rect2 = Rect2()   # svisly: rozptyl
+var strip_r: Rect2 = Rect2()   # vodorovny: mireni
 
 
 func update(v: Vector2) -> void:
@@ -62,9 +62,8 @@ func update(v: Vector2) -> void:
 		upg_rows = []
 		hud_pause = Rect2()
 		hud_menu = Rect2()
-		pad_r = 0.0
-		pad_l_pos = Vector2.ZERO
-		pad_r_pos = Vector2.ZERO
+		strip_l = Rect2()
+		strip_r = Rect2()
 		return
 	ui_scale = maxf(0.45, minf(v.x, v.y) / 600.0)
 	var u: float = ui_scale
@@ -81,35 +80,34 @@ func update(v: Vector2) -> void:
 	# ostepy) a dosah odrazu. Odecita se od sirky displeje.
 	field_r = maxf(40.0, v.x * 0.45)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, center.y - bar_h))
-	_pads()
+	_strips()
 	_hud()
 	layout_menu()
 	layout_upgrades()
 	layout_dialog()
 
 
-# DVE ZONY: stredy vedle bojovnika. Levá je zrcadlove stejne daleko od okraje,
-# aby se na sirsi displeji nerozjely.
-func _pads() -> void:
-	# PRUMER ~30 px na bezneM telefonu (390 CSS px) = 7,7 % sirky. Pocita se
-	# ze sirky, ne z ui_scale: na sirokem displeji musi zony zustat u kraju.
-	pad_r = maxf(12.0 * ui_scale, view.x * PAD_DIA_FRAC * 0.5)
-	var mx: float = maxf(pad_r * 1.9, view.x * 0.115)
-	var y: float = minf(center.y - pad_r * 0.30, view.y - pad_r - 4.0 * ui_scale)
-	pad_l_pos = Vector2(mx, y)
-	pad_r_pos = Vector2(view.x - mx, y)
-
-
-# KAM AZ SE DA ZONY CHYTIT. Videt je velky krouzek, chyta se jeste o kus
-# vetsi okoli - ale ne tolik, aby zona sahala do mista, kde se miri.
-func pad_touch_r() -> float:
-	return pad_r * 1.55
-
-
-# VYCHYLKA PRSTU, PRI KTERE JE ZONA NAPLNO. Prst muze vyjet mimo krouzek -
-# hodnota uz jen zustane na maximu.
-func pad_travel() -> float:
-	return maxf(1.0, pad_r * 1.25)
+# DVA PASKY VEDLE BOJOVNIKA. Tloustka i delka se pocitaji ze SIRKY displeje,
+# ne z ui_scale - na sirokem displeji musi pasky zustat u kraju.
+#   levy  = svisly, u leveho okraje, stred ve stejne vysce jako bojovnik
+#   pravy = vodorovny, u praveho okraje, ve stejne vysce
+func _strips() -> void:
+	var t: float = maxf(16.0 * ui_scale, view.x * 0.10)      # tloustka pasku
+	# SVISLY: 30 % sirky displeje, ale nikdy vic, nez kolik je mista nad
+	# bojovnikem (na nizkém displeji na sirku by vylezl do pruhu s zivoty).
+	var vlen: float = maxf(t * 2.0, minf(view.x * 0.30, (center.y - bar_h) * 0.55))
+	var lx: float = maxf(10.0 * ui_scale, view.x * 0.055)
+	var ly: float = center.y - vlen * 0.5
+	ly = minf(ly, view.y - 6.0 * ui_scale - vlen)
+	ly = maxf(ly, bar_h + 6.0 * ui_scale)
+	strip_l = Rect2(lx, ly, t, vlen)
+	# VODOROVNY: 34 % sirky, dorazi k pravemu okraji.
+	var hlen: float = maxf(t * 2.0, view.x * 0.34)
+	var rx: float = view.x - maxf(10.0 * ui_scale, view.x * 0.055) - hlen
+	var ry: float = center.y - t * 0.5
+	ry = minf(ry, view.y - 6.0 * ui_scale - t)
+	ry = maxf(ry, bar_h + 6.0 * ui_scale)
+	strip_r = Rect2(rx, ry, hlen, t)
 
 
 func _hud() -> void:

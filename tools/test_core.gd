@@ -21,7 +21,7 @@ func _init() -> void:
 	_run("vic ostepu v jednom hodu", _test_multishot)
 	_run("druhy nepratel: velikost, rychlost, vydrz", _test_types)
 	_run("strelci se zastavi a strili", _test_ranged)
-	_run("prava zona otaci smer, leva meni rozptyl", _test_pads)
+	_run("pravy pasek otaci smer, levy meni rozptyl", _test_pads)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()

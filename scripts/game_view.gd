@@ -41,8 +41,10 @@ const NO_PTR := -9999
 const MOUSE_PTR := -1
 var _aim_ptr: int = NO_PTR
 var _spread_ptr: int = NO_PTR
-var _aim_off: Vector2 = Vector2.ZERO
-var _spread_off: Vector2 = Vector2.ZERO
+# POSLEDNI POLOHA PRSTU na pasku. Bere se z ni jen jedna osa (u mireni x,
+# u rozptylu y), takze pohyb jinym smerem nic nedela.
+var _aim_pos: Vector2 = Vector2.ZERO
+var _spread_pos: Vector2 = Vector2.ZERO
 var _js_t: float = 0.0
 # Cas posledniho doteku (ms). Brani dvojimu zpracovani doteku jako mysi.
 var _touch_ms: int = -100000
@@ -171,66 +173,67 @@ func _press(pos: Vector2, id: int) -> void:
 			_drop_pads()
 			menu.open_menu()
 			return
-		_grab_pad(pos, id)
+		_grab_strip(pos, id)
 
 
-# KTERA ZONA BYLA CHYCENA. Mimo zony se nedela nic - presne to Jan chtel:
-# prst uz nelezi ve hre, ale v koutě vedle bojovnika.
-func _grab_pad(pos: Vector2, id: int) -> void:
-	var tr: float = layout.pad_touch_r()
-	if _aim_ptr == NO_PTR and pos.distance_to(layout.pad_r_pos) <= tr:
+# KTERY PASEK BYL CHYCEN. Mimo pasky se nedela nic - prst nelezi ve hristi.
+# Pasek se chyta i kousek za okrajem (grow), aby se na nej dalo dosahnout
+# palcem, ale ne tolik, aby si ho hrac pletl se hristem.
+func _grab_strip(pos: Vector2, id: int) -> void:
+	var g: float = maxf(6.0, layout.ui_scale * 10.0)
+	if _aim_ptr == NO_PTR and layout.strip_r.grow(g).has_point(pos):
 		_aim_ptr = id
-		_aim_off = pos - layout.pad_r_pos
+		_aim_pos = pos
 		game.aiming = true
 		_apply_aim()
 		return
-	if _spread_ptr == NO_PTR and pos.distance_to(layout.pad_l_pos) <= tr:
+	if _spread_ptr == NO_PTR and layout.strip_l.grow(g).has_point(pos):
 		_spread_ptr = id
-		_spread_off = pos - layout.pad_l_pos
+		_spread_pos = pos
 		_apply_spread()
 
 
 func _drag(pos: Vector2, id: int) -> void:
 	if not menu.is_battle() or game.is_over():
 		return
+	# KAZDY PASEK POSLOUCHA JEN SVOU OSU: svisly smer u mireni a vodorovny
+	# u rozptylu se ignoruje (Jan: "levy jen nahoru a dolu, pravy jen doleva
+	# a doprava"). Proto se uklada cely bod a bere se z nej jedna souradnice.
 	if id == _aim_ptr:
-		_aim_off = pos - layout.pad_r_pos
+		_aim_pos = pos
 		_apply_aim()
 	elif id == _spread_ptr:
-		_spread_off = pos - layout.pad_l_pos
+		_spread_pos = pos
 		_apply_spread()
 
 
 func _release_ptr(id: int) -> void:
 	if id == _aim_ptr:
 		_aim_ptr = NO_PTR
-		_aim_off = Vector2.ZERO
 		game.set_turn(0.0)
 		game.release()
 
 
-# VYCHYLKA -> SMER. Mrtva zona uprostred, aby sel smer drzet presne; plna
-# vychylka = plne otaceni (TURN_SPEED v game.gd).
+# VODOROVNY PASEK -> Smer otaceni. Poloha prstu po delsce pasku je primo
+# velikost otaceni: levy konec = naplno vlevo, stred = stoji, pravy = vpravo.
+# Diky tomu jde drzet i jemne otaceni - staci se drzet bliz stredu.
 func _apply_aim() -> void:
-	var nx: float = clampf(_aim_off.x / layout.pad_travel(), -1.0, 1.0)
-	if absf(nx) < 0.12:
+	var r: Rect2 = layout.strip_r
+	var v: float = clampf((_aim_pos.x - r.position.x) / maxf(1.0, r.size.x), 0.0, 1.0)
+	var nx: float = (v - 0.5) * 2.0
+	if absf(nx) < 0.10:
 		nx = 0.0
 	else:
-		nx = signf(nx) * (absf(nx) - 0.12) / 0.88
+		nx = signf(nx) * (absf(nx) - 0.10) / 0.90
 	game.set_turn(nx)
 
 
-# VYCHYLKA -> ROZPTYL. Nahoru = uzsi (0), dolu = sirsi (1). Po zvednuti prstu
-# hodnota ZUSTAVA - hrac nemusi rozptyl drzet porad.
+# SVISLY PASEK -> Rozptyl. Nahore nejuzsi, dole nej sirsi. Poloha prstu je
+# primo hodnota (zadne posouvani), po zvednuti prstu zustava.
 func _apply_spread() -> void:
-	var ny: float = clampf(_spread_off.y / layout.pad_travel(), -1.0, 1.0)
-	var t: float = (ny + 1.0) * 0.5
-	game.set_spread_scale(lerpf(Game.SPREAD_SCALE_MIN, Game.SPREAD_SCALE_MAX, t))
-
-
-# Poloha knobu: prst muze vyjet dal, nez je krouzek, ale knob zustane na okraji.
-func _knob(off: Vector2) -> Vector2:
-	return off.limit_length(layout.pad_r * 0.66)
+	var r: Rect2 = layout.strip_l
+	var v: float = clampf((_spread_pos.y - r.position.y) / maxf(1.0, r.size.y), 0.0, 1.0)
+	game.set_spread_scale(lerpf(Game.SPREAD_SCALE_MIN, Game.SPREAD_SCALE_MAX, v))
 
 
 func _release_if_empty() -> void:
@@ -241,7 +244,6 @@ func _release_if_empty() -> void:
 func _open_action(a: String) -> void:
 	if a == "battle":
 		_drop_pads()
-		_spread_off = Vector2.ZERO
 		game.start_level(maxi(1, game.profile.level))
 		menu.open_battle()
 	elif a == "upgrades":
@@ -259,7 +261,6 @@ func _drop_pads() -> void:
 		game.release()
 	_aim_ptr = NO_PTR
 	_spread_ptr = NO_PTR
-	_aim_off = Vector2.ZERO
 
 
 # =========================================================================
@@ -357,7 +358,7 @@ func _draw_battle() -> void:
 	_draw_aim()
 	_draw_spears()
 	_draw_shots()
-	_draw_pads()
+	_draw_strips()
 	_draw_warrior()
 	_draw_health()
 	_draw_bar()
@@ -369,31 +370,37 @@ func _draw_battle() -> void:
 				float(layout.font_px) * 1.6), layout.font_px, DIM)
 
 
-# DVE ZONY V KOUTECH VEDLE BOJOVNIKA. Plochy strojovy vzhled: tmavy krouzek,
-# tenky obrys, mala tecka (knob) vychylena podle prstu. Zadny glow.
-# LEVA (svisla osa) = rozptyl multishotu, PRAVA (vodorovna) = smer mireni.
-func _draw_pads() -> void:
-	if layout.pad_r <= 0.0:
+# DVA PASKY VEDLE BOJOVNIKA. Plochy strojovy vzhled: tmavy pruh, tenky
+# obrys, vyznacena poloha (znacka), ktera ukazuje, jak je co nastavene.
+# LEVY svisly = rozptyl multishotu, PRAVY vodorovny = smer mireni.
+func _draw_strips() -> void:
+	if layout.strip_l.size.y <= 1.0 or layout.strip_r.size.x <= 1.0:
 		return
-	_draw_pad(layout.pad_l_pos, _knob(_spread_off), true, _spread_ptr != NO_PTR)
-	_draw_pad(layout.pad_r_pos, _knob(_aim_off), false, _aim_ptr != NO_PTR)
+	# ROZPTYL: znacka je tam, kde je prave nastavena hodnota (nejde o prst -
+	# hodnota po zvednuti prstu zustava, takze musi byt videt furt).
+	var sl: Rect2 = layout.strip_l
+	var st: float = clampf((game.spread_scale - Game.SPREAD_SCALE_MIN)
+		/ maxf(0.01, Game.SPREAD_SCALE_MAX - Game.SPREAD_SCALE_MIN), 0.0, 1.0)
+	var sy: float = sl.position.y + sl.size.y * st
+	_draw_strip(sl, true, _spread_ptr != NO_PTR, sy)
+	# MIRENI: znacka je poloha otaceni (stred = stoji).
+	var sr: Rect2 = layout.strip_r
+	var ax: float = sr.position.x + sr.size.x * (0.5 + game.turn_in * 0.5)
+	_draw_strip(sr, false, _aim_ptr != NO_PTR, ax)
 
 
-func _draw_pad(p: Vector2, off: Vector2, vertical: bool, active: bool) -> void:
-	var r: float = layout.pad_r
+func _draw_strip(r: Rect2, vertical: bool, active: bool, mark: float) -> void:
 	var edge: Color = GOLD if active else Color(0.47, 0.45, 0.47)
-	draw_circle(p, r, Color(0.095, 0.090, 0.102, 0.95))
-	# OSA: ukazuje, kterym smerem se v zone tahne. Svisla = rozptyl, vodorovna
-	# = mireni; hrac to pozna bez popisku, na 30 px by se text nedal precist.
-	var a: Vector2 = Vector2(0.0, r * 0.74) if vertical else Vector2(r * 0.74, 0.0)
-	draw_line(p - a, p + a, Color(0.36, 0.34, 0.37), maxf(1.0, r * 0.09))
-	draw_arc(p, r, 0.0, TAU, 28, edge, maxf(1.5, r * 0.13))
-	# KNOB: kde je prst. Kdyz se nedrzi, zustava na posledni hodnote (hlavne
-	# u rozptylu - hrac vidi, jak si ho nechal).
-	var kc: Color = GOLD if active else Color(0.62, 0.60, 0.60)
-	var kr: float = maxf(2.5, r * 0.28)
-	draw_circle(p + off, kr, kc)
-	draw_arc(p + off, kr, 0.0, TAU, 16, Color(0.10, 0.09, 0.10), maxf(1.0, r * 0.07))
+	var w: float = maxf(2.0, layout.ui_scale * 3.0)
+	draw_rect(r, Color(0.095, 0.090, 0.102, 0.95), true)
+	draw_rect(r, edge, false, w)
+	# ZNACKA POLOHY: kolmice pres cely pasek.
+	var mk: Color = GOLD if active else Color(0.66, 0.64, 0.64)
+	var mt: float = maxf(3.0, (r.size.x if vertical else r.size.y) * 0.12)
+	if vertical:
+		draw_rect(Rect2(r.position.x, mark - mt * 0.5, r.size.x, mt), mk, true)
+	else:
+		draw_rect(Rect2(mark - mt * 0.5, r.position.y, mt, r.size.y), mk, true)
 
 
 func _draw_warrior() -> void:

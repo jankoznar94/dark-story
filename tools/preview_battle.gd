@@ -61,13 +61,16 @@ func _layout() -> void:
 	g.wave = 5
 	g.phase = "build"
 	g.build_left = 0.01
-	# ZONY V AKCI: jen pro snimek, jak vypadaji pri drzeni prstu.
+	# PASKY V AKCI: jen pro snimek, jak vypadaji pri drzeni prstu.
 	if _active:
+		var sl: Rect2 = view.layout.strip_l
 		view._spread_ptr = 7
-		view._spread_off = Vector2(0.0, view.layout.pad_travel() * 0.85)
+		view._spread_pos = Vector2(sl.get_center().x, sl.position.y + sl.size.y * 0.85)
 		view._apply_spread()
+		var sr: Rect2 = view.layout.strip_r
 		view._aim_ptr = 8
-		view._aim_off = Vector2(view.layout.pad_travel() * 0.6, 0.0)
+		view._aim_pos = Vector2(sr.position.x + sr.size.x * 0.72, sr.get_center().y)
+		view._apply_aim()
 		g.aiming = true
 
 
