@@ -37,10 +37,7 @@ var _mouse_down: bool = false
 var _mouse_pos: Vector2 = Vector2.ZERO
 # DVE ZONY (Jan, Oct 2026): prava = smer mireni, leva = rozptyl multishotu.
 # Kazda zona si pamatuje SVUJ prst - hrac muze drzet obe najednou.
-const NO_PTR := -9999
 const MOUSE_PTR := -1
-var _aim_ptr: int = NO_PTR
-var _spread_ptr: int = NO_PTR
 # POSLEDNI POLOHA PRSTU na pasku. Bere se z ni jen jedna osa (u mireni x,
 # u rozptylu y), takze pohyb jinym smerem nic nedela.
 var _aim_pos: Vector2 = Vector2.ZERO
@@ -142,8 +139,17 @@ func _input(event: InputEvent) -> void:
 
 
 # =========================================================================
-# ZONY
+# PASKY
 # =========================================================================
+
+# PASKY SE RIDI POZICI PRSTU, NE PODLE ID DOTYKU. Na webu dostavaji dotek a
+# tazeni stejneho prstu ruzne indexy, takze kdyz se prst pamatoval podle id,
+# druhy prst prepisoval ovladani prvniho a pasky se "hadaly" (Jan). Ted kazdy
+# pasek kouka jen na to, jestli ma ve sve plose nejaky prst - a bere si jeho
+# polohu. Dva prsty si tak nemohou prekazet.
+var _aim_on: bool = false
+var _spread_on: bool = false
+
 
 func _press(pos: Vector2, id: int) -> void:
 	_tap_fx.append({"pos": pos, "t": 0.0})
@@ -173,45 +179,54 @@ func _press(pos: Vector2, id: int) -> void:
 			_drop_pads()
 			menu.open_menu()
 			return
-		_grab_strip(pos, id)
+		_sync_strips()
 
 
-# KTERY PASEK BYL CHYCEN. Mimo pasky se nedela nic - prst nelezi ve hristi.
-# Pasek se chyta i kousek za okrajem (grow), aby se na nej dalo dosahnout
-# palcem, ale ne tolik, aby si ho hrac pletl se hristem.
-func _grab_strip(pos: Vector2, id: int) -> void:
-	var g: float = maxf(6.0, layout.ui_scale * 10.0)
-	if _aim_ptr == NO_PTR and layout.strip_r.grow(g).has_point(pos):
-		_aim_ptr = id
-		_aim_pos = pos
-		game.aiming = true
-		_apply_aim()
-		return
-	if _spread_ptr == NO_PTR and layout.strip_l.grow(g).has_point(pos):
-		_spread_ptr = id
-		_spread_pos = pos
-		_apply_spread()
-
-
-func _drag(pos: Vector2, id: int) -> void:
+func _drag(_pos: Vector2, _id: int) -> void:
 	if not menu.is_battle() or game.is_over():
 		return
-	# KAZDY PASEK POSLOUCHA JEN SVOU OSU: svisly smer u mireni a vodorovny
-	# u rozptylu se ignoruje (Jan: "levy jen nahoru a dolu, pravy jen doleva
-	# a doprava"). Proto se uklada cely bod a bere se z nej jedna souradnice.
-	if id == _aim_ptr:
-		_aim_pos = pos
+	_sync_strips()
+
+
+# PRST V PLOSE PASKU. Hleda se jen uvnitr daneho pasku (s mirnou toleranci),
+# takze levy pasek nikdy necte prst z praveho.
+func _finger_in(r: Rect2) -> Dictionary:
+	var g: float = maxf(4.0, minf(r.size.x, r.size.y) * 0.45)
+	var area: Rect2 = r.grow(g)
+	for k in _touch.keys():
+		var p: Vector2 = _touch[k]
+		if area.has_point(p):
+			return {"on": true, "pos": p}
+	if _mouse_down and area.has_point(_mouse_pos):
+		return {"on": true, "pos": _mouse_pos}
+	return {"on": false, "pos": Vector2.ZERO}
+
+
+func _sync_strips() -> void:
+	if not menu.is_battle():
+		return
+	# MIRENI (vodorovny pasek): bez prstu se stoji a nehazi.
+	var a: Dictionary = _finger_in(layout.strip_r)
+	_aim_on = bool(a["on"])
+	if _aim_on:
+		_aim_pos = a["pos"]
+		game.aiming = true
 		_apply_aim()
-	elif id == _spread_ptr:
-		_spread_pos = pos
+	else:
+		game.set_turn(0.0)
+		game.release()
+	# ROZPTYL (svisly pasek): hodnota zustava, kdyz prst zvednes.
+	var s: Dictionary = _finger_in(layout.strip_l)
+	_spread_on = bool(s["on"])
+	if _spread_on:
+		_spread_pos = s["pos"]
 		_apply_spread()
 
 
-func _release_ptr(id: int) -> void:
-	if id == _aim_ptr:
-		_aim_ptr = NO_PTR
-		game.set_turn(0.0)
-		game.release()
+func _release_ptr(_id: int) -> void:
+	# Kdo pustil prst, neni treba resit - stav pasku se pocita z POLOHY prstu
+	# pri kazdem vstupu. Staci jen znovu prekreslit stav.
+	_sync_strips()
 
 
 # VODOROVNY PASEK -> Smer otaceni. Poloha prstu po delsce pasku je primo
@@ -237,8 +252,8 @@ func _apply_spread() -> void:
 
 
 func _release_if_empty() -> void:
-	if _aim_ptr == NO_PTR and _touch.is_empty() and not _mouse_down:
-		game.release()
+	if _touch.is_empty() and not _mouse_down:
+		_sync_strips()
 
 
 func _open_action(a: String) -> void:
@@ -253,14 +268,13 @@ func _open_action(a: String) -> void:
 		menu.request_update()
 
 
-# ZVEDNOUT PRSTY ZE ZON: pri odchodu do menu nebo na zacatku levelu nesmi
+# ZVEDNOUT PRSTY ZE PASKU: pri odchodu do menu nebo na zacatku levelu nesmi
 # zustat viset mireni z minule obrazovky.
 func _drop_pads() -> void:
-	if _aim_ptr != NO_PTR:
-		game.set_turn(0.0)
-		game.release()
-	_aim_ptr = NO_PTR
-	_spread_ptr = NO_PTR
+	game.set_turn(0.0)
+	game.release()
+	_aim_on = false
+	_spread_on = false
 
 
 # =========================================================================
@@ -382,11 +396,11 @@ func _draw_strips() -> void:
 	var st: float = clampf((game.spread_scale - Game.SPREAD_SCALE_MIN)
 		/ maxf(0.01, Game.SPREAD_SCALE_MAX - Game.SPREAD_SCALE_MIN), 0.0, 1.0)
 	var sy: float = sl.position.y + sl.size.y * st
-	_draw_strip(sl, true, _spread_ptr != NO_PTR, sy)
+	_draw_strip(sl, true, _spread_on, sy)
 	# MIRENI: znacka je poloha otaceni (stred = stoji).
 	var sr: Rect2 = layout.strip_r
 	var ax: float = sr.position.x + sr.size.x * (0.5 + game.turn_in * 0.5)
-	_draw_strip(sr, false, _aim_ptr != NO_PTR, ax)
+	_draw_strip(sr, false, _aim_on, ax)
 
 
 func _draw_strip(r: Rect2, vertical: bool, active: bool, mark: float) -> void:

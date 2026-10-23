@@ -61,17 +61,14 @@ func _layout() -> void:
 	g.wave = 5
 	g.phase = "build"
 	g.build_left = 0.01
-	# PASKY V AKCI: jen pro snimek, jak vypadaji pri drzeni prstu.
+	# PASKY V AKCI: jen pro snimek, jak vypadaji pri drzeni prstu. Staci do
+	# slovniku doteku dat dva "prsty" - pasky se ridi polohou, ne id.
 	if _active:
 		var sl: Rect2 = view.layout.strip_l
-		view._spread_ptr = 7
-		view._spread_pos = Vector2(sl.get_center().x, sl.position.y + sl.size.y * 0.85)
-		view._apply_spread()
 		var sr: Rect2 = view.layout.strip_r
-		view._aim_ptr = 8
-		view._aim_pos = Vector2(sr.position.x + sr.size.x * 0.72, sr.get_center().y)
-		view._apply_aim()
-		g.aiming = true
+		view._touch[7] = Vector2(sl.get_center().x, sl.position.y + sl.size.y * 0.85)
+		view._touch[8] = Vector2(sr.position.x + sr.size.x * 0.72, sr.get_center().y)
+		view._sync_strips()
 
 
 # SIMULACE: hrac miri na nejvyssiho nepritele, aby se bitva opravdu hrala.
@@ -91,3 +88,6 @@ func _sim() -> void:
 			g.release()
 		g.step(1.0 / 60.0)
 	g.release()
+	# Po simulaci znovu "polozit prsty", aby snimek ukazal pasky v akci.
+	if _active:
+		view._sync_strips()
