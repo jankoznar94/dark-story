@@ -36,6 +36,9 @@ var _touch: Dictionary = {}
 var _mouse_down: bool = false
 var _mouse_pos: Vector2 = Vector2.ZERO
 var _js_t: float = 0.0
+# PORTRETY NEPRATEL: nactou se jednou pri startu. Kruhove PNG (pruhledne okoli)
+# pripravi tools/prepare_monsters.py z portretu Dungeon Recall.
+var _tex: Dictionary = {}
 
 
 func _ready() -> void:
@@ -44,6 +47,7 @@ func _ready() -> void:
 	menu.load_build_id()
 	layout.update(get_viewport_rect().size)
 	_apply_field()
+	_load_textures()
 	get_viewport().size_changed.connect(_on_resize)
 
 
@@ -54,6 +58,14 @@ func _on_resize() -> void:
 
 func _apply_field() -> void:
 	game.set_field(layout.field_r, layout.center, layout.arena)
+
+
+func _load_textures() -> void:
+	_tex.clear()
+	for t in Game.ENEMY_TYPES:
+		var path: String = "res://assets/monsters/%s.png" % String(t["img"])
+		if ResourceLoader.exists(path):
+			_tex[String(t["id"])] = load(path)
 
 
 func _process(dt: float) -> void:
@@ -242,6 +254,7 @@ func _draw_battle() -> void:
 	_draw_enemies()
 	_draw_aim()
 	_draw_spears()
+	_draw_shots()
 	_draw_warrior()
 	_draw_health()
 	_draw_bar()
@@ -283,15 +296,66 @@ func _draw_warrior() -> void:
 
 
 func _draw_enemies() -> void:
-	var er: float = game.enemy_r()
 	for e in game.enemies:
 		var pos: Vector2 = e["pos"]
-		draw_circle(pos, er, ENEMY)
-		draw_arc(pos, er, 0.0, TAU, 16, ENEMY_EDGE, maxf(1.5, er * 0.28))
+		var er: float = game.radius_of(e)
+		var kind: String = String(e.get("kind", "nomad"))
+		var edge: Color = _kind_edge(kind)
+		# KRUH: obrazek je jiz predkruhovany s pruhlednym okolim (tools/
+		# prepare_monsters.py), takze nikde neni cerny ctverec. Pod nim je jen
+		# tenky lem, ktery drzi tvar i kdyz obrazek chybi.
+		draw_circle(pos, er, Color(0.085, 0.078, 0.090))
+		var tex: Texture2D = _tex.get(kind, null)
+		if tex != null:
+			draw_texture_rect(tex, Rect2(pos - Vector2(er, er), Vector2(er, er) * 2.0), false)
+		else:
+			draw_circle(pos, er * 0.94, ENEMY)
+		draw_arc(pos, er * 0.97, 0.0, TAU, 28, edge, maxf(1.5, er * 0.10))
+		# ZIVOTY: oblouk kolem hlavy, ne cislo - hrac vidi "kolik jeste vydrzi".
 		var frac: float = clampf(float(e["hp"]) / maxf(1.0, float(e["max_hp"])), 0.0, 1.0)
 		if frac < 0.999:
-			draw_arc(pos, er * 1.55, -PI * 0.5, -PI * 0.5 + TAU * frac, 20,
-				_hp_color(frac), maxf(2.0, er * 0.30))
+			draw_arc(pos, er * 1.16, -PI * 0.5, -PI * 0.5 + TAU * frac, 24,
+				_hp_color(frac), maxf(2.0, er * 0.22))
+		# NABIJENI STRELCE: tesne pred vystrelem se nad hlavou rozsviti tecka.
+		# Je to jen plocha, zadny glow - hrac ma cas uskocit ostepem.
+		if bool(e.get("ranged", false)) and float(e.get("shot_left", 9.0)) < 0.5:
+			draw_circle(pos + Vector2(0.0, -er * 1.32), er * 0.16, edge)
+
+
+# BARVA DRUHU: jen odstin lemu a strel, zadne neony. Kazdy druh ma byt poznat
+# perifernim videnim, ale stale to musi byt strojova, ztlumena paleta.
+func _kind_edge(kind: String) -> Color:
+	match kind:
+		"cobra":
+			return Color(0.55, 0.60, 0.32)
+		"nomad":
+			return Color(0.66, 0.54, 0.36)
+		"treant":
+			return Color(0.44, 0.52, 0.33)
+		"kolos":
+			return Color(0.62, 0.48, 0.30)
+		"ghost":
+			return Color(0.52, 0.62, 0.70)
+		"pyro":
+			return Color(0.74, 0.44, 0.28)
+	return Color(0.62, 0.30, 0.28)
+
+
+func _draw_shots() -> void:
+	for s in game.enemy_shots:
+		var pos: Vector2 = s["pos"]
+		var dir: Vector2 = s["dir"]
+		var r: float = float(s["r"])
+		var kind: String = String(s.get("kind", "ghost"))
+		var col: Color = _kind_edge(kind)
+		# STOPA: dve kratke useky, aby bylo videt, odkud strela leti.
+		for i in range(2):
+			var t0: Vector2 = pos - dir * r * (5.0 + 3.0 * float(i))
+			var t1: Vector2 = pos - dir * r * (2.0 + 3.0 * float(i))
+			draw_line(t0, t1, Color(col.r, col.g, col.b, 0.34 - 0.14 * float(i)),
+				maxf(1.5, r * 1.2))
+		draw_circle(pos, r, col)
+		draw_circle(pos, r * 0.45, Color(0.95, 0.90, 0.78))
 
 
 func _draw_spears() -> void:

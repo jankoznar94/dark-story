@@ -32,6 +32,35 @@ const RICO_FALLOFF := 0.6
 # ROZESTUP VIC OSTREPU (celkem, v radiánech).
 const SPREAD := 0.10
 
+# DRUHY NEPRATEL (Jan, Oct 2026: "Různé velikosti, různá rychlost, různá výdrž.
+# Někteří budou střílet ... většina bude na blízko.")
+#
+#   r      - polomer v podilu field_r (velikost je videt na prvni pohled)
+#   travel - nasobek doby chuze; <1 = rychlejsi, >1 = pomalejsi
+#   hp     - nasobek zivotu vlny
+#   dmg    - nasobek poskozeni pri dorazu
+#   ranged - stoji v `stop` (podil field_r od stredu) a strili
+#   shot_cd / shot_dmg / shot_spd - kadence, poskozeni a rychlost strel (podil field_r/s)
+#
+# Vetsina je na blizko; strelci jsou vzacni a stoji daleko, takze je hrac musi
+# dobehnout ostepem, ne je nechat dojit.
+const ENEMY_TYPES := [
+	{"id": "cobra", "name": "Kobra", "img": "desert_cobra", "r": 0.055,
+		"travel": 0.60, "hp": 0.55, "dmg": 0.55, "ranged": false},
+	{"id": "nomad", "name": "Poutník", "img": "desert_nomad", "r": 0.070,
+		"travel": 1.00, "hp": 1.00, "dmg": 1.00, "ranged": false},
+	{"id": "treant", "name": "Stromák", "img": "ent", "r": 0.092,
+		"travel": 1.35, "hp": 1.90, "dmg": 1.45, "ranged": false},
+	{"id": "kolos", "name": "Kolos", "img": "desert_beetle", "r": 0.108,
+		"travel": 1.70, "hp": 2.40, "dmg": 1.90, "ranged": false},
+	{"id": "ghost", "name": "Přízrak", "img": "ghost", "r": 0.062,
+		"travel": 1.15, "hp": 0.85, "dmg": 0.50, "ranged": true,
+		"stop": 0.68, "shot_cd": 2.6, "shot_dmg": 0.55, "shot_spd": 0.50},
+	{"id": "pyro", "name": "Ohnivec", "img": "fire_ghost", "r": 0.072,
+		"travel": 1.30, "hp": 1.15, "dmg": 0.60, "ranged": true,
+		"stop": 0.52, "shot_cd": 3.2, "shot_dmg": 0.90, "shot_spd": 0.60},
+]
+
 var profile: Profile = Profile.new()
 var field_r: float = 300.0
 var center: Vector2 = Vector2(500.0, 500.0)
@@ -48,6 +77,8 @@ var gold: int = 0          # nepouziva se, zustava kvuli kompatibilite UI
 var body_earned: int = 0
 var enemies: Array = []
 var spears: Array = []
+# STRELY NEPRATEL (strelci): leti od nepritele k bojovnikovi.
+var enemy_shots: Array = []
 var aiming: bool = false
 var aim: Vector2 = Vector2.UP
 var fire_left: float = 0.0
@@ -140,6 +171,51 @@ func enemy_hp(w: int) -> float:
 	return BASE_HP * pow(HP_GROWTH, float(maxi(0, kolo - 1)))
 
 
+# VZHLED A VLASTNOSTI DRUHU. Hleda se podle id, aby se dala mit v jedne tabulce
+# i logika i kresleni (obrazek).
+static func enemy_type(id: String) -> Dictionary:
+	for t in ENEMY_TYPES:
+		if String(t["id"]) == id:
+			return t
+	return ENEMY_TYPES[1]
+
+
+# POLOMER KONKRETNIHO NEPRITELE. Testy a starsi data nemaji "kind", takze padaji
+# na zakladni velikost.
+func radius_of(e: Dictionary) -> float:
+	if e.has("r"):
+		return float(e["r"])
+	return enemy_r()
+
+
+# SLOZENI VLNY: do zacatku jen pesaci, od 3. vlny prvni strelci, od 5. vlny
+# tezsi kusy. Vahy jsou nasobene, aby "vetsina na blizko" opravdu platilo.
+func type_weights(w: int) -> Array:
+	var out: Array = [["cobra", 2.2], ["nomad", 5.0]]
+	if w >= 3:
+		out.append(["ghost", 1.5])
+	if w >= 4:
+		out.append(["treant", 1.6])
+	if w >= 6:
+		out.append(["pyro", 1.3])
+	if w >= 7:
+		out.append(["kolos", 0.9])
+	return out
+
+
+func _pick_type(w: int) -> Dictionary:
+	var list: Array = type_weights(w)
+	var total: float = 0.0
+	for it in list:
+		total += float(it[1])
+	var roll: float = rng.randf() * total
+	for it in list:
+		roll -= float(it[1])
+		if roll <= 0.0:
+			return enemy_type(String(it[0]))
+	return enemy_type("nomad")
+
+
 func enemy_dmg(w: int) -> float:
 	var kolo: int = (level - 1) * WAVES_PER_LEVEL + w
 	return 5.0 + 0.7 * float(kolo)
@@ -159,6 +235,7 @@ func start_level(n: int) -> void:
 	body_earned = 0
 	enemies = []
 	spears = []
+	enemy_shots = []
 	aiming = false
 	fire_left = 0.0
 	spawned = 0
@@ -228,6 +305,7 @@ func step(dt: float) -> void:
 	_fire(dt)
 	_move_enemies(dt)
 	_move_spears(dt)
+	_move_shots(dt)
 	_prune()
 	if hp <= 0.0:
 		_lose()
@@ -282,16 +360,31 @@ func _next_wave() -> void:
 func _spawn() -> void:
 	# NEPRATELE JDOU SHORA: rodi se u horniho okraje plochy, ne kolem dokola.
 	# Sireni po cele sirce, aby se hrac nemohl jen schovat do jednoho rohu.
+	var t: Dictionary = _pick_type(wave)
+	var er: float = field_r * float(t["r"])
 	var span: float = minf(arena.size.x * 0.42, field_r * 0.95)
 	var x: float = center.x + rng.randf_range(-span, span)
-	var p0 := Vector2(clampf(x, 8.0, arena.end.x - 8.0), arena.position.y + field_r * 0.06)
+	var p0 := Vector2(clampf(x, 8.0, arena.end.x - 8.0), arena.position.y + er * 1.05)
 	var dist: float = p0.distance_to(center)
 	var p := {
 		"pos": p0,
-		"hp": enemy_hp(wave), "max_hp": enemy_hp(wave),
-		"speed": dist / travel_time(), "dmg": enemy_dmg(wave),
+		"kind": String(t["id"]),
+		"r": er,
+		"ranged": bool(t["ranged"]),
+		"hp": enemy_hp(wave) * float(t["hp"]),
+		"max_hp": enemy_hp(wave) * float(t["hp"]),
+		# KAZDY DRUH MA SVOU DOBU CHUZE - je to doba, ne rychlost, aby to na
+		# kazdem displeji vyslo stejne.
+		"speed": dist / (travel_time() * float(t["travel"])),
+		"dmg": enemy_dmg(wave) * float(t["dmg"]),
 		"alive": true,
 	}
+	if bool(t["ranged"]):
+		p["stop"] = float(t["stop"])
+		p["shot_left"] = float(t["shot_cd"]) * rng.randf_range(0.35, 0.9)
+		p["shot_cd"] = float(t["shot_cd"])
+		p["shot_dmg"] = float(t["shot_dmg"])
+		p["shot_spd"] = float(t["shot_spd"])
 	enemies.append(p)
 	spawned += 1
 
@@ -329,15 +422,63 @@ func _move_enemies(dt: float) -> void:
 		var pos: Vector2 = e["pos"]
 		var d: Vector2 = center - pos
 		var dd: float = d.length()
-		if dd <= warrior_r() + enemy_r():
+		var er: float = radius_of(e)
+		if dd <= warrior_r() + er * 0.85:
 			# DORAZIL: ubere zivoty a zmizi. Zbroj ani barvy tu nejsou - jedina
 			# obrana je zabit ho driv.
-			hp -= float(e["dmg"])
-			hit_amount = float(e["dmg"])
-			hit_flash = 0.45
+			_hurt_warrior(float(e["dmg"]))
 			e["alive"] = false
 			continue
+		# STRELEC: zastavi se v `stop` a stoji. Nesmi ale zustat stat vecne, kdyz
+		# se k nemu hrac priblizi - pak couva, aby si drzel odstup.
+		var stop: float = float(e.get("stop", 0.0)) * field_r
+		if stop > 0.0:
+			if dd <= stop:
+				if dd < stop * 0.80:
+					e["pos"] = pos - d / dd * float(e["speed"]) * dt
+				e["shot_left"] = float(e["shot_left"]) - dt
+				if float(e["shot_left"]) <= 0.0:
+					_shoot(e)
+					e["shot_left"] = float(e["shot_cd"])
+				continue
 		e["pos"] = pos + d / dd * float(e["speed"]) * dt
+
+
+# STRELA NEPRITELE: leti presne na bojovnika v okamziku vystrelu. Hrac ji vidi
+# prichazet, ale neda se od ni usknout - musi strelce zabit.
+func _shoot(e: Dictionary) -> void:
+	var from: Vector2 = e["pos"]
+	var aim_vec: Vector2 = (center - from).normalized()
+	var dmg: float = enemy_dmg(wave) * float(e.get("shot_dmg", 0.6))
+	enemy_shots.append({
+		"pos": from + aim_vec * (radius_of(e) + field_r * 0.02),
+		"dir": aim_vec,
+		"dmg": dmg,
+		"spd": field_r * float(e.get("shot_spd", 0.5)),
+		"r": field_r * 0.013,
+		"kind": String(e.get("kind", "ghost")),
+		"alive": true,
+	})
+
+
+func _hurt_warrior(amount: float) -> void:
+	hp -= amount
+	hit_amount = amount
+	hit_flash = 0.45
+
+
+func _move_shots(dt: float) -> void:
+	for s in enemy_shots:
+		if not bool(s.get("alive", true)):
+			continue
+		var pos: Vector2 = s["pos"] + (s["dir"] as Vector2) * float(s["spd"]) * dt
+		s["pos"] = pos
+		if pos.distance_to(center) <= warrior_r() + float(s["r"]):
+			_hurt_warrior(float(s["dmg"]))
+			s["alive"] = false
+			continue
+		if not arena.grow(field_r * 0.20).has_point(pos):
+			s["alive"] = false
 
 
 func _move_spears(dt: float) -> void:
@@ -378,7 +519,7 @@ func _first_hit(pos: Vector2, skip: Array = []) -> Dictionary:
 	for e in enemies:
 		if not bool(e["alive"]) or skip.has(e):
 			continue
-		if (e["pos"] as Vector2).distance_to(pos) <= enemy_r() + spear_r():
+		if (e["pos"] as Vector2).distance_to(pos) <= radius_of(e) + spear_r():
 			return e
 	return {}
 
@@ -414,6 +555,11 @@ func _prune() -> void:
 		if bool(s.get("alive", true)):
 			keep_s.append(s)
 	spears = keep_s
+	var keep_o: Array = []
+	for s in enemy_shots:
+		if bool(s.get("alive", true)):
+			keep_o.append(s)
+	enemy_shots = keep_o
 
 
 # ------------------------------------------------------------------ HLASKY

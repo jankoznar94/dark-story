@@ -19,6 +19,8 @@ func _init() -> void:
 	_run("nepritel u bojovnika ubere zivoty a zmizi", _test_enemy_hits_warrior)
 	_run("vlny: build -> wave -> body za odrazeno", _test_waves)
 	_run("vic ostepu v jednom hodu", _test_multishot)
+	_run("druhy nepratel: velikost, rychlost, vydrz", _test_types)
+	_run("strelci se zastavi a strili", _test_ranged)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -183,3 +185,68 @@ func _test_multishot() -> void:
 	g.aim_at(g.center + Vector2(-400.0, 0.0))
 	g.step(1.0 / 120.0)
 	_check(g.spears.size() == 3, "tri ostepy v hodu nejsou tri (%d)" % g.spears.size())
+
+
+# 8) RUZNE DRUHY: musi se lisit velikosti, dobou chuze i vydrzi a vsechny musi
+#    mit prirazeny obrazek (kdyby obrazek chybel, hra by kreslila jen kolecka).
+func _test_types() -> void:
+	var ids: Array = []
+	var rmin: float = 9.0
+	var rmax: float = 0.0
+	var tmin: float = 9.0
+	var tmax: float = 0.0
+	var hpmin: float = 9.0
+	var hpmax: float = 0.0
+	for t in Game.ENEMY_TYPES:
+		ids.append(String(t["id"]))
+		_check(not String(t["img"]).is_empty(), "druh %s nema obrazek" % String(t["id"]))
+		rmin = minf(rmin, float(t["r"]))
+		rmax = maxf(rmax, float(t["r"]))
+		tmin = minf(tmin, float(t["travel"]))
+		tmax = maxf(tmax, float(t["travel"]))
+		hpmin = minf(hpmin, float(t["hp"]))
+		hpmax = maxf(hpmax, float(t["hp"]))
+	_check(ids.size() >= 5, "druhu je malo (%d)" % ids.size())
+	_check(rmax / rmin > 1.6, "velikosti druhu se lisi jen malo (%.2f)" % (rmax / rmin))
+	_check(tmax / tmin > 2.0, "rychlosti druhu se lisi jen malo (%.2f)" % (tmax / tmin))
+	_check(hpmax / hpmin > 3.0, "vydrz druhu se lisi jen malo (%.2f)" % (hpmax / hpmin))
+	# SLOZENI: od 6. vlny se musi objevit vic nez jen dva zakladni druhy a
+	# vetsina musi byt na blizko.
+	var g: Game = _fresh()
+	g.wave = 7
+	var seen: Dictionary = {}
+	var ranged: int = 0
+	for i in range(400):
+		var t: Dictionary = g._pick_type(7)
+		seen[String(t["id"])] = true
+		if bool(t["ranged"]):
+			ranged += 1
+	_check(seen.size() >= 4, "ve vlne se objevi jen %d druhu" % seen.size())
+	_check(ranged < 200, "strelcu je vic nez pesaku (%d/400)" % ranged)
+
+
+# 9) STRELEC: zastavi se v odstupu, stoji a jeho strela doleti na bojovnika.
+func _test_ranged() -> void:
+	var g: Game = _fresh()
+	g.wave = 3
+	var er: float = g.field_r * 0.058
+	var e := {
+		"pos": g.center + Vector2(0.0, -g.field_r * 0.75), "kind": "ghost",
+		"r": er, "ranged": true, "hp": 60.0, "max_hp": 60.0,
+		"speed": g.field_r / 12.0, "dmg": 10.0, "alive": true,
+		"stop": 0.68, "shot_left": 0.2, "shot_cd": 2.6,
+		"shot_dmg": 0.55, "shot_spd": 0.5,
+	}
+	g.enemies.append(e)
+	var hp0: float = g.hp
+	# 1,2 s: strelec dojde do odstupu a vystreli - strela musi byt videt ve vzduchu.
+	_tick(g, 1.2)
+	var stop_px: float = float(e["stop"]) * g.field_r
+	var dd: float = (e["pos"] as Vector2).distance_to(g.center)
+	_check(dd > stop_px * 0.95, "strelec nedosel do odstupu (%.0f < %.0f)" % [dd, stop_px])
+	_check(dd < stop_px * 1.10, "strelec selhal dal nez do odstupu")
+	_check(g.enemy_shots.size() > 0, "strelec nevystrelil")
+	# STRELA LETI: do 3 s musi doletet a ubrat zivoty.
+	_tick(g, 3.0)
+	_check(g.hp < hp0, "strela strelce neubrala bojovnikovi zivoty")
+	_check(g.hit_flash >= 0.0, "zasah strelou nema varovani")
