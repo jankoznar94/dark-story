@@ -161,7 +161,11 @@ FETCH_BLOCK = """self.addEventListener(
 \t\t\t\t\t// dozvedel stary otisk buildu - hra vypadala, ze se neaktualizovala.
 \t\t\t\t\t// Kdyz sit neni, spadneme na cache a pak na offline stranku.
 \t\t\t\t\ttry {
-\t\t\t\t\t\tconst fresh = await fetch(event.request);
+\t\t\t\t\t\t// KOD HRY (.pck, .wasm) SE NESMI PTAT HTTP CACHE. GitHub Pages
+\t\t\t\t\t\t// posila cache-control: max-age=600, takze jeste deset minut po
+\t\t\t\t\t\t// nasazeni vratil prohlizec stary .pck - menu hlasilo novy build
+\t\t\t\t\t\t// a hra bezela stara (presne tak zmizely zony v bitve).
+\t\t\t\t\t\tconst fresh = await fetch(event.request, { cache: isCode ? 'no-store' : 'default' });
 \t\t\t\t\t\tif (fresh && fresh.ok) {
 \t\t\t\t\t\t\tcache.put(event.request, fresh.clone());
 \t\t\t\t\t\t\treturn fresh;
