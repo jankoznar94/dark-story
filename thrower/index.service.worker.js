@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = 'e3b9040';
+const CACHE_VERSION = 'e06ff04';
 /** @type {string} */
 const CACHE_PREFIX = 'Thrower-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -102,10 +102,18 @@ self.addEventListener(
 		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 		const local = url.startsWith(base) ? url.replace(base, '') : '';
 		const isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
-		// KOD HRY JE VZDY ZE SITE: .pck a .wasm se nikdy neserviruji z cache,
-		// dokud je sit. Jinak hrac po kazdem nasazeni hraje starou hru a v menu
-		// mu sviti novy build.
-		const isCode = local === 'index.pck' || local === 'index.wasm';
+		// KOD HRY JE VZDY ZE SITE: pozname ho PODLE CESTY, ne podle referreru.
+		// V nainstalovane PWA byva referrer prazdny, `local` pak vyjde jako
+		// cela URL, .pck se nepoznal a spadl do HTTP cache (GitHub Pages:
+		// max-age=600). Hrac pak jeste deset minut hraje starou hru, i kdyz
+		// je novy build venku.
+		let isCode = false;
+		try {
+			const path = new URL(url).pathname;
+			isCode = path.endsWith('/index.pck') || path.endsWith('/index.wasm');
+		} catch (e) {
+			isCode = local === 'index.pck' || local === 'index.wasm';
+		}
 		if (isNavigate || isCode || isCacheable) {
 			event.respondWith((async () => {
 				// Try to use cache first
