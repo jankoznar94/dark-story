@@ -29,8 +29,16 @@ const BODY_PER_LEVEL := 2
 # ODRAZ: jak daleko muze byt dalsi cil a kolik si odnese.
 const RICO_RANGE_FRAC := 0.55
 const RICO_FALLOFF := 0.6
-# ROZESTUP VIC OSTREPU (celkem, v radiánech).
+# ROZESTUP VIC OSTREPU (celkem, v radiánech) pri zakladnim nastaveni.
 const SPREAD := 0.10
+# ROZPTYL JE OVLADATELNY (Jan, Oct 2026: "levá zóna bude ovládat rozptyl
+# střel u multishotu"). Hrac nastavuje nasobek zakladniho rozestupu: 0 = co
+# nejužší ("dopředu"), 1 = co nejširší ("dozadu").
+const SPREAD_SCALE_MIN := 0.30
+const SPREAD_SCALE_MAX := 3.60
+# OTACENI MIRENI: plna vychylka pravé zony otoci smer o TURN_SPEED rad/s.
+# 1.9 rad/s = 109°/s, takze celni pulkruh (180°) se prejede za 1.65 s.
+const TURN_SPEED := 1.9
 # MINIMALNI POLOMER NEPRITELE v pixelech (prumer 25 px). Jan: "Nejmensi z nich
 # musi mit minimalne prumer kruhu 25 px." Podil field_r na malem displeji pada
 # pod to, takze se velikost dorovnava nahoru.
@@ -85,6 +93,11 @@ var spears: Array = []
 var enemy_shots: Array = []
 var aiming: bool = false
 var aim: Vector2 = Vector2.UP
+# VSTUP ZE ZON: smer otaceni (-1 vlevo, +1 vpravo) a nasobek rozptylu.
+# Obrazovka je jen nastavuje, otaceni se pocita tady v kroku - diky tomu je
+# pohyb plynuly a nezavisly na poctu snimku.
+var turn_in: float = 0.0
+var spread_scale: float = 1.0
 var fire_left: float = 0.0
 var spawn_left: float = 0.0
 var spawned: int = 0
@@ -241,6 +254,9 @@ func start_level(n: int) -> void:
 	spears = []
 	enemy_shots = []
 	aiming = false
+	aim = Vector2.UP
+	turn_in = 0.0
+	spread_scale = 1.0
 	fire_left = 0.0
 	spawned = 0
 	spawn_left = 0.0
@@ -295,6 +311,30 @@ func aim_at(pos: Vector2) -> void:
 
 func release() -> void:
 	aiming = false
+	turn_in = 0.0
+
+
+# PRAVA ZONA: -1 = otacet vlevo, +1 = vpravo, 0 = stoji. Zona posila spojitou
+# hodnotu podle vychylky prstu, takze jde mirne dorovnavat i naplno otacet.
+func set_turn(x: float) -> void:
+	turn_in = clampf(x, -1.0, 1.0)
+
+
+# LEVA ZONA: nasobek rozestupu vic ostrepu. 1.0 = zaklad (SPREAD).
+func set_spread_scale(s: float) -> void:
+	spread_scale = clampf(s, SPREAD_SCALE_MIN, SPREAD_SCALE_MAX)
+
+
+func turn_angle() -> float:
+	return wrapf(aim.angle() + PI * 0.5, -PI, PI)
+
+
+func _turn(dt: float) -> void:
+	if absf(turn_in) < 0.001:
+		return
+	var rel: float = clampf(turn_angle() + turn_in * TURN_SPEED * dt,
+		-PI * 0.5, PI * 0.5)
+	aim = Vector2.from_angle(-PI * 0.5 + rel)
 
 
 # ------------------------------------------------------------------ KROK
@@ -304,6 +344,7 @@ func step(dt: float) -> void:
 		return
 	clock += dt
 	hit_flash = maxf(0.0, hit_flash - dt)
+	_turn(dt)
 	_regen(dt)
 	_phase(dt)
 	_fire(dt)
@@ -402,16 +443,17 @@ func _fire(dt: float) -> void:
 		return
 	fire_left = fire_interval()
 	var n: int = shots()
+	var total: float = SPREAD * spread_scale
 	var step: float = 0.0
 	if n > 1:
-		step = SPREAD / float(n - 1)
+		step = total / float(n - 1)
 	for i in range(n):
 		# JEDEN OSTEP LETI PRESNE TAM, KAM HRAC MIRI. Rozestup se pridava jen
 		# u vicenasobne strelby - jinak by se jednoducha rana vzdy ukradla
 		# o pulku rozestupu do strany.
 		var a: float = aim.angle()
 		if n > 1:
-			a += -SPREAD * 0.5 + step * float(i)
+			a += -total * 0.5 + step * float(i)
 		spears.append({
 			"pos": center + Vector2(cos(a), sin(a)) * (warrior_r() + spear_r()),
 			"dir": Vector2(cos(a), sin(a)),

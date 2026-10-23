@@ -21,6 +21,7 @@ func _init() -> void:
 	_run("vic ostepu v jednom hodu", _test_multishot)
 	_run("druhy nepratel: velikost, rychlost, vydrz", _test_types)
 	_run("strelci se zastavi a strili", _test_ranged)
+	_run("prava zona otaci smer, leva meni rozptyl", _test_pads)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -258,3 +259,66 @@ func _test_ranged() -> void:
 	_tick(g, 3.0)
 	_check(g.hp < hp0, "strela strelce neubrala bojovnikovi zivoty")
 	_check(g.hit_flash >= 0.0, "zasah strelou nema varovani")
+
+
+# 10) ZONY (Jan, Oct 2026): prava otaci smer mirne i naplno, na 180° se zastavi;
+#     leva meni rozestup vic ostrepu - nahoru uzsi, dolu sirsi.
+func _test_pads() -> void:
+	var g: Game = _fresh()
+	g.aiming = true
+	var a0: float = rad_to_deg(g.turn_angle())
+	g.set_turn(1.0)
+	_tick(g, 0.5)
+	var a1: float = rad_to_deg(g.turn_angle())
+	_check(a1 > a0 + 30.0, "zona neotaci smerem vpravo (%.1f -> %.1f)" % [a0, a1])
+	_check(a1 < a0 + 80.0, "zona otaci moc rychle (%.1f -> %.1f)" % [a0, a1])
+	# KONEC PULKRUHU: dal se smer neotoci.
+	g.set_turn(1.0)
+	_tick(g, 3.0)
+	_check(absf(rad_to_deg(g.turn_angle()) - 90.0) < 1.0,
+		"smer nekonci na 90° (%.1f)" % rad_to_deg(g.turn_angle()))
+	g.set_turn(-1.0)
+	_tick(g, 4.0)
+	_check(absf(rad_to_deg(g.turn_angle()) + 90.0) < 1.0,
+		"smer nekonci na -90° (%.1f)" % rad_to_deg(g.turn_angle()))
+	# STOJICI ZONA: smer se nesmi hybat sam.
+	g.set_turn(0.0)
+	var rest: float = g.turn_angle()
+	_tick(g, 1.0)
+	_check(absf(g.turn_angle() - rest) < 0.001, "smer se hybe bez prstu")
+
+	# ROZPTYL: tri ostrepy, uzky a siroky hod.
+	var n: float = _spread_rad(_fire3(Game.SPREAD_SCALE_MIN))
+	var w: float = _spread_rad(_fire3(Game.SPREAD_SCALE_MAX))
+	_check(n > 0.0, "uzky hod nema zadny rozestup")
+	_check(w > n * 5.0, "siroky hod neni vyrazne sirsi (%.3f vs %.3f)" % [w, n])
+	_check(absf(rad_to_deg(w) - rad_to_deg(Game.SPREAD * Game.SPREAD_SCALE_MAX)) < 1.0,
+		"siroky hod neodpovida nastaveni (%.1f°)" % rad_to_deg(w))
+	# JEDEN OSTREP: rozptyl nema co menit.
+	var one: Array = _fire(1, Game.SPREAD_SCALE_MAX)
+	_check(one.size() == 1, "jednoduchy hod nema jeden ostep (%d)" % one.size())
+
+
+func _fire3(scale: float) -> Array:
+	return _fire(3, scale)
+
+
+func _fire(n: int, scale: float) -> Array:
+	var g: Game = _fresh()
+	g.profile.perm["shots"] = n - 1
+	g.set_spread_scale(scale)
+	g.aim_at(g.center + Vector2(0.0, -400.0))
+	g.step(1.0 / 120.0)
+	return g.spears.duplicate()
+
+
+func _spread_rad(spears: Array) -> float:
+	var lo: float = 1e9
+	var hi: float = -1e9
+	for s in spears:
+		var a: float = (s["dir"] as Vector2).angle()
+		lo = minf(lo, a)
+		hi = maxf(hi, a)
+	if spears.is_empty():
+		return 0.0
+	return hi - lo

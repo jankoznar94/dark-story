@@ -82,6 +82,27 @@ func _test_size(v: Vector2) -> void:
 	var g := Game.new()
 	g.profile = Profile.new()
 	g.set_field(l.field_r, l.center, l.arena)
+	# 6) ZONY: dve kulaté zony vedle bojovnika, v displeji, nesmi se prekryvat
+	#    s bojovnikem ani s sebou a musi mit dotykovou toleranci.
+	var pr: float = l.pad_r
+	_check(pr > 0.0, "%s: zony nemaji polomer" % tag)
+	_check(pr * 2.0 >= v.x * 0.055 and pr * 2.0 <= v.x * 0.105,
+		"%s: prumer zony neni ~30 px na telefonu (%.0f z %.0f)" % [tag, pr * 2.0, v.x])
+	for p in [l.pad_l_pos, l.pad_r_pos]:
+		var pp: Vector2 = p
+		_check(pp.x - pr >= -0.5 and pp.x + pr <= v.x + 0.5
+			and pp.y - pr >= l.bar_h - 0.5 and pp.y + pr <= v.y + 0.5,
+			"%s: zona je mimo displej (%.0f, %.0f)" % [tag, pp.x, pp.y])
+	_check(l.pad_l_pos.distance_to(l.pad_r_pos) > pr * 4.0, "%s: zony se prekryvaji" % tag)
+	_check(l.pad_l_pos.distance_to(l.center) > g.warrior_r() + pr * 2.6,
+		"%s: leva zona lezi na bojovnikovi" % tag)
+	_check(l.pad_r_pos.distance_to(l.center) > g.warrior_r() + pr * 2.6,
+		"%s: prava zona lezi na bojovnikovi" % tag)
+	_check(l.pad_l_pos.y <= l.center.y + 0.5 and l.pad_r_pos.y <= l.center.y + 0.5,
+		"%s: zony jsou niz nez bojovnik" % tag)
+	# DOTYK: chytat se musi vyrazne vetsi okoli, nez je videt.
+	_check(l.pad_touch_r() >= 30.0 * l.ui_scale, "%s: zona se neda chytit prstem" % tag)
+	_check(l.pad_travel() > 0.0, "%s: zona nema drahu vychylky" % tag)
 	# TEST MODE: zadne vlny, jen ten jeden neprítel, ktery ma dojit.
 	g.phase = "test"
 	var tt: float = g.travel_time()

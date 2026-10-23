@@ -11,6 +11,8 @@ var frame: int = 0
 var out_path: String = "user://thrower_battle.png"
 var _simmed: bool = false
 var _steps: int = 780
+var _size: Vector2 = Vector2(600.0, 900.0)
+var _active: bool = false
 
 
 func _init() -> void:
@@ -19,6 +21,11 @@ func _init() -> void:
 			out_path = a.split("=")[1]
 		elif a.begins_with("--steps="):
 			_steps = int(a.split("=")[1])
+		elif a.begins_with("--size="):
+			var s: PackedStringArray = a.split("=")[1].split("x")
+			_size = Vector2(float(s[0]), float(s[1]))
+		elif a == "--active":
+			_active = true
 
 
 func _process(_d: float) -> bool:
@@ -46,7 +53,7 @@ func _process(_d: float) -> bool:
 
 
 func _layout() -> void:
-	view.layout.update(Vector2(600.0, 900.0))
+	view.layout.update(_size)
 	view._apply_field()
 	view.menu.open_battle()
 	var g = view.game
@@ -54,6 +61,14 @@ func _layout() -> void:
 	g.wave = 5
 	g.phase = "build"
 	g.build_left = 0.01
+	# ZONY V AKCI: jen pro snimek, jak vypadaji pri drzeni prstu.
+	if _active:
+		view._spread_ptr = 7
+		view._spread_off = Vector2(0.0, view.layout.pad_travel() * 0.85)
+		view._apply_spread()
+		view._aim_ptr = 8
+		view._aim_off = Vector2(view.layout.pad_travel() * 0.6, 0.0)
+		g.aiming = true
 
 
 # SIMULACE: hrac miri na nejvyssiho nepritele, aby se bitva opravdu hrala.

@@ -35,6 +35,14 @@ var menu := Menu.new()
 var _touch: Dictionary = {}
 var _mouse_down: bool = false
 var _mouse_pos: Vector2 = Vector2.ZERO
+# DVE ZONY (Jan, Oct 2026): prava = smer mireni, leva = rozptyl multishotu.
+# Kazda zona si pamatuje SVUJ prst - hrac muze drzet obe najednou.
+const NO_PTR := -9999
+const MOUSE_PTR := -1
+var _aim_ptr: int = NO_PTR
+var _spread_ptr: int = NO_PTR
+var _aim_off: Vector2 = Vector2.ZERO
+var _spread_off: Vector2 = Vector2.ZERO
 var _js_t: float = 0.0
 # Cas posledniho doteku (ms). Brani dvojimu zpracovani doteku jako mysi.
 var _touch_ms: int = -100000
@@ -100,15 +108,16 @@ func _input(event: InputEvent) -> void:
 		_touch_ms = Time.get_ticks_msec()
 		if t.pressed:
 			_touch[t.index] = t.position
-			_press(t.position)
+			_press(t.position, t.index)
 		else:
 			_touch.erase(t.index)
+			_release_ptr(t.index)
 			_release_if_empty()
 		return
 	if event is InputEventScreenDrag:
 		var d: InputEventScreenDrag = event
 		_touch[d.index] = d.position
-		_drag(d.position)
+		_drag(d.position, d.index)
 		return
 	# JEDEN DOTYK = JEDNO KLEPNUTI. Prohlizec posle dotek a k tomu jeste
 	# emulovanou mys; bez tehle pojistky se kazde klepnuti vykona dvakrat -
@@ -120,22 +129,21 @@ func _input(event: InputEvent) -> void:
 		_mouse_down = event.pressed
 		_mouse_pos = event.position
 		if event.pressed:
-			_press(event.position)
+			_press(event.position, MOUSE_PTR)
 		else:
+			_release_ptr(MOUSE_PTR)
 			_release_if_empty()
 		return
 	if event is InputEventMouseMotion and _mouse_down:
 		_mouse_pos = event.position
-		_drag(event.position)
+		_drag(event.position, MOUSE_PTR)
 
 
-func _active_pos() -> Vector2:
-	if not _touch.is_empty():
-		return _touch[_touch.keys()[0]]
-	return _mouse_pos
+# =========================================================================
+# ZONY
+# =========================================================================
 
-
-func _press(pos: Vector2) -> void:
+func _press(pos: Vector2, id: int) -> void:
 	_tap_fx.append({"pos": pos, "t": 0.0})
 	if menu.is_menu():
 		# TOLERANCE PRO PRST: klepnuti nemusi padnout presne do obdelniku.
@@ -160,23 +168,80 @@ func _press(pos: Vector2) -> void:
 			_handle_end(pos)
 			return
 		if layout.hud_menu.has_point(pos):
+			_drop_pads()
 			menu.open_menu()
 			return
-		game.aim_at(pos)
+		_grab_pad(pos, id)
 
 
-func _drag(pos: Vector2) -> void:
-	if menu.is_battle() and not game.is_over():
-		game.aim_at(pos)
+# KTERA ZONA BYLA CHYCENA. Mimo zony se nedela nic - presne to Jan chtel:
+# prst uz nelezi ve hre, ale v koutě vedle bojovnika.
+func _grab_pad(pos: Vector2, id: int) -> void:
+	var tr: float = layout.pad_touch_r()
+	if _aim_ptr == NO_PTR and pos.distance_to(layout.pad_r_pos) <= tr:
+		_aim_ptr = id
+		_aim_off = pos - layout.pad_r_pos
+		game.aiming = true
+		_apply_aim()
+		return
+	if _spread_ptr == NO_PTR and pos.distance_to(layout.pad_l_pos) <= tr:
+		_spread_ptr = id
+		_spread_off = pos - layout.pad_l_pos
+		_apply_spread()
+
+
+func _drag(pos: Vector2, id: int) -> void:
+	if not menu.is_battle() or game.is_over():
+		return
+	if id == _aim_ptr:
+		_aim_off = pos - layout.pad_r_pos
+		_apply_aim()
+	elif id == _spread_ptr:
+		_spread_off = pos - layout.pad_l_pos
+		_apply_spread()
+
+
+func _release_ptr(id: int) -> void:
+	if id == _aim_ptr:
+		_aim_ptr = NO_PTR
+		_aim_off = Vector2.ZERO
+		game.set_turn(0.0)
+		game.release()
+
+
+# VYCHYLKA -> SMER. Mrtva zona uprostred, aby sel smer drzet presne; plna
+# vychylka = plne otaceni (TURN_SPEED v game.gd).
+func _apply_aim() -> void:
+	var nx: float = clampf(_aim_off.x / layout.pad_travel(), -1.0, 1.0)
+	if absf(nx) < 0.12:
+		nx = 0.0
+	else:
+		nx = signf(nx) * (absf(nx) - 0.12) / 0.88
+	game.set_turn(nx)
+
+
+# VYCHYLKA -> ROZPTYL. Nahoru = uzsi (0), dolu = sirsi (1). Po zvednuti prstu
+# hodnota ZUSTAVA - hrac nemusi rozptyl drzet porad.
+func _apply_spread() -> void:
+	var ny: float = clampf(_spread_off.y / layout.pad_travel(), -1.0, 1.0)
+	var t: float = (ny + 1.0) * 0.5
+	game.set_spread_scale(lerpf(Game.SPREAD_SCALE_MIN, Game.SPREAD_SCALE_MAX, t))
+
+
+# Poloha knobu: prst muze vyjet dal, nez je krouzek, ale knob zustane na okraji.
+func _knob(off: Vector2) -> Vector2:
+	return off.limit_length(layout.pad_r * 0.66)
 
 
 func _release_if_empty() -> void:
-	if _touch.is_empty() and not _mouse_down:
+	if _aim_ptr == NO_PTR and _touch.is_empty() and not _mouse_down:
 		game.release()
 
 
 func _open_action(a: String) -> void:
 	if a == "battle":
+		_drop_pads()
+		_spread_off = Vector2.ZERO
 		game.start_level(maxi(1, game.profile.level))
 		menu.open_battle()
 	elif a == "upgrades":
@@ -184,6 +249,17 @@ func _open_action(a: String) -> void:
 		menu.open_upgrades()
 	elif a == "update":
 		menu.request_update()
+
+
+# ZVEDNOUT PRSTY ZE ZON: pri odchodu do menu nebo na zacatku levelu nesmi
+# zustat viset mireni z minule obrazovky.
+func _drop_pads() -> void:
+	if _aim_ptr != NO_PTR:
+		game.set_turn(0.0)
+		game.release()
+	_aim_ptr = NO_PTR
+	_spread_ptr = NO_PTR
+	_aim_off = Vector2.ZERO
 
 
 # =========================================================================
@@ -281,6 +357,7 @@ func _draw_battle() -> void:
 	_draw_aim()
 	_draw_spears()
 	_draw_shots()
+	_draw_pads()
 	_draw_warrior()
 	_draw_health()
 	_draw_bar()
@@ -290,6 +367,33 @@ func _draw_battle() -> void:
 		_label("Připrav se — %.0f" % maxf(0.0, game.build_left),
 			Rect2(0.0, c.y - float(layout.font_px) * 6.0, layout.view.x,
 				float(layout.font_px) * 1.6), layout.font_px, DIM)
+
+
+# DVE ZONY V KOUTECH VEDLE BOJOVNIKA. Plochy strojovy vzhled: tmavy krouzek,
+# tenky obrys, mala tecka (knob) vychylena podle prstu. Zadny glow.
+# LEVA (svisla osa) = rozptyl multishotu, PRAVA (vodorovna) = smer mireni.
+func _draw_pads() -> void:
+	if layout.pad_r <= 0.0:
+		return
+	_draw_pad(layout.pad_l_pos, _knob(_spread_off), true, _spread_ptr != NO_PTR)
+	_draw_pad(layout.pad_r_pos, _knob(_aim_off), false, _aim_ptr != NO_PTR)
+
+
+func _draw_pad(p: Vector2, off: Vector2, vertical: bool, active: bool) -> void:
+	var r: float = layout.pad_r
+	var edge: Color = GOLD if active else Color(0.47, 0.45, 0.47)
+	draw_circle(p, r, Color(0.095, 0.090, 0.102, 0.95))
+	# OSA: ukazuje, kterym smerem se v zone tahne. Svisla = rozptyl, vodorovna
+	# = mireni; hrac to pozna bez popisku, na 30 px by se text nedal precist.
+	var a: Vector2 = Vector2(0.0, r * 0.74) if vertical else Vector2(r * 0.74, 0.0)
+	draw_line(p - a, p + a, Color(0.36, 0.34, 0.37), maxf(1.0, r * 0.09))
+	draw_arc(p, r, 0.0, TAU, 28, edge, maxf(1.5, r * 0.13))
+	# KNOB: kde je prst. Kdyz se nedrzi, zustava na posledni hodnote (hlavne
+	# u rozptylu - hrac vidi, jak si ho nechal).
+	var kc: Color = GOLD if active else Color(0.62, 0.60, 0.60)
+	var kr: float = maxf(2.5, r * 0.28)
+	draw_circle(p + off, kr, kc)
+	draw_arc(p + off, kr, 0.0, TAU, 16, Color(0.10, 0.09, 0.10), maxf(1.0, r * 0.07))
 
 
 func _draw_warrior() -> void:

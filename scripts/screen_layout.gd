@@ -41,6 +41,15 @@ var dlg_box: Rect2 = Rect2()
 var dlg_a: Rect2 = Rect2()
 var dlg_b: Rect2 = Rect2()
 
+# DVE KULATE ZONY (Jan, Oct 2026): leva = rozptyl, prava = mireni. Sedí vedle
+# bojovnika po stranach, aby prst nezakryval to, co se haze. Kresli se maly
+# krouzek (prumer ~30 px na telefonu), ale chytá se vetsi okoli - na 30 px by
+# se prst trefil jen nahodou.
+const PAD_DIA_FRAC := 0.077     # podil sirky displeje = prumer zony
+var pad_r: float = 0.0
+var pad_l_pos: Vector2 = Vector2.ZERO
+var pad_r_pos: Vector2 = Vector2.ZERO
+
 
 func update(v: Vector2) -> void:
 	view = v
@@ -53,6 +62,9 @@ func update(v: Vector2) -> void:
 		upg_rows = []
 		hud_pause = Rect2()
 		hud_menu = Rect2()
+		pad_r = 0.0
+		pad_l_pos = Vector2.ZERO
+		pad_r_pos = Vector2.ZERO
 		return
 	ui_scale = maxf(0.45, minf(v.x, v.y) / 600.0)
 	var u: float = ui_scale
@@ -69,10 +81,35 @@ func update(v: Vector2) -> void:
 	# ostepy) a dosah odrazu. Odecita se od sirky displeje.
 	field_r = maxf(40.0, v.x * 0.45)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, center.y - bar_h))
+	_pads()
 	_hud()
 	layout_menu()
 	layout_upgrades()
 	layout_dialog()
+
+
+# DVE ZONY: stredy vedle bojovnika. Levá je zrcadlove stejne daleko od okraje,
+# aby se na sirsi displeji nerozjely.
+func _pads() -> void:
+	# PRUMER ~30 px na bezneM telefonu (390 CSS px) = 7,7 % sirky. Pocita se
+	# ze sirky, ne z ui_scale: na sirokem displeji musi zony zustat u kraju.
+	pad_r = maxf(12.0 * ui_scale, view.x * PAD_DIA_FRAC * 0.5)
+	var mx: float = maxf(pad_r * 1.9, view.x * 0.115)
+	var y: float = minf(center.y, view.y - pad_r - 4.0 * ui_scale)
+	pad_l_pos = Vector2(mx, y)
+	pad_r_pos = Vector2(view.x - mx, y)
+
+
+# KAM AZ SE DA ZONY CHYTIT. Videt je jen maly krouzek, ale prst se trefi do
+# 2,2x vetsiho okoli - jinak by to bylo na 30 px nehratelne.
+func pad_touch_r() -> float:
+	return pad_r * 2.2
+
+
+# VYCHYLKA PRSTU, PRI KTERE JE ZONA NAPLNO. Prst muze vyjet mimo krouzek -
+# hodnota uz jen zustane na maximu.
+func pad_travel() -> float:
+	return maxf(1.0, pad_r * 1.25)
 
 
 func _hud() -> void:
