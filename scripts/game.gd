@@ -49,18 +49,18 @@ const MIN_ENEMY_R := 18.75
 # Vetsina je na blizko; strelci jsou vzacni a stoji daleko, takze je hrac musi
 # dobehnout ostepem, ne je nechat dojit.
 const ENEMY_TYPES := [
-	{"id": "cobra", "name": "Kobra", "img": "desert_cobra", "r": 0.112,
+	{"id": "cobra", "name": "Kobra", "img": "desert_cobra", "r": 0.155,
 		"travel": 0.60, "hp": 0.55, "dmg": 0.55, "ranged": false},
-	{"id": "nomad", "name": "Poutník", "img": "desert_nomad", "r": 0.123,
+	{"id": "nomad", "name": "Poutník", "img": "desert_nomad", "r": 0.168,
 		"travel": 1.00, "hp": 1.00, "dmg": 1.00, "ranged": false},
-	{"id": "treant", "name": "Stromák", "img": "ent", "r": 0.140,
+	{"id": "treant", "name": "Stromák", "img": "ent", "r": 0.182,
 		"travel": 1.35, "hp": 1.90, "dmg": 1.45, "ranged": false},
-	{"id": "kolos", "name": "Kolos", "img": "desert_beetle", "r": 0.165,
+	{"id": "kolos", "name": "Kolos", "img": "desert_beetle", "r": 0.200,
 		"travel": 1.70, "hp": 2.40, "dmg": 1.90, "ranged": false},
-	{"id": "ghost", "name": "Přízrak", "img": "ghost", "r": 0.114,
+	{"id": "ghost", "name": "Přízrak", "img": "ghost", "r": 0.158,
 		"travel": 1.15, "hp": 0.85, "dmg": 0.50, "ranged": true,
 		"stop": 0.68, "shot_cd": 2.6, "shot_dmg": 0.55, "shot_spd": 0.50},
-	{"id": "pyro", "name": "Ohnivec", "img": "fire_ghost", "r": 0.122,
+	{"id": "pyro", "name": "Ohnivec", "img": "fire_ghost", "r": 0.168,
 		"travel": 1.30, "hp": 1.15, "dmg": 0.60, "ranged": true,
 		"stop": 0.52, "shot_cd": 3.2, "shot_dmg": 0.90, "shot_spd": 0.60},
 ]

@@ -197,15 +197,15 @@ func _draw_menu() -> void:
 		_label(String(Menu.SUBS[i]),
 			Rect2(r.position.x + 10.0, r.position.y + r.size.y * 0.63, r.size.x - 20.0, r.size.y * 0.35),
 			int(maxf(18.0, r.size.y * 0.27)), DIM)
+	_label("build %s" % menu.build_id, Rect2(0.0, layout.menu_title_y + float(layout.title_px) * 0.9
+		+ float(layout.font_px) * 1.9, layout.view.x, float(layout.font_px) * 1.6),
+		int(maxf(14.0, float(layout.font_px) * 0.85)), DIM)
 	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_note_y, layout.view.x,
 		float(layout.font_px) * 1.5), layout.font_px, GOLD)
 	if not menu.update_note.is_empty():
 		_label(menu.update_note, Rect2(0.0, layout.menu_note_y + float(layout.font_px) * 1.6,
 			layout.view.x, float(layout.font_px) * 1.5),
 			int(maxf(11.0, float(layout.font_px) * 0.85)), Color(0.80, 0.72, 0.50))
-	_label("build %s" % menu.build_id,
-		Rect2(0.0, layout.view.y - float(layout.font_px) * 2.2, layout.view.x,
-			float(layout.font_px) * 1.3), int(maxf(14.0, float(layout.font_px) * 0.95)), DIM)
 
 
 func _draw_upgrades() -> void:

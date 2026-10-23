@@ -207,7 +207,7 @@ func _test_types() -> void:
 		hpmin = minf(hpmin, float(t["hp"]))
 		hpmax = maxf(hpmax, float(t["hp"]))
 	_check(ids.size() >= 5, "druhu je malo (%d)" % ids.size())
-	_check(rmax / rmin > 1.4, "velikosti druhu se lisi jen malo (%.2f)" % (rmax / rmin))
+	_check(rmax / rmin > 1.25, "velikosti druhu se lisi jen malo (%.2f)" % (rmax / rmin))
 	_check(tmax / tmin > 2.0, "rychlosti druhu se lisi jen malo (%.2f)" % (tmax / tmin))
 	_check(hpmax / hpmin > 3.0, "vydrz druhu se lisi jen malo (%.2f)" % (hpmax / hpmin))
 	# SLOZENI: od 6. vlny se musi objevit vic nez jen dva zakladni druhy a

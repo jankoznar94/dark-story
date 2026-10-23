@@ -35,6 +35,11 @@ ICON_192_DST = "index.192x192.png"
 
 # Znacka, podle ktere poznáme, ze navigace uz je network-first.
 NAV_MARK = "NAVIGACE JE VZDY ZE SITE"
+# Znacka pro KOD HRY (index.pck / index.wasm). Bez ni zustane v prohlizeci
+# stara hra i po nasazeni: cache-first na .pck znamena, ze se novy kod nikdy
+# nestahne, dokud se cache nesmaze. Presne to se stalo: menu hlasilo novy
+# build, ale hra se chovala porad stejne.
+PCK_MARK = "KOD HRY JE VZDY ZE SITE"
 
 # Orientace se NEPREBIRA z exportniho presetu: ciselnik toho nastaveni je
 # v kazde verzi Godotu jiny a spatna hodnota se projevi jen tim, ze se PWA
@@ -142,11 +147,15 @@ FETCH_BLOCK = """self.addEventListener(
 \t\tconst base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 \t\tconst local = url.startsWith(base) ? url.replace(base, '') : '';
 \t\tconst isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
-\t\tif (isNavigate || isCacheable) {
+\t\t// KOD HRY JE VZDY ZE SITE: .pck a .wasm se nikdy neserviruji z cache,
+\t\t// dokud je sit. Jinak hrac po kazdem nasazeni hraje starou hru a v menu
+\t\t// mu sviti novy build.
+\t\tconst isCode = local === 'index.pck' || local === 'index.wasm';
+\t\tif (isNavigate || isCode || isCacheable) {
 \t\t\tevent.respondWith((async () => {
 \t\t\t\t// Try to use cache first
 \t\t\t\tconst cache = await caches.open(CACHE_NAME);
-\t\t\t\tif (isNavigate) {
+\t\t\t\tif (isNavigate || isCode) {
 \t\t\t\t\t// %s. Godot tu mel cache-first, takze
 \t\t\t\t\t// hrac po nasazeni nove verze dostal stary index.html a z menu se
 \t\t\t\t\t// dozvedel stary otisk buildu - hra vypadala, ze se neaktualizovala.
@@ -266,7 +275,7 @@ def fix_service_worker(out: str, version: str = "") -> bool:
 		src = src.replace(old_act, new_act)
 
 	# 3) NAVIGACE network-first. Vymenime cely listener 'fetch' jako blok.
-	if NAV_MARK not in src:
+	if NAV_MARK not in src or PCK_MARK not in src:
 		a = src.index("self.addEventListener(\n\t'fetch',")
 		b = src.index("self.addEventListener('message'")
 		if not (0 < a < b):
@@ -287,15 +296,15 @@ def fix_service_worker(out: str, version: str = "") -> bool:
 	with open(sw, "w", encoding="utf-8") as f:
 		f.write(src)
 
-	ok = "self.skipWaiting()" in src and NAV_MARK in src
+	ok = "self.skipWaiting()" in src and NAV_MARK in src and PCK_MARK in src
 	if versioned and ("CACHE_VERSION = '%s'" % version) not in src:
 		ok = False
 	if not ok:
-		print("PWA_SW=fail skipWaiting=%s networkFirst=%s"
-			% ("self.skipWaiting()" in src, NAV_MARK in src))
+		print("PWA_SW=fail skipWaiting=%s networkFirst=%s codeFirst=%s"
+			% ("self.skipWaiting()" in src, NAV_MARK in src, PCK_MARK in src))
 		return False
 	m = re.search(r"const CACHE_VERSION = '([^']*)';", src)
-	print("PWA_SW=ok cacheVersion=%s skipWaiting=true networkFirst=true claim=%s"
+	print("PWA_SW=ok cacheVersion=%s skipWaiting=true networkFirst=true codeNetworkFirst=true claim=%s"
 		% (m.group(1) if m else "?", "self.clients.claim()" in src))
 	return True
 
