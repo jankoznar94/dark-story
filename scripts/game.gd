@@ -36,10 +36,6 @@ const SPREAD := 0.10
 # nejužší ("dopředu"), 1 = co nejširší ("dozadu").
 const SPREAD_SCALE_MIN := 0.30
 const SPREAD_SCALE_MAX := 3.60
-# OTACENI MIRENI: plna vychylka pravé zony otoci smer o TURN_SPEED rad/s.
-# 1.15 rad/s = 66°/s: celni pulkruh (180°) se prejede za 2,7 s. Pomaleji nez
-# driv (1,9) - se zonou se miri plynule, ne trhane.
-const TURN_SPEED := 1.15
 # MINIMALNI POLOMER NEPRITELE v pixelech (prumer 25 px). Jan: "Nejmensi z nich
 # musi mit minimalne prumer kruhu 25 px." Podil field_r na malem displeji pada
 # pod to, takze se velikost dorovnava nahoru.
@@ -97,7 +93,6 @@ var aim: Vector2 = Vector2.UP
 # VSTUP ZE ZON: smer otaceni (-1 vlevo, +1 vpravo) a nasobek rozptylu.
 # Obrazovka je jen nastavuje, otaceni se pocita tady v kroku - diky tomu je
 # pohyb plynuly a nezavisly na poctu snimku.
-var turn_in: float = 0.0
 var spread_scale: float = 1.0
 var fire_left: float = 0.0
 var spawn_left: float = 0.0
@@ -256,7 +251,6 @@ func start_level(n: int) -> void:
 	enemy_shots = []
 	aiming = false
 	aim = Vector2.UP
-	turn_in = 0.0
 	spread_scale = 1.0
 	fire_left = 0.0
 	spawned = 0
@@ -296,12 +290,15 @@ func _level_won() -> void:
 
 # ------------------------------------------------------------------ VSTUP
 
-# MIREni PRIMO PRSTEM PRED BOJOVNIKEM: smer je presne ten, kterym prst lezi
-# od barbara (Jan, Oct 2026: "bude střílet tam, kam ukazuje prst. Přímo").
+# MIREni PRIMO PRSTEM: smer je presne ten, kterym prst lezi od barbara, a
+# VZDALENOST PRSTU URCI ROZPTYL (Jan, Oct 2026: "vzdalenost prstu od barbara
+# bude urcovat rozptyl projektilu. Cim dal od barbara, tim primnejsi").
 # Uhel se orizne na 180° dopredu, takze se nikdy neotoci zpet k sobe.
 func aim_at(pos: Vector2) -> void:
 	var d: Vector2 = pos - center
-	if d.length() <= 0.001:
+	var dist: float = d.length()
+	_spread_from_distance(dist)
+	if dist <= 0.001:
 		aiming = true
 		return
 	var rel: float = wrapf(d.angle() + PI * 0.5, -PI, PI)
@@ -310,32 +307,24 @@ func aim_at(pos: Vector2) -> void:
 	aiming = true
 
 
+# BLIZKO = SIROKY, DALEKO = PRIMY. U barbara se ostepy rozleti, na konci
+# dostrelu leti presne. Mezi tim linearni prechod, aby to bylo odhadnutelne.
+# `near` je tesne nad telem barbara, `far` je polovina dostrelu - dal uz nema
+# smysl hledat, protoze prst dojede na kraj displeje.
+func _spread_from_distance(dist: float) -> void:
+	var near: float = warrior_r() * 2.5
+	var far: float = field_r * 1.5
+	var t: float = clampf((dist - near) / maxf(1.0, far - near), 0.0, 1.0)
+	spread_scale = lerpf(SPREAD_SCALE_MAX, SPREAD_SCALE_MIN, t)
+
+
 func release() -> void:
 	aiming = false
-	turn_in = 0.0
 
 
-# PRAVA ZONA: -1 = otacet vlevo, +1 = vpravo, 0 = stoji. Zona posila spojitou
-# hodnotu podle vychylky prstu, takze jde mirne dorovnavat i naplno otacet.
-func set_turn(x: float) -> void:
-	turn_in = clampf(x, -1.0, 1.0)
-
-
-# LEVA ZONA: nasobek rozestupu vic ostrepu. 1.0 = zaklad (SPREAD).
+# ROZPTYL: nasobek rozestupu vic ostrepu. 1.0 = zaklad (SPREAD).
 func set_spread_scale(s: float) -> void:
 	spread_scale = clampf(s, SPREAD_SCALE_MIN, SPREAD_SCALE_MAX)
-
-
-func turn_angle() -> float:
-	return wrapf(aim.angle() + PI * 0.5, -PI, PI)
-
-
-func _turn(dt: float) -> void:
-	if absf(turn_in) < 0.001:
-		return
-	var rel: float = clampf(turn_angle() + turn_in * TURN_SPEED * dt,
-		-PI * 0.5, PI * 0.5)
-	aim = Vector2.from_angle(-PI * 0.5 + rel)
 
 
 # ------------------------------------------------------------------ KROK
@@ -345,7 +334,6 @@ func step(dt: float) -> void:
 		return
 	clock += dt
 	hit_flash = maxf(0.0, hit_flash - dt)
-	_turn(dt)
 	_regen(dt)
 	_phase(dt)
 	_fire(dt)

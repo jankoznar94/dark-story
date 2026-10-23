@@ -82,29 +82,6 @@ func _test_size(v: Vector2) -> void:
 	var g := Game.new()
 	g.profile = Profile.new()
 	g.set_field(l.field_r, l.center, l.arena)
-	# 6) PASKY: levy svisly (rozptyl), pravy vodorovny (mireni). V displeji,
-	#    nad spodni hranou, nesmi lezt do hriste k bojovnikovi.
-	var sl: Rect2 = l.strip_l
-	var sr: Rect2 = l.strip_r
-	_check(sl.size.y > sl.size.x * 1.8, "%s: levy pasek neni svisly (%.0fx%.0f)"
-		% [tag, sl.size.x, sl.size.y])
-	_check(sr.size.x > sr.size.y * 1.8, "%s: pravy pasek neni vodorovny (%.0fx%.0f)"
-		% [tag, sr.size.x, sr.size.y])
-	_check(sl.size.x >= v.x * 0.09 and sr.size.y >= v.x * 0.09,
-		"%s: pasek je uzky na prst (%.0f)" % [tag, sl.size.x])
-	_check(sl.size.y >= minf(v.x * 0.26, (l.center.y - l.bar_h) * 0.5),
-		"%s: levy pasek je kratky (%.0f)" % [tag, sl.size.y])
-	_check(sr.size.x >= v.x * 0.30, "%s: pravy pasek je kratky (%.0f)" % [tag, sr.size.x])
-	for r in [sl, sr]:
-		var rr: Rect2 = r
-		_check(rr.position.x >= -0.5 and rr.end.x <= v.x + 0.5
-			and rr.position.y >= l.bar_h - 0.5 and rr.end.y <= v.y + 0.5,
-			"%s: pasek je mimo displej (%s)" % [tag, str(rr)])
-	_check(sl.end.x < sr.position.x, "%s: pasky se prekryvaji" % tag)
-	# PASKY NESMI ZAKRYVAT BOJOVNIKA ANI JEHO ZIVOTY.
-	_check(not sl.grow(2.0).has_point(l.center) and not sr.grow(2.0).has_point(l.center),
-		"%s: pasek lezi na bojovnikovi" % tag)
-	_check(sr.position.x > l.center.x + g.warrior_r(), "%s: pravy pasek zacina u bojovnika" % tag)
 	# TEST MODE: zadne vlny, jen ten jeden neprítel, ktery ma dojit.
 	g.phase = "test"
 	var tt: float = g.travel_time()

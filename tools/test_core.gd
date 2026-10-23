@@ -21,7 +21,7 @@ func _init() -> void:
 	_run("vic ostepu v jednom hodu", _test_multishot)
 	_run("druhy nepratel: velikost, rychlost, vydrz", _test_types)
 	_run("strelci se zastavi a strili", _test_ranged)
-	_run("pravy pasek otaci smer, levy meni rozptyl", _test_pads)
+	_run("vzdalenost prstu od barbara urcuje rozptyl", _test_spread_by_distance)
 	print("checks=%d fails=%d" % [checks, fails.size()])
 	print("CORE_ALL_PASS=%s" % ("true" if fails.is_empty() else "false"))
 	quit()
@@ -261,64 +261,60 @@ func _test_ranged() -> void:
 	_check(g.hit_flash >= 0.0, "zasah strelou nema varovani")
 
 
-# 10) ZONY (Jan, Oct 2026): prava otaci smer mirne i naplno, na 180° se zastavi;
-#     leva meni rozestup vic ostrepu - nahoru uzsi, dolu sirsi.
-func _test_pads() -> void:
+# 10) ROZPTYL PODLE VZDALENOSTI (Jan, Oct 2026): "vzdalenost prstu od
+#     barbara bude urcovat rozptyl projektilu. Cim dal od barbara, tim
+#     primnejsi." U barbara = siroky, daleko = presny.
+func _test_spread_by_distance() -> void:
+	var far: float = 1.4
+	var near: float = 0.0
+	var mid: float = 0.0
 	var g: Game = _fresh()
-	g.aiming = true
-	var a0: float = rad_to_deg(g.turn_angle())
-	g.set_turn(1.0)
-	_tick(g, 0.5)
-	var a1: float = rad_to_deg(g.turn_angle())
-	_check(a1 > a0 + 30.0, "zona neotaci smerem vpravo (%.1f -> %.1f)" % [a0, a1])
-	_check(a1 < a0 + 80.0, "zona otaci moc rychle (%.1f -> %.1f)" % [a0, a1])
-	# KONEC PULKRUHU: dal se smer neotoci.
-	g.set_turn(1.0)
-	_tick(g, 3.0)
-	_check(absf(rad_to_deg(g.turn_angle()) - 90.0) < 1.0,
-		"smer nekonci na 90° (%.1f)" % rad_to_deg(g.turn_angle()))
-	g.set_turn(-1.0)
-	_tick(g, 4.0)
-	_check(absf(rad_to_deg(g.turn_angle()) + 90.0) < 1.0,
-		"smer nekonci na -90° (%.1f)" % rad_to_deg(g.turn_angle()))
-	# STOJICI ZONA: smer se nesmi hybat sam.
-	g.set_turn(0.0)
-	var rest: float = g.turn_angle()
-	_tick(g, 1.0)
-	_check(absf(g.turn_angle() - rest) < 0.001, "smer se hybe bez prstu")
-
-	# ROZPTYL: tri ostrepy, uzky a siroky hod.
-	var n: float = _spread_rad(_fire3(Game.SPREAD_SCALE_MIN))
-	var w: float = _spread_rad(_fire3(Game.SPREAD_SCALE_MAX))
-	_check(n > 0.0, "uzky hod nema zadny rozestup")
-	_check(w > n * 5.0, "siroky hod neni vyrazne sirsi (%.3f vs %.3f)" % [w, n])
-	_check(absf(rad_to_deg(w) - rad_to_deg(Game.SPREAD * Game.SPREAD_SCALE_MAX)) < 1.0,
-		"siroky hod neodpovida nastaveni (%.1f°)" % rad_to_deg(w))
+	# U BARBARA: prst tesne nad nim -> nejvetsi rozptyl.
+	g.aim_at(g.center + Vector2(0.0, -g.warrior_r() * 2.0))
+	near = g.spread_scale
+	_check(near > Game.SPREAD_SCALE_MAX * 0.95,
+		"prst u barbara nedava siroky rozptyl (%.2f)" % near)
+	# DALEKO: pres polovinu dostrelu -> nejmensi rozptyl.
+	g.aim_at(g.center + Vector2(0.0, -g.field_r * 1.6))
+	far = g.spread_scale
+	_check(far < Game.SPREAD_SCALE_MIN * 1.05,
+		"prst daleko nedava primy smer (%.2f)" % far)
+	# MEZI TIM: postupné zužování (monotonie).
+	g.aim_at(g.center + Vector2(0.0, -g.field_r * 0.5))
+	mid = g.spread_scale
+	_check(mid < near and mid > far, "mezi blizkem a dalkou neni prechod (%.2f)" % mid)
+	# A OPRAVDU TO MENI HOD: tri ostrepy z blizka maji sirsi rozestup nez z dalky.
+	var wide: float = _spread_rad(_fire_at(0.30))
+	var tight: float = _spread_rad(_fire_at(1.20))
+	_check(wide > tight * 2.0, "hod z blizka neni sirsi nez z dalky (%.3f vs %.3f)"
+		% [wide, tight])
 	# JEDEN OSTREP: rozptyl nema co menit.
-	var one: Array = _fire(1, Game.SPREAD_SCALE_MAX)
+	var one: Array = _fire_at(0.30, 1)
 	_check(one.size() == 1, "jednoduchy hod nema jeden ostep (%d)" % one.size())
+	# UHEL ZUSTAVA PRESNY: smer je tam, kam prst ukazuje, i v ruzne vzdalenosti.
+	var g2: Game = _fresh()
+	g2.aim_at(g2.center + Vector2(g2.field_r * 0.30, -g2.field_r * 0.30))
+	var a_near: Vector2 = g2.aim
+	g2.aim_at(g2.center + Vector2(g2.field_r * 1.20, -g2.field_r * 1.20))
+	_check(a_near.distance_to(g2.aim) < 0.001, "vzdalenost prstu meni smer strelby")
 
 
-func _fire3(scale: float) -> Array:
-	return _fire(3, scale)
-
-
-func _fire(n: int, scale: float) -> Array:
+# Tri ostrepy, prst ve vzdalenosti `frac` * field_r smerem nahoru.
+func _fire_at(frac: float, n: int = 3) -> Array:
 	var g: Game = _fresh()
 	g.profile.perm["shots"] = n - 1
-	g.set_spread_scale(scale)
-	g.aim_at(g.center + Vector2(0.0, -400.0))
+	g.aim_at(g.center + Vector2(0.0, -g.field_r * frac))
 	g.step(1.0 / 120.0)
 	return g.spears.duplicate()
 
 
 func _spread_rad(spears: Array) -> float:
+	if spears.is_empty():
+		return 0.0
 	var lo: float = 1e9
 	var hi: float = -1e9
 	for s in spears:
 		var a: float = (s["dir"] as Vector2).angle()
 		lo = minf(lo, a)
 		hi = maxf(hi, a)
-	if spears.is_empty():
-		return 0.0
 	return hi - lo

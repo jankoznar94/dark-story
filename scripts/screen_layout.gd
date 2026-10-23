@@ -41,16 +41,6 @@ var dlg_box: Rect2 = Rect2()
 var dlg_a: Rect2 = Rect2()
 var dlg_b: Rect2 = Rect2()
 
-# DVA PASKY (Jan, Oct 2026: "mozna je blbost je delat kruhove ... prava
-# horizontalni, leva vertikalni. Levy jde jen nahoru a dolu, pravy jen doleva
-# a doprava"). Kazda osa je jen jedna, takze se neda minout smerem:
-#   PRASKA VLEVO  = svisly pasek, rozptyl multishotu (nahoru uzsi, dolu sirsi)
-#   PASEK VPRAVO  = vodorovny pasek, mireni (vlevo/vpravo)
-# Drzi se u kraju displeje vedle bojovnika, aby prst nezakryval hriste.
-var strip_l: Rect2 = Rect2()   # svisly: rozptyl
-var strip_r: Rect2 = Rect2()   # vodorovny: mireni
-
-
 func update(v: Vector2) -> void:
 	view = v
 	if v.x < 1.0 or v.y < 1.0:
@@ -62,8 +52,6 @@ func update(v: Vector2) -> void:
 		upg_rows = []
 		hud_pause = Rect2()
 		hud_menu = Rect2()
-		strip_l = Rect2()
-		strip_r = Rect2()
 		return
 	ui_scale = maxf(0.45, minf(v.x, v.y) / 600.0)
 	var u: float = ui_scale
@@ -80,34 +68,10 @@ func update(v: Vector2) -> void:
 	# ostepy) a dosah odrazu. Odecita se od sirky displeje.
 	field_r = maxf(40.0, v.x * 0.45)
 	arena = Rect2(0.0, bar_h, v.x, maxf(1.0, center.y - bar_h))
-	_strips()
 	_hud()
 	layout_menu()
 	layout_upgrades()
 	layout_dialog()
-
-
-# DVA PASKY VEDLE BOJOVNIKA. Tloustka i delka se pocitaji ze SIRKY displeje,
-# ne z ui_scale - na sirokem displeji musi pasky zustat u kraju.
-#   levy  = svisly, u leveho okraje, stred ve stejne vysce jako bojovnik
-#   pravy = vodorovny, u praveho okraje, ve stejne vysce
-func _strips() -> void:
-	var t: float = maxf(16.0 * ui_scale, view.x * 0.10)      # tloustka pasku
-	# SVISLY: 30 % sirky displeje, ale nikdy vic, nez kolik je mista nad
-	# bojovnikem (na nizkém displeji na sirku by vylezl do pruhu s zivoty).
-	var vlen: float = maxf(t * 2.0, minf(view.x * 0.30, (center.y - bar_h) * 0.55))
-	var lx: float = maxf(10.0 * ui_scale, view.x * 0.055)
-	var ly: float = center.y - vlen * 0.5
-	ly = minf(ly, view.y - 6.0 * ui_scale - vlen)
-	ly = maxf(ly, bar_h + 6.0 * ui_scale)
-	strip_l = Rect2(lx, ly, t, vlen)
-	# VODOROVNY: 34 % sirky, dorazi k pravemu okraji.
-	var hlen: float = maxf(t * 2.0, view.x * 0.34)
-	var rx: float = view.x - maxf(10.0 * ui_scale, view.x * 0.055) - hlen
-	var ry: float = center.y - t * 0.5
-	ry = minf(ry, view.y - 6.0 * ui_scale - t)
-	ry = maxf(ry, bar_h + 6.0 * ui_scale)
-	strip_r = Rect2(rx, ry, hlen, t)
 
 
 func _hud() -> void:
