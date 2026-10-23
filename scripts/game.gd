@@ -31,10 +31,10 @@ const RICO_RANGE_FRAC := 0.55
 const RICO_FALLOFF := 0.6
 # ROZESTUP VIC OSTREPU (celkem, v radiánech).
 const SPREAD := 0.10
-# MINIMALNI POLOMER NEPRITELE v pixelech (prumer 15 px). Jan: "Nejmensi z nich
-# musi mit minimalne prumer kruhu 15 px." Podil field_r na malem displeji pada
+# MINIMALNI POLOMER NEPRITELE v pixelech (prumer 25 px). Jan: "Nejmensi z nich
+# musi mit minimalne prumer kruhu 25 px." Podil field_r na malem displeji pada
 # pod to, takze se velikost dorovnava nahoru.
-const MIN_ENEMY_R := 7.5
+const MIN_ENEMY_R := 12.5
 
 # DRUHY NEPRATEL (Jan, Oct 2026: "Různé velikosti, různá rychlost, různá výdrž.
 # Někteří budou střílet ... většina bude na blízko.")

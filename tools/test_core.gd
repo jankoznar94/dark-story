@@ -224,13 +224,13 @@ func _test_types() -> void:
 	_check(seen.size() >= 4, "ve vlne se objevi jen %d druhu" % seen.size())
 	_check(ranged < 200, "strelcu je vic nez pesaku (%d/400)" % ranged)
 	# MINIMALNI VELIKOST: i na malem displeji musi mit nejmensi nepratel
-	# prumer aspon 15 px (polomer 7,5).
+	# prumer aspon 25 px (polomer 12,5).
 	var small: Game = _fresh()
 	small.set_field(90.0, Vector2(200.0, 400.0))
 	for t in Game.ENEMY_TYPES:
 		var e := {"r": 90.0 * float(t["r"])}
-		_check(small.radius_of(e) * 2.0 >= 15.0,
-			"druh %s je pod 15 px (%0.1f)" % [String(t["id"]), small.radius_of(e) * 2.0])
+		_check(small.radius_of(e) * 2.0 >= 25.0,
+			"druh %s je pod 25 px (%0.1f)" % [String(t["id"]), small.radius_of(e) * 2.0])
 
 
 # 9) STRELEC: zastavi se v odstupu, stoji a jeho strela doleti na bojovnika.
