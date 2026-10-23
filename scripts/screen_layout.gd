@@ -50,8 +50,8 @@ func update(v: Vector2) -> void:
 		hud_menu = Rect2()
 		return
 	bar_h = maxf(48.0, v.y * BAR_FRAC)
-	font_px = int(clampf(minf(v.x, v.y) * 0.042, 13.0, 26.0))
-	title_px = int(clampf(minf(v.x, v.y) * 0.075, 22.0, 44.0))
+	font_px = int(clampf(minf(v.x, v.y) * 0.048, 14.0, 34.0))
+	title_px = int(clampf(minf(v.x, v.y) * 0.088, 24.0, 56.0))
 	# BOJOVNIK STOJI NA SPODKU (Jan, Oct 2026: "bude bojovník stát na spodku
 	# obrazovky a bude koukat jen jedním směrem. Dopředu."). Hra je zase na
 	# vysku. Plocha nad nim je cela herni prostor - ne kruh, ne stred.

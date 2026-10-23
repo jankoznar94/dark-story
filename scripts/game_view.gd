@@ -192,11 +192,11 @@ func _draw_menu() -> void:
 		draw_rect(r, PANEL, true)
 		draw_rect(r, accent, false, 3.0)
 		var item: String = String(Menu.ITEMS[i])
-		_label(item, Rect2(r.position.x, r.position.y + r.size.y * 0.18, r.size.x, r.size.y * 0.48),
-			int(minf(float(layout.title_px) * 0.7, r.size.y * 0.36)), Color(0.90, 0.87, 0.80))
+		_label(item, Rect2(r.position.x, r.position.y + r.size.y * 0.12, r.size.x, r.size.y * 0.54),
+			int(minf(float(layout.title_px) * 0.72, r.size.y * 0.46)), Color(0.90, 0.87, 0.80))
 		_label(String(Menu.SUBS[i]),
-			Rect2(r.position.x + 10.0, r.position.y + r.size.y * 0.66, r.size.x - 20.0, r.size.y * 0.3),
-			int(maxf(11.0, r.size.y * 0.17)), DIM)
+			Rect2(r.position.x + 10.0, r.position.y + r.size.y * 0.64, r.size.x - 20.0, r.size.y * 0.34),
+			int(maxf(15.0, r.size.y * 0.21)), DIM)
 	_label(game.profile.menu_note(), Rect2(0.0, layout.menu_note_y, layout.view.x,
 		float(layout.font_px) * 1.5), layout.font_px, GOLD)
 	if not menu.update_note.is_empty():
@@ -205,7 +205,7 @@ func _draw_menu() -> void:
 			int(maxf(11.0, float(layout.font_px) * 0.85)), Color(0.80, 0.72, 0.50))
 	_label("build %s" % menu.build_id,
 		Rect2(0.0, layout.view.y - float(layout.font_px) * 2.2, layout.view.x,
-			float(layout.font_px)), int(maxf(10.0, float(layout.font_px) * 0.75)), DIM)
+			float(layout.font_px)), int(maxf(12.0, float(layout.font_px) * 0.80)), DIM)
 
 
 func _draw_upgrades() -> void:
@@ -227,7 +227,8 @@ func _draw_upgrades() -> void:
 		draw_rect(r, ROW if afford else PANEL, true)
 		draw_rect(r, edge, false, 2.0)
 		var pad: float = maxf(8.0, r.size.x * 0.025)
-		var name_px: int = int(clampf(r.size.y * 0.34, 11.0, 22.0))
+		var name_px: int = int(clampf(r.size.y * 0.40, 13.0, 26.0))
+		name_px = _fit_px(Upgrades.label_of(id), r.size.x * 0.50 - pad, name_px)
 		draw_string(ThemeDB.fallback_font, Vector2(r.position.x + pad, r.position.y + r.size.y * 0.52),
 			Upgrades.label_of(id), HORIZONTAL_ALIGNMENT_LEFT,
 			r.size.x * 0.52 - pad, name_px, Color(0.88, 0.86, 0.80))
@@ -241,7 +242,7 @@ func _draw_upgrades() -> void:
 	var br: Rect2 = layout.upg_back
 	draw_rect(br, PANEL, true)
 	draw_rect(br, EDGE, false, 2.0)
-	_label("ZPĚT", br, int(clampf(br.size.y * 0.34, 12.0, 22.0)), Color(0.90, 0.87, 0.80))
+	_label("ZPĚT", br, int(clampf(br.size.y * 0.42, 14.0, 26.0)), Color(0.90, 0.87, 0.80))
 
 
 func _draw_battle() -> void:
@@ -442,7 +443,7 @@ func _draw_health() -> void:
 
 func _draw_bar() -> void:
 	var pad: float = maxf(8.0, layout.bar_h * 0.20)
-	var px: int = int(clampf(layout.bar_h * 0.36, 12.0, 22.0))
+	var px: int = int(clampf(layout.bar_h * 0.42, 14.0, 26.0))
 	var l1: String = "Level %d · vlna %d/%d" % [game.level, game.wave, game.WAVES_PER_LEVEL]
 	draw_string(ThemeDB.fallback_font, Vector2(pad, layout.bar_h * 0.62), l1,
 		HORIZONTAL_ALIGNMENT_LEFT, layout.view.x * 0.62, px, TEXT)
@@ -453,7 +454,7 @@ func _draw_bar() -> void:
 	var mr: Rect2 = layout.hud_menu
 	draw_rect(mr, PANEL, true)
 	draw_rect(mr, EDGE, false, 2.0)
-	_label("MENU", mr, int(clampf(mr.size.y * 0.38, 10.0, 18.0)), Color(0.88, 0.86, 0.80))
+	_label("MENU", mr, int(clampf(mr.size.y * 0.44, 12.0, 22.0)), Color(0.88, 0.86, 0.80))
 
 
 func _draw_end() -> void:
@@ -477,9 +478,9 @@ func _dialog(title: String, sub: String, a: String, b: String) -> void:
 	draw_rect(box, Color(0.08, 0.075, 0.085), true)
 	draw_rect(box, EDGE, false, 3.0)
 	_label(title, Rect2(box.position.x, box.position.y + box.size.y * 0.14, box.size.x,
-		box.size.y * 0.2), int(clampf(box.size.y * 0.14, 14.0, 30.0)), Color(0.92, 0.89, 0.82))
+		box.size.y * 0.22), int(clampf(box.size.y * 0.17, 16.0, 34.0)), Color(0.92, 0.89, 0.82))
 	_label(sub, Rect2(box.position.x, box.position.y + box.size.y * 0.34, box.size.x,
-		box.size.y * 0.2), int(clampf(box.size.y * 0.085, 11.0, 18.0)), DIM)
+		box.size.y * 0.22), int(clampf(box.size.y * 0.105, 13.0, 22.0)), DIM)
 	_button(layout.dlg_a, a, GOLD)
 	_button(layout.dlg_b, b, EDGE)
 
@@ -487,7 +488,7 @@ func _dialog(title: String, sub: String, a: String, b: String) -> void:
 func _button(r: Rect2, txt: String, accent: Color) -> void:
 	draw_rect(r, PANEL, true)
 	draw_rect(r, accent, false, 2.0)
-	_label(txt, r, int(clampf(r.size.y * 0.36, 11.0, 20.0)), Color(0.90, 0.87, 0.80))
+	_label(txt, r, int(clampf(r.size.y * 0.42, 13.0, 24.0)), Color(0.90, 0.87, 0.80))
 
 
 func _handle_end(pos: Vector2) -> void:
@@ -508,6 +509,17 @@ func _hp_color(frac: float) -> Color:
 	if frac > 0.3:
 		return HP_MID
 	return HP_LOW
+
+
+# TEXT, KTERY SE DO RADKU VEJDE: na sirokem displeji jsou radky ve dvou
+# sloupcich a dlouhy nazev by prelezl do ceny. Zmensuje se jen tenhle text a
+# jen kdyz je potreba - jinde zustava velke pismo.
+func _fit_px(s: String, max_w: float, px: int) -> int:
+	var f: Font = ThemeDB.fallback_font
+	var p: int = px
+	while p > 10 and f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, p).x > max_w:
+		p -= 1
+	return p
 
 
 func _label(s: String, r: Rect2, px: int, col: Color) -> void:
