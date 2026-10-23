@@ -86,8 +86,8 @@ func _test_size(v: Vector2) -> void:
 	#    s bojovnikem ani s sebou a musi mit dotykovou toleranci.
 	var pr: float = l.pad_r
 	_check(pr > 0.0, "%s: zony nemaji polomer" % tag)
-	_check(pr * 2.0 >= v.x * 0.055 and pr * 2.0 <= v.x * 0.105,
-		"%s: prumer zony neni ~30 px na telefonu (%.0f z %.0f)" % [tag, pr * 2.0, v.x])
+	_check(pr * 2.0 >= v.x * 0.13 and pr * 2.0 <= v.x * 0.17,
+		"%s: prumer zony neni ~15 %% sirky (%.0f z %.0f)" % [tag, pr * 2.0, v.x])
 	for p in [l.pad_l_pos, l.pad_r_pos]:
 		var pp: Vector2 = p
 		_check(pp.x - pr >= -0.5 and pp.x + pr <= v.x + 0.5

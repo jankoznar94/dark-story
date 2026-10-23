@@ -37,8 +37,9 @@ const SPREAD := 0.10
 const SPREAD_SCALE_MIN := 0.30
 const SPREAD_SCALE_MAX := 3.60
 # OTACENI MIRENI: plna vychylka pravé zony otoci smer o TURN_SPEED rad/s.
-# 1.9 rad/s = 109°/s, takze celni pulkruh (180°) se prejede za 1.65 s.
-const TURN_SPEED := 1.9
+# 1.15 rad/s = 66°/s: celni pulkruh (180°) se prejede za 2,7 s. Pomaleji nez
+# driv (1,9) - se zonou se miri plynule, ne trhane.
+const TURN_SPEED := 1.15
 # MINIMALNI POLOMER NEPRITELE v pixelech (prumer 25 px). Jan: "Nejmensi z nich
 # musi mit minimalne prumer kruhu 25 px." Podil field_r na malem displeji pada
 # pod to, takze se velikost dorovnava nahoru.

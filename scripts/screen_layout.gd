@@ -45,7 +45,7 @@ var dlg_b: Rect2 = Rect2()
 # bojovnika po stranach, aby prst nezakryval to, co se haze. Kresli se maly
 # krouzek (prumer ~30 px na telefonu), ale chytá se vetsi okoli - na 30 px by
 # se prst trefil jen nahodou.
-const PAD_DIA_FRAC := 0.077     # podil sirky displeje = prumer zony
+const PAD_DIA_FRAC := 0.15      # podil sirky displeje = prumer zony
 var pad_r: float = 0.0
 var pad_l_pos: Vector2 = Vector2.ZERO
 var pad_r_pos: Vector2 = Vector2.ZERO
@@ -95,15 +95,15 @@ func _pads() -> void:
 	# ze sirky, ne z ui_scale: na sirokem displeji musi zony zustat u kraju.
 	pad_r = maxf(12.0 * ui_scale, view.x * PAD_DIA_FRAC * 0.5)
 	var mx: float = maxf(pad_r * 1.9, view.x * 0.115)
-	var y: float = minf(center.y, view.y - pad_r - 4.0 * ui_scale)
+	var y: float = minf(center.y - pad_r * 0.30, view.y - pad_r - 4.0 * ui_scale)
 	pad_l_pos = Vector2(mx, y)
 	pad_r_pos = Vector2(view.x - mx, y)
 
 
-# KAM AZ SE DA ZONY CHYTIT. Videt je jen maly krouzek, ale prst se trefi do
-# 2,2x vetsiho okoli - jinak by to bylo na 30 px nehratelne.
+# KAM AZ SE DA ZONY CHYTIT. Videt je velky krouzek, chyta se jeste o kus
+# vetsi okoli - ale ne tolik, aby zona sahala do mista, kde se miri.
 func pad_touch_r() -> float:
-	return pad_r * 2.2
+	return pad_r * 1.55
 
 
 # VYCHYLKA PRSTU, PRI KTERE JE ZONA NAPLNO. Prst muze vyjet mimo krouzek -
