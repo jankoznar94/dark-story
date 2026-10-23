@@ -36,6 +36,8 @@ var _touch: Dictionary = {}
 var _mouse_down: bool = false
 var _mouse_pos: Vector2 = Vector2.ZERO
 var _js_t: float = 0.0
+# Cas posledniho doteku (ms). Brani dvojimu zpracovani doteku jako mysi.
+var _touch_ms: int = -100000
 # PORTRETY NEPRATEL: nactou se jednou pri startu. Kruhove PNG (pruhledne okoli)
 # pripravi tools/prepare_monsters.py z portretu Dungeon Recall.
 var _tex: Dictionary = {}
@@ -88,6 +90,7 @@ func _process(dt: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var t: InputEventScreenTouch = event
+		_touch_ms = Time.get_ticks_msec()
 		if t.pressed:
 			_touch[t.index] = t.position
 			_press(t.position)
@@ -99,6 +102,12 @@ func _input(event: InputEvent) -> void:
 		var d: InputEventScreenDrag = event
 		_touch[d.index] = d.position
 		_drag(d.position)
+		return
+	# JEDEN DOTYK = JEDNO KLEPNUTI. Prohlizec posle dotek a k tomu jeste
+	# emulovanou mys; bez tehle pojistky se kazde klepnuti vykona dvakrat -
+	# obrazovka VYLEPSENI se otevrela a hned zase zavrela. Tyká se to jen
+	# mysi, dotyk a tazeni prstem jdou vzdy.
+	if Time.get_ticks_msec() - _touch_ms < 500:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		_mouse_down = event.pressed
