@@ -147,10 +147,18 @@ FETCH_BLOCK = """self.addEventListener(
 \t\tconst base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 \t\tconst local = url.startsWith(base) ? url.replace(base, '') : '';
 \t\tconst isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
-\t\t// KOD HRY JE VZDY ZE SITE: .pck a .wasm se nikdy neserviruji z cache,
-\t\t// dokud je sit. Jinak hrac po kazdem nasazeni hraje starou hru a v menu
-\t\t// mu sviti novy build.
-\t\tconst isCode = local === 'index.pck' || local === 'index.wasm';
+\t\t// KOD HRY JE VZDY ZE SITE: pozname ho PODLE CESTY, ne podle referreru.
+\t\t// V nainstalovane PWA byva referrer prazdny, `local` pak vyjde jako
+\t\t// cela URL, .pck se nepoznal a spadl do HTTP cache (GitHub Pages:
+\t\t// max-age=600). Hrac pak jeste deset minut hraje starou hru, i kdyz
+\t\t// je novy build venku.
+\t\tlet isCode = false;
+\t\ttry {
+\t\t\tconst path = new URL(url).pathname;
+\t\t\tisCode = path.endsWith('/index.pck') || path.endsWith('/index.wasm');
+\t\t} catch (e) {
+\t\t\tisCode = local === 'index.pck' || local === 'index.wasm';
+\t\t}
 \t\tif (isNavigate || isCode || isCacheable) {
 \t\t\tevent.respondWith((async () => {
 \t\t\t\t// Try to use cache first
