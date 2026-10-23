@@ -130,14 +130,17 @@ func _active_pos() -> Vector2:
 
 func _press(pos: Vector2) -> void:
 	if menu.is_menu():
+		# TOLERANCE PRO PRST: klepnuti nemusi padnout presne do obdelniku.
+		# U velkych tlacitek to nic nezkazi a na telefonu to zachrani minuti
+		# o par pixelu (hlavne u spodniho okraje).
 		for i in range(layout.menu_rects.size()):
-			if (layout.menu_rects[i] as Rect2).has_point(pos) and i < Menu.ACTIONS.size():
+			if (layout.menu_rects[i] as Rect2).grow(12.0).has_point(pos) and i < Menu.ACTIONS.size():
 				_open_action(String(Menu.ACTIONS[i]))
 				return
 		return
 	if menu.is_upgrades():
 		for i in range(layout.upg_rows.size()):
-			if (layout.upg_rows[i] as Rect2).has_point(pos):
+			if (layout.upg_rows[i] as Rect2).grow(8.0).has_point(pos):
 				if i < Upgrades.STATS.size():
 					game.profile.buy_perm(String(Upgrades.STATS[i]["id"]))
 				return
