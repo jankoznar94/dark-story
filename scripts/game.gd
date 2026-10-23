@@ -41,6 +41,18 @@ const SPREAD_SCALE_MAX := 3.60
 # pod to, takze se velikost dorovnava nahoru.
 const MIN_ENEMY_R := 12.5
 
+# HRADBA (Jan, Oct 2026): "Před Barbara postavíme hradbu. Nepřátelé budou ničit
+# ji, místo Barbara. Nepřátelé tedy budou chodit striktně rovně. Žádné směřování
+# do středu. Žádné kličkování."
+#
+# Hradba stoji vodorovne pres celou plochu kus nad Barbarem. Nepratel jde rovne
+# dolu SVYM sloupcem (x se nikdy nemeni), zastavi se o hradbu a mlati do ni.
+# Dokud stoji, jde vsechno poskozeni do ni; kdyz padne, jde to do Barbara.
+# Hradba se stavi znovu na zacatku kazde vlny (proto existuje priprava).
+const WALL_ABOVE := 0.45       # vyska hradby nad bojovnikem (podil field_r)
+const WALL_HP_FRAC := 1.0      # kolik zivotu bojovnika hradba vydrzi
+const WALL_ATTACK_CD := 1.0    # sekundy mezi ranami do hradby
+
 # DRUHY NEPRATEL (Jan, Oct 2026: "Různé velikosti, různá rychlost, různá výdrž.
 # Někteří budou střílet ... většina bude na blízko.")
 #
@@ -105,6 +117,11 @@ var paused: bool = false
 # rano, ne jen ze mu nekde ubylo cislo.
 var hit_flash: float = 0.0
 var hit_amount: float = 0.0
+# HRADBA: zivoty a bliknuti pri zasahu. Vyska se pocita z `center` a `field_r`
+# (`wall_top()`), takze po zmene rozmeru nikdy nezustane na starem miste.
+var wall_hp: float = 0.0
+var wall_max_hp: float = 0.0
+var wall_flash: float = 0.0
 var log: Array = []
 var hits: int = 0
 var kills: int = 0
@@ -162,6 +179,42 @@ func warrior_r() -> float:
 	# BARBAR JE VELKY (Jan, Oct 2026: "Barbar musí být větší") - je to hlavni
 	# objekt na obrazovce a musi byt videt, kam se otoci.
 	return field_r * 0.085
+
+
+# VYSKA HRADBY: vodorovna cara, za kterou uz nepratele neprojdou. Pocita se
+# z rozmeru, neuklada se - pri zmene displeje nemuze zustat na starem miste.
+func wall_top() -> float:
+	return center.y - field_r * WALL_ABOVE
+
+
+func wall_max() -> float:
+	return maxf(1.0, max_hp * WALL_HP_FRAC)
+
+
+func wall_frac() -> float:
+	return clampf(wall_hp / maxf(1.0, wall_max_hp), 0.0, 1.0)
+
+
+func wall_alive() -> bool:
+	return wall_hp > 0.0
+
+
+# NOVA HRADBA. Stavi se na zacatku levelu a na zacatku kazde vlny.
+func build_wall() -> void:
+	wall_max_hp = wall_max()
+	wall_hp = wall_max_hp
+	wall_flash = 0.0
+
+
+# RANA DO HRADBY. Dokud stoji, bere vsechno poskozeni ona; hracuv zivot se
+# ani nehne, dokud nezustane 0.
+func _damage_wall(amount: float) -> void:
+	if wall_hp <= 0.0:
+		return
+	wall_hp = maxf(0.0, wall_hp - amount)
+	wall_flash = 0.30
+	if wall_hp <= 0.0:
+		_note("Hradba padla.")
 
 
 func travel_time() -> float:
@@ -260,6 +313,7 @@ func start_level(n: int) -> void:
 	kills = 0
 	max_hp = val("hp")
 	hp = max_hp
+	build_wall()
 	_note("Level %d — %d vln." % [level, WAVES_PER_LEVEL])
 
 
@@ -334,6 +388,7 @@ func step(dt: float) -> void:
 		return
 	clock += dt
 	hit_flash = maxf(0.0, hit_flash - dt)
+	wall_flash = maxf(0.0, wall_flash - dt)
 	_regen(dt)
 	_phase(dt)
 	_fire(dt)
@@ -387,6 +442,8 @@ func _next_wave() -> void:
 	if wave > WAVES_PER_LEVEL:
 		_level_won()
 		return
+	# HRADBA SE STAVI ZNOVU: priprava pred vlnou je cas, kdy ji hrac "spravi".
+	build_wall()
 	phase = "build"
 	build_left = BUILD_S
 
@@ -399,7 +456,12 @@ func _spawn() -> void:
 	var span: float = minf(arena.size.x * 0.42, field_r * 0.95)
 	var x: float = center.x + rng.randf_range(-span, span)
 	var p0 := Vector2(clampf(x, er + 4.0, arena.end.x - er - 4.0), arena.position.y + er * 1.05)
-	var dist: float = p0.distance_to(center)
+	# CESTA JE ROVNE DOLU: merit se k mistu, kde se nepratel zastavi (hradba,
+	# u strelcu jejich odstup), ne k bojovnikovi.
+	var line_y: float = wall_top() - er
+	if bool(t["ranged"]):
+		line_y = center.y - float(t["stop"]) * field_r
+	var dist: float = maxf(1.0, line_y - p0.y)
 	var p := {
 		"pos": p0,
 		"kind": String(t["id"]),
@@ -411,6 +473,7 @@ func _spawn() -> void:
 		# kazdem displeji vyslo stejne.
 		"speed": dist / (travel_time() * float(t["travel"])),
 		"dmg": enemy_dmg(wave) * float(t["dmg"]),
+		"atk_left": WALL_ATTACK_CD * rng.randf_range(0.55, 1.0),
 		"alive": true,
 	}
 	if bool(t["ranged"]):
@@ -450,33 +513,47 @@ func _fire(dt: float) -> void:
 		})
 
 
+# POHYB NEPRATEL: STRIKTNE ROVNE DOLU (Jan, Oct 2026: "Žádné směřování do
+# středu. Žádné kličkování."). Kazdy si drzi svuj sloupec - meni se jen y.
+# U hradby se zastavi a mlati do ni; strelci stoji v odstupu a strili.
 func _move_enemies(dt: float) -> void:
 	for e in enemies:
 		if not bool(e["alive"]):
 			continue
 		var pos: Vector2 = e["pos"]
-		var d: Vector2 = center - pos
-		var dd: float = d.length()
-		var er: float = radius_of(e)
-		if dd <= warrior_r() + er * 0.85:
-			# DORAZIL: ubere zivoty a zmizi. Zbroj ani barvy tu nejsou - jedina
-			# obrana je zabit ho driv.
-			_hurt_warrior(float(e["dmg"]))
-			e["alive"] = false
+		var line: float = _line_y(e)
+		if pos.y < line:
+			e["pos"] = Vector2(pos.x, minf(line, pos.y + float(e["speed"]) * dt))
 			continue
-		# STRELEC: zastavi se v `stop` a stoji. Nesmi ale zustat stat vecne, kdyz
-		# se k nemu hrac priblizi - pak couva, aby si drzel odstup.
-		var stop: float = float(e.get("stop", 0.0)) * field_r
-		if stop > 0.0:
-			if dd <= stop:
-				if dd < stop * 0.80:
-					e["pos"] = pos - d / dd * float(e["speed"]) * dt
-				e["shot_left"] = float(e["shot_left"]) - dt
-				if float(e["shot_left"]) <= 0.0:
-					_shoot(e)
-					e["shot_left"] = float(e["shot_cd"])
-				continue
-		e["pos"] = pos + d / dd * float(e["speed"]) * dt
+		# STRELEC: stoji a strili. Jeho strela narazi do hradby, dokud stoji.
+		if bool(e.get("ranged", false)):
+			e["shot_left"] = float(e["shot_left"]) - dt
+			if float(e["shot_left"]) <= 0.0:
+				_shoot(e)
+				e["shot_left"] = float(e["shot_cd"])
+			continue
+		# NA HRADBE: rana do ni. Kdyz uz stoji jen zbytky, jde rana do Barbara.
+		e["atk_left"] = float(e.get("atk_left", WALL_ATTACK_CD)) - dt
+		if float(e["atk_left"]) <= 0.0:
+			e["atk_left"] = WALL_ATTACK_CD
+			_strike(e)
+
+
+# KDE SE NEPRATEL ZASTAVI. Pesak se dotkne hradby okrajem tela, strelec stoji
+# v odstupu `stop` od Barbara (hradba je pro nej jen prekazka mezi nim a cilem).
+func _line_y(e: Dictionary) -> float:
+	var stop_px: float = float(e.get("stop", 0.0)) * field_r
+	if bool(e.get("ranged", false)) and stop_px > 0.0:
+		return center.y - stop_px
+	return wall_top() - radius_of(e)
+
+
+# RANA NA BLIZKO: nejdriv hradba, teprve kdyz padne, Barbara.
+func _strike(e: Dictionary) -> void:
+	if wall_hp > 0.0:
+		_damage_wall(float(e["dmg"]))
+		return
+	_hurt_warrior(float(e["dmg"]))
 
 
 # STRELA NEPRITELE: leti presne na bojovnika v okamziku vystrelu. Hrac ji vidi
@@ -506,8 +583,15 @@ func _move_shots(dt: float) -> void:
 	for s in enemy_shots:
 		if not bool(s.get("alive", true)):
 			continue
-		var pos: Vector2 = s["pos"] + (s["dir"] as Vector2) * float(s["spd"]) * dt
+		var prev: Vector2 = s["pos"]
+		var pos: Vector2 = prev + (s["dir"] as Vector2) * float(s["spd"]) * dt
 		s["pos"] = pos
+		# HRADBA STRELU ZACHYTI: dokud stoji, nedoleti k Barbarovi. Je to
+		# stejna cara jako pro pesaky, aby se hrac mohl spolehnout na jedno.
+		if wall_hp > 0.0 and prev.y < wall_top() and pos.y >= wall_top():
+			_damage_wall(float(s["dmg"]))
+			s["alive"] = false
+			continue
 		if pos.distance_to(center) <= warrior_r() + float(s["r"]):
 			_hurt_warrior(float(s["dmg"]))
 			s["alive"] = false

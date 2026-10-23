@@ -16,7 +16,8 @@ func _init() -> void:
 	_run("bez prstu se nehazi, s prstem ano (v odstupech)", _test_fire_only_while_aiming)
 	_run("ostep leti smerem mireni a ubira zivoty", _test_spear_hits)
 	_run("odraz preskoci na dalsi cil se slabsi ranou", _test_ricochet)
-	_run("nepritel u bojovnika ubere zivoty a zmizi", _test_enemy_hits_warrior)
+	_run("nepritel jde rovne a mlati do hradby, ne do Barbara", _test_wall_shields_warrior)
+	_run("hradba se stavi znovu na zacatku vlny", _test_wall_rebuilds)
 	_run("vlny: build -> wave -> body za odrazeno", _test_waves)
 	_run("vic ostepu v jednom hodu", _test_multishot)
 	_run("druhy nepratel: velikost, rychlost, vydrz", _test_types)
@@ -145,19 +146,54 @@ func _test_ricochet() -> void:
 	_check(float(b["hp"]) < 30.0, "odraz nepreskocil na druhy cil (%.1f)" % float(b["hp"]))
 
 
-func _test_enemy_hits_warrior() -> void:
+func _test_wall_shields_warrior() -> void:
 	var g: Game = _fresh()
-	var e: Dictionary = _place(g, 0.02, 0.0, 100.0)
-	e["speed"] = g.field_r / 9.0
+	_check(g.wall_hp > 0.0, "na zacatku levelu nestoji hradba")
+	var e: Dictionary = _place(g, 0.90, -PI * 0.5, 100.0)
+	e["speed"] = g.field_r / 6.0
+	e["atk_left"] = 0.10
+	var x0: float = (e["pos"] as Vector2).x
 	var hp0: float = g.hp
+	var wall0: float = g.wall_hp
+	g.step(1.0 / 60.0)
+	_check(absf((e["pos"] as Vector2).x - x0) < 0.001, "nepritel se hned stočil do strany")
+	# STRIKTNE ROVNE: dojde az k hradbe, x se ani nehne.
 	var t: float = 0.0
-	while t < 1.0 and g.hp >= hp0:
+	while t < 12.0 and (e["pos"] as Vector2).y < g.wall_top() - g.radius_of(e) - 0.5:
 		g.step(1.0 / 60.0)
 		t += 1.0 / 60.0
-	_check(g.hp < hp0, "nepritel u bojovnika neubere zivoty")
-	_check(g.hit_flash > 0.0, "zásah nerozsviti varovani bojovnika")
-	_check(g.hit_amount > 0.0, "zásah nema cislo poskozeni")
-	_check(g.enemies.is_empty(), "nepritel po dorazu nezmizi")
+	_check(absf((e["pos"] as Vector2).y - (g.wall_top() - g.radius_of(e))) < 2.0,
+		"nepritel se nezastavil o hradbu (%.0f vs %.0f)"
+		% [(e["pos"] as Vector2).y, g.wall_top() - g.radius_of(e)])
+	_check(absf((e["pos"] as Vector2).x - x0) < 0.001, "nepritel cestou odbocil")
+	# DVE SEKUNDY U HRADBY: rany jdou do hradby, Barbara se to netyka.
+	_tick(g, 2.0)
+	_check(g.wall_hp < wall0, "hradba nedostava rany (%.1f)" % g.wall_hp)
+	_check(g.hp >= hp0 - 0.001, "Barbara dostal rano, i kdyz stoji hradba")
+	_check(bool(e["alive"]), "nepritel po prvni rane zmizel, ma mlatit dal")
+	# HRADBA PADNE: dalsi rana uz jde do Barbara.
+	g.wall_hp = 0.0
+	var t2: float = 0.0
+	while t2 < 2.5 and g.hp >= hp0:
+		g.step(1.0 / 60.0)
+		t2 += 1.0 / 60.0
+	_check(g.hp < hp0, "po padu hradby nedostane Barbara rano")
+	_check(g.hit_flash > 0.0 and g.hit_amount > 0.0, "zásah nema varovani ani cislo")
+
+
+# HRADBA SE STAVI ZNOVU: kazda vlna zacina s plnou hradbou, i kdyz predchozi
+# padla. Jinak by hrac na dalsi vlnu nemel zadnou obranu.
+func _test_wall_rebuilds() -> void:
+	var g: Game = _fresh()
+	g.wall_hp = 1.0
+	g.phase = "wave"
+	g.spawned = g.plan
+	for e in g.enemies:
+		e["alive"] = false
+	g.step(1.0 / 60.0)
+	_check(g.wave == 2, "vlna se po vycisteni nezacala")
+	_check(g.wall_hp >= g.wall_max_hp - 0.001,
+		"nove vlne se nepostavila plna hradba (%.1f z %.1f)" % [g.wall_hp, g.wall_max_hp])
 
 
 func _test_waves() -> void:
@@ -248,6 +284,7 @@ func _test_ranged() -> void:
 	}
 	g.enemies.append(e)
 	var hp0: float = g.hp
+	var wall0: float = g.wall_hp
 	# 1,2 s: strelec dojde do odstupu a vystreli - strela musi byt videt ve vzduchu.
 	_tick(g, 1.2)
 	var stop_px: float = float(e["stop"]) * g.field_r
@@ -255,10 +292,17 @@ func _test_ranged() -> void:
 	_check(dd > stop_px * 0.95, "strelec nedosel do odstupu (%.0f < %.0f)" % [dd, stop_px])
 	_check(dd < stop_px * 1.10, "strelec selhal dal nez do odstupu")
 	_check(g.enemy_shots.size() > 0, "strelec nevystrelil")
-	# STRELA LETI: do 3 s musi doletet a ubrat zivoty.
-	_tick(g, 3.0)
-	_check(g.hp < hp0, "strela strelce neubrala bojovnikovi zivoty")
-	_check(g.hit_flash >= 0.0, "zasah strelou nema varovani")
+	# STRELA NARAZI DO HRADBY: dokud stoji, Barbara se nic nedeje.
+	_tick(g, 1.7)
+	_check(g.wall_hp < wall0, "strela strelce neposkodila hradbu (%.1f)" % g.wall_hp)
+	_check(g.hp >= hp0 - 0.001, "strela prosla hradbou az do Barbara")
+	# HRADBA PADNE: dalsi strela uz Barbara zasahne.
+	g.wall_hp = 0.0
+	var t: float = 0.0
+	while t < 6.0 and g.hp >= hp0:
+		g.step(1.0 / 60.0)
+		t += 1.0 / 60.0
+	_check(g.hp < hp0, "po padu hradby strela nezasahne Barbara")
 
 
 # 10) ROZPTYL PODLE VZDALENOSTI (Jan, Oct 2026): "vzdalenost prstu od

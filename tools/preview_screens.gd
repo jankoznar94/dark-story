@@ -64,5 +64,9 @@ func _setup() -> void:
 		g.wave = 5
 		g.phase = "build"
 		g.build_left = 3.0
+	elif screen == "reset":
+		# POTVRZENI VYNULOVANI: modal nad menu.
+		view.menu.open_menu()
+		view.menu.ask_reset()
 	else:
 		view.menu.open_menu()

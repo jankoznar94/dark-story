@@ -25,6 +25,11 @@ const EDGE := Color(0.34, 0.33, 0.36)
 const HP_GOOD := Color(0.62, 0.76, 0.56)
 const HP_MID := Color(0.86, 0.76, 0.40)
 const HP_LOW := Color(0.85, 0.42, 0.36)
+# HRADBA: kamen, ploche a ztlumene. Zadny svetly nater, aby neodvadela
+# pozornost od nepratel.
+const WALL := Color(0.315, 0.295, 0.270)
+const WALL_DARK := Color(0.180, 0.170, 0.160)
+const WALL_EDGE := Color(0.430, 0.400, 0.355)
 
 var game := Game.new()
 var layout := ScreenLayout.new()
@@ -140,6 +145,16 @@ func _input(event: InputEvent) -> void:
 func _press(pos: Vector2, id: int) -> void:
 	_tap_fx.append({"pos": pos, "t": 0.0})
 	if menu.is_menu():
+		# POTVRZENI RESETU JE MODAL: dokud stoji, tlacitka menu nefunguji.
+		if menu.confirm_reset:
+			if layout.dlg_a.has_point(pos):
+				game.profile.reset()
+				game.start_level(1)
+				menu.cancel_reset()
+				return
+			# ZPET, nebo klepnuti mimo dialog: nic se nemaze.
+			menu.cancel_reset()
+			return
 		# TOLERANCE PRO PRST: klepnuti nemusi padnout presne do obdelniku.
 		# U velkych tlacitek to nic nezkazi a na telefonu to zachrani minuti
 		# o par pixelu (hlavne u spodniho okraje).
@@ -193,6 +208,9 @@ func _open_action(a: String) -> void:
 		menu.open_upgrades()
 	elif a == "update":
 		menu.request_update()
+	elif a == "reset":
+		# NEVRATNÉ: nejdriv se zeptat, mazat az po potvrzeni.
+		menu.ask_reset()
 
 
 # =========================================================================
@@ -222,7 +240,11 @@ func _draw_menu() -> void:
 			layout.view.x, float(layout.font_px) * 1.6), layout.font_px, DIM)
 	for i in range(layout.menu_rects.size()):
 		var r: Rect2 = layout.menu_rects[i]
-		var accent: Color = GOLD if i == 0 else EDGE
+		var act: String = String(Menu.ACTIONS[i])
+		var accent: Color = GOLD if act == "battle" else EDGE
+		if act == "reset":
+			# NEVRATNA AKCE: rezavy lem. Jen lem - porad plochy strojovy vzhled.
+			accent = Color(0.60, 0.34, 0.30)
 		draw_rect(r, PANEL, true)
 		draw_rect(r, accent, false, 3.0)
 		var item: String = String(Menu.ITEMS[i])
@@ -240,6 +262,13 @@ func _draw_menu() -> void:
 		_label(menu.update_note, Rect2(0.0, layout.menu_note_y + float(layout.font_px) * 1.6,
 			layout.view.x, float(layout.font_px) * 1.5),
 			int(maxf(11.0, float(layout.font_px) * 0.85)), Color(0.80, 0.72, 0.50))
+	# POTVRZENI RESETU: prekryje menu, dokud hrac neodpovi. Klepnuti mimo
+	# dialog se bere jako ZPET (viz _press) - omylem se nic nesmaze.
+	if menu.confirm_reset:
+		draw_rect(Rect2(Vector2.ZERO, layout.view), Color(0.02, 0.02, 0.025, 0.72), true)
+		_dialog("Vynulovat postup?",
+			"Smaže body, vylepšení i levely.",
+			"VYNULOVAT", "ZPĚT")
 
 
 func _draw_upgrades() -> void:
@@ -281,6 +310,9 @@ func _draw_upgrades() -> void:
 
 func _draw_battle() -> void:
 	_draw_enemies()
+	# HRADBA JE PRED BARBAREM, ale ostepy i mireni kreslime PRES ni: barbar
+	# haze pres ni, takze musi byt videt, kam leti.
+	_draw_wall()
 	_draw_aim()
 	_draw_spears()
 	_draw_shots()
@@ -293,6 +325,55 @@ func _draw_battle() -> void:
 		_label("Připrav se — %.0f" % maxf(0.0, game.build_left),
 			Rect2(0.0, layout.center.y - float(layout.font_px) * 6.0, layout.view.x,
 				float(layout.font_px) * 1.6), layout.font_px, DIM)
+
+
+func _draw_wall() -> void:
+	var wy: float = game.wall_top()
+	var h: float = maxf(10.0, layout.field_r * 0.062)
+	var x0: float = 0.0
+	var x1: float = layout.view.x
+	if game.wall_hp <= 0.0:
+		# ZBOURANA HRADBA: jen nizke zbytky kamenu. Hrac na prvni pohled vidi,
+		# ze uz ho nic nekryje.
+		var sh: float = h * 0.34
+		draw_rect(Rect2(x0, wy + h - sh, x1 - x0, sh), WALL_DARK, true)
+		var bw2: float = maxf(16.0, layout.field_r * 0.16)
+		var bx2: float = x0
+		var i2: int = 0
+		while bx2 < x1:
+			var hh: float = sh * (0.55 + 0.45 * float((i2 * 7) % 3) * 0.5)
+			draw_rect(Rect2(bx2, wy + h - hh, bw2 * 0.55, hh), WALL, true)
+			bx2 += bw2
+			i2 += 1
+		return
+	var flash: float = clampf(game.wall_flash / 0.30, 0.0, 1.0)
+	var base: Color = WALL.lerp(WALL_EDGE, 0.5 * flash)
+	draw_rect(Rect2(x0, wy, x1 - x0, h), base, true)
+	# SPARY: dve rady kamenu, horni posunuta o pul bloku. Ploche, bez textur.
+	var rowh: float = h * 0.5
+	var bw: float = maxf(18.0, layout.field_r * 0.20)
+	var lw: float = maxf(1.0, h * 0.10)
+	draw_line(Vector2(x0, wy + rowh), Vector2(x1, wy + rowh), WALL_DARK, lw)
+	var row: int = 0
+	while row < 2:
+		var off: float = 0.0 if row == 0 else bw * 0.5
+		var bx: float = x0 - off
+		while bx < x1:
+			draw_line(Vector2(bx, wy + rowh * float(row)),
+				Vector2(bx, wy + rowh * float(row + 1)), WALL_DARK, lw)
+			bx += bw
+		row += 1
+	# HORNI HRANA: jedina svetlejsi cara, aby hradba mela tvar.
+	draw_line(Vector2(x0, wy), Vector2(x1, wy), WALL_EDGE, maxf(2.0, h * 0.14))
+	# STAV HRADBY: tenky pruh POD ni (mezi hradbou a Barbarem), aby nelezel
+	# nepratelum na nohou a aby hrac videl, kolik jeste vydrzi.
+	var frac: float = game.wall_frac()
+	var ph: float = maxf(4.0, h * 0.22)
+	var m: float = layout.view.x * 0.06
+	var bar := Rect2(m, wy + h + ph * 0.9, layout.view.x - m * 2.0, ph)
+	draw_rect(bar, Color(0.09, 0.085, 0.095, 0.85), true)
+	draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, ph)), _hp_color(frac), true)
+	draw_rect(bar, EDGE, false, maxf(1.0, ph * 0.16))
 
 
 func _draw_warrior() -> void:

@@ -15,9 +15,10 @@ extends RefCounted
 enum View { MENU, BATTLE, UPGRADES }
 
 # Polozky menu. Akce se vyhodnocuji PRES JMENO, ne podle poradi.
-const ITEMS := ["HRÁT", "VYLEPŠENÍ", "UPDATE"]
-const SUBS := ["hraj od nejvyššího levelu", "permanentní upgrady za body", "stáhnout novou verzi"]
-const ACTIONS := ["battle", "upgrades", "update"]
+const ITEMS := ["HRÁT", "VYLEPŠENÍ", "UPDATE", "RESET"]
+const SUBS := ["hraj od nejvyššího levelu", "permanentní upgrady za body",
+	"stáhnout novou verzi", "vynuluje celý postup"]
+const ACTIONS := ["battle", "upgrades", "update", "reset"]
 
 # GLOBALNI PROMENNE, KTERYMI PROHLIZEC MLUVI S HROU. Hra si je sama VYCTE
 # (`pull_js_state`) - callback z JS do GDScriptu v prohlizeci nedojde.
@@ -28,10 +29,14 @@ var view: int = View.MENU
 var web: bool = false
 var build_id: String = "dev"
 var update_note: String = ""
+# RESET SE PTÁ: vynulovani progresu je nevratne, takze tlacitko jen otevre
+# potvrzeni. Sama obrazovka kresli modal, zadny systemovy dialog.
+var confirm_reset: bool = false
 
 
 func open_menu() -> void:
 	view = View.MENU
+	confirm_reset = false
 
 
 func open_battle() -> void:
@@ -40,6 +45,15 @@ func open_battle() -> void:
 
 func open_upgrades() -> void:
 	view = View.UPGRADES
+
+
+# POTVRZENI RESETU. Modal kresli game_view, kde jsou i obdelniky tlacitek.
+func ask_reset() -> void:
+	confirm_reset = true
+
+
+func cancel_reset() -> void:
+	confirm_reset = false
 
 
 func is_menu() -> bool:

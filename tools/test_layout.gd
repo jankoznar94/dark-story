@@ -77,8 +77,8 @@ func _test_size(v: Vector2) -> void:
 	_check(l.hud_menu.size.y >= 30.0 * l.ui_scale - 0.5, "%s: tlacitko MENU je moc male" % tag)
 	_check(l.hud_pause.end.x <= l.hud_menu.position.x, "%s: tlacitka v pruhu se prekryvaji" % tag)
 	_check(l.hud_menu.end.x <= v.x + 0.5, "%s: MENU je mimo displej" % tag)
-	# 5) HRATELNOST: neprítel z horniho okraje stihne dojit k bojovnikovi za
-	#    svuj cestovni cas (na 1. levelu je nejpomalejsi).
+	# 5) HRADBA: neprítel z horniho okraje stihne dojit k hradbe za svuj
+	#    cestovni cas a zastavi se o ni. Hradba stoji mezi nim a Barbarem.
 	var g := Game.new()
 	g.profile = Profile.new()
 	g.set_field(l.field_r, l.center, l.arena)
@@ -86,12 +86,17 @@ func _test_size(v: Vector2) -> void:
 	g.phase = "test"
 	var tt: float = g.travel_time()
 	var start := Vector2(l.center.x, l.arena.position.y + l.field_r * 0.06)
-	var e := {"pos": start, "hp": 10.0, "max_hp": 10.0,
-		"speed": start.distance_to(l.center) / tt, "dmg": 1.0, "alive": true}
+	var er: float = maxf(Game.MIN_ENEMY_R, l.field_r * 0.065)
+	var line: float = g.wall_top() - er
+	var e := {"pos": start, "hp": 1000.0, "max_hp": 1000.0, "r": er,
+		"speed": (line - start.y) / tt, "dmg": 1.0, "alive": true}
 	g.enemies.append(e)
 	var t: float = 0.0
-	while t < tt + 1.0 and not g.enemies.is_empty():
+	while t < tt + 1.0 and (e["pos"] as Vector2).y < line - 0.5:
 		g.step(1.0 / 60.0)
 		t += 1.0 / 60.0
-	_check(g.enemies.is_empty(), "%s: neprítel nedojde k bojovnikovi (%.1f s)" % [tag, t])
-	_check(t <= tt + 0.5, "%s: cesta k bojovnikovi je delsi nez cestovni cas (%.1f s)" % [tag, t])
+	var ey: float = (e["pos"] as Vector2).y
+	_check(ey >= line - 0.5, "%s: neprítel nedojde k hradbe (%.1f s)" % [tag, t])
+	_check(t <= tt + 0.5, "%s: cesta k hradbe je delsi nez cestovni cas (%.1f s)" % [tag, t])
+	_check(g.wall_top() < l.center.y and g.wall_top() > l.arena.position.y + l.field_r * 0.10,
+		"%s: hradba nestoji mezi neprateli a Barbarem (%.0f)" % [tag, g.wall_top()])
