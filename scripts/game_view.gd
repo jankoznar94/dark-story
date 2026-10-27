@@ -546,7 +546,10 @@ func _settings_rows() -> Array:
 # =========================================================================
 # HUDBA (Jan, Oct 2026: "A dáme do hry nějakou primitivní hudbu.")
 #
-# Jedna kratka smycka (soubor z `tools/make_music.py`) hraje porad dokola.
+# DVE SMYCKY, prepina se podle obrazovky: menu ma svou kratkou (soubor z
+# `tools/make_music.py`), BOJ ma Janovu skladbu (`tools/make_battle_loop.py`).
+# Jan (Oct 2026): "Tuto hudbu dáme jako background music v souboji. Pojede ve
+# smyčce. Do nekonečna. Musí na sebe zcela plynule navazovat."
 #
 # PROCHRAMEC NESPUSTI ZVUK BEZ GESTA HRAVE: hudba se proto rozjede az po
 # PRVNIM klepnuti (`touched`). Hra, ktera "sama hraje", by v prohlizeci jen
@@ -554,22 +557,37 @@ func _settings_rows() -> Array:
 # =========================================================================
 
 const MUSIC_PATH := "res://assets/audio/theme.ogg"
+const BATTLE_MUSIC_PATH := "res://assets/audio/battle.ogg"
 const MUSIC_DB := -15.0
 var music: AudioStreamPlayer = null
+var music_menu: AudioStream = null
+var music_battle: AudioStream = null
 var touched: bool = false
+
+
+func _loop_stream(path: String) -> AudioStream:
+	var s: AudioStream = load(path)
+	if s is AudioStreamOggVorbis:
+		(s as AudioStreamOggVorbis).loop = true
+	elif s is AudioStreamWAV:
+		(s as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
+	return s
 
 
 func _make_music() -> void:
 	music = AudioStreamPlayer.new()
-	var s: AudioStream = load(MUSIC_PATH)
-	if s != null:
-		if s is AudioStreamOggVorbis:
-			(s as AudioStreamOggVorbis).loop = true
-		elif s is AudioStreamWAV:
-			(s as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
-	music.stream = s
+	music_menu = _loop_stream(MUSIC_PATH)
+	music_battle = _loop_stream(BATTLE_MUSIC_PATH)
+	music.stream = music_menu
 	music.volume_db = MUSIC_DB
 	add_child(music)
+
+
+# Ktera smycka patri k tomu, co hrac prave vidi.
+func _music_for_view() -> AudioStream:
+	if menu != null and menu.is_battle() and music_battle != null:
+		return music_battle
+	return music_menu
 
 
 # ============================================================================
@@ -697,6 +715,14 @@ func _play_sfx(kind: String) -> void:
 func _sync_music() -> void:
 	if music == null:
 		return
+	# Smycka se meni podle obrazovky (menu / boj) - jinak by v souboji hralo
+	# tema z menu a Janova skladba by se nikdy neozvala.
+	var want_stream: AudioStream = _music_for_view()
+	if want_stream != null and music.stream != want_stream:
+		var was_playing: bool = music.playing
+		music.stream = want_stream
+		if was_playing:
+			music.play()
 	var want: bool = touched and settings.music and music.stream != null
 	if want and not music.playing:
 		music.play()

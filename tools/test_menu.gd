@@ -624,6 +624,31 @@ func _test_tap_settings_and_update() -> void:
 	s.music = true
 	v.call("_sync_music")
 	_check(pl == null or pl.playing, "zapnuta hudba po klepnuti nehraje")
+	# BOJOVA HUDBA (Jan, Oct 2026: "Tuto hudbu dáme jako background music
+	# v souboji. Pojede ve smyčce. Do nekonečna."). V souboji musi hrat JINA
+	# smycka nez v menu, musi byt nastavena na LOOP (jinak po 31 s ztichne)
+	# a po navratu do menu se musi vratit tema menu.
+	var battle: AudioStream = v.get("music_battle")
+	_check(battle != null, "bojova hudba se nenacetla (chybi battle.ogg?)")
+	if battle is AudioStreamOggVorbis:
+		_check((battle as AudioStreamOggVorbis).loop, "bojova smycka nema zapnuty loop")
+	if battle != null:
+		_check(absf(battle.get_length() - 31.35) < 0.2,
+			"bojova smycka ma jinou delku nez 31,35 s (%.2f)" % battle.get_length())
+	v.set("touched", true)
+	s.music = true
+	m.open_battle()
+	v.call("_sync_music")
+	_check(pl != null and pl.stream == battle, "v souboji nehraje bojova hudba")
+	m.open_menu()
+	v.call("_sync_music")
+	_check(pl != null and pl.stream == v.get("music_menu"),
+		"po navratu do menu nehraje zpet tema menu")
+	# Test pokracuje v NASTAVENI (dalsi radky), takze se sem musi vratit -
+	# jinak si dalsi kontroly meri neco jineho (presne to jednou shodilo
+	# "ZPET z nastaveni nevrátilo do menu").
+	m.open_settings()
+
 	# ZVUKY: treti radek je vypne a `_play_sfx` to musi respektovat.
 	var voices: Array = v.get("sfx_voices")
 	_check(voices.size() > 0, "hra si nevytvorila hlasy pro zvukove efekty")
