@@ -67,6 +67,7 @@ var _potion_centre := Vector2.ZERO
 var _toast := ""
 var _toast_ticks := 0.0
 var _flash := 0.0
+var _death_reported := false
 
 ## Seeded decorations: they are DATA so a re-layout cannot move the cover the fight uses.
 var _props: Array = []
@@ -80,12 +81,23 @@ func _ready() -> void:
 	_grass = UIKit.load_texture(GRASS_PATH)
 
 
+## Stop the clock. The run object is KEPT (the payout is read from it when the screen hands the
+## player back), but nothing advances it any more.
+func stop() -> void:
+	set_process(false)
+	_pointer_down = false
+	_stick_vec = Vector2.ZERO
+	_accum = 0.0
+
+
 func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
 	_state = state
 	_find_item = find_item
 	run = SurvivorRun.new()
 	run.setup(state, find_item, loot_system, act_id)
 	_accum = 0.0
+	_death_reported = false
+	set_process(true)
 	_toast = ""
 	_toast_ticks = 0.0
 	_flash = 0.0
@@ -249,9 +261,13 @@ func _process(delta: float) -> void:
 		_toast_ticks = maxf(0.0, _toast_ticks - delta)
 	_flash = maxf(0.0, _flash - delta * 3.0)
 	_play_events()
-	if run.finished and run.outcome == "dead":
+	# ONE report per run. The old code cleared `finished` after emitting, so a run whose hp had
+	# already reached 0 re-entered `step()`, died again on the next frame and emitted again — with
+	# the player on another screen each `run_finished` dragged him back.
+	if run.finished and run.outcome == "dead" and not _death_reported:
+		_death_reported = true
+		stop()
 		run_finished.emit("dead")
-		run.finished = false
 	_place_camera()
 	queue_redraw()
 
@@ -292,6 +308,15 @@ func _place_camera() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_buttons()
+	elif what == NOTIFICATION_VISIBILITY_CHANGED:
+		# ⚠️  A hidden Control STILL RUNS `_process`. Leaving the run therefore kept simulating it
+		# behind whatever screen was opened next: monsters kept spawning, the hero kept losing
+		# health, and when he died the `run_finished` signal pulled the player back to the road
+		# from a screen he was already using. A screen that draws a live fight must own its clock.
+		if not is_visible_in_tree():
+			stop()
+		else:
+			set_process(true)
 
 
 func _layout_buttons() -> void:

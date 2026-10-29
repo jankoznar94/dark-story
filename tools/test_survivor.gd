@@ -405,4 +405,35 @@ func _test_screen_gesture_and_disc() -> void:
 		_check(img.get_pixel(1, 1).a < 0.02, "a corner of the medallion must be transparent")
 		_check(img.get_pixel(96, 96).a > 0.5, "the middle of the medallion must be opaque")
 
+	# ⚠️  A HIDDEN SCREEN MUST NOT KEEP THE FIGHT RUNNING. Leaving the run used to leave `_process`
+	# alive, so the arena kept spawning behind the town and the player was dragged back when the
+	# hero died. Asserted on `is_processing()`, which is what actually stops the clock.
+	screen.show()
+	_check(screen.is_processing(), "a visible survivor screen must run its clock")
+	var t_before: float = screen.run.elapsed
+	for i in 30:
+		screen._process(1.0 / 60.0)
+	var t_moved: bool = screen.run.elapsed > t_before
+	screen.hide()
+	_check(not screen.is_processing(), "a HIDDEN survivor screen must stop its clock")
+	t_before = screen.run.elapsed
+	for i in 30:
+		if screen.is_processing():
+			screen._process(1.0 / 60.0)
+	_check(t_moved, "a visible screen must advance the run")
+	_check(absf(screen.run.elapsed - t_before) < 0.0001,
+		"a hidden screen must not advance the run (%.3f -> %.3f)" % [t_before, screen.run.elapsed])
+
+	# ...and the death is reported ONCE, not once per frame.
+	var deaths := [0]
+	screen.run_finished.connect(func(_o): deaths[0] += 1)
+	screen.show()
+	screen.setup(_state, _find_item, _loot, 0)
+	screen.run.hp = 0
+	screen.run.finished = true
+	screen.run.outcome = "dead"
+	for i in 20:
+		screen._process(1.0 / 60.0)
+	_check(deaths[0] == 1, "a death must be reported exactly once, got %d" % deaths[0])
+
 	screen.queue_free()
