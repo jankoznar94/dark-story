@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1793280904|2527191';
+const CACHE_VERSION = '1793284097|2200145';
 /** @type {string} */
 const CACHE_PREFIX = 'Dungeon Recall-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
