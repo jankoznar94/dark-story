@@ -29,6 +29,9 @@ const Battle := preload("res://scripts/combat/battle.gd")
 signal next_fight_requested()
 signal walk_home_requested()
 signal portal_requested()
+## The new fight's door: a survivor run in this act. Draft, so it sits beside the road's
+## "walk into this fight" rather than replacing it.
+signal survivor_requested()
 
 const BG := Color("#121212")
 const GOLD := Color(UIKit.GOLD)
@@ -335,6 +338,13 @@ func _build_actions() -> void:
 	_portal_button.visible = false
 	_portal_button.pressed.connect(func(): portal_requested.emit())
 	row.add_child(_portal_button)
+
+	# The survivor run, as a DRAFT entry: the same act, continuous movement, its own fight.
+	var survivor_button := UIKit.secondary_button("Nájezd", 30)
+	survivor_button.add_theme_font_size_override("font_size", 12)
+	survivor_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	survivor_button.pressed.connect(func(): survivor_requested.emit())
+	row.add_child(survivor_button)
 
 
 # ============================================================================ geometry

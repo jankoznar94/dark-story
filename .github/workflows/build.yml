@@ -285,6 +285,23 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "DUEL_DISTANCE_ALL_PASS=true"
 
+      # The survivor run — the new fight. It is REAL TIME and it drops loot into the save, so
+      # the two defects that matter are "the run cannot be reproduced" and "a kill does not
+      # reach the bag". Both are asserted on a fixed 1/60 s step with no renderer, plus the one
+      # drawing claim that can be checked without a viewport: the portrait really is cropped to
+      # a disc (transparent corners), which is what keeps the black plate out of the arena.
+      #
+      # ⚠️  This gate has already caught a real one: a full bag made `_move_drops` append the
+      # refused item back into the array it was iterating, so COLLECTING LOOPED FOREVER and the
+      # game locked up on the first drop a full bag could not take. A refused item is now kept
+      # by the loop instead of re-appended, and this test fails (not hangs) if that regresses.
+      - name: Survivor run test (rules, loot payout, movement)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_survivor.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SURVIVOR_ALL_PASS=true"
+
       # The arena's CLOCK and its END, driven through `_process(delta)` — the seam no other
       # test touches. `test_combat` supplies the clock itself (it ticks the battle 100 ms at
       # a time), so a screen that pumped one tick per FRAME looked perfect to it while the

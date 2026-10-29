@@ -27,6 +27,7 @@ const TownScreen := preload("res://scripts/ui/town_screen.gd")
 const MapScreen := preload("res://scripts/ui/map_screen.gd")
 const WorldScreen := preload("res://scripts/ui/world_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
+const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
@@ -184,6 +185,9 @@ func _build_screens() -> void:
 	# The same handler the MAP's button uses: store the position and SPEND the scroll. One rule,
 	# two places it can be taken from.
 	world.portal_requested.connect(_on_map_portal_used)
+	# The NEW fight's own door. Kept separate from "Další souboj" so the duel stays reachable
+	# while the survivor run is a draft the player can compare against it.
+	world.survivor_requested.connect(func(): _enter_survivor(int(state.data.get("_currentAct", 0))))
 	_add_screen("world", world)
 
 	var map_screen := MapScreen.new(data, state, _resolve)
@@ -253,6 +257,15 @@ func _build_screens() -> void:
 	arena.result_portal_requested.connect(_on_result_portal_used)
 	arena.hero_requested.connect(func(): open_modal("stats"))
 	_add_screen("arena", arena)
+
+	# The NEW fight — the survivor run. It lives BESIDE the duel on purpose: the duel is
+	# still the only complete encounter in the port, and a draft must be comparable to it
+	# on the phone rather than replacing it in the same commit.
+	var survivor := SurvivorScreen.new()
+	survivor.visible = false
+	survivor.leave_requested.connect(func(): _end_survivor(""))
+	survivor.run_finished.connect(_end_survivor)
+	_add_screen("survivor", survivor)
 
 	# The screens are Control nodes on a Node2D main; give them a CanvasLayer so they
 	# sit above any future world rendering, and keep the status strip on top of them.
@@ -336,7 +349,7 @@ func _add_screen(key: String, screen: Control) -> void:
 ## The nav bar is hidden on the screens the PWA hid it on — the arena replaces the whole
 ## page (`.battle-active` locked scrolling) and a nav button under a live fight is a way
 ## to lose a fight by accident.
-const NAV_HIDDEN := ["arena"]
+const NAV_HIDDEN := ["arena", "survivor"]
 
 
 func show_screen(name: String) -> void:
@@ -402,6 +415,9 @@ func show_screen(name: String) -> void:
 			_screens["character"].open_default_tab()
 		"arena":
 			# Nothing to set up: _enter_arena already started the fight.
+			pass
+		"survivor":
+			# Nothing to set up: _enter_survivor already started the run.
 			pass
 
 
@@ -599,7 +615,7 @@ func _toggle_music() -> void:
 func _update_music() -> void:
 	if _music == null:
 		return
-	if _current == "map" or _current == "world":
+	if _current == "map" or _current == "world" or _current == "survivor":
 		# The wilderness. The PWA's `showScreen` mapped `map` to 'battle'; the road IS the
 		# wilderness, so it shares that mode rather than inventing a track.
 		_music.switch_mode("battle")
@@ -611,7 +627,7 @@ func _update_music() -> void:
 ## PWA re-derives it from the active screen on `visibilitychange` — and that is the ONLY
 ## route by which the defeat and victory tracks are ever reached.
 func _music_mode_for_current_screen() -> String:
-	if _current == "map" or _current == "world":
+	if _current == "map" or _current == "world" or _current == "survivor":
 		return "battle"
 	if _current == "arena":
 		var arena = _screens.get("arena", null)
@@ -787,6 +803,34 @@ func _enter_arena(act_id: int) -> void:
 	# different from the ten fights that lead to it.
 	if _music != null:
 		_music.switch_mode("boss" if arena.battle.is_boss else "battle")
+
+
+## The SURVIVOR RUN — the new fight, alongside the duel. `_currentAct` is written the same way
+## the arena writes it, so a run pays out against the act whose monsters the player is facing.
+func _enter_survivor(act_id: int) -> void:
+	state.data["_currentAct"] = act_id
+	show_screen("survivor")
+	var screen = _screens["survivor"]
+	screen.setup(state, _resolve, loot, act_id)
+	if _music != null:
+		_music.switch_mode("battle")
+
+
+## A run ends by walking out or by dying. Either way the payout is ALREADY in the save (gold and
+## items are collected during the run), so this only reports and hands the player back to the road.
+func _end_survivor(outcome: String) -> void:
+	var screen = _screens.get("survivor", null)
+	if screen == null:
+		return
+	var gold := int(screen.run.gold) if screen.run != null else 0
+	var items := int(screen.run.items_taken) if screen.run != null else 0
+	state.save()
+	if str(outcome) == "dead":
+		state.data["deaths"] = int(state.data.get("deaths", 0)) + 1
+		_set_status("Nájezd skončil. %d zlata, %d předmětů" % [gold, items])
+	else:
+		_set_status("Nájezd ukončen. %d zlata, %d předmětů" % [gold, items])
+	show_screen("world")
 
 
 ## The one way into the wilderness screen. `_currentAct` is what the world reads to know which
