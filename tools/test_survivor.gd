@@ -175,6 +175,13 @@ func _test_auto_attack_kills_and_drops() -> void:
 		ticks += 1
 	_check(int(m["hp"]) < hp_before, "the auto-attack must land inside its range")
 	_check(not run.numbers.is_empty(), "a landing blow must produce a damage number")
+	# The swing the RENDERER animates: an age the screen can read, and a direction that points at
+	# what was hit. Without this the screen has nothing to draw a lunge or a slash from.
+	_check(run.swing_age >= 0.0 and run.swing_age < 0.25,
+		"a landed blow must stamp swing_age near 0, got %.3f" % run.swing_age)
+	var to_target: Vector2 = (m["pos"] as Vector2) - run.player_pos
+	_check(run.swing_dir.dot(to_target.normalized()) > 0.9,
+		"the swing must point at the target: %s vs %s" % [str(run.swing_dir), str(to_target.normalized())])
 	var kills_before := run.kills
 	while run.kills == kills_before and ticks < 3000:
 		m["pos"] = run.player_pos + Vector2(SurvivorRun.ATTACK_RANGE * 0.5, 0)

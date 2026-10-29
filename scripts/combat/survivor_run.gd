@@ -81,6 +81,11 @@ var wave := 1
 var elapsed := 0.0
 var gold := 0
 var items_taken := 0
+## How long ago the last swing LANDED, in seconds (-1 = no swing yet). The renderer turns this
+## into the lunge and the slash — the RULES never animate, they only say when and which way.
+var swing_age := -1.0
+var swing_dir := Vector2.RIGHT
+
 var finished := false
 ## "" | "dead"
 var outcome := ""
@@ -137,6 +142,8 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	_spawn_accum = 0.0
 	_attack_clock = 0.0
 	_next_id = 0
+	swing_age = -1.0
+	swing_dir = Vector2.RIGHT
 	_spawn_wave(2)
 
 
@@ -146,6 +153,8 @@ func step(dt: float, move: Vector2) -> void:
 	if finished:
 		return
 	elapsed += dt
+	if swing_age >= 0.0:
+		swing_age += dt
 	_wave_clock += dt
 	if _wave_clock >= WAVE_SECONDS:
 		_wave_clock -= WAVE_SECONDS
@@ -364,6 +373,9 @@ func _auto_attack(dt: float) -> void:
 		dmg = int(round(float(dmg) * 2.0))
 	m["hp"] = int(m["hp"]) - dmg
 	m["hit_flash"] = 0.12
+	var toward: Vector2 = (m["pos"] as Vector2) - player_pos
+	swing_dir = toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
+	swing_age = 0.0
 	_add_number((m["pos"] as Vector2) + Vector2(0, -30), str(dmg), "crit" if crit else "hit")
 	events.append("crit" if crit else "hit")
 	if int(m["hp"]) <= 0:

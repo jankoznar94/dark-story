@@ -309,8 +309,10 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_patches()
 	_draw_props()
+	_draw_attack_ring()
 	_draw_drops()
 	_draw_actors()
+	_draw_slash()
 	_draw_numbers()
 	_draw_hud()
 
@@ -441,9 +443,17 @@ func _draw_monster(m: Dictionary) -> void:
 
 func _draw_hero() -> void:
 	var pos: Vector2 = run.player_pos - _cam
+	var base_pos := pos
+	# The whole body lunges a few pixels toward the blow, so the attack is visible even when the
+	# damage number is off screen. The SHADOW stays at the base: it is on the ground, the body is
+	# not.
+	var lunge := Vector2.ZERO
+	if run.swing_age >= 0.0 and run.swing_age < SWING_ANIM:
+		lunge = run.swing_dir * 8.0 * sin(PI * clampf(float(run.swing_age) / SWING_ANIM, 0.0, 1.0))
+	pos += lunge
 	# The hero is a WALKING PORTRAIT like everything else, and the only thing that separates him
 	# from a monster is the GOLD ring — the same distinction the arena's rings already use.
-	draw_set_transform(Vector2(pos.x, pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
+	draw_set_transform(Vector2(base_pos.x, base_pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
 	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var tex: Texture2D = _disc("assets/monsters/%s.png" % _hero_face())
@@ -455,6 +465,45 @@ func _draw_hero() -> void:
 	var hero_ring := Color(UIKit.MOD_BLUE)
 	draw_arc(pos, DISC_DIA * 0.5 + 3.5, 0.0, TAU, 32, Color(0, 0, 0, 0.45), 2.0, true)
 	draw_arc(pos, DISC_DIA * 0.5, 0.0, TAU, 32, hero_ring, 2.5, true)
+
+
+## The hero's REACH, drawn on the ground he stands on. Dashed, because a solid circle reads as a
+## second body outline; it brightens and thickens for a moment on every landed swing, which is
+## half of "the player can see something happened".
+const SWING_ANIM := 0.22
+const RING_SEGMENTS := 28
+
+
+func _draw_attack_ring() -> void:
+	var pos: Vector2 = run.player_pos - _cam
+	var hot := 0.0
+	if run.swing_age >= 0.0 and run.swing_age < SWING_ANIM:
+		hot = 1.0 - float(run.swing_age) / SWING_ANIM
+	var col := Color(UIKit.MOD_BLUE)
+	col.a = 0.20 + 0.55 * hot
+	var radius := SurvivorRun.ATTACK_RANGE
+	for i in RING_SEGMENTS:
+		var a0 := TAU * float(i) / float(RING_SEGMENTS)
+		var a1 := a0 + TAU / float(RING_SEGMENTS) * 0.55
+		draw_arc(pos, radius, a0, a1, 6, col, 1.5 + 1.5 * hot, true)
+
+
+## The swing itself: an arc sweeping across the reach in the direction the blow was aimed. Drawn
+## OVER the bodies so it reads as the blow landing on them, not as a decal on the grass.
+func _draw_slash() -> void:
+	if run.swing_age < 0.0 or run.swing_age > SWING_ANIM:
+		return
+	var t := clampf(float(run.swing_age) / SWING_ANIM, 0.0, 1.0)
+	var pos: Vector2 = run.player_pos - _cam
+	var base: float = run.swing_dir.angle()
+	# The leading edge travels ~40 deg across the target, the stroke fades and thins as it goes.
+	var lead := base - 0.55 + 1.10 * t
+	var col := Color("#f0e0c0")
+	col.a = 0.95 * (1.0 - t * 0.75)
+	var r0 := SurvivorRun.ATTACK_RANGE * 0.62
+	var r1 := SurvivorRun.ATTACK_RANGE * 0.96
+	draw_arc(pos, r1, lead - 0.42, lead, 12, col, 4.0 * (1.0 - t) + 1.0, true)
+	draw_arc(pos, r0, lead - 0.30, lead, 10, Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
 
 
 func _draw_drops() -> void:

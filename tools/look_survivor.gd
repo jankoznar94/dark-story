@@ -24,6 +24,12 @@ var _walk_frames := 130
 ## Keep the thumb DOWN at capture time, so the floating stick is in the frame. The control is
 ## half of what this slice is; a shot without it photographs a game with no controls.
 var _stick := "1"
+## Wait for a blow to be LANDING before the shot. A screenshot of a swing that is not happening
+## photographs the game as if it had no attack animation at all.
+var _wait_swing := true
+## Place N bodies in the hero's reach before the shot. A look-frame needs a fight IN it; waiting
+## for the spawner to walk one over costs the timeout and photographs an empty field.
+var _pack := 5
 
 var _screen = null
 var _started := false
@@ -43,6 +49,10 @@ func _initialize() -> void:
 				_walk = args[i + 1] != "0"
 			"--stick":
 				_stick = args[i + 1]
+			"--swing":
+				_wait_swing = args[i + 1] != "0"
+			"--pack":
+				_pack = int(args[i + 1])
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -57,6 +67,13 @@ func _process(_delta: float) -> bool:
 		_started = true
 		_main._enter_survivor(0)
 		_screen = _main._screens["survivor"]
+		if _pack > 0 and _screen.run != null:
+			var run = _screen.run
+			run.monsters.clear()
+			for i in _pack:
+				run._spawn_one()
+				var ang := TAU * float(i) / float(_pack) + 0.4
+				run.monsters[i]["pos"] = run.player_pos + Vector2(cos(ang), sin(ang)) * 105.0
 		return false
 
 	if _screen == null:
@@ -71,6 +88,11 @@ func _process(_delta: float) -> bool:
 	_frames += 1
 	if _frames < _frames_to_run:
 		return false
+	if _wait_swing and _screen.run != null:
+		var age: float = _screen.run.swing_age
+		if age < 0.0 or age > 0.07:
+			_frames -= 1
+			return false
 	_capture()
 	return false
 
