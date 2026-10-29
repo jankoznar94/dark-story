@@ -32,9 +32,15 @@ const MON_RADIUS := BODY_RADIUS
 ## --- the fight ------------------------------------------------------------
 ## ONE range and ONE cadence for the auto-attack: a survivor hero must never have to
 ## aim, and a swing timer the player cannot see must not vary per monster type.
-## Reach is CONTACT plus ~14 px. With two 31 px discs, touching is 62 px, so the hero has to be
-## pressed against a body to swing — the "logicky musí být blízko" Jan asked for.
+## ATTACK_RANGE is the circle drawn on the ground, and it is the WEAPON's reach — so the rule is
+## about BODIES, not centres: a target is hit when its own disc crosses that circle. Jan's report
+## ("the enemy has to be deep inside the radius before the hero swings") was this rule measured to
+## the wrong point: with the check on centres, a 31 px body had to be half-way through the circle
+## before it registered, which reads as point-blank. `HIT_REACH` adds the target's radius, so the
+## blow lands the moment a portrait touches the drawn circle — the ring is now the promise it looks
+## like.
 const ATTACK_RANGE := 76.0
+const HIT_REACH := ATTACK_RANGE + MON_RADIUS
 const ATTACK_COOLDOWN := 0.85
 const CONTACT_PAD := 3.0
 
@@ -348,16 +354,16 @@ func _take_damage(raw: int) -> void:
 
 # ============================================================================ attack
 
-## The auto-attack picks the NEAREST monster inside the range and nothing else. No cone,
-## no aiming, no target assist: in a survivor fight the player steers the hero, and the
-## hero spends what the timer gives him. Everything the swing lands on is a real roll
+## The auto-attack picks the NEAREST monster whose BODY reaches inside the drawn reach and nothing
+## else. No cone, no aiming, no target assist: in a survivor fight the player steers the hero, and
+## the hero spends what the timer gives him. Everything the swing lands on is a real roll
 ## from the equipped weapon through `Progression`, so the loot loop stays honest.
 func _auto_attack(dt: float) -> void:
 	_attack_clock = maxf(0.0, _attack_clock - dt)
 	if _attack_clock > 0.0 or monsters.is_empty():
 		return
 	var nearest := -1
-	var best := ATTACK_RANGE * ATTACK_RANGE
+	var best := HIT_REACH * HIT_REACH
 	for i in monsters.size():
 		var d2: float = (monsters[i]["pos"] as Vector2).distance_squared_to(player_pos)
 		if d2 <= best:

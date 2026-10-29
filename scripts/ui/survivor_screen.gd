@@ -526,7 +526,7 @@ func _draw_slash() -> void:
 	var col := Color("#f0e0c0")
 	col.a = 0.95 * (1.0 - t * 0.75)
 	var r0 := SurvivorRun.ATTACK_RANGE * 0.62
-	var r1 := SurvivorRun.ATTACK_RANGE * 0.96
+	var r1 := SurvivorRun.ATTACK_RANGE
 	draw_arc(pos, r1, lead - 0.42, lead, 12, col, 4.0 * (1.0 - t) + 1.0, true)
 	draw_arc(pos, r0, lead - 0.30, lead, 10, Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
 

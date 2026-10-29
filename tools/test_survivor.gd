@@ -55,6 +55,7 @@ func _initialize() -> void:
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
 	_test_bodies_are_solid()
+	_test_reach_is_the_drawn_circle()
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
 	_test_wave_counter()
@@ -296,11 +297,45 @@ func _test_bodies_are_solid() -> void:
 		"the hero must not pass through a body: closest %.1f < %.1f" % [worst_hero, min_gap])
 	_check(worst_pair >= min_gap - 1.0,
 		"two portraits must not overlap: closest pair %.1f < %.1f" % [worst_pair, min_gap])
-	# ...and the reach has to actually be reachable: contact is 62 px, the swing 76 px.
-	_check(SurvivorRun.ATTACK_RANGE > min_gap and SurvivorRun.ATTACK_RANGE <= min_gap + 24.0,
-		"the melee reach must be CONTACT plus a short step, got %.1f against contact %.1f"
-			% [SurvivorRun.ATTACK_RANGE, min_gap])
+	# ...and the reach has to read as a real step: bodies touch at 62 px, a target whose rim
+	# crosses the drawn circle stands HIT_REACH away, and that must be a whole body off contact.
+	_check(SurvivorRun.HIT_REACH - min_gap >= SurvivorRun.BODY_RADIUS,
+		"the reach must be a visible step beyond contact, got %.1f against contact %.1f"
+			% [SurvivorRun.HIT_REACH, min_gap])
 	print("  measured: hero_gap=%.1f pair_gap=%.1f (min %.1f)" % [worst_hero, worst_pair, min_gap])
+
+
+## The drawn circle is the promise: a target whose BODY touches it is hit, one that is still
+## outside is not. Jan's report was that the hero only swung at point-blank, which is exactly what
+## a CENTRE-based check against a 31 px body looks like on screen.
+func _test_reach_is_the_drawn_circle() -> void:
+	_log("  section: reach_is_the_drawn_circle")
+	var inside := _fresh()
+	inside.monsters.clear()
+	inside._spawn_one()
+	var m: Dictionary = inside.monsters[0]
+	m["speed"] = 0.0
+	var hp_before := int(m["hp"])
+	var gap := SurvivorRun.HIT_REACH - 1.0
+	m["pos"] = inside.player_pos + Vector2(gap, 0)
+	for _i in 2:
+		m["pos"] = inside.player_pos + Vector2(gap, 0)
+		inside.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) < hp_before,
+		"a body whose rim touches the drawn circle must be hit at gap %.1f" % gap)
+
+	var outside := _fresh()
+	outside.monsters.clear()
+	outside._spawn_one()
+	var m2: Dictionary = outside.monsters[0]
+	m2["speed"] = 0.0
+	var hp2 := int(m2["hp"])
+	var far := SurvivorRun.HIT_REACH + 3.0
+	for _i in 10:
+		m2["pos"] = outside.player_pos + Vector2(far, 0)
+		outside.step(STEP, Vector2.ZERO)
+	_check(int(m2["hp"]) == hp2,
+		"a body fully outside the circle must NOT be hit at gap %.1f" % far)
 
 
 func _test_determinism() -> void:

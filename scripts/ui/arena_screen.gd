@@ -1015,23 +1015,71 @@ func _build_reaction_layer() -> void:
 		button.add_to_group("no_click_sfx")
 		button.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
 		button.size = Vector2(PS_BUTTON, PS_BUTTON)
+		# ⚠️  `SIZE_SHRINK_CENTER`, or the button does not stay 56. An `HBoxContainer` hands
+		# its children the ROW's full height (and `size_flags_vertical` defaults to FILL), so
+		# the Dodge tile came out **56x112**: the image sat in the top half and the stylebox
+		# ring, stretched over 112px, drew only its lower arc around it — the "fallen apart"
+		# button Jan reported. Measured with `tools/probe_dodge.gd` at 390x844.
+		button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		button.focus_mode = Control.FOCUS_NONE
 		button.tooltip_text = str(spec["label"])
-		# `.ps-def-btn { border-radius:50%; border:2px }` — the PWA's coloured ring around
-		# a black plate, and the PNG inside is RGB (no alpha) so it must be cropped to the
-		# circle or its black corners show as a square in a round frame.
-		var border := Color(str(spec["border"]))
-		var style := _flat_style("#000000", str(spec["border"]), int(PS_BUTTON * 0.5))
+		# `.ps-def-btn { border-radius:50%; border:2px }` — the PWA's coloured ring around a
+		# black plate. Its 56 is `box-sizing:border-box`, so the ring is drawn INSIDE; a
+		# stylebox border is drawn outside `custom_minimum_size`, so the box handed over is
+		# 56 - 2 - 2 and the visible tile is exactly 56.
+		#
+		# ⚠️  The radius is HALF THE VISIBLE TILE (28), not half the inner box. At 26 the
+		# stylebox drew a 56x56 rounded rect with 2px of corner left, and with the image's
+		# own black corners behind it the whole thing read as a black SQUARE with an arc —
+		# which is exactly what Jan reported. 28 is the circle the CSS's `border-radius:50%`
+		# means, and `overflow:hidden` is what makes the PWA's image obey it.
+		var radius := int(PS_BUTTON * 0.5)
+		var style := _flat_style("#000000", str(spec["border"]), radius)
 		style.set_border_width_all(PS_BORDER_W)
 		for state_name in ["normal", "hover", "focus", "pressed", "disabled"]:
 			button.add_theme_stylebox_override(state_name, style)
+		# `.ps-def-btn .ps-def-img { width:100%;height:100%;object-fit:cover }` — the image
+		# fills the whole button and the parent's `overflow:hidden` crops it to the circle.
+		# It carries NO ring of its own: the stylebox above is the coloured one, and giving
+		# `CircularPortrait` a ring too put a second outline inside the first.
+		#
+		# The PNG is RGB (no alpha), so it MUST be cropped to the circle — its black square
+		# corners are the difference between a round button and a black square. The backdrop
+		# is therefore TRANSPARENT (the stylebox's own black shows through inside the
+		# circle), never black: painting the outside black hides the crop completely and
+		# leaves the square exactly as it was.
 		var img := CircularPortrait.new()
 		img.texture = _load("assets/ps/%s" % str(spec["icon"]))
-		img.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
-		img.size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.custom_minimum_size = Vector2(PS_INNER, PS_INNER)
+		img.size = Vector2(PS_INNER, PS_INNER)
+		# ⚠️  INSIDE the border, not at the origin. A Godot Button does NOT inset its own
+		# children by the stylebox border, so an image at (0,0) covered the ring's left and
+		# top 2px and the button drew as a black square with an arc on the right — measured
+		# on a real frame: the orange ring appeared only at x 219..222 of a 167..223 button.
+		img.position = Vector2(PS_BORDER_W, PS_BORDER_W)
 		img.backdrop = Color(0, 0, 0, 0)
+		img.ring_width = 0.0
 		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		button.add_child(img)
+		# `.ps-def-btn span { position:absolute; bottom:3px; left:0; right:0; font-size:9px;
+		# color:#fff; text-shadow:0 1px 2px #000; z-index:1 }` — measured as a 52x10 box whose
+		# BOTTOM edge sits 3px above the button's padding box bottom, so its text centre is
+		# 46px below the button's top edge (56 - 2 - 3 - 10/2 = 46; the stylebox border is drawn
+		# outside the origin, hence 44 here). `z-index:1` matters: the label rides ON TOP of the
+		# artwork, so it is added after the image.
+		#
+		# ⚠️  A Label's height CANNOT be forced to 10 — `size` is clamped to the font's own
+		# minimum (DejaVu at 9px came back 17 in this container), and pinning a 10px box left
+		# the text 3.5px low. The label gets the whole 52px square instead and is SHIFTED so
+		# its centre lands where the PWA's 10px box put it.
+		var label := _label(str(spec["label"]), 9, Color("#ffffff"),
+			HORIZONTAL_ALIGNMENT_CENTER, true)
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.size = Vector2(PS_INNER, PS_INNER)
+		label.position = Vector2(0.0, PS_LABEL_CENTRE_Y - PS_INNER * 0.5)
+		label.clip_contents = true
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(label)
 		button.pressed.connect(func(): on_reaction_button(kind))
 		_reaction_row.add_child(button)
 		_reaction_buttons[kind] = button
@@ -1054,6 +1102,9 @@ func _build_reaction_layer() -> void:
 		button.add_to_group("no_click_sfx")
 		button.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
 		button.size = Vector2(PS_BUTTON, PS_BUTTON)
+		# Same row, same trap: `.ps-btns-combo` shares `.ps-def-btn, .ps-btn`'s 56x56 and an
+		# `HBoxContainer` would stretch these to the row's height too.
+		button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		button.focus_mode = Control.FOCUS_NONE
 		button.tooltip_text = key
 		var style := _flat_style("#000000", str(PS_KEY_BORDERS.get(key, "#2a2a2a")),
@@ -1067,9 +1118,11 @@ func _build_reaction_layer() -> void:
 		# makes these buttons look small and empty.
 		var img := CircularPortrait.new()
 		img.texture = _load("assets/ps/ps_%s.png" % key)
-		img.custom_minimum_size = Vector2(PS_BUTTON, PS_BUTTON)
-		img.size = Vector2(PS_BUTTON, PS_BUTTON)
+		img.custom_minimum_size = Vector2(PS_INNER, PS_INNER)
+		img.size = Vector2(PS_INNER, PS_INNER)
+		img.position = Vector2(PS_BORDER_W, PS_BORDER_W)
 		img.backdrop = Color(0, 0, 0, 0)
+		img.ring_width = 0.0
 		img.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		button.add_child(img)
 		button.pressed.connect(func(): on_whirlwind_button(key))
@@ -1098,12 +1151,29 @@ func _build_reaction_layer() -> void:
 	_action_image = CircularPortrait.new()
 	_action_image.custom_minimum_size = Vector2(ACTION_SYMBOL, ACTION_SYMBOL)
 	_action_image.size = Vector2(ACTION_SYMBOL, ACTION_SYMBOL)
-	# The middle icon carries a ring in the COLOUR of the press it is asking for — the
-	# PWA's own `border:2px solid` on `.combo-ring img` (it dropped the white border there
-	# so the gold countdown ring stays readable, and this keeps the same two-tier look).
+	# The middle icon carries a ring in the COLOUR of the press it is asking for — the PWA's
+	# own inline `border:2px solid` on the `<img>` `showOpportunityPrompt` writes for a window,
+	# and `.combo-ring img`'s dropped white border for the flurry.
 	_action_image.ring_width = 2.0
 	_action_image.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_action_icon.add_child(_action_image)
+
+	# The tick and the cross, siblings of the icon rather than replacements for it: the PWA
+	# swaps `#mbArrow`'s `innerHTML`, and `#mbArrow` is a DIFFERENT element from
+	# `#mbActionInfo`, so after a success the tick sits over the arena while the icon is
+	# hidden. One node per verdict, hidden, so a frame can never show both.
+	_verdict_glyphs = {}
+	for verdict in ["success", "fail"]:
+		var glyph := VerdictGlyph.new()
+		glyph.verdict = verdict
+		glyph.custom_minimum_size = Vector2(ARROW_GLYPH, ARROW_GLYPH)
+		glyph.size = Vector2(ARROW_GLYPH, ARROW_GLYPH)
+		glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		glyph.visible = false
+		_arena.add_child(glyph)
+		# `top:50%; left:50%; transform:translate(-50%,-50%)` on `.boss-attack-arrow`.
+		glyph.set_meta("centre_dy", 0.0)
+		_verdict_glyphs[verdict] = glyph
 	# Centred by hand: `_action_icon` is a bare Control, so its child keeps the rect it
 	# is given and a centred placement is arithmetic, not a container's job.
 	_action_image.position = Vector2(
@@ -1121,14 +1191,96 @@ const REACTION_BUTTONS := [
 	{"kind": "block", "label": "Block", "border": "#3498db", "icon": "ps_block.png"},
 	{"kind": "counter", "label": "Counter", "border": "#9b59b6", "icon": "ps_counter.png"},
 ]
-## `.ps-def-btn { width:56px; height:56px; border:2px }`.
+## `.ps-def-btn { width:56px; height:56px; border:2px }`, `border-radius:50%`,
+## `overflow:hidden`, `background:#000` — measured on the live PWA as a 56x56 box with a
+## 2px coloured ring and a 52x52 `<img class="ps-def-img">` inside it.
+##
+## ⚠️  `box-sizing:border-box` is what makes the IMAGE 52: the CSS's 56 already CONTAINS the
+## 2px borders, whereas a Godot Button's stylebox border is drawn OUTSIDE
+## `custom_minimum_size`. Handing the button 56 with a 2px border made the visible tile 60 —
+## and in `_reaction_row` it also came out 112 high, because an `HBoxContainer` stretches its
+## children to the row's height. See `_build_reaction_layer`.
 const PS_BUTTON := 56.0
 const PS_BORDER_W := 2
-## `.combo-ring img { width:96px;height:96px }` plus its 8px padding.
+## `56 - 2 - 2`, the image's own 52px (`.ps-def-btn .ps-def-img { width:100%;height:100% }`).
+const PS_INNER := PS_BUTTON - 2.0 * PS_BORDER_W
+## `.ps-def-btn span { position:absolute; bottom:3px; left:0; right:0; font-size:9px;
+## color:#fff; text-shadow:0 1px 2px #000; z-index:1 }` — measured as a 52x10 box whose bottom
+## edge sits 3px above the button's padding box bottom, i.e. its text centre is
+## `56 - 2 - 3 - 10/2 = 46` below the button's top edge. The stylebox border is drawn OUTSIDE
+## `custom_minimum_size`, so in this container's own coordinates that is `46 - 2 = 44`.
+const PS_LABEL_H := 10.0
+const PS_LABEL_CENTRE_Y := PS_BUTTON - PS_BORDER_W - 3.0 - PS_LABEL_H * 0.5 - PS_BORDER_W
+## `.ps-def-btn .ps-def-img` fills 100% of the 56px button and `overflow:hidden` on the parent
+## crops it to the circle. The label rides ON TOP of the image (`span` is `z-index:1` and
+## absolutely positioned), so the text is drawn over the artwork, not above it.
+##
+## ⚠️  The PWA's `<img>` is `object-fit:cover` on a SQUARE box with a square 256px source, so
+## it fills the tile and the parent's `border-radius:50%` crops the black corners. The port
+## crops to a circle inside `CircularPortrait` instead, which is the same result — but it does
+## NOT need its own ring: the button's stylebox already draws the coloured one. Two rings
+## (stylebox + CircularPortrait) is what made the Dodge tile read as a double outline.
+## `.mb-action-info` / `.action-info-icon` — the middle icon. TWO sizes in the PWA, measured:
+##
+##   * an opportunity window writes ONE inline-styled `<img>` — a 64x64 circle with a 2px
+##     coloured border (`showOpportunityPrompt`), and `#mbActionInfo` measures 64x64 at
+##     x 163, y 339.5 on a 390x844 viewport;
+##   * the flurry wraps a 96x96 `<img>` in `.combo-ring`, whose own `padding:8px` makes the
+##     whole thing 112 across and carries the `--ww-remaining` conic gradient.
+##
+## The port keeps ONE box for both, so the node is a 112px canvas (`96 + 2*8`) and the image
+## inside it is centred and resized per mode. Both modes end up centred on the arena, which is
+## the PWA's own `top:50%; left:50%; transform:translate(-50%,-50%)` — the box size itself is
+## never read by anything.
 const ACTION_SYMBOL := 96.0
-const ACTION_ICON_BOX := 116.0
-const ACTION_RING_RADIUS := 56.0
+const ACTION_SYMBOL_WINDOW := 64.0
+const ACTION_ICON_BOX := ACTION_SYMBOL + 2.0 * 8.0
+const ACTION_RING_RADIUS := ACTION_ICON_BOX * 0.5 - 1.5
 const ACTION_RING_W := 3.0
+## `.boss-attack-arrow` (which `dodge-success` / `dodge-fail` both override) is
+## `width:110px;height:110px`, centred on the arena with `translate(-50%,-50%)`. The tick and
+## the cross are drawn at that size, in the PWA's own two colours.
+const ARROW_GLYPH := 110.0
+const TICK_COLOUR := "#2ecc71"
+const CROSS_COLOUR := "#e74c3c"
+## `.dodge-success` / `.dodge-fail` stroke: `stroke-width:2.5` inside a `viewBox="-3 -3 22 22"`,
+## i.e. 2.5 units out of 22 across a 110px box.
+const GLYPH_STROKE := ARROW_GLYPH * 2.5 / 22.0
+
+
+## The tick and the cross the PWA swaps the middle icon for — `#mbArrow` is ONE `<svg>` whose
+## `innerHTML` is replaced, which is why `showOpportunitySuccess` and `showOpportunityFail`
+## both re-set the `viewBox` to `-3 -3 22 22` and the class to `dodge-success` / `dodge-fail`.
+## Drawn rather than loaded: the game has no emoji and no tick/cross asset (the world screen's
+## own tick is a 20px map dot, a different thing), and these are two strokes.
+##
+## The paths are the PWA's own, scaled from the 22-unit viewBox into the 110px box:
+##   tick — `M2 8.5 L6 12.5 L14 3.5`
+##   cross — `M4 4 L12 12 M12 4 L4 12`
+class VerdictGlyph:
+	extends Control
+
+	## "success" (a green tick) or "fail" (a red cross).
+	var verdict := "success"
+
+	func _draw() -> void:
+		var unit := minf(size.x, size.y) / 22.0
+		# The viewBox starts at -3, so a point (x, y) in it lands at (x + 3, y + 3) units.
+		var origin := Vector2(3.0, 3.0) * unit
+		var colour := Color(TICK_COLOUR if verdict == "success" else CROSS_COLOUR)
+		var width := GLYPH_STROKE
+		if verdict == "success":
+			var a := origin + Vector2(2.0, 8.5) * unit
+			var b := origin + Vector2(6.0, 12.5) * unit
+			var c := origin + Vector2(14.0, 3.5) * unit
+			# `stroke-linejoin:round` / `stroke-linecap:round` — a polyline rather than two
+			# segments, so the corner joins itself instead of showing a notch on the outside.
+			draw_polyline(PackedVector2Array([a, b, c]), colour, width, true)
+		else:
+			draw_line(origin + Vector2(4.0, 4.0) * unit, origin + Vector2(12.0, 12.0) * unit,
+				colour, width, true)
+			draw_line(origin + Vector2(12.0, 4.0) * unit, origin + Vector2(4.0, 12.0) * unit,
+				colour, width, true)
 
 
 ## The middle icon: which press is wanted right now, and for the flurry the fraction of
@@ -1153,7 +1305,7 @@ func _refresh_action_icon() -> void:
 		var icon: String = str({"block": "ps_block.png", "counter": "ps_counter.png"}
 			.get(kind, "ps_dodge.png"))
 		var tint: String = str({"block": "#3498db", "counter": "#9b59b6"}.get(kind, "#e67e22"))
-		_show_action_icon(icon, Color(tint), false)
+		_show_action_icon(icon, Color(tint), false, ACTION_SYMBOL_WINDOW)
 		return
 	if _action_icon.visible and not _action_hold:
 		_action_icon.visible = false
@@ -1163,11 +1315,21 @@ func _refresh_action_icon() -> void:
 ## Show the middle icon, and say whether the countdown ring belongs with it. The ring has
 ## its own visibility because a Whirlwind strike has a deadline and a dodge window does
 ## not — the PWA's own asymmetry (only `.combo-ring` carries `--ww-remaining`).
-func _show_action_icon(file: String, border: Color, ring: bool) -> void:
+##
+## `symbol_px` is the PWA's two sizes: 96 for the flurry (`.combo-ring img`) and 64 for an
+## opportunity window (the inline-styled `<img>` `showOpportunityPrompt` writes). The image is
+## re-centred inside the shared 112px box on every call, so the two modes both end up on the
+## arena's centre.
+func _show_action_icon(file: String, border: Color, ring: bool,
+		symbol_px: float = ACTION_SYMBOL) -> void:
 	var path := "assets/ps/%s" % file
 	if _action_image.texture == null or _action_icon.get_meta("icon_path", "") != path:
 		_action_image.texture = _load(path)
 		_action_icon.set_meta("icon_path", path)
+	if not is_equal_approx(_action_image.size.x, symbol_px):
+		_action_image.custom_minimum_size = Vector2(symbol_px, symbol_px)
+		_action_image.size = Vector2(symbol_px, symbol_px)
+		_action_image.position = Vector2(ACTION_ICON_BOX - symbol_px, ACTION_ICON_BOX - symbol_px) * 0.5
 	_action_image.ring_colour = border
 	_action_image.ring_width = 2.0
 	_action_icon.visible = true
@@ -1176,16 +1338,41 @@ func _show_action_icon(file: String, border: Color, ring: bool) -> void:
 
 ## Hold the middle icon up for a moment after the window closes, so a FAILED or MISSED
 ## reaction can be seen before it disappears — the PWA's own `setTimeout(hide, 500)` after
-## showing the cross. Counted on real time (`_process`), never on a fight tick: the ticks
-## that would carry it stop the moment the fight ends, and the icon has to clear then too.
-const ACTION_HOLD_MS := 600
+## showing the cross, which is exactly `HIDE_AFTER_MS`.
+##
+## ⚠️  A SUCCESS gets no hold. In the PWA `showOpportunitySuccess` hides the icon and the
+## buttons AT ONCE; the tick it draws lives on `#mbArrow`, which `resolveOpportunity` then
+## clears on the same swing. The port used to hold the icon for 600 ms on every outcome,
+## which both invented a timing the PWA does not have and made a successful dodge look like
+## the cross's case.
+const HIDE_AFTER_MS := 500
+const ACTION_HOLD_MS := HIDE_AFTER_MS
 var _action_hold_ms := 0
 var _action_hold := false
+## Which verdict glyph is up: "" | "success" | "fail". Driven from the outcome of the last
+## press (`on_reaction_button`) or from the battle's own "missed" word, and cleared after
+## `HIDE_AFTER_MS` on real time.
+var _verdict := ""
+var _verdict_ms := 0
+var _verdict_glyphs := {}
 
 
 func _hold_action_icon() -> void:
 	_action_hold = true
 	_action_hold_ms = ACTION_HOLD_MS
+
+
+## `showOpportunitySuccess` — a green tick, then gone. Called from the PRESS, so the feedback
+## is instant rather than waiting for the swing to settle.
+func _show_verdict(which: String) -> void:
+	_verdict = which
+	_verdict_ms = HIDE_AFTER_MS
+
+
+## `hideOpportunityArrow` — the tick/cross leaves with the window, and so does the row.
+func _clear_verdict() -> void:
+	_verdict = ""
+	_verdict_ms = 0
 
 
 ## The surrender flag, drawn rather than emoji — a banner pole with a red pennant.
@@ -1489,6 +1676,9 @@ func start(state, find_item: Callable) -> bool:
 	_action_hold = false
 	_action_hold_ms = 0
 	_row_shown = false
+	# The tick/cross belongs to the FIGHT too — a held verdict from the previous one would
+	# flash over the new fight's arena before its first window opens.
+	_clear_verdict()
 	if _reaction_row != null:
 		_reaction_row.visible = false
 	if _combo_row != null:
@@ -1497,6 +1687,8 @@ func start(state, find_item: Callable) -> bool:
 		_action_icon.visible = false
 	if _action_ring != null:
 		_action_ring.visible = false
+	for which in _verdict_glyphs:
+		(_verdict_glyphs[which] as Control).visible = false
 	_last_wall_ms = Time.get_ticks_msec()
 	_clear_floats()
 
@@ -1642,6 +1834,22 @@ func _refresh_reaction_layer(delta: float) -> void:
 
 	var flurry := battle.whirlwind_open()
 	_row_shown = flurry or battle.opportunity_open()
+	# The tick/cross leaves with the window: `hideOpportunityArrow` runs the moment the swing
+	# settles, so a verdict must not outlive its window. A FAILED press closes it immediately
+	# (`opp_type` is already "" by then), which is why the fail path pins the row down with
+	# `_action_hold` instead of relying on the window being open.
+	if _verdict != "":
+		# ⚠️  The verdict lives while the ROW is up OR the icon is being HELD. A wrong press
+		# closes the window on the spot (`battle.opp_type` is "" immediately), so ticking it
+		# only while `_row_shown` cancelled the cross on the very next frame — the exact
+		# opposite of the PWA, whose `setTimeout(hide, 500)` exists precisely to let it be
+		# seen after the window is gone.
+		if _row_shown or _action_hold:
+			_verdict_ms = maxi(0, _verdict_ms - int(round(delta * 1000.0)))
+			if _verdict_ms == 0:
+				_clear_verdict()
+		else:
+			_clear_verdict()
 	_combo_row.visible = flurry
 	_reaction_row.visible = _row_shown and not flurry
 	# Block and Counter are offered only to a hero who can USE them, which is the PWA's
@@ -1652,6 +1860,26 @@ func _refresh_reaction_layer(delta: float) -> void:
 		(_reaction_buttons["counter"] as Button).visible = \
 			battle.hero_counter_chance(_state) > 0.0
 	_refresh_action_icon()
+	_refresh_verdict_glyphs()
+	# One reaction ROW is up at a time, so the other row's buttons are hidden with it. The
+	# PWA toggles a `.hidden` class on `#mbPsDefBtns` / `#mbPsComboBtns` rather than hiding
+	# each button, and `_reaction_row.visible` already carries that for the whole row.
+	if _action_icon.visible and _verdict != "":
+		# `showOpportunitySuccess` / `showOpportunityFail` both do `info.classList.add('hidden')`
+		# — the tick and the cross REPLACE the middle icon, they do not sit beside it.
+		_action_icon.visible = false
+		_action_ring.visible = false
+
+
+## Show whichever verdict glyph is held and hide the other, so a frame can never carry both.
+## `_apply_centring` positions them like every other centred child of the arena, which is the
+## PWA's own `top:50%; left:50%; transform:translate(-50%,-50%)` on `.boss-attack-arrow`.
+func _refresh_verdict_glyphs() -> void:
+	for which in _verdict_glyphs:
+		var glyph: Control = _verdict_glyphs[which]
+		glyph.visible = _verdict == str(which)
+		if glyph.visible:
+			glyph.queue_redraw()
 
 
 ## The middle icon's colour when it is showing a FAILED or MISSED window: the PWA's own
@@ -1976,13 +2204,20 @@ func _place_hero(lift: float, gap: float = -1.0) -> void:
 ## `sin` on the wall clock rather than a Tween: this runs every frame for 110 ms and is read
 ## together with the ring's swell, so one decay drives both. The y uses a different frequency
 ## so the motion is a shove rather than a straight diagonal, which the eye reads as a slide.
-func _apply_impact_shake() -> void:
+## `impact` 0..1 scales the shake; the phase is a wall-clock sine so two shakes never look
+## alike.
+##
+## `now_ms` is a parameter so a TEST can sweep the phase: the sine is legitimately zero at a
+## zero crossing, and a test that samples the wall clock once can land there and read a live
+## shake as a dead one (measured — see `test_juice`).
+func _apply_impact_shake(now_ms: int = -1) -> void:
 	if _impact <= 0.0:
 		if position != Vector2.ZERO:
 			position = Vector2.ZERO
 		return
 	var amp := IMPACT_SHAKE_PX * _impact
-	var phase := float(Time.get_ticks_msec()) * 0.09
+	var clock := now_ms if now_ms >= 0 else Time.get_ticks_msec()
+	var phase := float(clock) * 0.09
 	position = Vector2(round(amp * sin(phase)), round(amp * 0.6 * sin(phase * 1.7)))
 
 
@@ -2379,9 +2614,14 @@ func on_reaction_button(kind: String) -> Dictionary:
 		return {"ok": false, "result": "none", "type": ""}
 	var result: Dictionary = battle.answer_opportunity(kind)
 	if str(result["result"]) == "fail":
-		# A wrong button CLOSES the window — the player may not retry — and the middle
-		# icon stays up a moment so the cross is seen.
+		# A wrong button CLOSES the window — the player may not retry — and the PWA draws
+		# its red cross at that instant (`showOpportunityFail`), holding the row down
+		# through `_action_hold` because `opp_type` is already "" by now.
+		_show_verdict("fail")
 		_hold_action_icon()
+	elif str(result["result"]) == "hit":
+		# `showOpportunitySuccess` — the green tick, immediately, on the press.
+		_show_verdict("success")
 	render()
 	return result
 
@@ -2417,6 +2657,11 @@ func _drain_opportunity() -> void:
 				_float_word("COUNTER!", "#9b59b6")
 			"dodge":
 				_float_word("DODGE!", "#f39c12")
+			"missed":
+				# `resolveOpportunity`'s unanswered branch: the same cross a wrong press gets,
+				# and the window is still open on this frame so `_refresh_reaction_layer`
+				# keeps the row up while the cross is drawn.
+				_show_verdict("fail")
 	var ww: Dictionary = battle.take_whirlwind_result()
 	match str(ww.get("feedback", "")):
 		"complete":
