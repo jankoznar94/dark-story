@@ -32,14 +32,11 @@ const TOP_BAR := 54.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
 const BUTTON_RADIUS := 38.0
+## One disc diameter for every actor: the hero is a walking portrait too (Jan), and a single
+## size is what makes the collision radius (BODY_RADIUS 31 = DISC_DIA / 2) true on screen.
 const DISC_DIA := 62.0
 
 const GRASS_PATH := "res://assets/ground/grass.png"
-const HERO_BODY := {
-	"barbarian": "assets/monsters/hero_body_barbarian.png",
-	"mage": "assets/monsters/hero_body_mage.png",
-	"assassin": "assets/monsters/hero_body_assassin.png",
-}
 
 const C_TEXT := Color("#e8e0d0")
 const C_DIM := Color("#b0a48e")
@@ -53,7 +50,6 @@ var _find_item: Callable
 
 var _accum := 0.0
 var _grass: Texture2D = null
-var _hero_tex: Texture2D = null
 var _disc_cache: Dictionary = {}
 
 ## Camera, in world pixels (top-left of the view).
@@ -128,10 +124,12 @@ func _build_decoration() -> void:
 	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(SurvivorRun.WORLD * 0.5) > 70.0)
 
 
-func _hero_texture() -> Texture2D:
-	var cls := str(_state.data.get("heroClass", "barbarian")) if _state != null else "barbarian"
-	var path: String = HERO_BODY.get(cls, HERO_BODY["barbarian"])
-	return UIKit.load_texture(path)
+## The hero's medallion is the SAME portrait his stat page shows: `hero.face` ->
+## `assets/monsters/<face>.png`, the one route the stats panel uses. No second art source.
+func _hero_face() -> String:
+	if _state == null:
+		return "hero"
+	return str(_state.hero().get("face", "hero"))
 
 
 # ============================================================================ input
@@ -298,7 +296,7 @@ func _notification(what: int) -> void:
 
 func _layout_buttons() -> void:
 	var bottom := size.y - 42.0
-	_exit_rect = Rect2(size.x - 86.0, 9.0, 76.0, 36.0)
+	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
 	_potion_centre = Vector2(size.x - 58.0, bottom - 34.0)
 
 
@@ -346,7 +344,9 @@ func _draw_props() -> void:
 			continue
 		var s := float(p["size"])
 		draw_set_transform(pos, 0.0, Vector2.ONE)
-		draw_circle(Vector2(0, s * 0.22), s * 0.62, Color(0, 0, 0, 0.32))
+		draw_set_transform(pos + Vector2(0, s * 0.20), 0.0, Vector2(1.0, 0.34))
+		draw_circle(Vector2.ZERO, s * 0.66, Color(0, 0, 0, 0.40))
+		draw_set_transform(pos, 0.0, Vector2.ONE)
 		if str(p["kind"]) == "rock":
 			var seed_v := float(p["seed"])
 			var pts := PackedVector2Array([
@@ -417,8 +417,11 @@ func _draw_monster(m: Dictionary) -> void:
 	if pos.x < -60.0 or pos.y < -80.0 or pos.x > size.x + 60.0 or pos.y > size.y + 60.0:
 		return
 	var bob := sin(float(m["bob"])) * 2.2
+	# A round shadow under a disc reads as a second sphere. The contact shadow is FLATTENED and
+	# sits at the disc's own bottom edge — that is what puts a portrait ON the ground.
+	draw_set_transform(Vector2(pos.x, pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
+	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	draw_circle(Vector2(pos.x, pos.y + DISC_DIA * 0.42), DISC_DIA * 0.40, Color(0, 0, 0, 0.35))
 	var tex := _disc(str(m["face"]))
 	if tex != null:
 		var r := Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5 + bob, DISC_DIA, DISC_DIA)
@@ -430,22 +433,28 @@ func _draw_monster(m: Dictionary) -> void:
 	# HP: a thin bar under the disc, only while it is hurt (a full bar is noise).
 	var frac := clampf(float(m["hp"]) / maxf(1.0, float(m["max_hp"])), 0.0, 1.0)
 	if frac < 0.999:
-		var w := DISC_DIA * 0.82
-		var top := pos.y + DISC_DIA * 0.5 + 4.0 + bob
+		var w := DISC_DIA * 0.92
+		var top := pos.y + DISC_DIA * 0.5 - 2.0 + bob
 		draw_rect(Rect2(pos.x - w * 0.5, top, w, 4.0), C_BAR_BG)
 		draw_rect(Rect2(pos.x - w * 0.5, top, w * frac, 4.0), C_RED)
 
 
 func _draw_hero() -> void:
 	var pos: Vector2 = run.player_pos - _cam
-	if _hero_tex == null:
-		_hero_tex = _hero_texture()
-	draw_circle(Vector2(pos.x, pos.y + 8), 26.0, Color(0, 0, 0, 0.34))
-	if _hero_tex != null:
-		var h := 92.0
-		var w := h * float(_hero_tex.get_width()) / maxf(1.0, float(_hero_tex.get_height()))
-		draw_texture_rect(_hero_tex, Rect2(pos.x - w * 0.5, pos.y + 10.0 - h, w, h), false)
-	draw_arc(pos, 22.0, 0.0, TAU, 24, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), 1.5, true)
+	# The hero is a WALKING PORTRAIT like everything else, and the only thing that separates him
+	# from a monster is the GOLD ring — the same distinction the arena's rings already use.
+	draw_set_transform(Vector2(pos.x, pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
+	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var tex: Texture2D = _disc("assets/monsters/%s.png" % _hero_face())
+	if tex != null:
+		draw_texture_rect(tex, Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
+	# The player's ring is the SAME blue the hero's stat page uses for his portrait frame
+	# (`MOD_BLUE #4a7dff`). A gold ring on both sides made the hero indistinguishable from the
+	# pack — the two looked like five enemies. Colour, not size, is what separates him.
+	var hero_ring := Color(UIKit.MOD_BLUE)
+	draw_arc(pos, DISC_DIA * 0.5 + 3.5, 0.0, TAU, 32, Color(0, 0, 0, 0.45), 2.0, true)
+	draw_arc(pos, DISC_DIA * 0.5, 0.0, TAU, 32, hero_ring, 2.5, true)
 
 
 func _draw_drops() -> void:
@@ -510,11 +519,13 @@ func _draw_hud() -> void:
 	draw_rect(_exit_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
 	draw_rect(_exit_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
 	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
-		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 13, C_TEXT)
+		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
 
 	# HP bar, above the thumb row
+	# ⚠️  Not flush with the bottom: a phone's home-gesture strip sits there and a bar a few
+	# pixels from the edge is read as cut off.
 	var bar_h := 14.0
-	var bar_y := size.y - bar_h - 10.0
+	var bar_y := size.y - bar_h - 26.0
 	draw_rect(Rect2(0, bar_y, size.x, bar_h), C_BAR_BG)
 	var frac := clampf(float(run.hp) / maxf(1.0, float(run.max_hp)), 0.0, 1.0)
 	draw_rect(Rect2(0, bar_y, size.x * frac, bar_h), C_RED)
@@ -542,8 +553,27 @@ func _draw_hud() -> void:
 			HORIZONTAL_ALIGNMENT_CENTER, w, 12, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, a))
 
 	# Loot tally, so a run pays out visibly
-	draw_string(font_r, Vector2(8, size.y - 28), "%d zlata   %d predmetu" % [run.gold, run.items_taken],
+	var tally := "%d %s   %d %s" % [run.gold, _plural(run.gold, "zlato", "zlata", "zlata"),
+		run.items_taken, _plural(run.items_taken, "predmet", "predmety", "predmetu")]
+	draw_string(font_r, Vector2(8, size.y - 6), _with_diacritics(tally),
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+
+
+## Czech counts must not read "2 předmětu". One helper, used by every count on this screen.
+func _plural(n: int, one: String, few: String, many: String) -> String:
+	var n100 := n % 100
+	if n100 == 1:
+		return one
+	var n10 := n % 10
+	if n10 >= 2 and n10 <= 4 and (n100 < 12 or n100 > 14):
+		return few
+	return many
+
+
+## The tallies are built from ASCII stems so the numbers and the words stay one string; this
+## is the one place that puts the háčky back.
+func _with_diacritics(text: String) -> String:
+	return text.replace("predmet", "předmět").replace("predmety", "předměty")
 
 
 func _clock() -> String:

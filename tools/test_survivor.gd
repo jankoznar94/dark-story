@@ -30,6 +30,7 @@ const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
 const STEP := 1.0 / 60.0
 
 var _failures: Array[String] = []
+var _diag_done := false
 var _data: Node
 var _gen: ItemGen
 var _loot: LootSystem
@@ -53,6 +54,7 @@ func _initialize() -> void:
 	_test_walk_over_pays_into_the_save()
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
+	_test_bodies_are_solid()
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
 	_test_wave_counter()
@@ -117,7 +119,7 @@ func _test_setup_reads_the_hero() -> void:
 	_check(run.hp == run.max_hp, "a run starts at full health")
 	_check(run.dmg_min > 0 and run.dmg_max >= run.dmg_min,
 		"damage range must be a real range: %d..%d" % [run.dmg_min, run.dmg_max])
-	_check(run.monsters.size() == 3, "an opening wave of 3, got %d" % run.monsters.size())
+	_check(run.monsters.size() == 2, "an opening wave of 2, got %d" % run.monsters.size())
 	_check(run.wave == 1, "the first wave is 1")
 
 
@@ -254,6 +256,46 @@ func _test_contact_damage_kills() -> void:
 	_check(run.hp == 0, "hp must clamp at 0, got %d" % run.hp)
 
 
+## Jan's report: "hrdina prochází nepřáteli jakoby to byli duchové. Portréty se nesmí překrývat."
+## This is the assertion for it: after a long run with the hero pushing INTO the pack, no two
+## bodies may be closer than two disc radii. Asserted on the BODIES (positions), never on a flag.
+func _test_bodies_are_solid() -> void:
+	_log("  section: bodies_are_solid")
+	# ⚠️  The first version walked toward whatever spawned and measured NOTHING: the closest the
+	# hero ever came was 186 px against a 62 px bar, i.e. the assertion passed because no body
+	# ever touched him. The pack is therefore PLACED, and the hero is driven INTO it.
+	var run := _fresh(31337)
+	run.max_hp = 999999
+	run.hp = 999999
+	run.monsters.clear()
+	for i in 5:
+		run._spawn_one()
+		var ang := float(i) * TAU / 5.0
+		run.monsters[i]["pos"] = run.player_pos + Vector2(cos(ang), sin(ang)) * 90.0
+	var min_gap := SurvivorRun.BODY_RADIUS * 2.0
+	var worst_hero := 1e9
+	var worst_pair := 1e9
+	for i in 180:
+		# Walk right INTO the pack for a second, then stand still and let it press in.
+		var dir := Vector2(1, 0) if i < 60 else Vector2.ZERO
+		run.step(STEP, dir)
+		for m in run.monsters:
+			worst_hero = minf(worst_hero, (m["pos"] as Vector2).distance_to(run.player_pos))
+		for a in run.monsters.size():
+			for b in range(a + 1, run.monsters.size()):
+				worst_pair = minf(worst_pair,
+					(run.monsters[a]["pos"] as Vector2).distance_to(run.monsters[b]["pos"]))
+	_check(worst_hero >= min_gap - 1.0,
+		"the hero must not pass through a body: closest %.1f < %.1f" % [worst_hero, min_gap])
+	_check(worst_pair >= min_gap - 1.0,
+		"two portraits must not overlap: closest pair %.1f < %.1f" % [worst_pair, min_gap])
+	# ...and the reach has to actually be reachable: contact is 62 px, the swing 76 px.
+	_check(SurvivorRun.ATTACK_RANGE > min_gap and SurvivorRun.ATTACK_RANGE <= min_gap + 24.0,
+		"the melee reach must be CONTACT plus a short step, got %.1f against contact %.1f"
+			% [SurvivorRun.ATTACK_RANGE, min_gap])
+	print("  measured: hero_gap=%.1f pair_gap=%.1f (min %.1f)" % [worst_hero, worst_pair, min_gap])
+
+
 func _test_determinism() -> void:
 	_log("  section: determinism")
 	var a := _fresh(999)
@@ -279,7 +321,14 @@ func _test_spawn_cap_and_clearance() -> void:
 	for _i in 60 * 90:
 		run.step(STEP, Vector2(1, 0))
 		for m in run.monsters:
-			closest = minf(closest, (m["pos"] as Vector2).distance_to(run.player_pos))
+			var dd: float = (m["pos"] as Vector2).distance_to(run.player_pos)
+			if dd < SurvivorRun.BODY_RADIUS * 2.0 - 1.0 and not _diag_done:
+				_diag_done = true
+				print("  DIAG dist=%.2f hero=%s mon=%s at_edge=%s n=%d alive=%s"
+					% [dd, str(run.player_pos), str(m["pos"]),
+						str(run.player_pos.x > SurvivorRun.WORLD.x - 40.0 or run.player_pos.y > SurvivorRun.WORLD.y - 40.0),
+						run.monsters.size(), str(m["hp"])])
+			closest = minf(closest, dd)
 	_check(run.monsters.size() <= SurvivorRun.MAX_ALIVE,
 		"the alive cap must hold: %d > %d" % [run.monsters.size(), SurvivorRun.MAX_ALIVE])
 	# Clearance is asserted on SPAWN positions, so let a fresh run's first wave speak for it.
@@ -289,6 +338,8 @@ func _test_spawn_cap_and_clearance() -> void:
 		_check(d >= SurvivorRun.SPAWN_RADIUS_MIN - 1.0,
 			"a monster must not spawn on top of the player: %.1f < %.1f" % [d, SurvivorRun.SPAWN_RADIUS_MIN])
 	print("  measured: alive=%d closest_contact=%.1f" % [run.monsters.size(), closest])
+	_check(closest >= SurvivorRun.BODY_RADIUS * 2.0 - 1.0,
+		"the hero must stay clear of every body for a whole run: %.1f" % closest)
 
 
 func _test_wave_counter() -> void:
@@ -317,6 +368,10 @@ func _test_screen_gesture_and_disc() -> void:
 	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
 	_check(screen.run != null, "the screen must own a run after setup")
+	# The hero is a WALKING PORTRAIT built from the same face his stat page shows.
+	_check(screen._hero_face() != "", "the hero must have a portrait face")
+	var hero_tex: Texture2D = screen._disc("assets/monsters/%s.png" % screen._hero_face())
+	_check(hero_tex != null, "the hero's medallion must load (%s)" % screen._hero_face())
 
 	# A press in the field starts the stick THERE (the floating control), and a drag sets it.
 	screen._on_press(Vector2(140, 600))

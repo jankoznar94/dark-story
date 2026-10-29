@@ -22,20 +22,29 @@ const LootSystem := preload("res://scripts/items/loot_system.gd")
 ## hero and the run reads as travel instead of a fixed stage. These are world pixels.
 const WORLD := Vector2(1500.0, 2100.0)
 const HERO_SPEED := 168.0
-const HERO_RADIUS := 15.0
-const MON_RADIUS := 21.0
+## The bodies are the PORTRAIT DISCS, so the collision radius is the disc's own radius. One
+## number for both sides: a melee reach that is bigger than the gap between two bodies is a
+## reach that hits from another postcode.
+const BODY_RADIUS := 31.0
+const HERO_RADIUS := BODY_RADIUS
+const MON_RADIUS := BODY_RADIUS
 
 ## --- the fight ------------------------------------------------------------
 ## ONE range and ONE cadence for the auto-attack: a survivor hero must never have to
 ## aim, and a swing timer the player cannot see must not vary per monster type.
-const ATTACK_RANGE := 82.0
+## Reach is CONTACT plus ~14 px. With two 31 px discs, touching is 62 px, so the hero has to be
+## pressed against a body to swing — the "logicky musí být blízko" Jan asked for.
+const ATTACK_RANGE := 76.0
 const ATTACK_COOLDOWN := 0.85
 const CONTACT_PAD := 3.0
 
 ## --- spawning -------------------------------------------------------------
 ## The density is the design dial. The Dark Story pacing rule banned hordes; the survivor
 ## loop needs a CROWD, so the number lives here, named, and the slice stays at 16 alive.
-const MAX_ALIVE := 16
+## Was 16 on the first pass and Jan's report was "there are too many enemies". Seven is a pack
+## you can read and back away from; the arena's own pacing lesson is that a crowd on a phone
+## screen is not difficulty, it is noise.
+const MAX_ALIVE := 7
 const WAVE_SECONDS := 26.0
 const SPAWN_RADIUS_MIN := 300.0
 const SPAWN_RADIUS_MAX := 430.0
@@ -80,6 +89,9 @@ var _wave_clock := 0.0
 var _spawn_accum := 0.0
 var _attack_clock := 0.0
 var _next_id := 0
+## The hero's position at the START of the frame: the only honest place to send him back to
+## when his own step would put him inside a body.
+var _prev_pos := Vector2.ZERO
 
 
 ## `seed_value` is what makes a run reproducible: the tests drive one seed, the screen
@@ -125,7 +137,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	_spawn_accum = 0.0
 	_attack_clock = 0.0
 	_next_id = 0
-	_spawn_wave(3)
+	_spawn_wave(2)
 
 
 # ============================================================================ step
@@ -139,6 +151,7 @@ func step(dt: float, move: Vector2) -> void:
 		_wave_clock -= WAVE_SECONDS
 		wave += 1
 
+	_prev_pos = player_pos
 	_move_hero(dt, move)
 	_spawn_tick(dt)
 	_move_monsters(dt)
@@ -162,7 +175,7 @@ func _spawn_tick(dt: float) -> void:
 	_spawn_accum += dt
 	# The cadence tightens with the wave and stops at 0.55 s: a floor exists so the run
 	# cannot turn into a wall of bodies that the 16-alive cap then starves anyway.
-	var interval := maxf(0.55, 1.7 - float(wave - 1) * 0.12)
+	var interval := maxf(1.10, 2.30 - float(wave - 1) * 0.12)
 	if _spawn_accum < interval:
 		return
 	_spawn_accum -= interval
@@ -232,7 +245,7 @@ func _move_monsters(dt: float) -> void:
 		m["bob"] = float(m["bob"]) + dt * 7.0
 		var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
 		var gap := to_hero.length()
-		var stop_at := MON_RADIUS + HERO_RADIUS + CONTACT_PAD
+		var stop_at := BODY_RADIUS * 2.0
 		if gap > stop_at:
 			var step_len := minf(float(m["speed"]) * dt, gap - stop_at)
 			m["pos"] = (m["pos"] as Vector2) + to_hero.normalized() * step_len
@@ -245,6 +258,69 @@ func _move_monsters(dt: float) -> void:
 			_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
 		alive.append(m)
 	monsters = alive
+	_resolve_bodies()
+
+
+## Bodies are SOLID. Jan: "hrdina prochází nepřáteli jakoby to byli duchové. Portréty se nesmí
+## překrývat." Two rules, both here so no screen can disagree with them:
+##
+##   * monster vs monster — pushed apart symmetrically, so a pack spreads instead of stacking;
+##   * hero vs monster — the HERO yields, because a player who could shove monsters around would
+##     be able to walk the whole arena while touching nothing.
+##
+## The pass runs AFTER both sides have moved and BEFORE the auto-attack reads distances, so what
+## the swing sees is what the player sees.
+func _resolve_bodies() -> void:
+	var min_gap := BODY_RADIUS * 2.0
+	# ORDER MATTERS, and getting it wrong is how "the portraits may not overlap" became "the hero
+	# stands inside one". The bodies are settled FIRST and they may never be pushed toward the
+	# hero; only then is the hero's own step judged, and a step that ends inside a body is simply
+	# NOT TAKEN. That is also the feel Jan asked for: you walk into the pack and you stop.
+	for _pass in 4:
+		for i in monsters.size():
+			for j in range(i + 1, monsters.size()):
+				var a: Vector2 = monsters[i]["pos"]
+				var b: Vector2 = monsters[j]["pos"]
+				var d := a.distance_to(b)
+				if d >= min_gap:
+					continue
+				var dir := (a - b)
+				if d <= 0.001:
+					dir = Vector2(cos(float(i) * 2.1 + float(_pass)), sin(float(i) * 2.1 + float(_pass)))
+					d = 1.0
+				var push: Vector2 = dir / d * (min_gap - d) * 0.5
+				monsters[i]["pos"] = _keep_off_hero(a + push, min_gap)
+				monsters[j]["pos"] = _keep_off_hero(b - push, min_gap)
+	if _hero_is_free(min_gap):
+		return
+	# The hero's own step is refused whole: half a step would still be inside the body.
+	player_pos = _prev_pos
+	if not _hero_is_free(min_gap):
+		# He was ALREADY overlapped when the frame began (a body slid onto him), so the bodies are
+		# what yields — radially, away from him, never across him.
+		for _pass in 4:
+			for m in monsters:
+				var off: Vector2 = (m["pos"] as Vector2) - player_pos
+				var dist := off.length()
+				if dist >= min_gap or dist <= 0.001:
+					continue
+				m["pos"] = player_pos + off / dist * min_gap
+
+
+## A body pushed by its neighbour may not be pushed INTO the hero.
+func _keep_off_hero(pos: Vector2, min_gap: float) -> Vector2:
+	var off: Vector2 = pos - player_pos
+	var dist := off.length()
+	if dist >= min_gap or dist <= 0.001:
+		return pos
+	return player_pos + off / dist * min_gap
+
+
+func _hero_is_free(min_gap: float) -> bool:
+	for m in monsters:
+		if (m["pos"] as Vector2).distance_to(player_pos) < min_gap - 0.001:
+			return false
+	return true
 
 
 func _take_damage(raw: int) -> void:

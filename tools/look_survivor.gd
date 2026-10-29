@@ -21,6 +21,9 @@ var _walk := true
 ## close in and the auto-attack actually fires — a shot taken while running away from everything
 ## shows an empty arena and no fight.
 var _walk_frames := 130
+## Keep the thumb DOWN at capture time, so the floating stick is in the frame. The control is
+## half of what this slice is; a shot without it photographs a game with no controls.
+var _stick := "1"
 
 var _screen = null
 var _started := false
@@ -38,6 +41,8 @@ func _initialize() -> void:
 				_frames_to_run = int(args[i + 1])
 			"--walk":
 				_walk = args[i + 1] != "0"
+			"--stick":
+				_stick = args[i + 1]
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -59,8 +64,10 @@ func _process(_delta: float) -> bool:
 	if _frames == 4 and _walk:
 		_screen._on_press(Vector2(110, 660))
 		_screen._on_drag(Vector2(150, 610))
-	if _frames == 4 + _walk_frames and _walk:
+	if _frames == 4 + _walk_frames and _walk and _stick == "0":
 		_screen._on_release()
+	if _frames == _frames_to_run - 3 and _walk and _stick == "1":
+		_screen._on_drag(Vector2(150, 614))
 	_frames += 1
 	if _frames < _frames_to_run:
 		return false
