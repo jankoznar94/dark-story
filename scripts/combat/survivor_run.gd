@@ -149,6 +149,7 @@ const MAGNET_SPEED := 430.0
 var _data: Node
 var _state
 var _find_item: Callable
+var _prog
 var _loot: LootSystem
 var _gen: ItemGen
 var rng := RandomNumberGenerator.new()
@@ -200,6 +201,13 @@ var wave := 0
 var elapsed := 0.0
 var gold := 0
 var items_taken := 0
+## Every item that reached the bag during the run, in the order it was picked up. The RESULT
+## page lists these; `items_taken` alone can say how many but not which.
+var looted: Array = []
+## XP this run paid into the save, and how many LEVELS that bought — the result page reports
+## both, and the run levels the hero the way the arena's `apply_levels()` does.
+var xp_gained := 0
+var levels_gained := 0
 ## Set the moment the last pack dies; `finished` follows after CLEAR_DELAY.
 var area_cleared := false
 ## How long ago the last swing LANDED, in seconds (-1 = no swing yet). The renderer turns this
@@ -242,7 +250,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 
 	var hero: Dictionary = state.hero()
 	_gen = ItemGen.new(_data)
-	var _prog := Progression.new(_data)
+	_prog = Progression.new(_data)
 	max_hp = _gen.hero_max_hp(hero, state.equip(), find_item)
 	hp = max_hp
 	defense = int(_prog.total_defense(state.equip(), find_item))
@@ -263,6 +271,9 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	elapsed = 0.0
 	gold = 0
 	items_taken = 0
+	looted.clear()
+	xp_gained = 0
+	levels_gained = 0
 	finished = false
 	outcome = ""
 	area_cleared = false
@@ -410,8 +421,10 @@ func _build_area() -> void:
 			members.append({"row": row, "pos": _pack_slot(centre, members)})
 		if members.is_empty():
 			continue
+		var prog_idx := clampi(int(round(9.0 * centre.distance_to(centre_start) / max_d)), 0, 9)
 		zones.append({
 			"centre": centre,
+			"progress": prog_idx,
 			"members": members,
 			"active": false,
 			"cleared": false,
@@ -475,7 +488,8 @@ func _wake_zone(z: Dictionary) -> void:
 		# A pack is never SEEN popping into being: each member is placed at least WAKE_MIN_DIST
 		# away, on the side of its cell it would have come from, and walks in from the edge of
 		# the screen.
-		var rec := _make_monster(m["row"], _spawn_away((m["pos"] as Vector2) - player_pos))
+		var lvl: int = _prog.monster_level(act_id, int(z.get("progress", 0)), 0) if _prog != null else 1
+		var rec := _make_monster(m["row"], _spawn_away((m["pos"] as Vector2) - player_pos), lvl)
 		monsters.append(rec)
 		ids.append(int(rec["id"]))
 	z["ids"] = ids
@@ -554,12 +568,13 @@ func _spawn_one() -> void:
 	var ang := rng.randf() * TAU
 	var dist := rng.randf_range(SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX)
 	var pos := _clamp_world(player_pos + Vector2(cos(ang), sin(ang)) * dist)
-	monsters.append(_make_monster(row, pos))
+	var lvl: int = _prog.monster_level(act_id, 0, 0) if _prog != null else 1
+	monsters.append(_make_monster(row, pos, lvl))
 
 
 ## Every monster is a WALKING PORTRAIT: the record is the data row's own `face`, so a new
 ## monster in MONSTER_DB needs no code.
-func _make_monster(row: Dictionary, pos: Vector2) -> Dictionary:
+func _make_monster(row: Dictionary, pos: Vector2, level: int = 1) -> Dictionary:
 	# A kind's strength is the DB's own number, scaled by the act's difficulty so a run in a
 	# later act is dangerous without a second table.
 	var lvl_scale := 1.0 + float(act_id) * 0.35
@@ -584,6 +599,9 @@ func _make_monster(row: Dictionary, pos: Vector2) -> Dictionary:
 		"ranged": ranged,
 		"keep_range": KEEP_RANGE,
 		"orb_colour": str(row.get("orbColor", ORB_COLOUR)),
+		# The monster's own LEVEL VALUE, the same number `battle.gd` calls
+		# `monster_level_value`: the XP a kill is worth is derived from it.
+		"lvl": level,
 	}
 	_next_id += 1
 	return rec
@@ -845,9 +863,43 @@ func _swing_hand(index: int, is_off: bool) -> void:
 		_kill(index)
 
 
+## XP and LEVEL-UPS — the same rule as `arena_screen.apply_levels()`: 40 XP buys level 2, then
+## 80 per level, capped at 60; every level refills HP, pays 5 attribute points and 1 talent
+## point. It runs DURING the run (a kill can level the hero mid-fight), which is why the run's
+## own hp/max_hp are re-read here — the arena only ever levels between fights.
+func _award_xp(amount: int) -> void:
+	if amount <= 0:
+		return
+	var hero: Dictionary = _state.hero()
+	hero["xp"] = int(hero.get("xp", 0)) + amount
+	xp_gained += amount
+	var safety := 0
+	while safety < 100 and int(hero.get("level", 1)) < 60:
+		safety += 1
+		var lvl := int(hero["level"])
+		var need := lvl * 40 if lvl <= 2 else lvl * 80
+		if int(hero.get("xp", 0)) < need:
+			break
+		hero["xp"] = int(hero["xp"]) - need
+		hero["level"] = lvl + 1
+		hero["maxHp"] = _gen.hero_max_hp(hero, _state.equip(), _find_item)
+		hero["hp"] = hero["maxHp"]
+		hero["attrPoints"] = int(hero.get("attrPoints", 0)) + 5
+		_state.data["talentPoints"] = int(_state.data.get("talentPoints", 0)) + 1
+		# The RUN's own body: a level heals him where he stands, or the level-up would be a
+		# number in a save the player cannot feel until the run is over.
+		max_hp = int(hero["maxHp"])
+		hp = max_hp
+		levels_gained += 1
+		events.append("levelup")
+
+
 func _kill(index: int) -> void:
 	var m: Dictionary = monsters[index]
 	kills += 1
+	# XP per kill, the arena's own rule (`Progression.kill_xp` with the monster's level value):
+	# the survivor run is going to REPLACE the duel, so it has to pay the same currency.
+	_award_xp(int(_prog.kill_xp(int(_state.hero().get("level", 1)), int(m.get("lvl", 1)), 1)))
 	events.append("kill")
 	_roll_drop(m["pos"] as Vector2)
 	monsters.remove_at(index)
@@ -929,6 +981,9 @@ func _collect(d: Dictionary) -> bool:
 	_state.register_loot_item(item)
 	_state.add_item(str(item.get("id", "")), item)
 	items_taken += 1
+	# Kept for the RESULT PAGE, which lists what the run actually paid out. The bag is the
+	# truth for the save; this is the receipt.
+	looted.append(item)
 	_add_number(player_pos + Vector2(0, -48), str(item.get("name", "Predmet")), "item")
 	return true
 

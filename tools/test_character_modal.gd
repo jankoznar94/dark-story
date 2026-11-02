@@ -182,9 +182,12 @@ func _test_default_tab_is_inventory() -> void:
 	# so the only route that does NOT is the dialog being raised as a SCREEN — that is where
 	# `show_screen` has to apply it. Drive the real call, not the handler.
 	_main.show_screen("town")
+	# Jan, Nov 2026: "při otevření okna hrdiny se musí jako výchozí záložka otevřít inventář".
+	# The nav's `hero` entry IS the hero window, so it must land on Inventory — the arena's
+	# Hrdina button routes through the same pane key.
 	_main._on_nav_selected("hero")
-	if str(modal._active) != "stats":
-		_fail("the dialog did not reach Stats before the wiring check (on '%s')" % str(modal._active))
+	if str(modal._active) != "inventory":
+		_fail("the hero window must open on Inventory, got '%s'" % str(modal._active))
 		return
 	_main.show_screen("character")
 	if str(modal._active) != "inventory":
@@ -222,9 +225,13 @@ func _test_each_tab_shows_its_own_pane() -> void:
 ## realistic bug, because the two vocabularies differ. This walks the real path: emit the
 ## nav key, then ask which pane is showing.
 func _test_nav_keys_map_to_distinct_panes() -> void:
+	# ⚠️  NOT THREE DISTINCT PANES ANY MORE. `hero` and `items` are two entries onto the SAME
+	# window, and Jan wants that window to open on Inventory whichever entry raised it; only
+	# `talents` still names a pane of its own. Assert the exact mapping, so a future tweak to
+	# one entry cannot silently drag the other with it.
 	var modal = _main._screens["character"]
-	var seen: Dictionary = {}
-	for nav_key in ["inventory", "talents", "hero"]:
+	var expected := {"inventory": "inventory", "talents": "skills", "hero": "inventory"}
+	for nav_key in expected:
 		_main._on_nav_selected(nav_key)
 		var shown: Array[String] = []
 		for pane_key in modal._panes:
@@ -233,12 +240,9 @@ func _test_nav_keys_map_to_distinct_panes() -> void:
 		if shown.size() != 1:
 			_fail("nav key '%s' shows %d panes, expected 1 (%s)" % [nav_key, shown.size(), str(shown)])
 			continue
-		if seen.has(shown[0]):
-			_fail("nav key '%s' lands on pane '%s', which nav key '%s' already uses"
-				% [nav_key, shown[0], str(seen[shown[0]])])
-		seen[shown[0]] = nav_key
-	if seen.size() != 3:
-		_fail("the three nav keys resolve to %d distinct panes, expected 3" % seen.size())
+		if shown[0] != str(expected[nav_key]):
+			_fail("nav key '%s' lands on pane '%s', expected '%s'"
+				% [nav_key, shown[0], str(expected[nav_key])])
 
 
 ## The nav bar stays VISIBLE over the dialog, as it does in the PWA (`nav_hidden: false`

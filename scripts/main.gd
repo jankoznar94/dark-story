@@ -33,6 +33,7 @@ const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
 const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
 const CharacterModal := preload("res://scripts/ui/character_modal.gd")
+const ResultScreen := preload("res://scripts/ui/result_screen.gd")
 const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
 const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
 const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
@@ -255,7 +256,7 @@ func _build_screens() -> void:
 	# routed through the transition.
 	arena.map_requested.connect(func(): show_screen("map"))
 	arena.result_portal_requested.connect(_on_result_portal_used)
-	arena.hero_requested.connect(func(): open_modal("stats"))
+	arena.hero_requested.connect(func(): open_modal("inventory"))
 	_add_screen("arena", arena)
 
 	# The NEW fight — the survivor run. It lives BESIDE the duel on purpose: the duel is
@@ -266,6 +267,13 @@ func _build_screens() -> void:
 	survivor.leave_requested.connect(func(): _end_survivor(""))
 	survivor.run_finished.connect(_end_survivor)
 	_add_screen("survivor", survivor)
+
+	# The end-of-run page. The survivor run used to dump the player straight back on the road,
+	# so a finished run paid out silently — the arena's Victory/Defeat page had no counterpart.
+	var result := ResultScreen.new()
+	result.visible = false
+	result.closed.connect(_on_run_result_closed)
+	_add_screen("result", result)
 
 	# The screens are Control nodes on a Node2D main; give them a CanvasLayer so they
 	# sit above any future world rendering, and keep the status strip on top of them.
@@ -349,7 +357,7 @@ func _add_screen(key: String, screen: Control) -> void:
 ## The nav bar is hidden on the screens the PWA hid it on — the arena replaces the whole
 ## page (`.battle-active` locked scrolling) and a nav button under a live fight is a way
 ## to lose a fight by accident.
-const NAV_HIDDEN := ["arena", "survivor"]
+const NAV_HIDDEN := ["arena", "survivor", "result"]
 
 
 func show_screen(name: String) -> void:
@@ -429,7 +437,7 @@ func show_screen(name: String) -> void:
 const MODAL_TABS := {
 	"inventory": "inventory",
 	"talents": "skills",
-	"hero": "stats",
+	"hero": "inventory",
 }
 
 
@@ -890,15 +898,80 @@ func _end_survivor(outcome: String) -> void:
 	var screen = _screens.get("survivor", null)
 	if screen == null:
 		return
-	var gold := int(screen.run.gold) if screen.run != null else 0
-	var items := int(screen.run.items_taken) if screen.run != null else 0
+	var run = screen.run
 	state.save()
 	if str(outcome) == "dead":
 		state.data["deaths"] = int(state.data.get("deaths", 0)) + 1
-		_set_status("Nájezd skončil. %d zlata, %d předmětů" % [gold, items])
-	else:
-		_set_status("Nájezd ukončen. %d zlata, %d předmětů" % [gold, items])
-	show_screen("world")
+	_show_run_result(run, str(outcome))
+
+
+## The RUN's result page — the arena's Victory/Defeat page, for the fight that replaces it.
+##
+## Same page (see `scripts/ui/result_screen.gd`): the act's artwork, the outcome, the hero's
+## readout, the loot the run paid and the action tiles. The payout itself is ALREADY in the
+## save (gold, items and XP are collected during the run), so this only reports it.
+func _show_run_result(run, outcome: String) -> void:
+	var won := outcome == "cleared"
+	var act_id := int(state.data.get("_currentAct", 0))
+	var act: Dictionary = data.act_by_id(act_id)
+	var act_name := str(act.get("name", "ACT %d" % (act_id + 1))).to_upper()
+	var gold := int(run.gold) if run != null else 0
+	var kills := int(run.kills) if run != null else 0
+	var areas := int(run.cleared_zones()) if run != null else 0
+	var total_areas: int = (run.zones as Array).size() if run != null else 0
+	var xp := int(run.xp_gained) if run != null else 0
+	var levels := int(run.levels_gained) if run != null else 0
+	var rows: Array = []
+	if run != null and won:
+		rows = (run.looted as Array).duplicate()
+
+	var title := "Vitezstvi" if won else ("Prohra" if outcome == "dead" else "Najezd ukoncen")
+	var sub := ""
+	match outcome:
+		"cleared":
+			sub = "%s - oblast vycistena" % act_name
+		"dead":
+			sub = "%s - najezd nedokoncen" % act_name
+		_:
+			sub = "%s - najezd ukoncen" % act_name
+
+	var hero: Dictionary = state.hero()
+	var hp_line := "HP %d/%d" % [int(run.hp), int(run.max_hp)] if run != null else ""
+	var stat_line := "Uroven %d (+%d)   %d/%d oblasti   %d zabito" % [
+		int(hero.get("level", 1)), levels, areas, total_areas, kills]
+
+	var art_path := "assets/stops/stop_act%d_0.webp" % act_id
+	if not ResourceLoader.exists(art_path):
+		art_path = "assets/stops/placeholder_act%d.png" % act_id
+
+	var payload := {
+		"won": won,
+		"title": title,
+		"sub": sub,
+		"art": art_path,
+		"hp_line": hp_line,
+		"stat_line": stat_line,
+		"rows": rows,
+		"gold": gold if won else 0,
+		"tiles": [
+			{"label": "Hrdina", "icon": "assets/monsters/%s.png" % str(hero.get("face", "hero")),
+				"action": "hero"},
+			{"label": "Mesto", "icon": "assets/menu-icons/mesto.png", "action": "town"},
+		],
+	}
+	show_screen("result")
+	_screens["result"].present(state, _resolve, payload)
+	_set_status("Najezd: %d zlata, %d predmetu, %d XP" % [gold, int(run.items_taken) if run != null else 0, xp])
+
+
+## Which action the result page's tiles asked for. The page is a dead end otherwise: the nav
+## bar is hidden on it, exactly as it is in a fight.
+func _on_run_result_closed(action: String) -> void:
+	match action:
+		"hero":
+			open_modal("inventory")
+		_:
+			show_screen("town")
 
 
 ## The one way into the wilderness screen. `_currentAct` is what the world reads to know which

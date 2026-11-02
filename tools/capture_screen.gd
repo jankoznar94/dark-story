@@ -374,6 +374,30 @@ func _entry() -> void:
 			while (not arena.battle.ended or not arena._result_built) and guard < 300:
 				arena.step()
 				guard += 1
+	elif key == "runresult":
+		# The RUN's result page. The run is started for real, then settled as a WON area so the
+		# frame carries the art, the loot rows and the tiles — a page photographed with an
+		# empty payload proves nothing about the layout.
+		_main._enter_survivor(0)
+		var run = _main._screens["survivor"].run
+		if run != null:
+			for z in run.zones:
+				if run.monsters.size() + (z["members"] as Array).size() > 7:
+					continue
+				run.player_pos = (z["centre"] as Vector2) + Vector2(0, 250)
+				run.step(1.0 / 60.0, Vector2.ZERO)
+				break
+			var item: Dictionary = _main.data.item("blade_shortSword")
+			if not item.is_empty():
+				run.looted.append(item)
+			var ring: Dictionary = _main.data.item("ring_ring")
+			if not ring.is_empty():
+				run.looted.append(ring)
+			run.gold = 35
+			run.xp_gained = 120
+			run.levels_gained = 1
+			run.kills = 6
+			_main._show_run_result(run, "cleared")
 	elif key == "survivor":
 		# The run is STARTED by the router's own `_enter_survivor`, not by showing the screen:
 		# a survivor screen with no run draws nothing, which produced a black frame the first

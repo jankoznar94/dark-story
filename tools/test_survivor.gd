@@ -67,6 +67,7 @@ func _initialize() -> void:
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
 	_test_pack_discovery()
+	_test_kills_award_xp()
 	_test_screen_gesture_and_disc()
 
 	for f in _failures:
@@ -737,6 +738,37 @@ func _test_pack_discovery() -> void:
 		"the area must only end as 'cleared', outcome='%s'" % run.outcome)
 	_check(not run.finished,
 		"an UNVISITED pack must keep the area open — the run ended with cells still asleep")
+
+
+## A kill pays XP, and enough XP levels the hero UP — the run is going to REPLACE the duel, so
+## a fight that pays no experience is the whole progression missing.
+func _test_kills_award_xp() -> void:
+	_log("  section: kills_award_xp")
+	var run := _fresh(2024)
+	var hero: Dictionary = _state.hero()
+	hero["xp"] = 0
+	hero["level"] = 2
+	var before := int(hero.get("xp", 0))
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 1
+	m["ranged"] = false
+	var ticks := 0
+	while run.kills == 0 and ticks < 600:
+		m["pos"] = run.player_pos + Vector2(SurvivorRun.ATTACK_RANGE * 0.5, 0)
+		run.step(STEP, Vector2.ZERO)
+		ticks += 1
+	_check(run.kills >= 1, "the seeded monster must die so the XP can be measured")
+	_check(int(run.xp_gained) > 0, "a kill must pay XP, xp_gained=%d" % int(run.xp_gained))
+	var after := int(hero.get("xp", 0))
+	_check(after >= before, "the hero's XP must not go down: %d -> %d" % [before, after])
+	# Enough XP buys a level. Level 2 needs 80 XP; a level also pays 5 attribute points.
+	var attr_before := int(hero.get("attrPoints", 0))
+	run._award_xp(500)
+	_check(int(hero.get("level", 2)) > 2, "500 XP must buy at least one level, level=%d" % int(hero["level"]))
+	_check(int(hero.get("attrPoints", 0)) > attr_before, "a level must pay attribute points")
+	_check(int(run.levels_gained) >= 1, "the run must count the levels it bought")
 
 
 # ============================================================================ screen
