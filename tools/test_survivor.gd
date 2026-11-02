@@ -26,6 +26,7 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
+const Progression := preload("res://scripts/combat/progression.gd")
 
 const STEP := 1.0 / 60.0
 
@@ -56,6 +57,10 @@ func _initialize() -> void:
 	_test_contact_damage_kills()
 	_test_bodies_are_solid()
 	_test_reach_is_the_drawn_circle()
+	_test_weapon_pace_and_two_hands()
+	_test_two_hander_reach()
+	_test_move_speed_boots()
+	_test_boots_roll_speed_affix()
 	_test_ranged_kinds()
 	_test_thrower_keeps_distance_and_fires()
 	_test_orb_hits_and_can_be_dodged()
@@ -133,14 +138,14 @@ func _test_movement_and_clamp() -> void:
 	var start := run.player_pos
 	run.step(STEP, Vector2(1, 0))
 	var moved := run.player_pos.x - start.x
-	_check(absf(moved - SurvivorRun.HERO_SPEED * STEP) < 0.01,
-		"one step right must move HERO_SPEED*dt = %.3f, got %.3f"
-			% [SurvivorRun.HERO_SPEED * STEP, moved])
+	_check(absf(moved - run.hero_speed() * STEP) < 0.01,
+		"one step right must move hero_speed()*dt = %.3f, got %.3f"
+			% [run.hero_speed() * STEP, moved])
 	# A diagonal must not be faster than a straight line: the vector is limited, not summed.
 	var run2 := _fresh()
 	var start2 := run2.player_pos
 	run2.step(STEP, Vector2(1, 1))
-	_check(absf(run2.player_pos.distance_to(start2) - SurvivorRun.HERO_SPEED * STEP) < 0.01,
+	_check(absf(run2.player_pos.distance_to(start2) - run2.hero_speed() * STEP) < 0.01,
 		"a diagonal step must have the same length as a straight one")
 	# The world edge holds.
 	var run3 := _fresh()
@@ -443,6 +448,179 @@ func _test_reach_is_the_drawn_circle() -> void:
 		outside.step(STEP, Vector2.ZERO)
 	_check(int(m2["hp"]) == hp2,
 		"a body fully outside the circle must NOT be hit at gap %.1f" % far)
+
+
+## The weapon's OWN pace, and two hands that are genuinely independent.
+##
+## The slice before this shipped ONE constant 0.85 s for every weapon, so a 700 ms scimitar and a
+## 1580 ms two-hander swung identically and the whole `swingMs` column in the item table was
+## decoration. The off hand was not read at all. Both are asserted here on the two things that
+## are visible on screen: how often each hand lands, and that each hand stamps its own animation.
+func _test_weapon_pace_and_two_hands() -> void:
+	_log("  section: weapon_pace_and_two_hands")
+	var equip: Dictionary = _state.equip()
+	# SLOW in the main hand, FAST in the off hand: if the two hands shared a clock the off hand
+	# could never land more often than the main one.
+	equip["weapon"] = "blade_shortSword"
+	equip["shield"] = "blade_scimitar"
+	var run := _fresh()
+	_check(not run.off_weapon.is_empty(), "a dual-wielding class must read the OFF hand weapon")
+	_check(run.main_swing > run.off_swing,
+		"each hand swings at its own weapon's pace: main %.3f s vs off %.3f s"
+			% [run.main_swing, run.off_swing])
+	var dex_total := int(_state.hero().get("attrDex", 0)) \
+		+ int(Progression._equip_attr(equip, _find_item, "dex"))
+	var want := float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0)) / 1000.0
+	_check(absf(run.main_swing - want) < 0.002,
+		"the main interval must come from swing_time: want %.3f got %.3f" % [want, run.main_swing])
+
+	run.monsters.clear()
+	run._spawn_one()
+	run._spawn_one()
+	var a: Dictionary = run.monsters[0]
+	var b: Dictionary = run.monsters[1]
+	for m in [a, b]:
+		m["hp"] = 999999
+		m["max_hp"] = 999999
+		m["speed"] = 0.0
+		m["ranged"] = false
+		m["dmg_min"] = 0
+		m["dmg_max"] = 0
+	var main_hits := 0
+	var off_hits := 0
+	for _i in 180:
+		a["pos"] = run.player_pos + Vector2(70, 0)
+		b["pos"] = run.player_pos + Vector2(-70, 0)
+		run.step(STEP, Vector2.ZERO)
+		for n in run.numbers:
+			match str(n["kind"]):
+				"hit", "crit":
+					main_hits += 1
+				"hit_off":
+					off_hits += 1
+		run.numbers.clear()
+	_check(main_hits > 0 and off_hits > 0,
+		"both hands must land blows: main %d off %d" % [main_hits, off_hits])
+	_check(off_hits > main_hits,
+		"the FASTER weapon must land more often: off %d vs main %d" % [off_hits, main_hits])
+	_check(run.swing_age_off >= 0.0,
+		"the off hand must stamp its OWN animation age, or the screen draws one arc twice")
+	# The two arcs must point at DIFFERENT bodies: the off hand looks for another target, so its
+	# direction is the other side of the hero. One direction twice is a mirror, not a second weapon.
+	_check(run.swing_dir_off.dot(run.swing_dir) < -0.5,
+		"the off hand must swing in its own direction: %s vs %s"
+			% [str(run.swing_dir), str(run.swing_dir_off)])
+	_reset_kit()
+
+
+## A two-handed weapon has no off hand and a LONGER arm. Both are rules, not cosmetics: the
+## reach table is what makes a two-hander a different weapon rather than a bigger number.
+func _test_two_hander_reach() -> void:
+	_log("  section: two_hander_reach")
+	var equip: Dictionary = _state.equip()
+	equip["weapon"] = "blade_shortSword"
+	equip["shield"] = null
+	var one := _fresh()
+	_check(absf(one.reach_main - SurvivorRun.ATTACK_RANGE) < 0.01,
+		"a one-handed blade reaches the drawn ATTACK_RANGE, got %.1f" % one.reach_main)
+
+	equip["weapon"] = "blade2h_greatSword"
+	var two := _fresh()
+	_check(two.off_weapon.is_empty(), "a two-handed weapon leaves NO off hand")
+	_check(two.reach_main > one.reach_main + 5.0,
+		"a two-hander must reach noticeably further: %.1f vs %.1f"
+			% [two.reach_main, one.reach_main])
+
+	# A body the two-hander can reach and the one-hander cannot: the ONLY way to prove the reach
+	# table is live is a gap that falls between the two circles.
+	var gap := one.reach_main + SurvivorRun.MON_RADIUS + 3.0
+	var far_hit := _hit_once_at(two, gap)
+	var near_miss := _hit_once_at(one, gap)
+	_check(far_hit, "the two-hander must hit a body at gap %.1f" % gap)
+	_check(not near_miss, "a one-hander must NOT hit a body at gap %.1f" % gap)
+	_reset_kit()
+
+
+## Puts one stationary, harmless body at `gap` and reports whether a swing landed within 4 frames.
+func _hit_once_at(run: SurvivorRun, gap: float) -> bool:
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	var hp_before := int(m["hp"])
+	for _i in 4:
+		m["pos"] = run.player_pos + Vector2(gap, 0)
+		run.step(STEP, Vector2.ZERO)
+	return int(m["hp"]) < hp_before
+
+
+## Walking had no number of its own before this slice. The BASE must be slower than the 168 the
+## first pass shipped (a bonus against an already-fast walk is not felt), and a `moveSpeed` roll
+## must reach the actual step, not just the tooltip.
+func _test_move_speed_boots() -> void:
+	_log("  section: move_speed_boots")
+	_check(SurvivorRun.HERO_BASE_SPEED < 168.0,
+		"the base walk must be slower than the old 168, got %.1f" % SurvivorRun.HERO_BASE_SPEED)
+	_reset_kit()
+	var slow := _fresh()
+	_check(slow.speed_pct == 0, "no boots = no bonus, got %d %%" % slow.speed_pct)
+
+	var boots: Dictionary = _data.item("boots_boots").duplicate(true)
+	boots["id"] = "test_boots_fast"
+	boots["moveSpeed"] = 20
+	_state.register_loot_item(boots)
+	_state.equip()["boots"] = "test_boots_fast"
+	var fast := _fresh()
+	_check(fast.speed_pct == 20, "a +20 %% boot must reach the run, got %d" % fast.speed_pct)
+	_check(absf(fast.hero_speed() - SurvivorRun.HERO_BASE_SPEED * 1.2) < 0.01,
+		"walk speed must be base * 1.2, got %.2f" % fast.hero_speed())
+	var start := fast.player_pos
+	fast.step(STEP, Vector2(1, 0))
+	_check(absf((fast.player_pos.x - start.x) - SurvivorRun.HERO_BASE_SPEED * 1.2 * STEP) < 0.01,
+		"the bonus must be WALKED, not only printed")
+	# The cap holds: a hand-made +90 % boot cannot make the hero a projectile.
+	boots["moveSpeed"] = 90
+	_state.register_loot_item(boots)
+	var capped := _fresh()
+	_check(capped.speed_pct == SurvivorRun.MAX_SPEED_PCT,
+		"move speed must cap at %d %%, got %d" % [SurvivorRun.MAX_SPEED_PCT, capped.speed_pct])
+	_reset_kit()
+
+
+## The boot affix has to be ROLLABLE, and it has to be one group so two speed lines never stack.
+func _test_boots_roll_speed_affix() -> void:
+	_log("  section: boots_roll_speed_affix")
+	var groups := {}
+	for a in ItemGen.EXTRA_AFFIXES:
+		groups[int(a.get("group", -1))] = true
+	_check(groups.size() == 1,
+		"every speed tier must share ONE affix group, got %d" % groups.size())
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	var base: Dictionary = _data.item("boots_boots")
+	var rolled := 0
+	var total := 200
+	for _i in total:
+		var it: Dictionary = _gen.generate(base, "rare", 30, 30, rng)
+		# One line, one value: a second speed affix would sum into a bigger number here.
+		if int(it.get("moveSpeed", 0)) > 0:
+			rolled += 1
+	_check(rolled > 0, "%d rare boots at ilvl 30 must roll movement speed at least once" % total)
+	print("  measured: boots_with_speed=%d/%d" % [rolled, total])
+
+
+## Puts the class starting kit back, because every test above mutates the SAME save.
+func _reset_kit() -> void:
+	var equip: Dictionary = _state.equip()
+	equip["weapon"] = "blade_shortSword"
+	equip["shield"] = null
+	equip["boots"] = null
+	equip["gloves"] = null
 
 
 func _test_determinism() -> void:

@@ -32,6 +32,7 @@ const STAT_LABELS := {
 	"bonusMana": "+Mana",
 	"bonusHp": "+HP",
 	"ias": "Increased Attack Speed",
+	"moveSpeed": "Movement Speed",
 	"enhancedDefense": "Enhanced Defense",
 	"enhancedDmg": "Enhanced Damage",
 	"str": "Strength",
@@ -151,7 +152,7 @@ static func _mod_stat_order() -> Array:
 	return [
 		"fireDmg", "coldDmg", "poisonDmg", "poisonDur", "lightningDmg", "lifesteal", "manaSteal",
 		"attackRating", "skillDmg", "critChance", "castSpeed", "manaRegen", "bonusMana",
-		"bonusHp", "ias",
+		"bonusHp", "ias", "moveSpeed",
 		"enhancedDefense", "enhancedDmg", "str", "vit", "int", "dex",
 		"magicFind", "goldFind", "fireRes", "coldRes", "lightningRes", "poisonRes",
 		"allRes", "allSkills", "classSkills", "thorns", "dmgReduction", "lifeRegen",
@@ -171,7 +172,7 @@ static func _mod_line(stat: String, item: Dictionary, ranges: Dictionary) -> Str
 			return "%s Skills +%d%s" % [cls.capitalize(), int(value), range_text]
 		"poisonDmg":
 			return "Poison Dmg +%s (%ss)%s" % [ItemStats.fmt_dmg(value), str(item.get("poisonDur", 2)), range_text]
-		"allRes", "fireRes", "coldRes", "lightningRes", "poisonRes", "enhancedDmg", "enhancedDefense", "lifesteal", "manaSteal", "skillDmg", "ias", "magicFind", "goldFind", "allSkills", "critChance", "castSpeed":
+		"allRes", "fireRes", "coldRes", "lightningRes", "poisonRes", "enhancedDmg", "enhancedDefense", "lifesteal", "manaSteal", "skillDmg", "ias", "moveSpeed", "magicFind", "goldFind", "allSkills", "critChance", "castSpeed":
 			return "%s +%s%%%s" % [_label(stat), str(int(value)), range_text]
 		"manaRegen":
 			return "Mana Regen +%d/tick%s" % [int(value), range_text]

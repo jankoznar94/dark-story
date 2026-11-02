@@ -55,6 +55,8 @@ var _force_web := false
 ## `--orbs N` puts N throwers around the hero with an orb in the air, so a still frame can
 ## show the ranged attack at all — a projectile only exists mid-flight.
 var _orbs := 0
+## `--dual` freezes a dual-wielding hero mid-swing (one arc per hand, opposite directions).
+var _dual := false
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 ## `--scroll max` shows the BOTTOM of the page (the town's update section lives there).
 var _scroll := ""
@@ -101,6 +103,11 @@ func _initialize() -> void:
 				step = 1
 			"--orbs":
 				_orbs = int(args[i + 1])
+			"--dual":
+				# Freezes the two-handed... no: TWO one-handed weapons mid-swing, so a still
+				# frame can show the main arc sweeping one way and the off hand the other.
+				_dual = true
+				step = 1
 			"--scroll":
 				_scroll = args[i + 1]
 			"--web":
@@ -228,6 +235,45 @@ func _resolve(name: String) -> Dictionary:
 			return {"key": name, "tab": ""}
 
 
+## `--dual` — the two hands frozen MID-SWING. A 0.22 s animation cannot be caught by a frame
+## counter, and "does the off hand draw its own arc the other way" is exactly the claim a still
+## frame has to settle. Two bodies sit inside both reaches so each arc has a target.
+func _seed_dual() -> void:
+	var screen = _main._screens.get("survivor", null)
+	if screen == null or screen.run == null:
+		print("capture: FAIL --dual but the survivor run is missing")
+		quit(2)
+		return
+	var run = screen.run
+	print("capture: dual main=%s swing=%.3f off=%s swing=%.3f reach=%.1f/%.1f"
+		% [str(run.main_weapon.get("id", "?")), float(run.main_swing),
+			str(run.off_weapon.get("id", "?")), float(run.off_swing),
+			float(run.reach_main), float(run.reach_off)])
+	run.monsters.clear()
+	run.projectiles.clear()
+	run.drops.clear()
+	run.numbers.clear()
+	run._spawn_one()
+	run._spawn_one()
+	var a: Dictionary = run.monsters[0]
+	var b: Dictionary = run.monsters[1]
+	for m in [a, b]:
+		m["speed"] = 0.0
+		m["ranged"] = false
+		m["atk_ready"] = 999.0
+		m["dmg_min"] = 0
+		m["dmg_max"] = 0
+	a["pos"] = run.player_pos + Vector2(70, 0)
+	b["pos"] = run.player_pos + Vector2(-70, 0)
+	# Half-way through SWING_ANIM, in the two opposite directions the rules chose.
+	run.swing_age = 0.11
+	run.swing_dir = Vector2.RIGHT
+	run.swing_age_off = 0.11
+	run.swing_dir_off = Vector2.LEFT
+	screen.stop()
+	screen.queue_redraw()
+
+
 ## `--orbs N` — place N throwers at their stand-off distance with one orb of each in the air at a
 ## different travel distance, then STOP the run so the frame does not depend on how many frames
 ## the capture waited: an orb flies 268 px/s and would be inside the hero by frame 45.
@@ -322,6 +368,13 @@ func _entry() -> void:
 		# a survivor screen with no run draws nothing, which produced a black frame the first
 		# time this was captured.
 		_main._enter_survivor(0)
+		if _dual:
+			# The hands are read from the SAVE at setup, so the gear has to be on before the
+			# run is built — hence a second `_enter_survivor`, not a field poke.
+			_main.state.equip()["weapon"] = "blade_shortSword"
+			_main.state.equip()["shield"] = "blade_scimitar"
+			_main._enter_survivor(0)
+			_seed_dual()
 	elif not _main._screens.has(key):
 		# A name the router does not have used to be a silent no-op: the capture then wrote
 		# whatever WAS up under the asked-for name.
@@ -457,6 +510,12 @@ func _capture() -> void:
 	await RenderingServer.frame_post_draw
 	var img: Image = root.get_texture().get_image()
 	img.save_png(_out)
+	var surv = _main._screens.get("survivor", null)
+	if _dual and surv != null and surv.run != null:
+		print("capture: dual at shot swing=%.3f dir=%s off_age=%.3f off_dir=%s off_swing=%.3f reach=%.1f/%.1f visible=%s"
+			% [float(surv.run.swing_age), str(surv.run.swing_dir), float(surv.run.swing_age_off),
+				str(surv.run.swing_dir_off), float(surv.run.off_swing),
+				float(surv.run.reach_main), float(surv.run.reach_off), str(surv.visible)])
 	# `current` is the screen the port says is up — a file name is not evidence of its own
 	# contents, and these are diffs against the PWA.
 	print("capture: %s %dx%d asked=%s current=%s" % [_out, img.get_width(), img.get_height(),

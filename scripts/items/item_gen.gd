@@ -33,8 +33,23 @@ const COMMON_FORBIDDEN_TYPES := ["ring", "amulet"]
 const AFFIX_STATS := ["fireDmg", "coldDmg", "lightningDmg", "poisonDmg", "poisonDur",
 	"lifesteal", "manaSteal", "enhancedDefense", "enhancedDmg", "str", "vit", "int", "dex",
 	"skillDmg", "manaRegen", "fireRes", "coldRes", "lightningRes", "poisonRes", "allRes",
-	"goldFind", "magicFind", "allSkills", "classSkills", "ias", "thorns",
+	"goldFind", "magicFind", "allSkills", "classSkills", "ias", "thorns", "moveSpeed",
 	"dmgReduction", "lifeRegen", "knockback", "preventHeal"]
+
+## Affixes the PORT adds and the PWA never had. `data/AFFIXES.json` is generated from the PWA
+## by `tools/import/convert.mjs`, so a hand edit there is erased on the next conversion — the
+## same trap `RANGED_FACES` documents. Movement speed lives here for one reason: the survivor
+## fight made walking a real decision, and boots that only add defence are a dead slot.
+##
+## One GROUP for all three tiers, so two speed affixes can never stack on one pair of boots.
+const EXTRA_AFFIXES := [
+	{"id": "ofHaste", "name": "of Haste", "type": "suffix", "group": 130, "minIlvl": 3,
+		"weight": 6, "types": ["boots"], "stats": {"moveSpeed": [6, 10]}, "tint": "#8ec07c"},
+	{"id": "ofSpeed", "name": "of Speed", "type": "suffix", "group": 130, "minIlvl": 15,
+		"weight": 4, "types": ["boots"], "stats": {"moveSpeed": [11, 18]}, "tint": "#8ec07c"},
+	{"id": "ofTravel", "name": "of Travel", "type": "suffix", "group": 130, "minIlvl": 28,
+		"weight": 2, "types": ["boots"], "stats": {"moveSpeed": [19, 30]}, "tint": "#8ec07c"},
+]
 
 var _data: Node
 
@@ -143,6 +158,11 @@ func generate(base_item: Dictionary, quality: String, monster_level: int,
 
 	var candidates: Array = []
 	for a in _data.affixes():
+		if int(a.get("minIlvl", 0)) <= ilvl and base_item.get("type", "") in a.get("types", []):
+			candidates.append(a)
+	# The port's own affixes (movement speed on boots). Appended to the SAME pool, so the
+	# weighted pick treats them exactly like the generated ones.
+	for a in EXTRA_AFFIXES:
 		if int(a.get("minIlvl", 0)) <= ilvl and base_item.get("type", "") in a.get("types", []):
 			candidates.append(a)
 

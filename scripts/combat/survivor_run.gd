@@ -21,7 +21,13 @@ const LootSystem := preload("res://scripts/items/loot_system.gd")
 ## The world is bigger than the phone's viewport (390x844), so the camera FOLLOWS the
 ## hero and the run reads as travel instead of a fixed stage. These are world pixels.
 const WORLD := Vector2(1500.0, 2100.0)
-const HERO_SPEED := 168.0
+## The BASE walk. Deliberately slower than the 168 the first slice shipped: a boot affix that
+## adds 20 % has to be FELT, and a bonus measured against an already-fast walk reads as noise.
+## `moveSpeed` from gear multiplies this — see `hero_speed()`.
+const HERO_BASE_SPEED := 140.0
+## Everything in the game is additive percent, and a stacking cap keeps two lucky boots from
+## turning the hero into a projectile.
+const MAX_SPEED_PCT := 60
 ## The bodies are the PORTRAIT DISCS, so the collision radius is the disc's own radius. One
 ## number for both sides: a melee reach that is bigger than the gap between two bodies is a
 ## reach that hits from another postcode.
@@ -30,19 +36,34 @@ const HERO_RADIUS := BODY_RADIUS
 const MON_RADIUS := BODY_RADIUS
 
 ## --- the fight ------------------------------------------------------------
-## ONE range and ONE cadence for the auto-attack: a survivor hero must never have to
-## aim, and a swing timer the player cannot see must not vary per monster type.
-## ATTACK_RANGE is the circle drawn on the ground, and it is the WEAPON's reach — so the rule is
-## about BODIES, not centres: a target is hit when its own disc crosses that circle. Jan's report
-## ("the enemy has to be deep inside the radius before the hero swings") was this rule measured to
-## the wrong point: with the check on centres, a 31 px body had to be half-way through the circle
-## before it registered, which reads as point-blank. `HIT_REACH` adds the target's radius, so the
-## blow lands the moment a portrait touches the drawn circle — the ring is now the promise it looks
-## like.
+## ONE reach per HAND, taken from the weapon that hand holds: a two-handed axe is a longer arm
+## than a fist, and a fight where every weapon reaches exactly 76 px makes the whole gear table
+## decorative. `ATTACK_RANGE` is the ONE-HANDED BLADE value and stays the fallback for an empty
+## or unknown weapon.
+##
+## The rule is about BODIES, not centres: a target is hit when its own disc crosses the drawn
+## circle. Jan's report ("the enemy has to be deep inside the radius before the hero swings")
+## was this rule measured to the wrong point: with the check on centres, a 31 px body had to be
+## half-way through the circle before it registered, which reads as point-blank. `HIT_REACH`
+## adds the target's radius, so the blow lands the moment a portrait touches the drawn circle.
 const ATTACK_RANGE := 76.0
 const HIT_REACH := ATTACK_RANGE + MON_RADIUS
-const ATTACK_COOLDOWN := 0.85
+const WEAPON_REACH := {
+	"fists": 58.0, "claws": 62.0, "blade": 76.0, "axe": 80.0, "blunt": 72.0,
+}
+const TWO_HAND_REACH_BONUS := 10.0
 const CONTACT_PAD := 3.0
+
+
+## The reach of one weapon, in world pixels. Static so the screen can ask the same question the
+## rules answer, and so a test can assert the table without building a run.
+static func reach_for(weapon: Dictionary) -> float:
+	if weapon.is_empty():
+		return ATTACK_RANGE
+	var r: float = float(WEAPON_REACH.get(str(weapon.get("weaponType", "fists")), ATTACK_RANGE))
+	if bool(weapon.get("twoHand", false)):
+		r += TWO_HAND_REACH_BONUS
+	return r
 
 ## --- ranged units ----------------------------------------------------------
 ## The PWA had no notion of range: every monster walked into the hero and the damage was a
@@ -106,9 +127,28 @@ var player_pos := Vector2.ZERO
 var hp := 1
 var max_hp := 1
 var defense := 0
+## MAIN hand's damage range and crit (the fields the HUD and the older tests read).
 var dmg_min := 1
 var dmg_max := 2
 var crit_chance := 0.0
+
+## --- the two hands ---------------------------------------------------------
+## Each hand is a WEAPON with its own reach, its own interval and its own roll. `off_weapon`
+## stays empty for a class that cannot dual-wield, for a two-hander, and for a shield.
+var main_weapon: Dictionary = {}
+var off_weapon: Dictionary = {}
+## Seconds per swing, from `Progression.swing_time` — the weapon's own `swingMs`, shortened by
+## DEX and by Increased Attack Speed on the weapon and the gloves, floored at 0.45 s. Two hands,
+## two intervals: the second weapon never inherits the first one's pace.
+var main_swing := 0.85
+var off_swing := 0.0
+var reach_main := ATTACK_RANGE
+var reach_off := 0.0
+var dmg_off_min := 0
+var dmg_off_max := 0
+var crit_off := 0.0
+## Percent from `moveSpeed` gear (boots), capped at MAX_SPEED_PCT.
+var speed_pct := 0
 
 var monsters: Array = []
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
@@ -127,6 +167,10 @@ var items_taken := 0
 ## into the lunge and the slash — the RULES never animate, they only say when and which way.
 var swing_age := -1.0
 var swing_dir := Vector2.RIGHT
+## The OFF hand's own animation state. Two ages, not one: a 700 ms scimitar and a 1580 ms axe
+## must not share a single arc, or the second weapon is drawn only as a mirror of the first.
+var swing_age_off := -1.0
+var swing_dir_off := Vector2.RIGHT
 
 var finished := false
 ## "" | "dead"
@@ -134,7 +178,11 @@ var outcome := ""
 
 var _wave_clock := 0.0
 var _spawn_accum := 0.0
-var _attack_clock := 0.0
+var _main_clock := 0.0
+var _off_clock := 0.0
+## The monster the MAIN hand just hit, so the off hand prefers a different body. -1 = no
+## preference (the main hand has not swung at anything).
+var _off_prefer_id := -1
 var _next_id := 0
 ## The hero's position at the START of the frame: the only honest place to send him back to
 ## when his own step would put him inside a body.
@@ -163,10 +211,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	var roll: Dictionary = Progression.hero_dmg(hero, state.equip(), find_item)
 	dmg_min = int(roll["min"])
 	dmg_max = int(roll["max"])
-	var weapon: Dictionary = find_item.call(state.equip().get("weapon", "fists"))
-	if weapon.is_empty():
-		weapon = find_item.call("fists")
-	crit_chance = float(weapon.get("critChance", 0))
+	_read_hands()
 
 	player_pos = WORLD * 0.5
 	monsters.clear()
@@ -183,11 +228,78 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	outcome = ""
 	_wave_clock = 0.0
 	_spawn_accum = 0.0
-	_attack_clock = 0.0
+	_main_clock = 0.0
+	_off_clock = 0.0
 	_next_id = 0
 	swing_age = -1.0
 	swing_dir = Vector2.RIGHT
+	swing_age_off = -1.0
+	swing_dir_off = Vector2.RIGHT
 	_spawn_wave(2)
+
+
+## Reads BOTH hands off the save: the weapon's own interval (`swingMs` + DEX + IAS), its own
+## reach, and its own damage roll. The off hand is the `shield` slot holding something with a
+## `weaponType` — that is how the PWA's equipment model stores a second weapon, and a real
+## shield has no `weaponType`, so it is skipped instead of being swung.
+func _read_hands() -> void:
+	var hero: Dictionary = _state.hero()
+	var equip: Dictionary = _state.equip()
+	main_weapon = _find_item.call(equip.get("weapon", "fists"))
+	if main_weapon.is_empty():
+		main_weapon = _find_item.call("fists")
+	var dex_total := int(hero.get("attrDex", 0)) \
+		+ int(Progression._equip_attr(equip, _find_item, "dex"))
+	var gloves: Dictionary = _find_item.call(equip.get("gloves"))
+	var glove_ias := int(gloves.get("ias", 0)) if not gloves.is_empty() else 0
+	main_swing = float(Progression.swing_time(rng, main_weapon, dex_total, glove_ias)) / 1000.0
+	reach_main = reach_for(main_weapon)
+
+	var cls: Dictionary = {}
+	if _data != null:
+		cls = _data.class_by_id(str(_state.data.get("heroClass", "")))
+	off_weapon = {}
+	if bool(cls.get("dualWield", false)):
+		var cand: Dictionary = _find_item.call(equip.get("shield"))
+		if not cand.is_empty() and cand.has("weaponType"):
+			off_weapon = cand
+	if off_weapon.is_empty():
+		off_swing = 0.0
+		reach_off = 0.0
+		dmg_off_min = 0
+		dmg_off_max = 0
+		crit_off = 0.0
+	else:
+		# Each hand swings at its OWN pace. Averaging the two is what made an off-hand dagger
+		# obey the main hand's axe, and it also hid the whole point of a fast weapon.
+		off_swing = float(Progression.swing_time(rng, off_weapon, dex_total, glove_ias)) / 1000.0
+		reach_off = reach_for(off_weapon)
+
+	# Damage per hand: the weapon's own roll, times its specialisation, times D2's off-hand
+	# penalty (50 %, raised by One-Hand Specialization in `Talents.weapon_spec`).
+	var spec_main: Dictionary = Talents.weapon_spec(_state, main_weapon, false)
+	var roll_main: Dictionary = Progression.hero_dmg(hero, equip, _find_item, 1.0, {},
+		float(spec_main["dmgMult"]))
+	dmg_min = int(roll_main["min"])
+	dmg_max = int(roll_main["max"])
+	crit_chance = float(main_weapon.get("critChance", 0)) + float(spec_main["critBonus"])
+	if not off_weapon.is_empty():
+		var spec_off: Dictionary = Talents.weapon_spec(_state, off_weapon, true)
+		var mult := float(spec_off["dmgMult"]) * float(spec_off["offHandMult"])
+		var roll_off: Dictionary = Progression.hero_dmg(hero, equip, _find_item, 1.0,
+			off_weapon, mult)
+		dmg_off_min = int(roll_off["min"])
+		dmg_off_max = int(roll_off["max"])
+		crit_off = float(off_weapon.get("critChance", 0)) + float(spec_off["critBonus"])
+
+	speed_pct = clampi(int(Progression._equip_attr(equip, _find_item, "moveSpeed")),
+		0, MAX_SPEED_PCT)
+
+
+## The walk, in world pixels per second. One number for the rules and the camera, so a boot
+## bonus cannot move the hero at one speed and the screen's follow at another.
+func hero_speed() -> float:
+	return HERO_BASE_SPEED * (1.0 + float(speed_pct) / 100.0)
 
 
 # ============================================================================ step
@@ -198,6 +310,8 @@ func step(dt: float, move: Vector2) -> void:
 	elapsed += dt
 	if swing_age >= 0.0:
 		swing_age += dt
+	if swing_age_off >= 0.0:
+		swing_age_off += dt
 	_wave_clock += dt
 	if _wave_clock >= WAVE_SECONDS:
 		_wave_clock -= WAVE_SECONDS
@@ -217,7 +331,7 @@ func _move_hero(dt: float, move: Vector2) -> void:
 	var dir := move.limit_length(1.0)
 	if dir.length_squared() <= 0.0001:
 		return
-	player_pos += dir * HERO_SPEED * dt
+	player_pos += dir * hero_speed() * dt
 	player_pos.x = clampf(player_pos.x, HERO_RADIUS, WORLD.x - HERO_RADIUS)
 	player_pos.y = clampf(player_pos.y, HERO_RADIUS, WORLD.y - HERO_RADIUS)
 
@@ -467,38 +581,85 @@ func _take_damage(raw: int) -> void:
 
 # ============================================================================ attack
 
-## The auto-attack picks the NEAREST monster whose BODY reaches inside the drawn reach and nothing
-## else. No cone, no aiming, no target assist: in a survivor fight the player steers the hero, and
-## the hero spends what the timer gives him. Everything the swing lands on is a real roll
-## from the equipped weapon through `Progression`, so the loot loop stays honest.
+## The auto-attack picks, PER HAND, the NEAREST monster whose BODY reaches inside that hand's
+## drawn reach and nothing else. No cone, no aiming, no target assist: in a survivor fight the
+## player steers the hero, and each hand spends what its own timer gives it.
+##
+## Everything a swing lands on is a real roll from the weapon that hand holds through
+## `Progression`, so the loot loop stays honest and a fast 1H is not the same weapon as a slow
+## 2H. The two hands are INDEPENDENT: a 700 ms scimitar in the off hand swings on its own clock
+## while a 1580 ms axe keeps its own pace in the main hand.
 func _auto_attack(dt: float) -> void:
-	_attack_clock = maxf(0.0, _attack_clock - dt)
-	if _attack_clock > 0.0 or monsters.is_empty():
+	_main_clock = maxf(0.0, _main_clock - dt)
+	if off_swing > 0.0:
+		_off_clock = maxf(0.0, _off_clock - dt)
+	if monsters.is_empty():
 		return
-	var nearest := -1
-	var best := HIT_REACH * HIT_REACH
+	if _main_clock <= 0.0:
+		var idx := _nearest_in_reach(reach_main, -1)
+		if idx >= 0:
+			_main_clock = main_swing
+			var hit_id := int(monsters[idx]["id"])
+			_swing_hand(idx, false)
+			# The off hand AIMS SOMEWHERE ELSE when there is something else: two arcs on one
+			# portrait read as one weapon swinging twice, which is the exact thing the second
+			# weapon must not look like.
+			_off_prefer_id = hit_id
+	if off_swing > 0.0 and _off_clock <= 0.0:
+		var idx_off := _nearest_in_reach(reach_off, _off_prefer_id)
+		if idx_off < 0:
+			idx_off = _nearest_in_reach(reach_off, -1)
+		if idx_off >= 0:
+			_off_clock = off_swing
+			_swing_hand(idx_off, true)
+
+
+## The nearest body whose rim crosses `reach`'s circle, skipping one id (so the two hands do not
+## both land on the same portrait). `-1` skips nothing.
+func _nearest_in_reach(reach: float, exclude_id: int) -> int:
+	var limit := reach + MON_RADIUS
+	var best := limit * limit
+	var found := -1
 	for i in monsters.size():
+		if exclude_id >= 0 and int(monsters[i]["id"]) == exclude_id:
+			continue
 		var d2: float = (monsters[i]["pos"] as Vector2).distance_squared_to(player_pos)
 		if d2 <= best:
 			best = d2
-			nearest = i
-	if nearest < 0:
-		return
-	_attack_clock = ATTACK_COOLDOWN
-	var m: Dictionary = monsters[nearest]
-	var dmg := rng.randi_range(dmg_min, maxi(dmg_max, dmg_min))
-	var crit := crit_chance > 0.0 and rng.randf() * 100.0 < crit_chance
+			found = i
+	return found
+
+
+## One hand's landing blow. `index` is valid at call time; a kill removes the monster and no
+## later hand may use that index.
+func _swing_hand(index: int, is_off: bool) -> void:
+	var m: Dictionary = monsters[index]
+	var lo := dmg_off_min if is_off else dmg_min
+	var hi := dmg_off_max if is_off else dmg_max
+	var hand_crit := crit_off if is_off else crit_chance
+	var dmg := rng.randi_range(lo, maxi(hi, lo))
+	var crit := hand_crit > 0.0 and rng.randf() * 100.0 < hand_crit
 	if crit:
 		dmg = int(round(float(dmg) * 2.0))
 	m["hp"] = int(m["hp"]) - dmg
 	m["hit_flash"] = 0.12
 	var toward: Vector2 = (m["pos"] as Vector2) - player_pos
-	swing_dir = toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
-	swing_age = 0.0
-	_add_number((m["pos"] as Vector2) + Vector2(0, -30), str(dmg), "crit" if crit else "hit")
+	var dir := toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
+	if is_off:
+		swing_dir_off = dir
+		swing_age_off = 0.0
+	else:
+		swing_dir = dir
+		swing_age = 0.0
+	var kind := "hit"
+	if crit:
+		kind = "crit"
+	elif is_off:
+		kind = "hit_off"
+	_add_number((m["pos"] as Vector2) + Vector2(0, -30), str(dmg), kind)
 	events.append("crit" if crit else "hit")
 	if int(m["hp"]) <= 0:
-		_kill(nearest)
+		_kill(index)
 
 
 func _kill(index: int) -> void:

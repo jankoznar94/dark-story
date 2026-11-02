@@ -343,6 +343,7 @@ func _draw() -> void:
 	_draw_actors()
 	_draw_projectiles()
 	_draw_slash()
+	_draw_slash_off()
 	_draw_numbers()
 	_draw_hud()
 
@@ -511,11 +512,22 @@ func _draw_attack_ring() -> void:
 		hot = 1.0 - float(run.swing_age) / SWING_ANIM
 	var col := Color(UIKit.MOD_BLUE)
 	col.a = 0.20 + 0.55 * hot
-	var radius := SurvivorRun.ATTACK_RANGE
+	_dashed_ring(pos, run.reach_main, col, 1.5 + 1.5 * hot)
+	# A second hand with a DIFFERENT reach gets its own, fainter circle. ONE ring cannot be the
+	# promise for two weapons: a hand that really reaches 10 px further has to be visible, or the
+	# ring lies about the off hand.
+	if run.off_swing > 0.0 and absf(run.reach_off - run.reach_main) > 6.0:
+		var off_col := Color(UIKit.MOD_BLUE)
+		off_col.a = 0.12 + 0.30 * hot
+		_dashed_ring(pos, run.reach_off, off_col, 1.2 + hot)
+
+
+## The dashed circle itself, so the main and the off hand draw the SAME shape at two radii.
+func _dashed_ring(pos: Vector2, radius: float, col: Color, width: float) -> void:
 	for i in RING_SEGMENTS:
 		var a0 := TAU * float(i) / float(RING_SEGMENTS)
 		var a1 := a0 + TAU / float(RING_SEGMENTS) * 0.55
-		draw_arc(pos, radius, a0, a1, 6, col, 1.5 + 1.5 * hot, true)
+		draw_arc(pos, radius, a0, a1, 6, col, width, true)
 
 
 ## The orb is a BODY, not a UI dot: it gets the same flattened contact shadow the portraits have,
@@ -555,20 +567,71 @@ func _draw_projectiles() -> void:
 
 ## The swing itself: an arc sweeping across the reach in the direction the blow was aimed. Drawn
 ## OVER the bodies so it reads as the blow landing on them, not as a decal on the grass.
+##
+## TWO ARCS, TWO DIRECTIONS. Jan's rule for a dual-wielder: the MAIN hand sweeps left to right
+## and the OFF hand right to left, each at its own weapon's reach and on its own clock. One arc
+## drawn twice was what made a barbarian with two swords look like a barbarian with one.
 func _draw_slash() -> void:
-	if run.swing_age < 0.0 or run.swing_age > SWING_ANIM:
+	_slash(run.swing_age, run.swing_dir, run.reach_main, false)
+
+
+func _draw_slash_off() -> void:
+	if run.off_swing <= 0.0:
 		return
-	var t := clampf(float(run.swing_age) / SWING_ANIM, 0.0, 1.0)
+	_slash(run.swing_age_off, run.swing_dir_off, run.reach_off, true)
+
+
+func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
+	if age < 0.0 or age > SWING_ANIM:
+		return
+	var t := clampf(age / SWING_ANIM, 0.0, 1.0)
 	var pos: Vector2 = run.player_pos - _cam
-	var base: float = run.swing_dir.angle()
-	# The leading edge travels ~40 deg across the target, the stroke fades and thins as it goes.
+	var base: float = dir.angle()
+	# The off hand is a COOLER stroke on purpose: when both hands swing together the eye has to
+	# be able to tell which arc belongs to which weapon.
+	var col := Color("#f4e6c8") if not mirrored else Color("#c2cfe6")
+	# Opacity holds through most of the sweep and drops at the very end. A stroke that fades
+	# evenly from the first frame is invisible on a phone — the first pass measured as "no second
+	# weapon at all" in a still frame.
+	col.a = (0.95 if not mirrored else 0.85) * (1.0 - t * 0.45)
+	var r0 := reach * 0.60
+	var r1 := reach
+	var width := (6.0 if not mirrored else 5.0) * (1.0 - t * 0.5) + 2.0
 	var lead := base - 0.55 + 1.10 * t
-	var col := Color("#f0e0c0")
-	col.a = 0.95 * (1.0 - t * 0.75)
-	var r0 := SurvivorRun.ATTACK_RANGE * 0.62
-	var r1 := SurvivorRun.ATTACK_RANGE
-	draw_arc(pos, r1, lead - 0.42, lead, 12, col, 4.0 * (1.0 - t) + 1.0, true)
-	draw_arc(pos, r0, lead - 0.30, lead, 10, Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
+	if mirrored:
+		# Right to left.
+		lead = base + 0.55 - 1.10 * t
+		# A faint trailing arc behind the blade keeps the direction readable in motion.
+		draw_arc(pos, r1, lead, lead + 0.42, 14,
+			Color(col.r, col.g, col.b, col.a * 0.30), width * 0.7, true)
+		_blade(pos, lead, r1, Color("#8fb0d8"), Color("#cfe2f8"))
+	else:
+		# Left to right.
+		draw_arc(pos, r1, lead - 0.42, lead, 14,
+			Color(col.r, col.g, col.b, col.a * 0.30), width * 0.7, true)
+		_blade(pos, lead, r1, Color("#d9c393"), Color("#f5e6c2"))
+
+
+## The WEAPON itself: a tapered, flat blade sweeping around the hero. An arc alone is a line at
+## the reach circle, and the reach circle is exactly where the target portraits are — measured on
+## a still frame, two arcs at radius 76 read as "edges of the monster portraits" and the second
+## weapon was not visible at all. A blade coming OUT OF THE HERO cannot be mistaken for scenery.
+## Flat fill, hard edge, no glow (Jan's rule).
+func _blade(pos: Vector2, ang: float, length: float, body: Color, edge: Color) -> void:
+	var u := Vector2(cos(ang), sin(ang))
+	var v := Vector2(-u.y, u.x)
+	var a := pos + u * (length * 0.30)
+	var b := pos + u * length
+	var bw := 7.0
+	var tw := 1.0
+	var pts := PackedVector2Array([
+		a + v * bw, a - v * bw, b - v * tw, b + v * tw,
+	])
+	draw_colored_polygon(pts, body)
+	var outline := PackedVector2Array([a + v * bw, a - v * bw, b - v * tw, b + v * tw, a + v * bw])
+	draw_polyline(outline, edge, 1.5, true)
+	# The tip gets a small bright cap: that is the point the eye follows during a 0.22 s swing.
+	draw_circle(b, 2.6, edge)
 
 
 func _draw_drops() -> void:
@@ -600,6 +663,11 @@ func _draw_numbers() -> void:
 			"crit":
 				col = Color("#f0c860")
 				fs = 20
+			"hit_off":
+				# The off hand's own number, dimmer and smaller: with two weapons landing at once,
+				# two identical white numbers read as one number drawn twice.
+				col = Color("#cfd8ea")
+				fs = 13
 			"hurt":
 				col = Color("#e07068")
 				fs = 17

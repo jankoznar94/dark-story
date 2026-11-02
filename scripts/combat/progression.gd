@@ -138,8 +138,14 @@ func kill_gold(rng: RandomNumberGenerator) -> int:
 ## Note the STR term is 0.5 per point and the level term is a flat +1 per level.
 ## `shield_spec_mult` is Shield Specialization (barbarian): +20% per level.
 static func hero_dmg(hero: Dictionary, equip: Dictionary, find_item: Callable,
-		shield_spec_mult: float = 1.0) -> Dictionary:
-	var weapon: Dictionary = find_item.call(equip.get("weapon", "fists"))
+		shield_spec_mult: float = 1.0, weapon_override: Dictionary = {},
+		dmg_mult: float = 1.0) -> Dictionary:
+	# `weapon_override` is how the OFF HAND gets its own roll: the survivor fight swings two
+	# weapons and the damage of the second one must not be the first one's. Passing an empty
+	# dictionary keeps every older caller on the main-hand path.
+	var weapon: Dictionary = weapon_override
+	if weapon.is_empty():
+		weapon = find_item.call(equip.get("weapon", "fists"))
 	if weapon.is_empty():
 		weapon = find_item.call("fists")
 	var str_total := int(hero.get("attrStr", 0)) + _equip_attr(equip, find_item, "str")
@@ -147,8 +153,9 @@ static func hero_dmg(hero: Dictionary, equip: Dictionary, find_item: Callable,
 	var lv_bonus := int(floor(float(hero.get("level", 1))))
 	var w_min := weapon_dmg_min(weapon)
 	var w_max := weapon_dmg_max(weapon)
-	var dmg_min := maxi(1, int(round((2.0 + float(lv_bonus) + float(w_min) + str_bonus) * shield_spec_mult)))
-	var dmg_max := maxi(1, int(round((2.0 + float(lv_bonus) + float(w_max) + str_bonus) * shield_spec_mult)))
+	var mult := shield_spec_mult * dmg_mult
+	var dmg_min := maxi(1, int(round((2.0 + float(lv_bonus) + float(w_min) + str_bonus) * mult)))
+	var dmg_max := maxi(1, int(round((2.0 + float(lv_bonus) + float(w_max) + str_bonus) * mult)))
 	return {"min": dmg_min, "max": dmg_max}
 
 

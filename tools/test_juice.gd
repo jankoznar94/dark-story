@@ -450,14 +450,38 @@ func _test_a_second_freeze_is_dropped_not_queued() -> void:
 ## The screen's own position and the HP ring's scale are written by the layout code too. A
 ## residue left by an effect is permanent and is exactly the shape of defect that survives a
 ## frame-by-frame look.
+##
+## ⚠️  THIS IS A FLAKE AND IT IS NOT ABOUT THE SHAKE. `_apply_impact_shake` writes
+## `round(amp * sin(phase))` with `phase = Time.get_ticks_msec() * 0.09` — a WALL-CLOCK sine,
+## so whenever that clock happens to land in a zero crossing of BOTH axes the screen is
+## legitimately at (0,0). Measured on this machine: `JUICE_ALL_PASS=false` once with
+## "a full impact must actually displace the screen" and `true` on six consecutive re-runs,
+## with no source change. `sin(phase)` is zero at phase 0 and `sin(1.7 * phase)` too, so the
+## failing window is a couple of milliseconds wide and a slow CI runner is exactly where it
+## will land.
+##
+## The shake MECHANISM is what this asserts, not one sample of it: a full impact moves the
+## screen away from zero and removing the impact puts it back, over a whole phase. Sweeping
+## the clock through the sine's period makes the check deterministic while keeping the bug it
+## guards (a shake whose return never runs) fatal.
 func _test_the_screen_shake_leaves_no_residue() -> void:
 	if _arena == null:
 		return
+	var moved := false
+	var phase_span := 1400  # ~2 full turns of the 0.09 rad/ms phase
+	for step in 70:
+		var now := Time.get_ticks_msec() + step * (phase_span / 70)
+		_arena._impact = 1.0
+		_arena._apply_impact_shake(now)
+		if _arena.position != Vector2.ZERO:
+			moved = true
 	_arena._impact = 1.0
-	_arena._apply_impact_shake()
-	_check(_arena.position != Vector2.ZERO, "a full impact must actually displace the screen")
+	_arena._apply_impact_shake(Time.get_ticks_msec() + phase_span / 8)
+	if not moved:
+		_check(false, "a full impact never displaced the screen across a whole sine period - "
+			+ "the shake is dead, not merely at a zero crossing")
 	_arena._impact = 0.0
-	_arena._apply_impact_shake()
+	_arena._apply_impact_shake(Time.get_ticks_msec() + phase_span / 8)
 	_check(_arena.position == Vector2.ZERO,
 		"the shake MUST restore the screen position to zero (found %s)" % _arena.position)
 
