@@ -52,6 +52,10 @@ var _shield := false
 var _started := false
 ## `--web` forces the web-only sections on so a desktop capture can show them.
 var _force_web := false
+## `--orbs N` puts N throwers around the hero with an orb in the air, so a still frame can
+## show the ranged attack at all — a projectile only exists mid-flight.
+var _orbs := 0
+const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 ## `--scroll max` shows the BOTTOM of the page (the town's update section lives there).
 var _scroll := ""
 ## The stop the `world` capture enters. Act 0, stop 0 — the first one a player sees.
@@ -95,6 +99,8 @@ func _initialize() -> void:
 			"--shield":
 				_shield = true
 				step = 1
+			"--orbs":
+				_orbs = int(args[i + 1])
 			"--scroll":
 				_scroll = args[i + 1]
 			"--web":
@@ -222,6 +228,37 @@ func _resolve(name: String) -> Dictionary:
 			return {"key": name, "tab": ""}
 
 
+## `--orbs N` — place N throwers at their stand-off distance with one orb of each in the air at a
+## different travel distance, then STOP the run so the frame does not depend on how many frames
+## the capture waited: an orb flies 268 px/s and would be inside the hero by frame 45.
+func _seed_orbs() -> void:
+	var screen = _main._screens.get("survivor", null)
+	if screen == null or screen.run == null:
+		return
+	var run = screen.run
+	run.monsters.clear()
+	run.projectiles.clear()
+	for i in _orbs:
+		run._spawn_one()
+		var m: Dictionary = run.monsters[run.monsters.size() - 1]
+		m["ranged"] = true
+		m["keep_range"] = SurvivorRun.KEEP_RANGE
+		m["hp"] = m["max_hp"]
+		# Never fires on its own: the capture must not depend on a cooldown.
+		m["atk_ready"] = 999.0
+		var ang := TAU * float(i) / float(maxi(1, _orbs)) - PI * 0.5
+		m["pos"] = run.player_pos + Vector2(cos(ang), sin(ang)) * SurvivorRun.KEEP_RANGE
+		var dir: Vector2 = (run.player_pos - (m["pos"] as Vector2)).normalized()
+		run.projectiles.append({
+			"pos": (m["pos"] as Vector2) + dir * (30.0 + 55.0 * float(i + 1)),
+			"vel": dir * SurvivorRun.PROJECTILE_SPEED,
+			"dmg": 7,
+			"age": 0.0,
+			"colour": str(m["orb_colour"]),
+		})
+	screen.stop()
+
+
 func _entry() -> void:
 	if _screen == "":
 		return
@@ -280,6 +317,11 @@ func _entry() -> void:
 			while (not arena.battle.ended or not arena._result_built) and guard < 300:
 				arena.step()
 				guard += 1
+	elif key == "survivor":
+		# The run is STARTED by the router's own `_enter_survivor`, not by showing the screen:
+		# a survivor screen with no run draws nothing, which produced a black frame the first
+		# time this was captured.
+		_main._enter_survivor(0)
 	elif not _main._screens.has(key):
 		# A name the router does not have used to be a silent no-op: the capture then wrote
 		# whatever WAS up under the asked-for name.
@@ -296,6 +338,8 @@ func _entry() -> void:
 		while t < _fight_ticks and arena.battle != null and not arena.battle.ended:
 			arena.step()
 			t += 1
+	if _orbs > 0 and key == "survivor":
+		_seed_orbs()
 	_arm_opportunity(key)
 	_apply_tab()
 

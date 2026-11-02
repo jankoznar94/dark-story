@@ -44,6 +44,40 @@ const HIT_REACH := ATTACK_RANGE + MON_RADIUS
 const ATTACK_COOLDOWN := 0.85
 const CONTACT_PAD := 3.0
 
+## --- ranged units ----------------------------------------------------------
+## The PWA had no notion of range: every monster walked into the hero and the damage was a
+## contact tick. Ranged attacks are NEW in the port (Jan, Nov 2026), so this is where the
+## distance between the two sides finally means something.
+##
+## A thrower stops at `KEEP_RANGE` and shoots; it walks BACKWARDS when the hero closes inside
+## `RETREAT_RANGE`, which is the whole point — the player has to spend movement to get into
+## reach instead of just waiting for the pack to arrive. The retreat is slower than the hero
+## on purpose: a caster that can outrun a player makes a fight that never ends.
+const KEEP_RANGE := 232.0
+const RETREAT_RANGE := 168.0
+const SHOOT_RANGE := 470.0
+const PROJECTILE_SPEED := 268.0
+## 12 px on a 1077 px-wide canvas: the first pass was 9 and it read as a speck of dust on the
+## grass rather than as a threat. The orb is a BODY, so it has to look like one.
+const PROJECTILE_RADIUS := 12.0
+const PROJECTILE_LIFETIME := 3.2
+## Rarach's orb. Green because it is a poison bolt, and the fight has to be readable at a
+## glance: a green ball crossing the arena is a different threat from a body walking at you.
+const ORB_COLOUR := "#7ac74f"
+
+## Which kinds keep their distance.
+##
+## Two inputs, in this order:
+##   * a row that already says `caster` is a spell thrower in the PWA's own vocabulary;
+##   * `RANGED_FACES` — the port's own list of kinds that throw rather than touch. Rarach was
+##     the first: in the PWA he was a melee imp carrying a `poison_bolt` he never cast, which
+##     is exactly why the fight had no distance in it.
+##
+## ⚠️  This table lives in the PORT and not in `data/MONSTER_DB.json`: `data/` is generated
+## from the PWA by `tools/import/convert.mjs`, so a hand edit there disappears on the next
+## conversion and the rule silently reverts.
+const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
+
 ## --- spawning -------------------------------------------------------------
 ## The density is the design dial. The Dark Story pacing rule banned hordes; the survivor
 ## loop needs a CROWD, so the number lives here, named, and the slice stays at 16 alive.
@@ -77,6 +111,8 @@ var dmg_max := 2
 var crit_chance := 0.0
 
 var monsters: Array = []
+## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
+var projectiles: Array = []
 var drops: Array = []
 var numbers: Array = []
 ## Sound cues, drained by the screen every frame (battle.gd does the same with its log).
@@ -134,6 +170,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 
 	player_pos = WORLD * 0.5
 	monsters.clear()
+	projectiles.clear()
 	drops.clear()
 	numbers.clear()
 	events.clear()
@@ -171,6 +208,7 @@ func step(dt: float, move: Vector2) -> void:
 	_spawn_tick(dt)
 	_move_monsters(dt)
 	_auto_attack(dt)
+	_step_projectiles(dt)
 	_move_drops(dt)
 	_age_numbers(dt)
 
@@ -233,6 +271,7 @@ func _spawn_one() -> void:
 	# a later act is dangerous without a second table.
 	var lvl_scale := 1.0 + float(act_id) * 0.35
 	var mon_hp := int(round(float(row.get("hp", 60)) * lvl_scale))
+	var ranged := _is_ranged(row)
 	monsters.append({
 		"id": _next_id,
 		"face": str(row.get("face", "")),
@@ -247,8 +286,21 @@ func _spawn_one() -> void:
 		"atk_ready": 0.0,
 		"hit_flash": 0.0,
 		"bob": rng.randf() * TAU,
+		# A thrower's DISTANCE is part of its record, not a global: the fight has to be able
+		# to give two kinds different stand-off ranges without a second table.
+		"ranged": ranged,
+		"keep_range": KEEP_RANGE,
+		"orb_colour": str(row.get("orbColor", ORB_COLOUR)),
 	})
 	_next_id += 1
+
+
+## A row is a thrower when the PWA itself called it a caster, or when it is on the port's own
+## `RANGED_FACES` list — see the constants block for why both inputs exist.
+func _is_ranged(row: Dictionary) -> bool:
+	if str(row.get("attackType", "")) == "caster":
+		return true
+	return RANGED_FACES.has(str(row.get("face", "")))
 
 
 # ============================================================================ monsters
@@ -260,20 +312,81 @@ func _move_monsters(dt: float) -> void:
 		m["bob"] = float(m["bob"]) + dt * 7.0
 		var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
 		var gap := to_hero.length()
-		var stop_at := BODY_RADIUS * 2.0
+		var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
+		var ranged := bool(m["ranged"])
+		# A thrower stops OUT OF REACH and shoots; a melee kind stops when the two discs touch.
+		var stop_at := float(m["keep_range"]) if ranged else BODY_RADIUS * 2.0
 		if gap > stop_at:
 			var step_len := minf(float(m["speed"]) * dt, gap - stop_at)
-			m["pos"] = (m["pos"] as Vector2) + to_hero.normalized() * step_len
+			m["pos"] = _clamp_world((m["pos"] as Vector2) + dir * step_len)
+		elif ranged and gap < RETREAT_RANGE:
+			# Backing off is SLOWER than walking in, and it can be cornered: the arena's
+			# edge wins over the caster's comfort.
+			var back := minf(float(m["speed"]) * 0.8 * dt, RETREAT_RANGE - gap)
+			m["pos"] = _clamp_world((m["pos"] as Vector2) - dir * back)
 
-		# Contact damage. The cooldown is the KIND's own attack speed, so a Bear hits like
-		# a bear and a Wolf like a wolf with no extra code.
+		# The gap AFTER the move: the attack must be judged on where the bodies really are,
+		# or a caster fires from a distance it has already left.
+		var after: float = player_pos.distance_to(m["pos"] as Vector2)
 		m["atk_ready"] = maxf(0.0, float(m["atk_ready"]) - dt)
-		if gap <= stop_at + 1.0 and float(m["atk_ready"]) <= 0.0:
-			m["atk_ready"] = float(m["atk_cd"])
-			_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
+		if float(m["atk_ready"]) <= 0.0:
+			if ranged:
+				if after <= SHOOT_RANGE:
+					m["atk_ready"] = float(m["atk_cd"])
+					_shoot(m, player_pos - (m["pos"] as Vector2))
+			elif after <= stop_at + 1.0:
+				# Contact damage. The cooldown is the KIND's own attack speed, so a Bear hits
+				# like a bear and a Wolf like a wolf with no extra code.
+				m["atk_ready"] = float(m["atk_cd"])
+				_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
 		alive.append(m)
 	monsters = alive
 	_resolve_bodies()
+
+
+func _clamp_world(pos: Vector2) -> Vector2:
+	return Vector2(clampf(pos.x, MON_RADIUS, WORLD.x - MON_RADIUS),
+		clampf(pos.y, MON_RADIUS, WORLD.y - MON_RADIUS))
+
+
+## One orb, aimed at where the hero IS at the moment of the throw. It is NOT homing: that is
+## what makes the distance a skill instead of a formality — stepping out of the line is the
+## answer, and a hero who only walks straight in eats every ball.
+func _shoot(m: Dictionary, toward: Vector2) -> void:
+	var dir := toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
+	var dmg := rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"])))
+	projectiles.append({
+		"pos": (m["pos"] as Vector2) + dir * (BODY_RADIUS + 6.0),
+		"vel": dir * PROJECTILE_SPEED,
+		"dmg": dmg,
+		"age": 0.0,
+		"colour": str(m["orb_colour"]),
+	})
+	events.append("orb")
+
+
+## An orb is a BODY with a radius, and it dies on the hero's disc, not on his centre — the same
+## rule the hero's own reach uses. A projectile that only tests the centre passes through a
+## shoulder, which is exactly the bug "the ball went through me" describes.
+func _step_projectiles(dt: float) -> void:
+	if projectiles.is_empty():
+		return
+	var keep: Array = []
+	for p in projectiles:
+		p["age"] = float(p["age"]) + dt
+		var pos: Vector2 = (p["pos"] as Vector2) + (p["vel"] as Vector2) * dt
+		p["pos"] = pos
+		if float(p["age"]) > PROJECTILE_LIFETIME:
+			continue
+		if pos.x < -PROJECTILE_RADIUS or pos.y < -PROJECTILE_RADIUS \
+				or pos.x > WORLD.x + PROJECTILE_RADIUS or pos.y > WORLD.y + PROJECTILE_RADIUS:
+			continue
+		if pos.distance_to(player_pos) <= HERO_RADIUS + PROJECTILE_RADIUS:
+			events.append("orb_hit")
+			_take_damage(int(p["dmg"]))
+			continue
+		keep.append(p)
+	projectiles = keep
 
 
 ## Bodies are SOLID. Jan: "hrdina prochází nepřáteli jakoby to byli duchové. Portréty se nesmí

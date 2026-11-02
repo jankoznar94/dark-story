@@ -36,6 +36,10 @@ const ACT_COUNT := 5
 
 var data: Dictionary = {}
 
+## The PWA's `testMode`. NOT saved: the flag is a switch on the session, and the unlocked
+## data it produced is what the save carries (the PWA behaves the same way).
+var test_mode := false
+
 ## GameData, bound once at startup — see bind_data().
 var _data_ref: Node
 
@@ -101,6 +105,67 @@ func reset() -> void:
 	}
 	for _i in CHEST_SLOTS:
 		data["chest"].append(null)
+	# A fresh game is never a test game — `disable_test_mode()` and `_clear_save()` both land
+	# here, and a stale flag would make the nav entry lie about the save in front of it.
+	test_mode = false
+
+
+## The PWA's `toggleTestMode()` — every gate in the game opened at once, so a build can be
+## checked without playing five acts to get there.
+##
+## The numbers are the PWA's own, not invented here: 100 000 gold, 50 talent points, 150
+## attribute points, level 50, every boss defeated in every difficulty, every stop of every
+## act unlocked, and the whole bestiary seen.
+##
+## ⚠️  Derived pools are NOT set here. `maxHp`/`maxMana` are computed from attributes and gear
+## by ItemGen, and a copy of that formula written again in this file is exactly how the port
+## ended up with a level-20 hero on level-1 pools once already. The caller (Main, which owns
+## both ItemGen and the save) recomputes them right after this call.
+func enable_test_mode() -> void:
+	var h := hero()
+	h["gold"] = 100000
+	h["level"] = 50
+	h["xp"] = 0
+	h["attrPoints"] = 150
+	data["talentPoints"] = 50
+	# Every boss defeated in every difficulty: this is what unlocks the acts.
+	var bosses: Array = data["bossesDefeated"]
+	for difficulty in bosses.size():
+		var row: Array = bosses[difficulty]
+		for act in row.size():
+			row[act] = true
+	# 999 = every stop of every act is open. `_maxLocationProgress` moves with it because
+	# unlocking reads the MAX, never the current value (farming an earlier stop lowers
+	# `locationProgress` back down).
+	for act in ACT_COUNT:
+		data["locationProgress"][act] = 999
+		data["_maxLocationProgress"][act] = 999
+		data["areaFightProgress"][act] = 0
+	# The bestiary: every monster face of every theme, plus every act's boss.
+	var seen: Array = []
+	if _data_ref != null:
+		var themes: Array = _data_ref.table("MONSTER_DB", [])
+		for bucket in themes:
+			for row in bucket:
+				var face := str(row.get("face", ""))
+				if face != "" and not seen.has(face):
+					seen.append(face)
+		for act in _data_ref.acts():
+			var boss: Dictionary = act.get("boss", {})
+			var boss_face := str(boss.get("face", ""))
+			if boss_face != "" and not seen.has(boss_face):
+				seen.append(boss_face)
+	data["encounteredMonsters"] = seen
+	test_mode = true
+
+
+## Off again = a NEW GAME, exactly as the PWA's `toggleTestMode()` does with its
+## `state = defaultState()`. Test mode overwrites the save, so leaving it must not leave the
+## player in a game he did not earn. The caller re-seeds the class: a save with no class has
+## no skills, no weapon rules and no mana pool.
+func disable_test_mode() -> void:
+	test_mode = false
+	reset()
 
 
 func _empty_equip() -> Dictionary:

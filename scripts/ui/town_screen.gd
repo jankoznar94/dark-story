@@ -445,8 +445,11 @@ func enter(on_shop_reset: Callable) -> void:
 
 func refresh() -> void:
 	# Wilderness is offered only while an act is still uncompleted — otherwise the
-	# button is a dead end. Same rule as the PWA's `canEnter` in renderTown.
-	_wilderness_button.visible = _first_uncompleted_act() >= 0
+	# button is a dead end. Same rule as the PWA's `canEnter` in renderTown, which also
+	# carries the test-mode escape: with every boss marked dead there is no "uncompleted"
+	# act left, and hiding the one tile that leads to the map would lock the tester out of
+	# the content test mode just unlocked.
+	_wilderness_button.visible = _state.test_mode or _first_uncompleted_act() >= 0
 
 	var portal: Variant = _state.data.get("townPortalReturn")
 	if portal == null:

@@ -294,6 +294,10 @@ func _play_events() -> void:
 				_say("Batoh je plný — předmět zůstal na zemi")
 			"dead":
 				Sfx.play_global(Sfx.CUE_HURT)
+			"orb":
+				# The throw itself. A caster that fires silently reads as a bug in the hero's
+				# health bar, so the cue is part of the feature, not decoration.
+				Sfx.play_global(Sfx.CUE_ENEMY_CAST)
 
 
 func _place_camera() -> void:
@@ -337,6 +341,7 @@ func _draw() -> void:
 	_draw_attack_ring()
 	_draw_drops()
 	_draw_actors()
+	_draw_projectiles()
 	_draw_slash()
 	_draw_numbers()
 	_draw_hud()
@@ -511,6 +516,41 @@ func _draw_attack_ring() -> void:
 		var a0 := TAU * float(i) / float(RING_SEGMENTS)
 		var a1 := a0 + TAU / float(RING_SEGMENTS) * 0.55
 		draw_arc(pos, radius, a0, a1, 6, col, 1.5 + 1.5 * hot, true)
+
+
+## The orb is a BODY, not a UI dot: it gets the same flattened contact shadow the portraits have,
+## because a green ball with no shadow reads as something stuck to the camera. The short tail
+## behind it is the direction — a phone player has to be able to tell an incoming throw from a
+## passing one at a glance.
+##
+## No glow (Jan's rule): the edge is a darker rim of the orb's own colour, which is what
+## separates it from the grass without lighting anything up.
+func _draw_projectiles() -> void:
+	var radius: float = SurvivorRun.PROJECTILE_RADIUS
+	for p in run.projectiles:
+		var pos: Vector2 = (p["pos"] as Vector2) - _cam
+		if pos.x < -40.0 or pos.y < -40.0 or pos.x > size.x + 40.0 or pos.y > size.y + 40.0:
+			continue
+		var col := Color(str(p["colour"]))
+		var rim := col.darkened(0.66)
+		var vel: Vector2 = p["vel"]
+		var dir := vel.normalized() if vel.length() > 0.001 else Vector2.RIGHT
+		# TAIL: three tapered blobs BEHIND the orb, and none of them touches it. A trail that
+		# overlaps its own head reads as a glow — measured on the first frame, where the orb
+		# was described as "a soft glowing particle" — and the port has no glow.
+		for i in 3:
+			var t := float(i + 1)
+			var trail: Vector2 = pos - dir * (radius + 6.0 + t * 9.0)
+			draw_circle(trail, maxf(1.5, radius * (0.56 - 0.13 * t)),
+				Color(col.r, col.g, col.b, 0.42 - 0.11 * t))
+		# The contact shadow is what puts the orb IN the arena instead of on the lens.
+		draw_set_transform(Vector2(pos.x, pos.y + radius * 1.2), 0.0, Vector2(1.0, 0.34))
+		draw_circle(Vector2.ZERO, radius * 1.15, Color(0, 0, 0, 0.55))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		# A hard dark rim, then the fill. No highlight and no bloom: the edge is the contrast,
+		# which is the only way a green ball stays readable on green grass.
+		draw_circle(pos, radius + 2.0, rim)
+		draw_circle(pos, radius, col)
 
 
 ## The swing itself: an arc sweeping across the reach in the direction the blow was aimed. Drawn

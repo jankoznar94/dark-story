@@ -56,6 +56,9 @@ func _initialize() -> void:
 	_test_contact_damage_kills()
 	_test_bodies_are_solid()
 	_test_reach_is_the_drawn_circle()
+	_test_ranged_kinds()
+	_test_thrower_keeps_distance_and_fires()
+	_test_orb_hits_and_can_be_dodged()
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
 	_test_wave_counter()
@@ -251,6 +254,10 @@ func _test_contact_damage_kills() -> void:
 	run.monsters.clear()
 	run._spawn_one()
 	var m: Dictionary = run.monsters[0]
+	# ⚠️  Explicitly MELEE: this section is about contact damage, and the spawn table can hand
+	# back a thrower (Rarach) that never touches the hero. Pinning the flag keeps the test
+	# about the thing it names instead of about which row the dice picked.
+	m["ranged"] = false
 	m["hp"] = 99999
 	m["dmg_min"] = 6
 	m["dmg_max"] = 6
@@ -262,6 +269,106 @@ func _test_contact_damage_kills() -> void:
 	_check(run.finished and run.outcome == "dead",
 		"contact damage must be able to end the run, hp=%d finished=%s" % [run.hp, str(run.finished)])
 	_check(run.hp == 0, "hp must clamp at 0, got %d" % run.hp)
+
+
+# ============================================================================ ranged units
+
+## WHICH kinds throw. The rule is the port's own (the PWA had no range at all), so it is
+## asserted rather than assumed: a data regeneration or a renamed face silently turns Rarach
+## back into a melee imp, and nothing else in the game would say so.
+func _test_ranged_kinds() -> void:
+	_log("  section: ranged_kinds")
+	var run := _fresh()
+	var rarach := _row_with_face("assets/monsters/lesni_rarach.png")
+	_check(not rarach.is_empty(), "act 0 must offer Rarach (lesni_rarach)")
+	if not rarach.is_empty():
+		_check(run._is_ranged(rarach), "Rarach must be a THROWER, not a melee imp")
+	var wolf := _row_with_face("assets/monsters/vlk.png")
+	if not wolf.is_empty():
+		_check(not run._is_ranged(wolf), "Wolf must stay melee")
+	# The PWA's own vocabulary: a caster row throws.
+	_check(run._is_ranged({"attackType": "caster"}), "attackType=caster must count as ranged")
+
+
+## The point of a ranged unit is DISTANCE. It walks in to `KEEP_RANGE` and stops there — if it
+## walks to contact distance anyway, the range is a number in a table and nothing else.
+func _test_thrower_keeps_distance_and_fires() -> void:
+	_log("  section: thrower_keeps_distance")
+	var run := _fresh()
+	run.max_hp = 999999
+	run.hp = 999999
+	run.monsters.clear()
+	run.projectiles.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	# Pinned to a thrower: this section is about the stand-off, not about the dice.
+	m["ranged"] = true
+	m["keep_range"] = SurvivorRun.KEEP_RANGE
+	m["hp"] = 999999
+	m["speed"] = 60.0
+	m["atk_cd"] = 0.6
+	m["atk_ready"] = 0.0
+	m["pos"] = run.player_pos + Vector2(400.0, 0.0)
+
+	var fired := 0
+	for i in 240:
+		var before := run.projectiles.size()
+		run._move_monsters(STEP)
+		if run.projectiles.size() > before:
+			fired += 1
+		run._step_projectiles(STEP)
+	var gap: float = (m["pos"] as Vector2).distance_to(run.player_pos)
+	_check(fired > 0, "a thrower in range must fire, fired=%d" % fired)
+	_check(gap >= SurvivorRun.KEEP_RANGE - 2.0,
+		"a thrower must keep its distance, gap=%.1f keep=%.1f" % [gap, SurvivorRun.KEEP_RANGE])
+	_check(gap <= SurvivorRun.KEEP_RANGE + 60.0,
+		"a thrower must CLOSE to its keep distance, not hang back, gap=%.1f" % gap)
+
+
+## An orb is a body: it hits the hero's disc, it hurts, and it MISSES when the hero steps out
+## of the line. The miss is the half that makes movement matter, so it is asserted too.
+func _test_orb_hits_and_can_be_dodged() -> void:
+	_log("  section: orb_hits_and_dodges")
+	var run := _fresh()
+	run.max_hp = 500
+	run.hp = 500
+	run.defense = 0
+	run.monsters.clear()
+	run.projectiles.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["dmg_min"] = 12
+	m["dmg_max"] = 12
+
+	# A. Straight in: the orb must hurt.
+	run._shoot(m, run.player_pos - (m["pos"] as Vector2))
+	_check(run.projectiles.size() == 1, "a throw must put exactly one orb in the air")
+	var hit_hp := run.hp
+	for i in 120:
+		run._step_projectiles(STEP)
+		if run.hp < 500:
+			break
+	_check(run.hp < 500, "an orb aimed at a standing hero must hit, hp=%d" % run.hp)
+	hit_hp = run.hp
+	_check(run.projectiles.is_empty(), "a spent orb must leave the air, %d left" % run.projectiles.size())
+
+	# B. Step out of the line: the same throw must miss.
+	run.projectiles.clear()
+	run._shoot(m, run.player_pos - (m["pos"] as Vector2))
+	var dir := (run.player_pos - (m["pos"] as Vector2)).normalized()
+	run.player_pos += dir.orthogonal() * 140.0
+	for i in 120:
+		run._step_projectiles(STEP)
+	_check(run.hp == hit_hp, "an orb must MISS a hero who stepped aside, hp %d -> %d" % [hit_hp, run.hp])
+
+
+## The data row for a face in the act-0 pool. A helper rather than an index, because the pool
+## order comes from the converter.
+func _row_with_face(face: String) -> Dictionary:
+	for row in _data.monsters_for_theme(0):
+		if str(row.get("face", "")) == face:
+			return row
+	return {}
 
 
 ## Jan's report: "hrdina prochází nepřáteli jakoby to byli duchové. Portréty se nesmí překrývat."

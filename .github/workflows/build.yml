@@ -313,6 +313,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SURVIVOR_ALL_PASS=true"
 
+      # The nav bar's test button. It is a GATE, and a gate whose failure is "the button says
+      # a message" looks exactly like a working button: nothing crashes, nothing is logged.
+      # The numbers are asserted one by one against the PWA's `toggleTestMode()`, and the last
+      # section drives the RUNNING game (`main.gd`) through the nav entry — the half that no
+      # state test can see, and the half that was broken for the whole port.
+      - name: Test mode test (unlocks, derived pools, nav wiring)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_test_mode.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "TEST_MODE_ALL_PASS=true"
+
       # The arena's CLOCK and its END, driven through `_process(delta)` — the seam no other
       # test touches. `test_combat` supplies the clock itself (it ticks the battle 100 ms at
       # a time), so a screen that pumped one tick per FRAME looked perfect to it while the

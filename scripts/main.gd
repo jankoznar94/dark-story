@@ -41,6 +41,7 @@ const HitStop := preload("res://scripts/ui/hit_stop.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const Socketing := preload("res://scripts/items/socketing.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
+const Progression := preload("res://scripts/combat/progression.gd")
 
 var data: Node
 var gen: ItemGen
@@ -92,9 +93,7 @@ func _ready() -> void:
 	# fresh save is seeded with the first class rather than left empty.
 	var resumed: bool = state.load_from_disk()
 	if not resumed or str(state.data.get("heroClass", "")) == "":
-		var classes: Dictionary = data.classes()
-		var first: String = str((classes.keys() as Array)[0]) if not classes.is_empty() else "barbarian"
-		state.set_class(first)
+		_seed_first_class()
 		state.save()
 	_build_screens()
 	_build_nav()
@@ -447,6 +446,51 @@ func _on_levelled_up(_level: int) -> void:
 		_music.duck(0.3, 750.0)
 
 
+## The PWA's `toggleTestMode()`. Jan, Nov 2026: "Toto tlačítko musí odemknout všechny
+## možnosti. Všechny SKILL pointy, atribut pointy, atd. Zkrátka jak to bylo v původní hře
+## Dungeon recall."
+##
+## It is a TOGGLE, like in the PWA: on opens every gate, off starts a NEW GAME (the PWA
+## throws the state away with `defaultState()`). The save is written in both directions —
+## a test session that does not survive a reload cannot be used to check a deployed build,
+## which is the whole point of having the button.
+##
+## The derived pools are recomputed HERE and not in GameState: ItemGen owns those formulas.
+func _toggle_test_mode() -> void:
+	if state.test_mode:
+		state.disable_test_mode()
+		_seed_first_class()
+		state.save()
+		_set_status("Testovací režim vypnut — nová hra.")
+	else:
+		state.enable_test_mode()
+		_recompute_hero_pools()
+		state.save()
+		_set_status("Testovací režim zapnut — level 50, 50 talentů, 150 atributů, vše odemčeno.")
+	# Every screen is built ONCE and reads the state when it is entered, so the one on screen
+	# has to go through the router again or it keeps showing the numbers from before.
+	if _screens.has(_current):
+		show_screen(_current)
+
+
+## A fresh save has no class, and a hero without one has no skills, no weapon rules and no
+## mana pool. The first class in the table is the PWA's own default too.
+func _seed_first_class() -> void:
+	var classes: Dictionary = data.classes()
+	var first: String = str((classes.keys() as Array)[0]) if not classes.is_empty() else "barbarian"
+	state.set_class(first)
+
+
+## The pools the hero's LEVEL and gear derive. One place: a level-50 test hero has to be the
+## same hero the arena and the stat page compute for a level-50 hero earned in play.
+func _recompute_hero_pools() -> void:
+	var hero: Dictionary = state.hero()
+	hero["maxHp"] = gen.hero_max_hp(hero, state.equip(), _resolve)
+	hero["maxMana"] = gen.hero_max_mana(hero, state.equip(), str(state.data.get("heroClass", "")), _resolve)
+	hero["hp"] = hero["maxHp"]
+	hero["mana"] = hero["maxMana"]
+
+
 func _on_nav_selected(key: String) -> void:
 	# Leaving the arena from the nav is a retreat: the fight must be ended rather than
 	# left ticking behind another screen.
@@ -466,7 +510,7 @@ func _on_nav_selected(key: String) -> void:
 			_toggle_music()
 			return
 		"testmode":
-			_set_status("Testovaci rezim neni v portu preneseny.")
+			_toggle_test_mode()
 			return
 		"clearsave":
 			_clear_save()
