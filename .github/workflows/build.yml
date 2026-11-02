@@ -698,8 +698,11 @@ jobs:
       # installs OVER the old one because it is signed with the same key every time.
       #
       # ⚠️  Rolling tag, not `build-<run>`: a new tag per run buries the repo in releases
-      # and there is no stable link to give the phone. `make_latest` is what makes
-      # `/releases/latest/download/dungeon-recall.apk` resolve.
+      # and there is no stable link to give the phone. The URL is
+      # `/releases/download/android-latest/dungeon-recall.apk` — addressed by TAG on
+      # purpose: this one repository also publishes Zily and Thrower builds, so claiming
+      # the "latest" badge (make_latest) here would quietly point every other game's
+      # `/releases/latest/...` link at Dungeon Recall.
       #
       # ⚠️  Same rule as the web deploy above: whatever branch was pushed last IS the live
       # game, and the phone build must be the same code Jan plays in the browser. Pinning
@@ -714,7 +717,6 @@ jobs:
         with:
           tag_name: android-latest
           name: Android build (latest)
-          make_latest: true
           body: ${{ steps.built.outputs.report }}
           files: |
             build/windows/dungeon-recall.exe

@@ -91,16 +91,21 @@ Every push to `dr-godot` runs the workflow, which exports the APK, stamps it wit
 `version/code = <run number>` and publishes it to a rolling GitHub release:
 
 ```
-https://github.com/jankoznar94/dark-story/releases/latest/download/dungeon-recall.apk
+https://github.com/jankoznar94/dark-story/releases/download/android-latest/dungeon-recall.apk
 ```
 
 Open that link on the phone, install over the old build, save kept. The same URL
 always serves the newest build, so nothing has to be rebuilt or copied by hand. The
 APK is also kept as a workflow artifact for when a release step itself fails.
 
-⚠️  The publish step only runs on `dr-godot` — a feature branch must never become
-"latest" — and only once the keystore secret exists. An APK signed with a throwaway
-key would install but could never be updated over.
+⚠️  Address the release by TAG (`/releases/download/android-latest/…`), never by
+`/releases/latest/…`: this repository also publishes Zily and Thrower builds, so the
+"latest" badge must not be claimed by this workflow.
+
+⚠️  The publish step runs on whichever branch was pushed last, exactly like the web
+deploy — the phone build must be the same code the browser serves. It only runs once
+the keystore secret exists; an APK signed with a throwaway key would install but
+could never be updated over.
 
 First install only: Android asks once for permission to install from this source.
 
