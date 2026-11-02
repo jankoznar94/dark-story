@@ -58,44 +58,25 @@ const CUE_LEVELUP := "levelup"
 ## which is a different event from gaining a level and is the one that plays a FILE.
 const CUE_POINT_SPENT := "point_spent"
 const CUE_CLICK := "click"
-## The PWA's `sfxSuccess` / `sfxBossDefeat` — the fight-ending jingles, both of which it
-## SYNTHESISES with `playTone` oscillators rather than playing a file. See `TONES`.
+## The PWA's `sfxSuccess` / `sfxBossDefeat` — the fight-ending jingles, which it SYNTHESISED
+## with `playTone` oscillators. This port plays the win STING FILE for both instead; generated
+## sound is gone (see the note below the cue list).
 const CUE_VICTORY := "victory"
 const CUE_BOSS_DEFEAT := "boss_defeat"
 
-## ⚠️  THE SAME SOUND, TWO DIFFERENT EVENTS, and the port had them crossed.
+## ⚠️  NO SYNTHESISED SOUND PLAYS IN THIS GAME ANY MORE (Jan, Nov 2026: "zruš veškeré
+## generované zvuky … ať zůstanou jen zvuky, ze zvukového souboru").
 ##
-## The PWA has BOTH a `levelupSfx` FILE (`assets/sfx/levelup.mp3`) and an `sfxLevelUp()`
-## OSCILLATOR fanfare, and they are not interchangeable:
+## The PWA rendered its three fanfares (level-up, victory, boss defeat) with `playTone`
+## oscillator chains instead of files, and this port re-implemented them as generated
+## `AudioStreamWAV`s. Generated tones through a phone speaker read as a cheap beep next to the
+## sampled hits, and the whole point of the mixer is that every cue is a FILE:
 ##
-##   * gaining a level (XP threshold) -> `sfxLevelUp()`, the oscillator + `duckBgm`
-##   * spending a talent / attribute point -> `playSFX(levelupSfx)`, the FILE
+##   * gaining a level            -> `assets/sfx/levelup.mp3`
+##   * victory page               -> `assets/audio/win.mp3`
+##   * boss defeat                -> `assets/audio/win.mp3`
 ##
-## An earlier revision of this port played the FILE on a level-up. That is the OTHER
-## event's sound, and it reads as "the fanfare is wrong" rather than as a wrong mapping.
-##
-## `playTone` is a WebAudio oscillator and has no Godot equivalent to reuse, so the four
-## tones are described as data (`TONES`) and rendered into a `AudioStreamWAV` once. Each
-## entry is `{freq, ms, shape, volume, delay_ms}` — the PWA's own numbers, verbatim.
-const TONES := {
-	CUE_LEVELUP: [
-		{"freq": 392.0, "ms": 100.0, "shape": "sine", "volume": 0.12, "delay_ms": 0.0},
-		{"freq": 523.0, "ms": 100.0, "shape": "sine", "volume": 0.12, "delay_ms": 100.0},
-		{"freq": 659.0, "ms": 120.0, "shape": "sine", "volume": 0.14, "delay_ms": 200.0},
-		{"freq": 784.0, "ms": 150.0, "shape": "sine", "volume": 0.16, "delay_ms": 300.0},
-	],
-	CUE_VICTORY: [
-		{"freq": 523.0, "ms": 100.0, "shape": "sine", "volume": 0.12, "delay_ms": 0.0},
-		{"freq": 659.0, "ms": 100.0, "shape": "sine", "volume": 0.12, "delay_ms": 80.0},
-		{"freq": 784.0, "ms": 150.0, "shape": "sine", "volume": 0.14, "delay_ms": 160.0},
-	],
-	CUE_BOSS_DEFEAT: [
-		{"freq": 523.0, "ms": 150.0, "shape": "sine", "volume": 0.14, "delay_ms": 0.0},
-		{"freq": 659.0, "ms": 150.0, "shape": "sine", "volume": 0.14, "delay_ms": 100.0},
-		{"freq": 784.0, "ms": 150.0, "shape": "sine", "volume": 0.16, "delay_ms": 200.0},
-		{"freq": 1047.0, "ms": 300.0, "shape": "sine", "volume": 0.18, "delay_ms": 300.0},
-	],
-}
+## Do not bring `TONES` back. A cue with no file behind it is the thing that was rejected.
 
 ## The mixer singleton. A screen with no mixer of its own (the town, the shop) plays through
 ## this one, so a click on a shop tab is the same sound as a click anywhere else. Set by the
@@ -239,14 +220,21 @@ const TABLE := {
 	CUE_LEVELUP: [
 		{"paths": ["res://assets/sfx/levelup.mp3"], "volume": 0.70, "chance": 1.0},
 	],
-	## ⚠️  The FILE, which belongs to SPENDING a point — see the note above `CUE_LEVELUP`.
-	## The PWA's own `upgradeAttr` and its talent-invest handler both call
-	## `playSFX(levelupSfx)`, i.e. this same mp3.
+	## ⚠️  The FILE, which the PWA also uses for SPENDING a point — the same mp3 on both events
+	## now, because a level-up may no longer be a generated jingle (see the note above).
 	CUE_POINT_SPENT: [
 		{"paths": ["res://assets/sfx/levelup.mp3"], "volume": 0.70, "chance": 1.0},
 	],
 	CUE_CLICK: [
 		{"paths": ["res://assets/sfx/click.mp3"], "volume": 0.70, "chance": 1.0},
+	],
+	## The two fight-ending fanfares. Both are the game's own win sting, played as a FILE: the
+	## PWA's oscillator version is gone for good.
+	CUE_VICTORY: [
+		{"paths": ["res://assets/audio/win.mp3"], "volume": 0.90, "chance": 1.0},
+	],
+	CUE_BOSS_DEFEAT: [
+		{"paths": ["res://assets/audio/win.mp3"], "volume": 0.90, "chance": 1.0},
 	],
 }
 
@@ -300,7 +288,7 @@ static func known_cues() -> Array:
 
 
 static func is_known(cue: String) -> bool:
-	return TABLE.has(cue) or TONES.has(cue)
+	return TABLE.has(cue)
 
 
 ## Play one cue. An unknown cue is an error, not a silence: a typo in a rule would
@@ -313,11 +301,6 @@ func play(cue: String) -> void:
 		return
 	last_cue = cue
 	played_count += 1
-	# A SYNTHESISED cue is a whole jingle in one stream, so it has no layers and no
-	# per-layer volume — its own mixed volume is baked into the samples.
-	if TONES.has(cue):
-		_start_stream(_jingle_stream(cue), 1.0)
-		return
 	for layer in TABLE[cue]:
 		var chance := float(layer.get("chance", 1.0))
 		if chance < 1.0 and _rng.randf() >= chance:
@@ -369,8 +352,8 @@ func _start(path: String, volume: float) -> void:
 	_start_stream(stream, volume)
 
 
-## Hand an already-built stream to a free player. Split out from `_start` because a
-## synthesised jingle has no file behind it and no cache key.
+## Hand an already-built stream to a free player. Split out from `_start` so the caller can
+## pass a stream it already holds without going through the path cache again.
 func _start_stream(stream: AudioStream, volume: float) -> void:
 	if _pool.is_empty() or stream == null:
 		return
@@ -378,79 +361,14 @@ func _start_stream(stream: AudioStream, volume: float) -> void:
 	_next = (_next + 1) % _pool.size()
 	player.stream = stream
 	player.volume_db = SILENT_DB if volume <= 0.0 else linear_to_db(volume)
-	# ±2 semitones of pitch jitter, so a fight's forty identical swings stop sounding like
-	# one file on a loop. The PWA has no variation at all — it re-plays one `Audio` element —
-	# and a repeated cue is the cheapest, most audible place to buy "alive". Only a FILE gets
-	# it: a synthesised jingle (`TONES`) carries its own intended pitch and is a fanfare, not
-	# a repeated blow.
-	player.pitch_scale = _rng.randf_range(0.89, 1.12)
+	# ⚠️  NO PITCH JITTER. An earlier revision shifted every hit by ±2 semitones "so forty
+	# swings do not sound like one file on a loop". On the phone that reads as a processed,
+	# slightly detuned hit — the artefacts of resampling a 22-24 kHz source — and Jan's verdict
+	# was "nezní to dobře". The cue is the FILE, at the file's own pitch (Jan, Nov 2026).
+	player.pitch_scale = 1.0
 	player.play()
 
 
-## The PWA's `playTone` jingle, rendered to samples.
-##
-## ⚠️  `playTone` is a WebAudio `OscillatorNode` fed straight into `destination`: nothing
-## exists on disk, so there is no asset to port and the shape has to be BUILT. Each tone
-## gets its own slot in one buffer at its own `delay_ms` offset, which is what the PWA's
-## `setTimeout(() => playTone(...), delay)` chain produces — one stream rather than four
-## timers, so it cannot drift and a test can measure its length.
-##
-## The PWA's `g.exponentialRampToValueAtTime(0.001, now + d)` is the envelope: the tone
-## decays to a thousandth of its volume over its own duration.
-func _jingle_stream(cue: String) -> AudioStream:
-	var cached: AudioStream = _cache.get("tone:%s" % cue, null)
-	if cached != null:
-		return cached
-	var tones: Array = TONES.get(cue, [])
-	if tones.is_empty():
-		return null
-	var rate := 22050
-	var pcm := PackedFloat32Array()
-	var total_ms := 0.0
-	for tone in tones:
-		total_ms = maxf(total_ms, float(tone["delay_ms"]) + float(tone["ms"]))
-	# A tail so the last tone's decay is not cut off mid-sample.
-	var frames := int(round((total_ms + 20.0) / 1000.0 * float(rate)))
-	pcm.resize(frames)
-	pcm.fill(0.0)
-	for tone in tones:
-		var freq := float(tone["freq"])
-		var dur_ms := float(tone["ms"])
-		var vol := float(tone["volume"])
-		var shape := str(tone["shape"])
-		var start := int(round(float(tone["delay_ms"]) / 1000.0 * float(rate)))
-		var count := int(round(dur_ms / 1000.0 * float(rate)))
-		for i in count:
-			var idx := start + i
-			if idx < 0 or idx >= frames:
-				continue
-			var t := float(i) / float(rate)
-			var phase := TAU * freq * t
-			var s := 0.0
-			match shape:
-				"square":
-					s = 1.0 if sin(phase) >= 0.0 else -1.0
-				"sawtooth":
-					# `phase / TAU` normalised to [0,1), then mapped to [-1,1).
-					s = 2.0 * (freq * t - floor(freq * t + 0.5))
-				_:
-					s = sin(phase)
-			# `exponentialRampToValueAtTime(0.001, now + d)`, as a per-sample factor.
-			var frac := float(i) / float(maxi(1, count))
-			var env := pow(0.001 / maxf(vol, 0.0001), frac) if vol > 0.0 else 0.0
-			pcm[idx] += s * vol * env
-	var stream := AudioStreamWAV.new()
-	stream.format = AudioStreamWAV.FORMAT_16_BITS
-	stream.mix_rate = rate
-	stream.stereo = false
-	var bytes := PackedByteArray()
-	bytes.resize(frames * 2)
-	for i in frames:
-		var v := clampf(pcm[i], -1.0, 1.0)
-		bytes.encode_s16(i * 2, int(round(v * 32767.0)))
-	stream.data = bytes
-	_cache["tone:%s" % cue] = stream
-	return stream
 
 
 

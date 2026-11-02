@@ -103,6 +103,7 @@ func _ready() -> void:
 	_music.name = "Music"
 	_music.mode_provider = Callable(self, "_music_mode_for_current_screen")
 	add_child(_music)
+	_install_master_limiter()
 	# The screens' own sound mixer. Every screen that owns none (the town, the shop, the map)
 	# plays through this one via `Sfx.play_global()`, and it is also what makes the global
 	# button-click sound possible — see `_install_click_sfx`.
@@ -635,6 +636,29 @@ func _close_modal() -> void:
 	# Back to whatever was showing under the dialog — the PWA leaves that screen up the
 	# whole time, so closing simply uncovers it. `_modal_under` is set by `open_modal`.
 	show_screen(_modal_under if _modal_under != "" else "town")
+
+
+## A HARD LIMITER on the Master bus — the crackle fix.
+##
+## Every sound is a FILE at the PWA's own linear volumes: music 0.90-1.00 and a hit at 0.70.
+## Two hits inside one frame, or one hit over the overworld track, sum past 1.0 and the mixer
+## hard-clips on the phone, which is heard as crackle that follows the beat. The limiter holds
+## the ceiling without making anything quieter in normal play; it exists so the mix can stay at
+## the PWA's levels and still never exceed full scale.
+##
+## One effect, guarded: a headless test builds `main` too, and an audio driver that does not
+## know the class must not break the game.
+func _install_master_limiter() -> void:
+	var idx := AudioServer.get_bus_index("Master")
+	if idx < 0 or not ClassDB.class_exists("AudioEffectHardLimiter"):
+		return
+	for i in AudioServer.get_bus_effect_count(idx):
+		if AudioServer.get_bus_effect(idx, i) is AudioEffectHardLimiter:
+			return
+	var limiter: AudioEffectHardLimiter = AudioEffectHardLimiter.new()
+	limiter.ceiling_db = -1.0
+	limiter.release = 0.05
+	AudioServer.add_bus_effect(idx, limiter)
 
 
 func _toggle_music() -> void:
