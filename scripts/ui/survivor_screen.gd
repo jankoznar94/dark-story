@@ -589,49 +589,27 @@ func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
 	var base: float = dir.angle()
 	# The off hand is a COOLER stroke on purpose: when both hands swing together the eye has to
 	# be able to tell which arc belongs to which weapon.
-	var col := Color("#f4e6c8") if not mirrored else Color("#c2cfe6")
-	# Opacity holds through most of the sweep and drops at the very end. A stroke that fades
-	# evenly from the first frame is invisible on a phone — the first pass measured as "no second
-	# weapon at all" in a still frame.
-	col.a = (0.95 if not mirrored else 0.85) * (1.0 - t * 0.45)
-	var r0 := reach * 0.60
-	var r1 := reach
-	var width := (6.0 if not mirrored else 5.0) * (1.0 - t * 0.5) + 2.0
-	var lead := base - 0.55 + 1.10 * t
+	var col := Color("#f0e0c0") if not mirrored else Color("#a9c2e0")
+	# Opacity fades as the stroke travels, exactly as the single-hand arc always did: that shape
+	# was right, the only thing missing was the second hand. (Blades were tried and rejected —
+	# "čepele nevypadají moc dobře" — so this stays an arc.)
+	col.a = (0.95 if not mirrored else 0.80) * (1.0 - t * 0.75)
+	var r0 := reach * (0.62 if not mirrored else 0.54)
+	var r1 := reach * (1.0 if not mirrored else 0.92)
+	var width := (4.0 if not mirrored else 3.0) * (1.0 - t) + 1.0
 	if mirrored:
-		# Right to left.
-		lead = base + 0.55 - 1.10 * t
-		# A faint trailing arc behind the blade keeps the direction readable in motion.
-		draw_arc(pos, r1, lead, lead + 0.42, 14,
-			Color(col.r, col.g, col.b, col.a * 0.30), width * 0.7, true)
-		_blade(pos, lead, r1, Color("#8fb0d8"), Color("#cfe2f8"))
+		# Right to left, and a shade inside the main hand's circle so the two strokes never lie
+		# on top of each other.
+		var lead := base + 0.55 - 1.10 * t
+		draw_arc(pos, r1, lead, lead + 0.42, 12, col, width, true)
+		draw_arc(pos, r0, lead, lead + 0.30, 10,
+			Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
 	else:
 		# Left to right.
-		draw_arc(pos, r1, lead - 0.42, lead, 14,
-			Color(col.r, col.g, col.b, col.a * 0.30), width * 0.7, true)
-		_blade(pos, lead, r1, Color("#d9c393"), Color("#f5e6c2"))
-
-
-## The WEAPON itself: a tapered, flat blade sweeping around the hero. An arc alone is a line at
-## the reach circle, and the reach circle is exactly where the target portraits are — measured on
-## a still frame, two arcs at radius 76 read as "edges of the monster portraits" and the second
-## weapon was not visible at all. A blade coming OUT OF THE HERO cannot be mistaken for scenery.
-## Flat fill, hard edge, no glow (Jan's rule).
-func _blade(pos: Vector2, ang: float, length: float, body: Color, edge: Color) -> void:
-	var u := Vector2(cos(ang), sin(ang))
-	var v := Vector2(-u.y, u.x)
-	var a := pos + u * (length * 0.30)
-	var b := pos + u * length
-	var bw := 7.0
-	var tw := 1.0
-	var pts := PackedVector2Array([
-		a + v * bw, a - v * bw, b - v * tw, b + v * tw,
-	])
-	draw_colored_polygon(pts, body)
-	var outline := PackedVector2Array([a + v * bw, a - v * bw, b - v * tw, b + v * tw, a + v * bw])
-	draw_polyline(outline, edge, 1.5, true)
-	# The tip gets a small bright cap: that is the point the eye follows during a 0.22 s swing.
-	draw_circle(b, 2.6, edge)
+		var lead := base - 0.55 + 1.10 * t
+		draw_arc(pos, r1, lead - 0.42, lead, 12, col, width, true)
+		draw_arc(pos, r0, lead - 0.30, lead, 10,
+			Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
 
 
 func _draw_drops() -> void:

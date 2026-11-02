@@ -57,6 +57,7 @@ var _force_web := false
 var _orbs := 0
 ## `--dual` freezes a dual-wielding hero mid-swing (one arc per hand, opposite directions).
 var _dual := false
+var _dual_empty := false
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 ## `--scroll max` shows the BOTTOM of the page (the town's update section lives there).
 var _scroll := ""
@@ -104,9 +105,15 @@ func _initialize() -> void:
 			"--orbs":
 				_orbs = int(args[i + 1])
 			"--dual":
-				# Freezes the two-handed... no: TWO one-handed weapons mid-swing, so a still
-				# frame can show the main arc sweeping one way and the off hand the other.
+				# Freezes a dual-wielding hero mid-swing, so a still frame can show one arc per
+				# hand sweeping in opposite directions.
 				_dual = true
+				step = 1
+			"--dual-empty":
+				# The same, with no bodies in the arena: proves the two strokes are DRAWN and
+				# tells them apart from the portraits they normally land on.
+				_dual = true
+				_dual_empty = true
 				step = 1
 			"--scroll":
 				_scroll = args[i + 1]
@@ -253,6 +260,15 @@ func _seed_dual() -> void:
 	run.projectiles.clear()
 	run.drops.clear()
 	run.numbers.clear()
+	# Half-way through SWING_ANIM, in the two opposite directions the rules chose.
+	run.swing_age = 0.11
+	run.swing_dir = Vector2.RIGHT
+	run.swing_age_off = 0.11
+	run.swing_dir_off = Vector2.LEFT
+	if _dual_empty:
+		screen.stop()
+		screen.queue_redraw()
+		return
 	run._spawn_one()
 	run._spawn_one()
 	var a: Dictionary = run.monsters[0]
@@ -265,11 +281,6 @@ func _seed_dual() -> void:
 		m["dmg_max"] = 0
 	a["pos"] = run.player_pos + Vector2(70, 0)
 	b["pos"] = run.player_pos + Vector2(-70, 0)
-	# Half-way through SWING_ANIM, in the two opposite directions the rules chose.
-	run.swing_age = 0.11
-	run.swing_dir = Vector2.RIGHT
-	run.swing_age_off = 0.11
-	run.swing_dir_off = Vector2.LEFT
 	screen.stop()
 	screen.queue_redraw()
 
