@@ -16,6 +16,9 @@ class_name SurvivorRun
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
+const RunSpells := preload("res://scripts/combat/run_spells.gd")
+const PlayerSpells := preload("res://scripts/combat/player_spells.gd")
+const Sfx := preload("res://scripts/audio/sfx.gd")
 
 ## --- the arena -------------------------------------------------------------
 ## The world is bigger than the phone's viewport (390x844), so the camera FOLLOWS the
@@ -53,6 +56,18 @@ const WEAPON_REACH := {
 }
 const TWO_HAND_REACH_BONUS := 10.0
 const CONTACT_PAD := 3.0
+
+## --- facing ----------------------------------------------------------------
+## Jan, Nov 2026: "hrdina může útočit na nepřítele jen když je nepřítel v dosahu zbraní a když je
+## hrdina otočen k nepříteli čelem. Teď hrdina útočí i za sebe, když utíká a to je příliš velká
+## výhoda."
+##
+## So a swing needs TWO things: the body inside the hand's drawn reach AND in FRONT of the hero.
+## The front is the half-plane the hero faces — 90° each side of `facing`, i.e. `dot >= 0`. The
+## facing comes from MOVEMENT and is never re-aimed automatically: running is how the player
+## points the hero, and a hero who stands still keeps the direction he last walked in. That is
+## what turns "walk away from the pack" from a free swing into a choice.
+const FACING_MIN_DOT := 0.0
 
 
 ## The reach of one weapon, in world pixels. Static so the screen can ask the same question the
@@ -156,6 +171,9 @@ var rng := RandomNumberGenerator.new()
 
 var act_id := 0
 var player_pos := Vector2.ZERO
+## Where the hero is pointing. Driven by movement only (see `FACING_MIN_DOT`); RIGHT is the
+## starting direction, which is also what a still hero who never walked is facing.
+var facing := Vector2.RIGHT
 var hp := 1
 var max_hp := 1
 var defense := 0
@@ -220,8 +238,41 @@ var swing_age_off := -1.0
 var swing_dir_off := Vector2.RIGHT
 
 var finished := false
-## "" | "dead"
+## "" | "dead" | "cleared"
 var outcome := ""
+
+# ============================================================================ spells
+## The run's own spell session: mana, the global cooldown and the per-spell cooldowns live HERE
+## (a session, like the duel's) and never on the save. The effects live in `run_spells.gd`; this
+## side only owns the numbers a tick has to move.
+var mana := 0.0
+var max_mana := 0
+var mana_regen_frac := 0.0
+var spell_gcd_ms := 0
+var spell_cooldowns: Dictionary = {}
+## The two Shouts, as the numbers the swings and the damage taken actually read. A buff that
+## writes a value nothing consumes is not a buff — see `_swing_hand` and `_take_damage`.
+var buff_dmg_pct := 0.0
+var buff_dmg_ms := 0
+var buff_armor_pct := 0.0
+var buff_armor_ms := 0
+## Queued class spells, consumed by the next MAIN-HAND swing (the duel's rule).
+var heroic_queued := false
+var frenzy_queued := false
+## Frenzy stacks: each landed main-hand hit inside the queue adds one (max 5), and each stack
+## shortens BOTH hands by `lv + 1` % for FRENZY_MS.
+var frenzy_stacks := 0
+var frenzy_ms := 0
+
+## Whirlwind — the flurry of PS presses. `ww_dirs` is the random sequence, `ww_deadline_ms` the
+## time left to press the CURRENT one, counted on the run's own fixed step.
+var ww_active := false
+var ww_dirs: Array = []
+var ww_index := 0
+var ww_deadline_ms := 0
+var ww_reaction_ms := 0
+var ww_feedback := ""
+var ww_landed := 0
 
 var _clear_clock := 0.0
 var _main_clock := 0.0
@@ -258,6 +309,31 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	dmg_min = int(roll["min"])
 	dmg_max = int(roll["max"])
 	_read_hands()
+
+	# The mana pool is the save's own (class base + INT + gear), and the run holds a FLOAT copy
+	# so the regen can accumulate below 1 point — `_sync_mana()` writes the int back.
+	max_mana = _gen.hero_max_mana(hero, state.equip(), str(state.data.get("heroClass", "")),
+		find_item)
+	mana = float(mini(int(hero.get("mana", max_mana)), max_mana))
+	mana_regen_frac = 0.0
+	spell_gcd_ms = 0
+	spell_cooldowns.clear()
+	buff_dmg_pct = 0.0
+	buff_dmg_ms = 0
+	buff_armor_pct = 0.0
+	buff_armor_ms = 0
+	heroic_queued = false
+	frenzy_queued = false
+	frenzy_stacks = 0
+	frenzy_ms = 0
+	ww_active = false
+	ww_dirs.clear()
+	ww_index = 0
+	ww_deadline_ms = 0
+	ww_reaction_ms = 0
+	ww_feedback = ""
+	ww_landed = 0
+	facing = Vector2.RIGHT
 
 	player_pos = WORLD * 0.5
 	monsters.clear()
@@ -370,6 +446,7 @@ func step(dt: float, move: Vector2) -> void:
 	_step_projectiles(dt)
 	_move_drops(dt)
 	_age_numbers(dt)
+	RunSpells.tick(self, dt)
 	_zone_clear_tick(dt)
 
 
@@ -377,6 +454,10 @@ func _move_hero(dt: float, move: Vector2) -> void:
 	var dir := move.limit_length(1.0)
 	if dir.length_squared() <= 0.0001:
 		return
+	# Movement IS the aim: the hero faces where he walks, and a still hero keeps the last
+	# direction (see `FACING_MIN_DOT`). Nothing else may turn him — an auto-facing hero would
+	# hit in every direction while standing still, which is the advantage being removed.
+	facing = dir.normalized()
 	player_pos += dir * hero_speed() * dt
 	player_pos.x = clampf(player_pos.x, AREA_MARGIN + HERO_RADIUS, WORLD.x - AREA_MARGIN - HERO_RADIUS)
 	player_pos.y = clampf(player_pos.y, AREA_MARGIN + HERO_RADIUS, WORLD.y - AREA_MARGIN - HERO_RADIUS)
@@ -622,34 +703,51 @@ func _move_monsters(dt: float) -> void:
 	for m in monsters:
 		m["hit_flash"] = maxf(0.0, float(m["hit_flash"]) - dt)
 		m["bob"] = float(m["bob"]) + dt * 7.0
+		# A spell's status window, ticked here so the numbers on the record are the numbers the
+		# fight reads. A stunned body does NOTHING (no walk, no hit) — `_take_damage` would
+		# otherwise tick through the stun and make Thunder Bolt a slow.
+		m["stun_ms"] = maxi(0, int(m.get("stun_ms", 0)) - int(round(dt * 1000.0)))
+		m["slow_ms"] = maxi(0, int(m.get("slow_ms", 0)) - int(round(dt * 1000.0)))
+		m["block_ms"] = maxi(0, int(m.get("block_ms", 0)) - int(round(dt * 1000.0)))
+		if int(m.get("slow_ms", 0)) <= 0:
+			m["slow_pct"] = 0.0
+		if int(m["stun_ms"]) > 0:
+			alive.append(m)
+			continue
 		var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
 		var gap := to_hero.length()
 		var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
 		var ranged := bool(m["ranged"])
+		var walk_mult := 1.0 + float(m.get("slow_pct", 0.0)) / 100.0
 		# A thrower stops OUT OF REACH and shoots; a melee kind stops when the two discs touch.
 		var stop_at := float(m["keep_range"]) if ranged else BODY_RADIUS * 2.0
 		if gap > stop_at:
-			var step_len := minf(float(m["speed"]) * dt, gap - stop_at)
+			var step_len := minf(float(m["speed"]) / walk_mult * dt, gap - stop_at)
 			m["pos"] = _clamp_world((m["pos"] as Vector2) + dir * step_len)
 		elif ranged and gap < RETREAT_RANGE:
 			# Backing off is SLOWER than walking in, and it can be cornered: the arena's
 			# edge wins over the caster's comfort.
-			var back := minf(float(m["speed"]) * 0.8 * dt, RETREAT_RANGE - gap)
+			var back := minf(float(m["speed"]) * 0.8 / walk_mult * dt, RETREAT_RANGE - gap)
 			m["pos"] = _clamp_world((m["pos"] as Vector2) - dir * back)
 
 		# The gap AFTER the move: the attack must be judged on where the bodies really are,
 		# or a caster fires from a distance it has already left.
 		var after: float = player_pos.distance_to(m["pos"] as Vector2)
 		m["atk_ready"] = maxf(0.0, float(m["atk_ready"]) - dt)
+		if int(m.get("block_ms", 0)) > 0:
+			# Pummel: the attacks are blocked, the body still walks. The clock is NOT spent
+			# while blocked, so the first swing after the window is a real one.
+			alive.append(m)
+			continue
 		if float(m["atk_ready"]) <= 0.0:
 			if ranged:
 				if after <= SHOOT_RANGE:
-					m["atk_ready"] = float(m["atk_cd"])
+					m["atk_ready"] = float(m["atk_cd"]) * walk_mult
 					_shoot(m, player_pos - (m["pos"] as Vector2))
 			elif after <= stop_at + 1.0:
 				# Contact damage. The cooldown is the KIND's own attack speed, so a Bear hits
 				# like a bear and a Wolf like a wolf with no extra code.
-				m["atk_ready"] = float(m["atk_cd"])
+				m["atk_ready"] = float(m["atk_cd"]) * walk_mult
 				_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
 		alive.append(m)
 	monsters = alive
@@ -676,6 +774,9 @@ func _shoot(m: Dictionary, toward: Vector2) -> void:
 		"dmg": dmg,
 		"age": 0.0,
 		"colour": str(m["orb_colour"]),
+		# WHO threw it. Spell Reflect has to throw the damage back at the thrower, and a
+		# projectile with no owner can only be cancelled.
+		"owner": int(m["id"]),
 	})
 	events.append("orb")
 
@@ -769,7 +870,10 @@ func _hero_is_free(min_gap: float) -> bool:
 func _take_damage(raw: int) -> void:
 	# The hero's own defence is the only mitigation in the slice; gear therefore already
 	# matters, which is the point of keeping the loot loop attached from day one.
-	var taken := maxi(1, raw - int(float(defense) * 0.35))
+	# Defensive Shout multiplies that armour — it writes `buff_armor_pct` and THIS is the one
+	# place that reads it, so a buff cannot end up as a number nothing consumes.
+	var eff_def := float(defense) * (1.0 + buff_armor_pct / 100.0)
+	var taken := maxi(1, raw - int(eff_def * 0.35))
 	hp -= taken
 	_add_number(player_pos + Vector2(0, -34), "-%d" % taken, "hurt")
 	events.append("hurt")
@@ -799,7 +903,7 @@ func _auto_attack(dt: float) -> void:
 	if _main_clock <= 0.0:
 		var idx := _nearest_in_reach(reach_main, -1)
 		if idx >= 0:
-			_main_clock = main_swing
+			_main_clock = _main_interval()
 			var hit_id := int(monsters[idx]["id"])
 			_swing_hand(idx, false)
 			# The off hand AIMS SOMEWHERE ELSE when there is something else: two arcs on one
@@ -811,12 +915,43 @@ func _auto_attack(dt: float) -> void:
 		if idx_off < 0:
 			idx_off = _nearest_in_reach(reach_off, -1)
 		if idx_off >= 0:
-			_off_clock = off_swing
+			_off_clock = _off_interval()
 			_swing_hand(idx_off, true)
 
 
-## The nearest body whose rim crosses `reach`'s circle, skipping one id (so the two hands do not
-## both land on the same portrait). `-1` skips nothing.
+## Seconds per swing of each hand RIGHT NOW. Frenzy is the only thing that changes it: each stack
+## takes `lv + 1` % off both hands, and the duel's 450 ms floor is kept so a buffed hand cannot
+## swing faster than the animation can be read.
+func _main_interval() -> float:
+	var pct := _frenzy_speed_pct()
+	if pct <= 0.0:
+		return main_swing
+	return maxf(0.45, main_swing * (1.0 - pct / 100.0))
+
+
+func _off_interval() -> float:
+	var pct := _frenzy_speed_pct()
+	if pct <= 0.0:
+		return off_swing
+	return maxf(0.45, off_swing * (1.0 - pct / 100.0))
+
+
+func _frenzy_speed_pct() -> float:
+	if frenzy_stacks <= 0 or frenzy_ms <= 0:
+		return 0.0
+	var lv := 1
+	if _state != null:
+		var cid := str(_state.data.get("heroClass", ""))
+		lv = maxi(PlayerSpells.spell_level(_state, cid, "frenzy"), 1)
+	return float(frenzy_stacks * (lv + 1))
+
+
+## The nearest body whose rim crosses `reach`'s circle AND that stands IN FRONT of the hero,
+## skipping one id (so the two hands do not both land on the same portrait). `-1` skips nothing.
+##
+## The facing test is on the BODY's direction, not on the target's centre only: a body at
+## point-blank behind him has a centre with a negative dot and is correctly refused, which is the
+## whole point of the rule.
 func _nearest_in_reach(reach: float, exclude_id: int) -> int:
 	var limit := reach + MON_RADIUS
 	var best := limit * limit
@@ -824,7 +959,10 @@ func _nearest_in_reach(reach: float, exclude_id: int) -> int:
 	for i in monsters.size():
 		if exclude_id >= 0 and int(monsters[i]["id"]) == exclude_id:
 			continue
-		var d2: float = (monsters[i]["pos"] as Vector2).distance_squared_to(player_pos)
+		var off: Vector2 = (monsters[i]["pos"] as Vector2) - player_pos
+		if off.dot(facing) < FACING_MIN_DOT:
+			continue
+		var d2 := off.length_squared()
 		if d2 <= best:
 			best = d2
 			found = i
@@ -833,6 +971,10 @@ func _nearest_in_reach(reach: float, exclude_id: int) -> int:
 
 ## One hand's landing blow. `index` is valid at call time; a kill removes the monster and no
 ## later hand may use that index.
+##
+## The two queues and the one buff are consumed HERE, because this is where a blow is really
+## dealt: Heroic Strike multiplies this swing (`100 + lv*100` %, so lv1 is 200 %), Frenzy adds a
+## stack instead and Battle Shout's percentage applies to every swing while it lasts.
 func _swing_hand(index: int, is_off: bool) -> void:
 	var m: Dictionary = monsters[index]
 	var lo := dmg_off_min if is_off else dmg_min
@@ -842,6 +984,17 @@ func _swing_hand(index: int, is_off: bool) -> void:
 	var crit := hand_crit > 0.0 and rng.randf() * 100.0 < hand_crit
 	if crit:
 		dmg = int(round(float(dmg) * 2.0))
+	if buff_dmg_pct > 0.0:
+		dmg = int(round(float(dmg) * (1.0 + buff_dmg_pct / 100.0)))
+	if not is_off and heroic_queued:
+		heroic_queued = false
+		var lv := maxi(PlayerSpells.spell_level(_state, str(_state.data.get("heroClass", "")),
+			"heroicStrike"), 1)
+		dmg = int(round(float(dmg) * (1.0 + float(100 * lv) / 100.0)))
+		_add_number((m["pos"] as Vector2) + Vector2(0, -52), "HEROIC", "word")
+	if not is_off and frenzy_queued:
+		frenzy_queued = false
+		_apply_frenzy_stack()
 	m["hp"] = int(m["hp"]) - dmg
 	m["hit_flash"] = 0.12
 	var toward: Vector2 = (m["pos"] as Vector2) - player_pos
@@ -1005,6 +1158,203 @@ func _age_numbers(dt: float) -> void:
 
 func alive_count() -> int:
 	return monsters.size()
+
+
+# ============================================================================ spells
+
+## The bar the screen draws. The rule lives in `run_spells.gd` — this only forwards.
+func spell_bar() -> Array:
+	return RunSpells.bar(self)
+
+
+## Cast one class spell. The rule lives in `run_spells.gd`; this forwards and keeps the run's
+## own bookkeeping (the mana copy in the save) in one place.
+func cast_spell(spell_id: String) -> Dictionary:
+	var result: Dictionary = RunSpells.cast(self, spell_id)
+	if bool(result.get("ok", false)):
+		events.append("cast")
+		_sync_mana()
+	return result
+
+
+## The float copy of the mana pool is the truth DURING the run; the save gets the integer,
+## because every other screen (and the duel) reads `hero.mana` as an int.
+func _sync_mana() -> void:
+	if _state == null:
+		return
+	_state.hero()["mana"] = clampi(int(floor(mana)), 0, maxi(max_mana, 1))
+
+
+## One damage roll of the hand's own weapon, through the same `dmg_min/dmg_max` the swings use,
+## so a spell's damage is in the same currency as a blow and the loot loop stays honest.
+func _roll_damage(is_off: bool) -> int:
+	var lo := dmg_off_min if is_off else dmg_min
+	var hi := dmg_off_max if is_off else dmg_max
+	return rng.randi_range(lo, maxi(hi, lo))
+
+
+## A spell's landing blow on one body. The word is the spell's name, drawn over the portrait the
+## way the duel floats its own note ("DOUBLE SWING 45") — the same receipt, on a crowd.
+func _hurt_monster(index: int, dmg: int, word: String) -> void:
+	if index < 0 or index >= monsters.size():
+		return
+	var m: Dictionary = monsters[index]
+	m["hp"] = int(m["hp"]) - dmg
+	m["hit_flash"] = 0.14
+	var toward: Vector2 = (m["pos"] as Vector2) - player_pos
+	if toward.length() > 0.001:
+		swing_dir = toward.normalized()
+		swing_age = 0.0
+	_add_number((m["pos"] as Vector2) + Vector2(0, -30), str(dmg), "spell")
+	if word != "":
+		_add_number((m["pos"] as Vector2) + Vector2(0, -54), word, "word")
+	events.append("hit")
+	if int(m["hp"]) <= 0:
+		_kill(index)
+
+
+## A slow window on one body: `pct` % off its walk AND its attack clock, for `ms`.
+func _slow_monster(index: int, pct: float, ms: int) -> void:
+	if index < 0 or index >= monsters.size():
+		return
+	var m: Dictionary = monsters[index]
+	m["slow_pct"] = maxf(float(m.get("slow_pct", 0.0)), pct)
+	m["slow_ms"] = maxi(int(m.get("slow_ms", 0)), ms)
+	_add_number((m["pos"] as Vector2) + Vector2(0, -46), "SLOW", "word")
+
+
+## A stun window on one body: it neither walks nor hits, and the arc of its next attack is not
+## spent while it is out.
+func _stun_monster(index: int, ms: int) -> void:
+	if index < 0 or index >= monsters.size():
+		return
+	var m: Dictionary = monsters[index]
+	m["stun_ms"] = maxi(int(m.get("stun_ms", 0)), ms)
+
+
+## Pummel's window: the body's attacks are blocked for `ms`, the body itself keeps walking.
+func _block_monster(index: int, ms: int) -> void:
+	if index < 0 or index >= monsters.size():
+		return
+	monsters[index]["block_ms"] = maxi(int(monsters[index].get("block_ms", 0)), ms)
+
+
+## One Frenzy stack, and it is the MAIN hand's landed hit that earns it — the same rule the duel
+## has ("a missed Frenzy costs the mana and gives no stack").
+func _apply_frenzy_stack() -> void:
+	frenzy_stacks = mini(5, frenzy_stacks + 1)
+	frenzy_ms = RunSpells.FRENZY_MS
+	_add_number(player_pos + Vector2(0, -56), "FRENZY %d/5" % frenzy_stacks, "word")
+
+
+func _say_word(text: String) -> void:
+	_add_number(player_pos + Vector2(0, -62), text, "word")
+
+
+func _index_of_monster(id: int) -> int:
+	for i in monsters.size():
+		if int(monsters[i]["id"]) == id:
+			return i
+	return -1
+
+
+# ============================================================================ whirlwind
+
+## Arm the flurry. Its strikes are dealt by `answer_whirlwind`, one press at a time, so nothing
+## here applies damage — a flurry that ran to completion inside one call would be a damage spell
+## with extra steps, and the whole point is that it stops when the player gets one wrong.
+func start_whirlwind(dirs: Array, reaction_ms: int) -> void:
+	ww_dirs = dirs.duplicate()
+	ww_index = 0
+	ww_landed = 0
+	ww_active = not ww_dirs.is_empty()
+	ww_reaction_ms = reaction_ms
+	ww_deadline_ms = reaction_ms if ww_active else 0
+	ww_feedback = ""
+	# The flurry REPLACES the hero's swings rather than adding to them: BOTH hands start over,
+	# which is the deliberate exception to the independent clocks.
+	_main_clock = main_swing
+	_off_clock = off_swing
+
+
+func whirlwind_open() -> bool:
+	return ww_active
+
+
+func whirlwind_prompt() -> String:
+	if not ww_active or ww_index >= ww_dirs.size():
+		return ""
+	return str(ww_dirs[ww_index])
+
+
+## The press, from the screen. A correct key lands one strike; a wrong one ends the flurry with
+## what was already landed.
+func answer_whirlwind(key: String) -> Dictionary:
+	if not ww_active:
+		return {"ok": false, "result": "none", "prompt": ""}
+	if key != whirlwind_prompt():
+		ww_active = false
+		ww_deadline_ms = 0
+		ww_feedback = "fail"
+		_main_clock = main_swing
+		_off_clock = off_swing
+		return {"ok": false, "result": "fail", "prompt": ""}
+	ww_index += 1
+	_whirlwind_strike()
+	if ww_index >= ww_dirs.size():
+		ww_active = false
+		ww_deadline_ms = 0
+		ww_feedback = "complete"
+		_main_clock = main_swing
+		_off_clock = off_swing
+		events.append("strong_strike")
+	else:
+		ww_deadline_ms = ww_reaction_ms
+	return {"ok": true, "result": "strike", "landed": ww_landed, "prompt": whirlwind_prompt()}
+
+
+## The deadline ran out on the current key: the flurry ends, landed strikes kept.
+func whirlwind_timeout() -> void:
+	if not ww_active:
+		return
+	ww_active = false
+	ww_deadline_ms = 0
+	ww_feedback = "fail"
+	_main_clock = main_swing
+	_off_clock = off_swing
+
+
+## The flurry's own word, drained by the screen ("complete" / "fail"), plus the strikes landed.
+func take_whirlwind_result() -> Dictionary:
+	var out := {"feedback": ww_feedback, "landed": ww_landed}
+	ww_feedback = ""
+	return out
+
+
+## One strike of the flurry. In the duel Whirlwind hit the one enemy; here it is a SPIN, so it
+## lands on every body inside the main hand's reach — that is what makes a flurry a crowd spell
+## instead of a slower swing. The damage spread is the duel's own ±25 % (`0.75 + rand*0.5`), not
+## the weapon's range, and Battle Shout applies on top.
+##
+## The list is walked BACKWARDS: a kill removes an entry, and an index taken before the removal
+## is the next body or an index error — the same trap the drop loop documents.
+func _whirlwind_strike() -> void:
+	var limit := reach_main + MON_RADIUS
+	var victims: Array = []
+	for i in monsters.size():
+		var off: Vector2 = (monsters[i]["pos"] as Vector2) - player_pos
+		if off.dot(facing) < FACING_MIN_DOT:
+			continue
+		if off.length_squared() <= limit * limit:
+			victims.append(i)
+	for k in range(victims.size() - 1, -1, -1):
+		var i: int = victims[k]
+		var dmg := float(_roll_damage(false)) * (0.75 + rng.randf() * 0.5)
+		if buff_dmg_pct > 0.0:
+			dmg *= 1.0 + buff_dmg_pct / 100.0
+		ww_landed += 1
+		_hurt_monster(i, maxi(1, int(round(dmg))), "")
+		events.append(Sfx.cue_for_weapon(main_weapon, false))
 
 
 func drain_events() -> Array:

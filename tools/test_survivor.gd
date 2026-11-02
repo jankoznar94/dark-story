@@ -68,6 +68,10 @@ func _initialize() -> void:
 	_test_spawn_cap_and_clearance()
 	_test_pack_discovery()
 	_test_kills_award_xp()
+	_test_facing_gate()
+	_test_spells_in_the_run()
+	_test_whirlwind_flurry()
+	_test_screen_spell_buttons()
 	_test_screen_gesture_and_disc()
 
 	for f in _failures:
@@ -505,8 +509,12 @@ func _test_weapon_pace_and_two_hands() -> void:
 	var main_hits := 0
 	var off_hits := 0
 	for _i in 180:
-		a["pos"] = run.player_pos + Vector2(70, 0)
-		b["pos"] = run.player_pos + Vector2(-70, 0)
+		# ⚠️  BOTH bodies are IN FRONT of a hero who never walks (facing = RIGHT, see
+		# `SurvivorRun.FACING_MIN_DOT`). The off hand used to be aimed at a body at -70 px, which
+		# is behind him now and can no longer be hit at all — the test would be measuring the
+		# facing rule instead of the two clocks.
+		a["pos"] = run.player_pos + Vector2(70, 30)
+		b["pos"] = run.player_pos + Vector2(70, -30)
 		run.step(STEP, Vector2.ZERO)
 		for n in run.numbers:
 			match str(n["kind"]):
@@ -521,10 +529,10 @@ func _test_weapon_pace_and_two_hands() -> void:
 		"the FASTER weapon must land more often: off %d vs main %d" % [off_hits, main_hits])
 	_check(run.swing_age_off >= 0.0,
 		"the off hand must stamp its OWN animation age, or the screen draws one arc twice")
-	# The two arcs must point at DIFFERENT bodies: the off hand looks for another target, so its
-	# direction is the other side of the hero. One direction twice is a mirror, not a second weapon.
-	_check(run.swing_dir_off.dot(run.swing_dir) < -0.5,
-		"the off hand must swing in its own direction: %s vs %s"
+	# The two arcs must point at DIFFERENT bodies. Both are in front now, so the two directions
+	# are merely DIFFERENT, not opposite — one direction twice is a mirror, not a second weapon.
+	_check(run.swing_dir_off.dot(run.swing_dir) < 0.9,
+		"the off hand must swing at its own target: %s vs %s"
 			% [str(run.swing_dir), str(run.swing_dir_off)])
 	_reset_kit()
 
@@ -771,7 +779,222 @@ func _test_kills_award_xp() -> void:
 	_check(int(run.levels_gained) >= 1, "the run must count the levels it bought")
 
 
+# ============================================================================ facing & spells
+
+## Jan, Nov 2026: a swing needs the body in REACH **and** in FRONT. Attacking backwards while
+## running away was the exploit being closed, so the section pins both halves: a body behind an
+## untouched hero is never hit, and the same body IS hit the moment he walks toward it.
+func _test_facing_gate() -> void:
+	_log("  section: facing_gate")
+	var run := _fresh(31337)
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	_check(run.facing == Vector2.RIGHT, "a hero who never walked faces RIGHT, got %s" % str(run.facing))
+	var hp0 := int(m["hp"])
+	for _i in 120:
+		# Well inside the reach, straight BEHIND him.
+		m["pos"] = run.player_pos + Vector2(-70, 0)
+		run.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) == hp0,
+		"a body BEHIND the hero must not be hit: %d -> %d" % [hp0, int(m["hp"])])
+
+	# Walking at it turns him: the same body, the same gap, now in front.
+	for _i in 120:
+		m["pos"] = run.player_pos + Vector2(70, 0)
+		run.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) < hp0, "a body in FRONT must be hit")
+
+	# And the turn is the MOVEMENT's: running right then left flips the facing, and the body
+	# that was hittable is behind again.
+	var hp1 := int(m["hp"])
+	m["pos"] = run.player_pos + Vector2(70, 0)
+	for _i in 30:
+		run.step(STEP, Vector2(-1, 0))
+	var facing_left: bool = run.facing.x < -0.9
+	_check(facing_left, "walking left must turn the hero left, got %s" % str(run.facing))
+	var hp2 := int(m["hp"])
+	for _i in 120:
+		m["pos"] = run.player_pos + Vector2(70, 0)
+		run.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) == hp2,
+		"after turning away, a body at +X must not be hit: %d -> %d" % [hp2, int(m["hp"])])
+	_log("  measured: hp %d -> %d -> %d" % [hp0, hp1, hp2])
+
+
+## The spell bar is the duel's rule, unchanged: a spell with no talent point in it does not
+## exist as a button, and an invested one really lands its damage in the run.
+func _test_spells_in_the_run() -> void:
+	_log("  section: spells_in_the_run")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels.erase("barbarian_thunderClap")
+	levels.erase("barbarian_doubleSwing")
+	var run := _fresh(4711)
+	_check(run.spell_bar().is_empty(),
+		"no invested talent = no spell buttons, got %d" % run.spell_bar().size())
+
+	levels["barbarian_thunderClap"] = 3
+	levels["barbarian_doubleSwing"] = 1
+	var bar: Array = run.spell_bar()
+	var ids: Array = []
+	for e in bar:
+		ids.append(str((e as Dictionary)["id"]))
+	_check(ids.has("thunderClap") and ids.has("doubleSwing"),
+		"invested spells must appear in the bar, got %s" % str(ids))
+	_check(not ids.has("pummel"), "an uninvested spell must NOT appear in the bar")
+
+	# Thunder Clap needs a body in reach and in front; a refused cast costs nothing.
+	var mana0 := float(run.mana)
+	var refused: Dictionary = run.cast_spell("thunderClap")
+	_check(not bool(refused["ok"]), "casting with nothing in reach must be refused")
+	_check(absf(float(run.mana) - mana0) < 0.01, "a refused cast must cost no mana")
+
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	m["pos"] = run.player_pos + Vector2(60, 0)
+	var hp0 := int(m["hp"])
+	var res: Dictionary = run.cast_spell("thunderClap")
+	_check(bool(res["ok"]), "an invested spell must cast: %s" % str(res.get("message", "")))
+	_check(int(res["damage"]) > 0, "Thunder Clap must deal damage, got %d" % int(res["damage"]))
+	_check(int(m["hp"]) < hp0, "the damage must reach the body")
+	_check(float(run.mana) < mana0, "a cast must cost mana: %.1f -> %.1f" % [mana0, float(run.mana)])
+	_check(int(m.get("slow_ms", 0)) > 0, "Thunder Clap must slow the body it hit")
+	_check(int(_state.hero().get("mana", 0)) == int(floor(float(run.mana))),
+		"the mana pool must reach the SAVE (hero.mana=%d, run=%d)"
+			% [int(_state.hero().get("mana", 0)), int(floor(float(run.mana)))])
+
+	# The GCD is a real clock, not a message: a second cast in the same instant is refused.
+	var again: Dictionary = run.cast_spell("thunderClap")
+	_check(not bool(again["ok"]), "the global cooldown must refuse a second cast")
+	for _i in 40:
+		run.step(STEP, Vector2.ZERO)
+	_check(run.spell_gcd_ms == 0, "the GCD must tick down on the run's own step")
+
+	levels.erase("barbarian_thunderClap")
+	levels.erase("barbarian_doubleSwing")
+
+
+## Whirlwind is the duel's flurry with the pause removed: a sequence of PS presses on a deadline,
+## a wrong press ending it, and the strikes landing on EVERY body in reach (a spin, not a swing).
+func _test_whirlwind_flurry() -> void:
+	_log("  section: whirlwind_flurry")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_whirlwind"] = 2
+	var run := _fresh(90210)
+	run.monsters.clear()
+	for _i in 2:
+		run._spawn_one()
+	for m in run.monsters:
+		(m as Dictionary)["hp"] = 999999
+		(m as Dictionary)["max_hp"] = 999999
+		(m as Dictionary)["speed"] = 0.0
+		(m as Dictionary)["ranged"] = false
+		(m as Dictionary)["dmg_min"] = 0
+		(m as Dictionary)["dmg_max"] = 0
+	var a: Dictionary = run.monsters[0]
+	var b: Dictionary = run.monsters[1]
+	a["pos"] = run.player_pos + Vector2(40, 0)
+	b["pos"] = run.player_pos + Vector2(40, 20)
+	var res: Dictionary = run.cast_spell("whirlwind")
+	_check(bool(res["ok"]), "Whirlwind must cast with a body in reach: %s" % str(res.get("message", "")))
+	_check(run.whirlwind_open(), "the flurry must be open after the cast")
+	_check(run.ww_dirs.size() == 3 + 2, "3 + lv strikes, got %d" % run.ww_dirs.size())
+	# A cast while the flurry runs is refused: one prompt at a time.
+	_check(not bool(run.cast_spell("thunderClap")["ok"]),
+		"no second spell may start while a flurry is open")
+
+	var hp_a := int(a["hp"])
+	var hp_b := int(b["hp"])
+	var key := run.whirlwind_prompt()
+	var strike: Dictionary = run.answer_whirlwind(key)
+	_check(bool(strike["ok"]), "the shown key must land a strike")
+	_check(int(a["hp"]) < hp_a or int(b["hp"]) < hp_b,
+		"a flurry strike must hit the bodies in reach (a spin, not a single swing)")
+
+	# A WRONG press ends it, and what was landed stays landed.
+	var wrong := "square" if run.whirlwind_prompt() != "square" else "tri"
+	var bad: Dictionary = run.answer_whirlwind(wrong)
+	_check(str(bad["result"]) == "fail", "a wrong press must end the flurry")
+	_check(not run.whirlwind_open(), "the flurry must be closed after a wrong press")
+
+	# The deadline is a real clock on the run's own step.
+	run.start_whirlwind(["tri", "circle"], 500)
+	_check(run.whirlwind_open(), "a fresh flurry must be open")
+	var ticks := int(0.6 / STEP)
+	for _i in ticks:
+		run.step(STEP, Vector2.ZERO)
+	_check(not run.whirlwind_open(), "the strike deadline must expire on the run's clock")
+	var verdict: Dictionary = run.take_whirlwind_result()
+	_check(str(verdict["feedback"]) == "fail", "an expired flurry must report fail")
+
+	levels.erase("barbarian_whirlwind")
+
+
 # ============================================================================ screen
+
+## The spell column and the flurry row are TOUCH targets, and a button that also plants the
+## movement stick would make the hero run in the direction of a cast. Asserted through the
+## screen's own press handler, because that is the path a thumb takes.
+func _test_screen_spell_buttons() -> void:
+	_log("  section: screen_spell_buttons")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_heroicStrike"] = 1
+	levels["barbarian_whirlwind"] = 1
+	var screen = SurvivorScreen.new()
+	root.add_child(screen)
+	screen.size = Vector2(390, 844)
+	screen.setup(_state, _find_item, _loot, 0)
+	_check(screen._spell_buttons.size() >= 2,
+		"invested spells must produce buttons, got %d" % screen._spell_buttons.size())
+
+	# A tap on a spell button must NOT plant the stick.
+	var first: Dictionary = screen._spell_buttons[0]
+	screen._on_press(first["centre"])
+	_check(not screen._pointer_down or screen._stick_origin == Vector2.ZERO,
+		"a spell button must not start the movement stick")
+	screen._on_release()
+
+	# The buttons must stay inside the screen and clear of the potion button.
+	for b in screen._spell_buttons:
+		var c: Vector2 = b["centre"]
+		_check(c.x + SurvivorScreen.SPELL_BUTTON_RADIUS < 390.0 and c.y > 60.0,
+			"a spell button must be on screen, got %s" % str(c))
+		_check(c.distance_to(screen._potion_centre)
+			> SurvivorScreen.SPELL_BUTTON_RADIUS + SurvivorScreen.BUTTON_RADIUS + 8.0,
+			"a spell button must clear the potion button, gap %.1f"
+				% c.distance_to(screen._potion_centre))
+
+	# The flurry row owns the input while it runs: a press anywhere else is swallowed, so a
+	# spell cannot be cast with the thumb that was answering the press.
+	screen.run.start_whirlwind(["tri", "circle"], 1500)
+	var before: int = screen.run.ww_index
+	screen._on_press(Vector2(60, 700))
+	_check(screen.run.ww_index == before, "a press outside the flurry row must not answer it")
+	_check(not screen._pointer_down, "the flurry must swallow the press (no stick)")
+	var ww: Dictionary = screen._ww_buttons[0]
+	screen._on_press(ww["centre"])
+	_check(screen.run.ww_index == before + 1 or not screen.run.whirlwind_open(),
+		"a press on the shown symbol must answer the flurry")
+	screen._on_release()
+	screen.run.whirlwind_timeout()
+
+	screen.queue_free()
+	levels.erase("barbarian_heroicStrike")
+	levels.erase("barbarian_whirlwind")
+
 
 func _test_screen_gesture_and_disc() -> void:
 	_log("  section: screen_gesture_and_disc")

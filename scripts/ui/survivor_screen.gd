@@ -32,6 +32,18 @@ const TOP_BAR := 54.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
 const BUTTON_RADIUS := 38.0
+## Spell buttons: smaller than the potion, two columns, bottom-right. 25 px is the smallest
+## circle on which a 256 px icon still reads as a symbol on a phone.
+const SPELL_BUTTON_RADIUS := 25.0
+const SPELL_GAP := 8.0
+## The Whirlwind row: the duel's `ps_*.png` symbols, drawn as a body of their own. 26 px matches
+## the spell buttons so the thumb does not have to relearn a size mid-fight.
+const WW_BUTTON_RADIUS := 26.0
+const WW_ROW_Y := 150.0
+const WW_KEYS := ["tri", "circle", "cross", "square"]
+const WW_KEY_BORDERS := {
+	"tri": "#2ecc71", "circle": "#e74c3c", "cross": "#e67e22", "square": "#f1c40f",
+}
 ## One disc diameter for every actor: the hero is a walking portrait too (Jan), and a single
 ## size is what makes the collision radius (BODY_RADIUS 31 = DISC_DIA / 2) true on screen.
 const DISC_DIA := 62.0
@@ -64,6 +76,13 @@ var _pointer_kind := ""
 ## Buttons, fixed in the bottom-right. Rebuilt on resize.
 var _exit_rect := Rect2()
 var _potion_centre := Vector2.ZERO
+## The class-spell column, built from `run.spell_bar()` on every layout: `[{id, centre}]`.
+## The column grows UPWARDS from just above the potion button, two per row, so adding a spell to
+## a class never reflows the fight or moves a button the thumb already knows.
+var _spell_buttons: Array = []
+## The Whirlwind reaction row (four PS symbols). Only live during a flurry.
+var _ww_buttons: Array = []
+var _spell_tex_cache: Dictionary = {}
 var _toast := ""
 var _toast_ticks := 0.0
 var _flash := 0.0
@@ -220,7 +239,20 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _on_press(pos: Vector2) -> void:
+	# A running flurry OWNS the input: its four symbols are the only thing a press may hit, or a
+	# spell would be cast with the thumb that was about to answer the press. `_pointer_down` is
+	# NOT set here — a swallowed press must not leave the stick armed behind the row.
+	if run != null and run.whirlwind_open():
+		for b in _ww_buttons:
+			if (b["centre"] as Vector2).distance_to(pos) <= WW_BUTTON_RADIUS + 8.0:
+				_tap_whirlwind(str(b["key"]))
+				return
+		return
 	_pointer_down = true
+	for b in _spell_buttons:
+		if (b["centre"] as Vector2).distance_to(pos) <= SPELL_BUTTON_RADIUS + 6.0:
+			_cast_spell(str(b["id"]))
+			return
 	if _potion_centre.distance_to(pos) <= BUTTON_RADIUS + 6.0:
 		_drink_potion()
 		return
@@ -298,6 +330,7 @@ func _process(delta: float) -> void:
 		_toast_ticks = maxf(0.0, _toast_ticks - delta)
 	_flash = maxf(0.0, _flash - delta * 3.0)
 	_play_events()
+	_whirlwind_feedback()
 	# ONE report per run, whatever ended it: contact damage ("dead") or the last pack of the area
 	# ("cleared"). The old code only knew death, so a finished area kept simulating.
 	if run.finished and run.outcome != "" and not _death_reported:
@@ -343,6 +376,29 @@ func _play_events() -> void:
 			"cleared":
 				Sfx.play_global(Sfx.CUE_VICTORY)
 				_say("Celá oblast je čistá")
+			_:
+				# A spell's own cue (thunder_clap, thunder_bolt, shout, dodge, strong_strike,
+				# melee_hit …). The rules append the MIXER's name for a spell rather than
+				# inventing an event per spell, so the screen plays any cue it knows — the same
+				# contract `battle.sound()` has, and the reason a new spell needs no screen code.
+				var named := str(cue)
+				if Sfx.is_known(named):
+					Sfx.play_global(named)
+
+
+## The flurry's verdict, drained once: a completed flurry says so, a broken one says that
+## instead. One call so the word and the strike count can never disagree.
+func _whirlwind_feedback() -> void:
+	if run == null:
+		return
+	var res: Dictionary = run.take_whirlwind_result()
+	var word := str(res.get("feedback", ""))
+	if word == "":
+		return
+	if word == "complete":
+		_say("Whirlwind: %d úderů" % int(res.get("landed", 0)))
+	else:
+		_say("Whirlwind přerušen")
 
 
 func _place_camera() -> void:
@@ -372,6 +428,59 @@ func _layout_buttons() -> void:
 	var bottom := size.y - 42.0
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
 	_potion_centre = Vector2(size.x - 58.0, bottom - 34.0)
+	_layout_spells()
+	_layout_whirlwind()
+
+
+## The spell column: two per row, first row just above the potion button, the column growing
+## UPWARDS. Bottom-up on purpose — the newest-learned spell must not push the ones already
+## learned out from under the thumb, and the bottom of a phone is the only place a thumb rests.
+func _layout_spells() -> void:
+	_spell_buttons.clear()
+	if run == null:
+		return
+	var bar: Array = run.spell_bar()
+	var start_y := _potion_centre.y - BUTTON_RADIUS - 22.0 - SPELL_BUTTON_RADIUS
+	var step := SPELL_BUTTON_RADIUS * 2.0 + SPELL_GAP + 8.0
+	for i in bar.size():
+		var row := i / 2
+		var col := i % 2
+		var centre := Vector2(
+			size.x - 58.0 - float(col) * (SPELL_BUTTON_RADIUS * 2.0 + SPELL_GAP + 8.0),
+			start_y - float(row) * step)
+		_spell_buttons.append({"id": str((bar[i] as Dictionary)["id"]), "centre": centre})
+
+
+## The flurry's four symbols, in one row across the upper middle of the screen. Above the hero on
+## purpose: the fight happens under his portrait, and a row at the bottom would be under the
+## thumb that is steering him.
+func _layout_whirlwind() -> void:
+	_ww_buttons.clear()
+	var step := WW_BUTTON_RADIUS * 2.0 + 12.0
+	for i in WW_KEYS.size():
+		var x := size.x * 0.5 + (float(i) - 1.5) * step
+		_ww_buttons.append({"key": str(WW_KEYS[i]), "centre": Vector2(x, WW_ROW_Y)})
+
+
+## Send one spell to the rules and report a refusal the way the duel does — as a line over the
+## arena, not as silence.
+func _cast_spell(spell_id: String) -> void:
+	if run == null:
+		return
+	var result: Dictionary = run.cast_spell(spell_id)
+	if not bool(result.get("ok", false)):
+		_say("Nelze: %s" % str(result.get("message", "")))
+	_layout_spells()
+	queue_redraw()
+
+
+func _tap_whirlwind(key: String) -> void:
+	if run == null:
+		return
+	var result: Dictionary = run.answer_whirlwind(key)
+	if str(result.get("result", "")) == "fail":
+		_say("Whirlwind přerušen")
+	queue_redraw()
 
 
 # ============================================================================ draw
@@ -391,6 +500,8 @@ func _draw() -> void:
 	_draw_slash_off()
 	_draw_numbers()
 	_draw_hud()
+	_draw_spells()
+	_draw_whirlwind()
 
 
 func _draw_ground() -> void:
@@ -541,6 +652,18 @@ func _draw_hero() -> void:
 	var hero_ring := Color(UIKit.MOD_BLUE)
 	draw_arc(pos, DISC_DIA * 0.5 + 3.5, 0.0, TAU, 32, Color(0, 0, 0, 0.45), 2.0, true)
 	draw_arc(pos, DISC_DIA * 0.5, 0.0, TAU, 32, hero_ring, 2.5, true)
+	# WHICH WAY HE FACES, drawn ON his own portrait. The reach ring says it too, but a crowded
+	# frame buries that ring under the bodies that are touching him — measured: with three kinds
+	# in contact the front half of the reach circle is behind their discs, so the only honest
+	# place for the mark is the hero himself. A chevron, dark-underlaid so it reads on the
+	# portrait's own dark plate (no glow — Jan's rule).
+	var f: Vector2 = run.facing
+	var perp := Vector2(-f.y, f.x)
+	var tip := pos + f * 25.0
+	var l := tip - f * 9.0 + perp * 7.0
+	var r := tip - f * 9.0 - perp * 7.0
+	draw_polyline(PackedVector2Array([l, tip, r]), Color(0, 0, 0, 0.65), 5.0, true)
+	draw_polyline(PackedVector2Array([l, tip, r]), Color(UIKit.MOD_BLUE), 2.5, true)
 
 
 ## The hero's REACH, drawn on the ground he stands on. Dashed, because a solid circle reads as a
@@ -555,24 +678,44 @@ func _draw_attack_ring() -> void:
 	var hot := 0.0
 	if run.swing_age >= 0.0 and run.swing_age < SWING_ANIM:
 		hot = 1.0 - float(run.swing_age) / SWING_ANIM
+	# The FULL circle is the reach — what the weapon can touch.
+	var faint := Color(UIKit.MOD_BLUE)
+	faint.a = 0.07 + 0.13 * hot
+	_dashed_ring(pos, run.reach_main, faint, 1.2)
+	# The FRONT HALF is the part the hero can actually hit. Jan's rule ("útočí jen když je
+	# otočen čelem") is a rule the player has to be able to SEE, and a full bright ring while
+	# half of it is unreachable is exactly the lie the reach ring was fixed for once already.
+	# ⚠️  The contrast between the two halves is the feature: at 0.22 against 0.10 the front half
+	# was read as "a circle", which is a frame that proves nothing (the reference frame showed
+	# exactly that). The faint half is now dim enough to read as a guide, not as a promise.
+	var base: float = run.facing.angle()
 	var col := Color(UIKit.MOD_BLUE)
-	col.a = 0.20 + 0.55 * hot
-	_dashed_ring(pos, run.reach_main, col, 1.5 + 1.5 * hot)
+	col.a = 0.42 + 0.50 * hot
+	_dashed_ring(pos, run.reach_main, col, 2.0 + 1.5 * hot, base - PI * 0.5, base + PI * 0.5)
+	# A short nose on the ring in the facing direction: the smallest mark that says "this way".
+	var nose: Vector2 = pos + run.facing * run.reach_main
+	draw_circle(nose, 4.5 + 1.5 * hot, Color(UIKit.MOD_BLUE, 0.75 + 0.25 * hot))
 	# A second hand with a DIFFERENT reach gets its own, fainter circle. ONE ring cannot be the
 	# promise for two weapons: a hand that really reaches 10 px further has to be visible, or the
 	# ring lies about the off hand.
 	if run.off_swing > 0.0 and absf(run.reach_off - run.reach_main) > 6.0:
 		var off_col := Color(UIKit.MOD_BLUE)
-		off_col.a = 0.12 + 0.30 * hot
-		_dashed_ring(pos, run.reach_off, off_col, 1.2 + hot)
+		off_col.a = 0.10 + 0.26 * hot
+		_dashed_ring(pos, run.reach_off, off_col, 1.2 + hot, base - PI * 0.5, base + PI * 0.5)
 
 
 ## The dashed circle itself, so the main and the off hand draw the SAME shape at two radii.
-func _dashed_ring(pos: Vector2, radius: float, col: Color, width: float) -> void:
+## `a0`/`a1` cut it to a sector: the front half needs the same dashes at a hotter alpha, and two
+## loops that could drift apart is one loop too many.
+func _dashed_ring(pos: Vector2, radius: float, col: Color, width: float,
+		a0: float = 0.0, a1: float = TAU) -> void:
+	var span := a1 - a0
 	for i in RING_SEGMENTS:
-		var a0 := TAU * float(i) / float(RING_SEGMENTS)
-		var a1 := a0 + TAU / float(RING_SEGMENTS) * 0.55
-		draw_arc(pos, radius, a0, a1, 6, col, width, true)
+		var f0 := float(i) / float(RING_SEGMENTS)
+		var f1 := float(i + 0.55) / float(RING_SEGMENTS)
+		if f1 > 1.0:
+			f1 = 1.0
+		draw_arc(pos, radius, a0 + span * f0, a0 + span * f1, 6, col, width, true)
 
 
 ## The orb is a BODY, not a UI dot: it gets the same flattened contact shadow the portraits have,
@@ -633,18 +776,20 @@ func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
 	var pos: Vector2 = run.player_pos - _cam
 	var base: float = dir.angle()
 	# The off hand is a COOLER stroke on purpose: when both hands swing together the eye has to
-	# be able to tell which arc belongs to which weapon.
+	# be able to tell which arc belongs to which weapon. That is a COLOUR difference and
+	# nothing else — Jan, Nov 2026: "aby sekání obou zbraní bylo na stejné vizuální úrovni.
+	# Stejně daleko … tam, kde reálně končí dosah hrdinových zbraní." So both arcs sweep the SAME
+	# band of their own reach and carry the same width and the same opacity. The off hand used to
+	# be drawn 0.54-0.92 R, a little inside, and that read as a shorter arm rather than as a
+	# second weapon.
 	var col := Color("#f0e0c0") if not mirrored else Color("#a9c2e0")
-	# Opacity fades as the stroke travels, exactly as the single-hand arc always did: that shape
-	# was right, the only thing missing was the second hand. (Blades were tried and rejected —
-	# "čepele nevypadají moc dobře" — so this stays an arc.)
-	col.a = (0.95 if not mirrored else 0.80) * (1.0 - t * 0.75)
-	var r0 := reach * (0.62 if not mirrored else 0.54)
-	var r1 := reach * (1.0 if not mirrored else 0.92)
-	var width := (4.0 if not mirrored else 3.0) * (1.0 - t) + 1.0
+	col.a = 0.95 * (1.0 - t * 0.75)
+	var r0 := reach * 0.62
+	var r1 := reach
+	var width := 4.0 * (1.0 - t) + 1.0
 	if mirrored:
-		# Right to left, and a shade inside the main hand's circle so the two strokes never lie
-		# on top of each other.
+		# Right to left, the same band the main hand sweeps, so the two arcs cross rather than
+		# nest.
 		var lead := base + 0.55 - 1.10 * t
 		draw_arc(pos, r1, lead, lead + 0.42, 12, col, width, true)
 		draw_arc(pos, r0, lead, lead + 0.30, 10,
@@ -700,6 +845,16 @@ func _draw_numbers() -> void:
 			"item":
 				col = Color("#d8d0b0")
 				fs = 12
+			"spell":
+				# A spell's damage: warmer than a blow, so a cast is distinguishable from a swing
+				# in a fight with two hands and a crowd.
+				col = Color("#f2b45e")
+				fs = 17
+			"word":
+				# The duel's own receipt ("DOUBLE SWING", "FRENZY 2/5") over the portrait it
+				# landed on.
+				col = Color("#e8c66a")
+				fs = 11
 		col.a = alpha
 		draw_string(font, pos, str(n["text"]), HORIZONTAL_ALIGNMENT_CENTER, -1.0, fs, col)
 
@@ -738,6 +893,17 @@ func _draw_hud() -> void:
 	draw_rect(Rect2(0, bar_y, size.x, bar_h), Color(0, 0, 0, 0.5), false, 1.0)
 	draw_string(font, Vector2(8, bar_y + 11), "%d / %d" % [run.hp, run.max_hp],
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_TEXT)
+
+	# MANA, just above the health: the pool every class spell is paid from. A fight that can
+	# refuse a spell for "Malo many" without ever showing the pool is a fight that hides its own
+	# rule — the duel shows the same number as a thin bar.
+	var mana_h := 8.0
+	var mana_y := bar_y - mana_h - 3.0
+	draw_rect(Rect2(0, mana_y, size.x, mana_h), C_BAR_BG)
+	var mfrac := clampf(float(run.mana) / maxf(1.0, float(run.max_mana)), 0.0, 1.0)
+	draw_rect(Rect2(0, mana_y, size.x * mfrac, mana_h), Color(UIKit.MOD_BLUE))
+	draw_string(font_r, Vector2(8, mana_y - 2.0), "%d / %d" % [int(run.mana), run.max_mana],
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 9, C_DIM)
 
 	# Fixed potion button
 	draw_circle(_potion_centre, BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.85))
@@ -785,3 +951,94 @@ func _with_diacritics(text: String) -> String:
 func _clock() -> String:
 	var total := int(run.elapsed)
 	return "%02d:%02d" % [total / 60, total % 60]
+
+
+# ============================================================================ spells & flurry
+
+## The class-spell buttons: the duel's own bar, on a phone-sized column. Each button is a real
+## circle with the spell's ICON inside (cropped round — the spell art, like the monster art, is
+## a near-black square plate and the port forbids a black square), a rim that says whether it can
+## be cast right now, the mana cost, and a cooldown arc plus its seconds when it is spent.
+func _draw_spells() -> void:
+	if run == null or _spell_buttons.is_empty():
+		return
+	var bar: Array = run.spell_bar()
+	var font := UIFonts.bold()
+	var font_r := UIFonts.regular()
+	var n := mini(bar.size(), _spell_buttons.size())
+	for i in n:
+		var e: Dictionary = bar[i]
+		var c: Vector2 = _spell_buttons[i]["centre"]
+		var can := bool(e.get("can", false))
+		var cd := int(e.get("cooldown", 0))
+		var queued := bool(e.get("queued", false))
+		var dim := 1.0 if can else 0.40
+		draw_circle(c, SPELL_BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.90))
+		var tex: Texture2D = _disc("assets/spells/%s.png" % str(e["id"]))
+		if tex != null:
+			var ir := SPELL_BUTTON_RADIUS - 3.0
+			draw_texture_rect(tex, Rect2(c - Vector2(ir, ir), Vector2(ir, ir) * 2.0), false,
+				Color(1, 1, 1, dim))
+		var rim := C_GOLD if can else Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0)
+		if queued:
+			# A queued spell (Heroic Strike, Frenzy) is ARMED, and the bar has to say so or the
+			# second tap is a mystery.
+			rim = Color("#f4e4b8")
+		draw_arc(c, SPELL_BUTTON_RADIUS, 0.0, TAU, 28, rim, 2.0, true)
+		if cd > 0:
+			# The veil is an ARC over the icon rather than a number alone: the ring reads at a
+			# glance, and the seconds answer the exact question.
+			var def: Dictionary = e.get("def", {})
+			var total := maxf(float(def.get("cooldown", 1.0)) * 1000.0, 1000.0)
+			var frac := clampf(float(cd) / total, 0.0, 1.0)
+			draw_arc(c, SPELL_BUTTON_RADIUS - 2.0, -PI * 0.5,
+				-PI * 0.5 + TAU * frac, 28, Color(0, 0, 0, 0.62), 6.0, true)
+			draw_string(font, Vector2(c.x - 20.0, c.y + 6.0), str(int(ceil(float(cd) / 1000.0))),
+				HORIZONTAL_ALIGNMENT_CENTER, 40.0, 14, C_TEXT)
+		else:
+			# ⚠️  The cost is the ONE number a player needs before tapping and the one a 10 px
+			# label over grass loses. A dark chip behind it, 11 px, full-strength text: measured
+			# on the first frame, where no cost was readable at all.
+			var cost_txt := str(int(e.get("cost", 0)))
+			var chip := Rect2(c.x + 1.0, c.y + SPELL_BUTTON_RADIUS - 13.0, 15.0, 12.0)
+			draw_rect(chip, Color(0, 0, 0, 0.72))
+			draw_string(font, Vector2(chip.position.x, chip.position.y + 10.0), cost_txt,
+				HORIZONTAL_ALIGNMENT_CENTER, chip.size.x, 11,
+				Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, maxf(dim, 0.75)))
+
+
+## The Whirlwind row: the duel's four PS symbols, the one being asked for pulled OUT of the row
+## by a gold countdown ring. A wrong symbol ends the flurry, so the row must never be a guess —
+## the symbols stay in one fixed order and only the ring moves.
+func _draw_whirlwind() -> void:
+	if run == null or not run.whirlwind_open():
+		return
+	var prompt: String = run.whirlwind_prompt()
+	var font := UIFonts.bold()
+	# A dark band behind the row: the symbols are drawn over grass, and a red circle on green
+	# needs the plate the duel gives every symbol anyway.
+	draw_rect(Rect2(0, WW_ROW_Y - WW_BUTTON_RADIUS - 30.0, size.x, WW_BUTTON_RADIUS * 2.0 + 58.0),
+		Color(0, 0, 0, 0.30))
+	for b in _ww_buttons:
+		var key := str(b["key"])
+		var c: Vector2 = b["centre"]
+		var is_prompt: bool = key == prompt
+		draw_circle(c, WW_BUTTON_RADIUS, Color(0, 0, 0, 0.86))
+		var border := Color(str(WW_KEY_BORDERS.get(key, "#2a2a2a")))
+		var tex := UIKit.load_texture("assets/ps/ps_%s.png" % key)
+		if tex != null:
+			var ir := WW_BUTTON_RADIUS - 6.0
+			draw_texture_rect(tex, Rect2(c - Vector2(ir, ir), Vector2(ir, ir) * 2.0), false,
+				Color(1, 1, 1, 1.0 if is_prompt else 0.42))
+		draw_arc(c, WW_BUTTON_RADIUS, 0.0, TAU, 24,
+			Color(border.r, border.g, border.b, 1.0 if is_prompt else 0.32),
+			3.0 if is_prompt else 1.5, true)
+		if is_prompt:
+			var total := maxf(float(run.ww_reaction_ms), 1.0)
+			var frac := clampf(float(run.ww_deadline_ms) / total, 0.0, 1.0)
+			draw_arc(c, WW_BUTTON_RADIUS + 7.0, -PI * 0.5, -PI * 0.5 + TAU * frac, 32,
+				Color("#f1c40f"), 3.5, true)
+	draw_string(font, Vector2(size.x * 0.5 - 70.0, WW_ROW_Y - WW_BUTTON_RADIUS - 10.0),
+		"Whirlwind %d/%d" % [run.ww_index, run.ww_dirs.size()],
+		HORIZONTAL_ALIGNMENT_CENTER, 140.0, 13, C_GOLD)
+

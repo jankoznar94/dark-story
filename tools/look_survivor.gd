@@ -35,6 +35,14 @@ var _pack := 5
 ## pack wakes and walks in), "wall" = against the boundary props. A capture of the AREA has to
 ## show the thing being judged — the wall line and the discovery beat — not the middle of a field.
 var _spot := ""
+## Grant talent points to a handful of the barbarian's spells so the spell column is POPULATED in
+## the frame. Nothing is saved — this is a look-probe, and a screenshot of a class that invested
+## in nothing would photograph an empty column and prove nothing.
+var _spells := false
+## Open a Whirlwind flurry a few frames before the shot, so the PS row (and its countdown ring) is
+## in the frame. The row is the one part of the spell work that cannot be judged from a still of
+## anything else.
+var _flurry := false
 
 var _screen = null
 var _started := false
@@ -77,6 +85,10 @@ func _initialize() -> void:
 				_pack = int(args[i + 1])
 			"--spot":
 				_spot = args[i + 1]
+			"--spells":
+				_spells = args[i + 1] != "0"
+			"--flurry":
+				_flurry = args[i + 1] != "0"
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -92,6 +104,8 @@ func _process(_delta: float) -> bool:
 		_main._enter_survivor(0)
 		_screen = _main._screens["survivor"]
 		_place_hero()
+		if _spells or _flurry:
+			_grant_spells()
 		if _pack > 0 and _screen.run != null:
 			var run = _screen.run
 			run.monsters.clear()
@@ -110,6 +124,11 @@ func _process(_delta: float) -> bool:
 		_screen._on_release()
 	if _frames == _frames_to_run - 3 and _walk and _stick == "1":
 		_screen._on_drag(Vector2(150, 614))
+	# A flurry has to be OPEN at capture time: its row only exists while the flurry runs, and the
+	# run's own clock burns the deadline in 1.5 s, so it is opened a handful of frames before.
+	if _flurry and _frames == _frames_to_run - 12 and _screen.run != null:
+		_screen._layout_spells()
+		_screen._cast_spell("whirlwind")
 	_frames += 1
 	if _frames < _frames_to_run:
 		return false
@@ -120,6 +139,18 @@ func _process(_delta: float) -> bool:
 			return false
 	_capture()
 	return false
+
+
+## A handful of the barbarian's spells bought, so the column has buttons in it. The SAVE is not
+## written; the run reads the talent levels live through `PlayerSpells`.
+func _grant_spells() -> void:
+	var st = _screen._state
+	var levels: Dictionary = st.data.get("talentLevels", {})
+	for id in ["heroicStrike", "thunderClap", "doubleSwing", "battleShout", "pummel",
+			"whirlwind", "frenzy"]:
+		levels["barbarian_%s" % id] = 2
+	st.data["talentLevels"] = levels
+	_screen._layout_spells()
 
 
 func _capture() -> void:
