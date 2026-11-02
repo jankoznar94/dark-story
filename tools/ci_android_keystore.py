@@ -90,11 +90,23 @@ def main() -> int:
         if data != b"":
             break
     if data == b"":
+        # Diagnostics that are safe to publish: lengths, and the base64 header/tail — the
+        # header is the fixed DER prefix every keystore shares, so it names the format and
+        # nothing about the key.
+        longest = candidates[0] if candidates else ""
+        attempts: list[str] = []
+        for drop in (0, 1, 2, 3, 4):
+            core = longest[:len(longest) - drop] if drop else longest
+            core = core[:len(core) - (len(core) % 4)]
+            try:
+                dec = base64.b64decode(core + "=" * (-len(core) % 4), validate=False)
+                attempts.append("%d->%dB/%s" % (drop, len(dec), dec[:4].hex()))
+            except Exception as exc:
+                attempts.append("%d->%s" % (drop, type(exc).__name__))
         print("ci_android_keystore: could not find a keystore in the secret "
-              "(value %d chars, %d base64-ish runs, longest %d) — paste the whole long "
-              "line, or the value is truncated"
-              % (len(raw), len(candidates), len(candidates[0]) if candidates else 0),
-              file=sys.stderr)
+              "(value %d chars, %d runs, longest %d, head '%s', tail '%s', trims %s)"
+              % (len(raw), len(candidates), len(longest), longest[:12], longest[-8:],
+                 ",".join(attempts)), file=sys.stderr)
         return 1
 
     with open(out_path, "wb") as f:
