@@ -701,14 +701,15 @@ jobs:
       # and there is no stable link to give the phone. `make_latest` is what makes
       # `/releases/latest/download/dungeon-recall.apk` resolve.
       #
-      # ⚠️  Only from `dr-godot`. The workflow runs on every branch push, and any feature
-      # branch publishing itself as "latest" would hand Jan a half-finished build.
+      # ⚠️  Same rule as the web deploy above: whatever branch was pushed last IS the live
+      # game, and the phone build must be the same code Jan plays in the browser. Pinning
+      # this to one branch would silently hand him an APK older than the page.
       #
       # ⚠️  Gated on the signing key: an APK signed with the runner's throwaway debug key
       # installs (first time) but can never be UPDATED over, so nothing is published until
       # the real keystore secret exists.
       - name: Publish the Android build
-        if: github.ref == 'refs/heads/dr-godot' && steps.signing.outputs.keystore != ''
+        if: steps.signing.outputs.keystore != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-latest
