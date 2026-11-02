@@ -115,7 +115,7 @@ static func blocked_reason(run, spell_id: String) -> String:
 			if run._nearest_in_reach(run.reach_main, -1) < 0:
 				return "Zadny nepritel v dosahu"
 		"thunderBolt":
-			if _nearest_within(run, SPELL_RANGE) < 0:
+			if _nearest_in_front(run, SPELL_RANGE) < 0:
 				return "Zadny nepritel v dosahu"
 		"whirlwind":
 			if run._nearest_in_reach(run.reach_main, -1) < 0:
@@ -203,6 +203,8 @@ static func _apply(run, spell_id: String, lv: int, def: Dictionary) -> Dictionar
 			var dmg_pct := 5.0 + float(lv) * 5.0
 			run.buff_dmg_pct = dmg_pct
 			run.buff_dmg_ms = SHOUT_MS
+			# Battle Shout is the RED wave in the duel (`#e74c3c`), Defensive Shout the blue one.
+			run.add_shout_rings("#e74c3c")
 			run.events.append(Sfx.CUE_SHOUT)
 			run._say_word("BATTLE SHOUT")
 			return _ok(spell_id, "Battle Shout: +%d%% poskozeni" % int(dmg_pct), 0)
@@ -212,6 +214,7 @@ static func _apply(run, spell_id: String, lv: int, def: Dictionary) -> Dictionar
 			var armor_pct: float = float(table[clampi(lv - 1, 0, 4)])
 			run.buff_armor_pct = armor_pct
 			run.buff_armor_ms = SHOUT_MS
+			run.add_shout_rings("#5dade2")
 			run.events.append(Sfx.CUE_SHOUT)
 			run._say_word("DEFENSIVE SHOUT")
 			return _ok(spell_id, "Defensive Shout: +%d%% obrany" % int(armor_pct), 0)
@@ -232,6 +235,12 @@ static func _double_swing(run, lv: int) -> Dictionary:
 	var main_dmg := maxi(1, int(round(float(run._roll_damage(false)) * mult)))
 	var off_dmg := maxi(1, int(round(float(run._roll_damage(true)) * mult)))
 	var total := main_dmg + off_dmg
+	# Both weapons ARE swung: the PWA spawns a melee impact for each hand (`spawnDoubleSwingAnim`),
+	# so the run stamps the off hand's own arc in the opposite direction instead of drawing one.
+	var toward: Vector2 = (run.monsters[idx]["pos"] as Vector2) - run.player_pos
+	if toward.length() > 0.001:
+		run.swing_dir_off = toward.normalized()
+		run.swing_age_off = 0.0
 	run._hurt_monster(idx, total, "DOUBLE SWING")
 	run.events.append(Sfx.cue_for_weapon(run.main_weapon, false))
 	run._main_clock = maxf(run.main_swing, run.off_swing)
@@ -251,6 +260,12 @@ static func _thunder_clap(run, lv: int) -> Dictionary:
 	var pct := 0.5 + float(lv) * 0.3
 	var dmg := maxi(1, int(round(float(run._roll_damage(false)) * pct
 		* _skill_dmg_mult(run))))
+	# The duel's shape: a white blast (200 ms) and 4-6 thick lightning cracks running out of the
+	# centre, drawn blue over the arena. Here the centre is the HERO, because the run has no
+	# single arena centre to stand in.
+	run.add_effect("flash", run.player_pos, {"life": 0.20, "colour": "#ffffff"})
+	run.add_effect("cracks", run.player_pos, {"life": 0.42, "colour": "#5dade2",
+		"data": {"count": run.rng.randi_range(4, 6), "length": 96.0}})
 	run._slow_monster(idx, 20.0, (1 + lv) * 1000)
 	run._hurt_monster(idx, dmg, "THUNDER CLAP")
 	run.events.append(Sfx.CUE_THUNDER_CLAP)
@@ -260,7 +275,7 @@ static func _thunder_clap(run, lv: int) -> Dictionary:
 ## Thunder Bolt — the duel's flat formula rather than a weapon one: 10 + level*3 + a weapon roll
 ## + twice STR, at 80 + lv*20 %. Stuns, and a stunned body neither walks nor hits.
 static func _thunder_bolt(run, lv: int) -> Dictionary:
-	var idx: int = _nearest_within(run, SPELL_RANGE)
+	var idx: int = _nearest_in_front(run, SPELL_RANGE)
 	if idx < 0:
 		return {"ok": false, "message": "Zadny nepritel v dosahu", "damage": 0,
 			"spell": "thunderBolt"}
@@ -271,8 +286,11 @@ static func _thunder_bolt(run, lv: int) -> Dictionary:
 		+ float(Progression.weapon_dmg(run.rng, run.main_weapon)) + str_total * 2.0
 	var dmg := maxi(1, int(round(base * float(80 + lv * 20) / 100.0)))
 	var stun_ms := int(round((3.0 + float(lv - 1) * 0.5) * 1000.0))
-	run._stun_monster(idx, stun_ms)
-	run._hurt_monster(idx, dmg, "THUNDER BOLT")
+	# It TRAVELS. The damage and the stun land when the bolt reaches a body (`_step_bolts`),
+	# which is what makes the spell aimed rather than a number printed on a distant portrait.
+	# The target is the nearest body IN FRONT of the hero, fixed at cast time.
+	var target_pos: Vector2 = run.monsters[idx]["pos"] as Vector2
+	run.cast_bolt(target_pos, dmg, stun_ms, "#5dade2")
 	run.events.append(Sfx.CUE_THUNDER_BOLT)
 	return _ok("thunderBolt", "Thunder Bolt: %d, omraceni" % dmg, dmg)
 
@@ -291,6 +309,9 @@ static func _shield_slam(run, lv: int) -> Dictionary:
 	var dmg := maxi(1, int(round(float(roll) * pct / 100.0)))
 	var slow_pct := 15.0 + float(lv) * 5.0
 	var slow_ms := (2 + int(floor(float(lv) / 2.0))) * 1000
+	# The duel drops a big grey shield from above the body, shrinking as it lands.
+	run.add_effect("shield", run.monsters[idx]["pos"] as Vector2, {"life": 0.40,
+		"colour": "#888888"})
 	run._slow_monster(idx, slow_pct, slow_ms)
 	run._hurt_monster(idx, dmg, "SHIELD SLAM")
 	run.events.append(Sfx.CUE_BLUNT_HIT)
@@ -307,6 +328,9 @@ static func _pummel(run, lv: int) -> Dictionary:
 			"spell": "pummel"}
 	var block_ms := (2 + lv) * 1000
 	run._block_monster(idx, block_ms)
+	run.add_effect("ring", run.monsters[idx]["pos"] as Vector2, {"life": 0.26,
+		"colour": "#e67e22", "data": {"count": 2, "r0": 20.0, "r1": 42.0, "delay": 0.08,
+		"width": 3.0}})
 	run._add_number((run.monsters[idx]["pos"] as Vector2) + Vector2(0, -30), "PUMMEL", "word")
 	run.events.append(Sfx.CUE_DODGE)
 	return _ok("pummel", "Pummel: blok utoku na %d s" % (2 + lv), 0)
@@ -322,6 +346,7 @@ static func _spell_reflect(run, lv: int) -> Dictionary:
 	var raw := int(orb.get("dmg", 1))
 	var owner_id := int(orb.get("owner", -1))
 	run.projectiles.remove_at(pi)
+	run.add_shout_rings("#a64dff")
 	var dmg := maxi(1, int(round(float(raw) * 0.7 * float(10 * lv) / 100.0)))
 	var idx: int = run._index_of_monster(owner_id)
 	if idx >= 0:
@@ -412,7 +437,31 @@ static func _skill_dmg_mult(run) -> float:
 	return 1.0 + float(total) / 100.0
 
 
-## The nearest body whose rim is inside `radius`, IGNORING facing. A bolt is not a swing.
+## The nearest body within `radius` that stands IN FRONT of the hero — the target of an AIMED
+## spell. Jan: "kouzla, která jsou mířena na konkrétního nepřítele, například Thunder Bolt,
+## musí letět na nejbližšího nepřítele ve směru kam hrdina kouká." So it is the facing
+## half-plane (`dot >= FACING_MIN_DOT`) and then the nearest by distance: a bolt never picks a
+## body behind the hero's back just because it happens to be closer.
+static func _nearest_in_front(run, radius: float) -> int:
+	if run == null:
+		return -1
+	var limit: float = radius + run.MON_RADIUS
+	var best: float = limit * limit
+	var found := -1
+	for i in run.monsters.size():
+		var off: Vector2 = (run.monsters[i]["pos"] as Vector2) - run.player_pos
+		if off.dot(run.facing) < run.FACING_MIN_DOT:
+			continue
+		var d2 := off.length_squared()
+		if d2 <= best:
+			best = d2
+			found = i
+	return found
+
+
+## The nearest body whose rim is inside `radius`, IGNORING facing. Kept for the spells that are
+## not aimed (none of the barbarian's are, now that Thunder Bolt goes through `_nearest_in_front`)
+## and for a future AoE that should not care where the hero looks.
 static func _nearest_within(run, radius: float) -> int:
 	if run == null:
 		return -1

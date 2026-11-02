@@ -93,6 +93,11 @@ const KEEP_RANGE := 232.0
 const RETREAT_RANGE := 168.0
 const SHOOT_RANGE := 470.0
 const PROJECTILE_SPEED := 268.0
+## The HERO's bolt: faster than a thrown orb (it is magic, and the player is spending mana on it),
+## small, and gone after 1.4 s so a miss cannot fly around the area forever.
+const BOLT_SPEED := 620.0
+const BOLT_RADIUS := 9.0
+const BOLT_LIFETIME := 1.4
 ## 12 px on a 1077 px-wide canvas: the first pass was 9 and it read as a speck of dust on the
 ## grass rather than as a threat. The orb is a BODY, so it has to look like one.
 const PROJECTILE_RADIUS := 12.0
@@ -207,6 +212,15 @@ var monsters: Array = []
 var zones: Array = []
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
 var projectiles: Array = []
+## The HERO's own spells in the air (`thunderBolt`): {pos, vel, dmg, stun_ms, age, colour}.
+## A targeted spell has to be SEEN travelling — an instant number over a portrait two hundred
+## pixels away reads as a bug in the health bar, not as a bolt.
+var bolts: Array = []
+## Visual effects, aged on the run's own step and painted by the screen:
+## {kind, pos, age, life, colour, data}. Kinds: "ring" (expanding shout waves), "flash"
+## (the white blast of a Thunder Clap), "cracks" (its lightning), "shield" (the slam falling
+## from above), "spiral" (a bolt's impact). Pure paint — no rule reads this list.
+var effects: Array = []
 var drops: Array = []
 var numbers: Array = []
 ## Sound cues, drained by the screen every frame (battle.gd does the same with its log).
@@ -338,6 +352,8 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	player_pos = WORLD * 0.5
 	monsters.clear()
 	projectiles.clear()
+	bolts.clear()
+	effects.clear()
 	drops.clear()
 	numbers.clear()
 	events.clear()
@@ -444,6 +460,8 @@ func step(dt: float, move: Vector2) -> void:
 	_move_monsters(dt)
 	_auto_attack(dt)
 	_step_projectiles(dt)
+	_step_bolts(dt)
+	_age_effects(dt)
 	_move_drops(dt)
 	_age_numbers(dt)
 	RunSpells.tick(self, dt)
@@ -1249,6 +1267,90 @@ func _apply_frenzy_stack() -> void:
 
 func _say_word(text: String) -> void:
 	_add_number(player_pos + Vector2(0, -62), text, "word")
+
+
+# ============================================================================ bolts & effects
+
+## Fire the hero's own spell projectile at a point. The direction is FIXED at cast time (not
+## homing) — the same rule the enemy's orbs obey, so stepping aside is still the answer to a
+## thrown thing and the aimed spell never curves into a body the hero did not face.
+func cast_bolt(at: Vector2, dmg: int, stun_ms: int, colour: String) -> void:
+	var toward: Vector2 = at - player_pos
+	var dir := toward.normalized() if toward.length() > 0.001 else facing
+	bolts.append({
+		"pos": player_pos + dir * (HERO_RADIUS + 4.0),
+		"vel": dir * BOLT_SPEED,
+		"dmg": dmg,
+		"stun_ms": stun_ms,
+		"age": 0.0,
+		"colour": colour,
+	})
+	# The cast itself is drawn as a small burst at the hand, so a bolt that has already left is
+	# still explained by something happening where the hero stands.
+	add_effect("ring", player_pos, {"life": 0.30, "colour": colour,
+		"data": {"count": 2, "r0": 8.0, "r1": 34.0, "delay": 0.10, "width": 3.0}})
+
+
+## A bolt is a BODY with a radius, exactly like an orb: it dies on the first body whose disc it
+## touches, and it hits THAT body — not the one it was aimed at, which is what makes a line of
+## enemies worth thinking about.
+func _step_bolts(dt: float) -> void:
+	if bolts.is_empty():
+		return
+	var keep: Array = []
+	for b in bolts:
+		b["age"] = float(b["age"]) + dt
+		if float(b["age"]) > BOLT_LIFETIME:
+			continue
+		var pos: Vector2 = (b["pos"] as Vector2) + (b["vel"] as Vector2) * dt
+		b["pos"] = pos
+		var hit := -1
+		for i in monsters.size():
+			if pos.distance_to(monsters[i]["pos"] as Vector2) <= MON_RADIUS + BOLT_RADIUS:
+				hit = i
+				break
+		if hit >= 0:
+			var m: Dictionary = monsters[hit]
+			# The impact is a spiral on the body, the PWA's own shape for a bolt landing.
+			add_effect("spiral", m["pos"] as Vector2, {"life": 0.50, "colour": str(b["colour"])})
+			if int(b["stun_ms"]) > 0:
+				m["stun_ms"] = maxi(int(m.get("stun_ms", 0)), int(b["stun_ms"]))
+			_hurt_monster(hit, int(b["dmg"]), "")
+			continue
+		keep.append(b)
+	bolts = keep
+
+
+## Register one visual effect. `data` carries the shape's own numbers so the screen draws it
+## without a second table; `life` is seconds on the run's fixed clock, never wall time.
+func add_effect(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
+	effects.append({
+		"kind": kind,
+		"pos": pos,
+		"age": 0.0,
+		"life": float(opts.get("life", 0.8)),
+		"colour": str(opts.get("colour", "#e74c3c")),
+		"data": opts.get("data", {}),
+	})
+
+
+## The duel's shout wave: five rings leaving the figure, 800 ms, the later ones delayed. The
+## delays and the radii are the PWA's own (`10 + p * 250`), scaled down to the run's world so a
+## wave does not cover the whole phone screen.
+func add_shout_rings(colour: String) -> void:
+	add_effect("ring", player_pos, {"life": 0.80, "colour": colour,
+		"data": {"count": 5, "r0": 10.0, "r1": 148.0, "delay": 0.10, "width": 4.0}})
+
+
+func _age_effects(dt: float) -> void:
+	if effects.is_empty():
+		return
+	var keep: Array = []
+	for e in effects:
+		e["age"] = float(e["age"]) + dt
+		if float(e["age"]) <= float(e["life"]):
+			keep.append(e)
+	effects = keep
 
 
 func _index_of_monster(id: int) -> int:

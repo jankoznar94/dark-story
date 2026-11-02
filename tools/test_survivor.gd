@@ -71,7 +71,10 @@ func _initialize() -> void:
 	_test_facing_gate()
 	_test_spells_in_the_run()
 	_test_whirlwind_flurry()
+	_test_bolt_flies_at_the_aimed_body()
+	_test_spell_effects()
 	_test_screen_spell_buttons()
+	_test_cast_while_running()
 	_test_screen_gesture_and_disc()
 
 	for f in _failures:
@@ -941,6 +944,154 @@ func _test_whirlwind_flurry() -> void:
 	_check(str(verdict["feedback"]) == "fail", "an expired flurry must report fail")
 
 	levels.erase("barbarian_whirlwind")
+
+
+# ============================================================================ bolts & effects
+
+## Jan, Nov 2026: "kouzla, která jsou mířena na konkrétního nepřítele, například Thunder Bolt,
+## musí letět na nejbližšího nepřítele ve směru kam hrdina kouká." Three claims, and all three
+## are rules, not looks: the bolt EXISTS in the air, it lands on the body it was aimed at, and a
+## body behind the hero is never the target however close it stands.
+func _test_bolt_flies_at_the_aimed_body() -> void:
+	_log("  section: bolt_flies_at_the_aimed_body")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_thunderBolt"] = 2
+	var run := _fresh(555)
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	# Well out of weapon reach, straight ahead: the bolt is the only thing that can reach it.
+	m["pos"] = run.player_pos + Vector2(200, 0)
+	var hp0 := int(m["hp"])
+	var res: Dictionary = run.cast_spell("thunderBolt")
+	_check(bool(res["ok"]), "Thunder Bolt must cast with a body in front: %s"
+		% str(res.get("message", "")))
+	_check(run.bolts.size() == 1, "the bolt must EXIST in the air, got %d" % run.bolts.size())
+	_check(int(m["hp"]) == hp0, "a flying bolt must not damage on the frame it is cast")
+	# It travels and lands on its own clock.
+	for _i in 40:
+		m["pos"] = run.player_pos + Vector2(200, 0)
+		run.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) < hp0,
+		"the bolt must reach the body: %d -> %d" % [hp0, int(m["hp"])])
+	_check(int(m.get("stun_ms", 0)) > 0, "a landed bolt must stun")
+
+	# A body BEHIND is never the target, however close it stands.
+	run.monsters.clear()
+	run._spawn_one()
+	var back: Dictionary = run.monsters[0]
+	back["hp"] = 999999
+	back["max_hp"] = 999999
+	back["pos"] = run.player_pos + Vector2(-60, 0)
+	_check(not bool(run.cast_spell("thunderBolt")["ok"]),
+		"a body behind the hero must not be a bolt target")
+
+	# With one behind and one ahead, the aim is the one AHEAD — the nearest is the one in front.
+	run._spawn_one()
+	var front: Dictionary = run.monsters[1]
+	front["hp"] = 999999
+	front["max_hp"] = 999999
+	front["pos"] = run.player_pos + Vector2(240, 0)
+	run.spell_gcd_ms = 0
+	run.spell_cooldowns.clear()
+	run.mana = float(run.max_mana)
+	_check(bool(run.cast_spell("thunderBolt")["ok"]), "the aimed cast must fire")
+	_check(run.bolts.size() >= 1, "the bolt must be in the air")
+	if run.bolts.size() >= 1:
+		var vel: Vector2 = run.bolts[run.bolts.size() - 1]["vel"]
+		_check(vel.x > 0.0, "the bolt must fly FORWARD (vx>0), got %s" % str(vel))
+	levels.erase("barbarian_thunderBolt")
+
+
+## The duel's spell effects, carried over: a shout is a WAVE of rings leaving the hero, a Thunder
+## Clap a flash plus lightning, and every effect expires on the run's own clock (an effect that
+## never ages is a permanent white rectangle on the screen).
+func _test_spell_effects() -> void:
+	_log("  section: spell_effects")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_battleShout"] = 2
+	levels["barbarian_thunderClap"] = 2
+	var run := _fresh(606)
+	run.monsters.clear()
+	run.effects.clear()
+	var res: Dictionary = run.cast_spell("battleShout")
+	_check(bool(res["ok"]), "Battle Shout must cast (no target needed)")
+	var rings := 0
+	for e in run.effects:
+		if str(e["kind"]) == "ring":
+			rings += 1
+			_check(str(e["colour"]).to_lower().begins_with("#e74c3c"),
+				"Battle Shout is the RED wave in the duel, got %s" % str(e["colour"]))
+	_check(rings >= 1, "Battle Shout must spawn its ring wave, got %d effects" % run.effects.size())
+
+	# ...and it expires, or every shout would leave its rings on the arena forever.
+	for _i in int(2.0 / STEP):
+		run.step(STEP, Vector2.ZERO)
+	_check(run.effects.is_empty(), "effects must expire on the run's clock, %d left"
+		% run.effects.size())
+
+	# The clap: a white flash plus lightning cracks.
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	m["pos"] = run.player_pos + Vector2(50, 0)
+	run.spell_gcd_ms = 0
+	run.spell_cooldowns.clear()
+	run.mana = float(run.max_mana)
+	_check(bool(run.cast_spell("thunderClap")["ok"]), "Thunder Clap must cast")
+	var kinds: Array = []
+	for e in run.effects:
+		kinds.append(str(e["kind"]))
+	_check(kinds.has("flash"), "Thunder Clap must flash")
+	_check(kinds.has("cracks"), "Thunder Clap must crack")
+	levels.erase("barbarian_battleShout")
+	levels.erase("barbarian_thunderClap")
+
+
+## A SECOND FINGER must be able to cast while the first one holds the stick. Jan: "kouzla musí
+## jít vykouzlit i za běhu." Asserted on touch INDICES, because a single `_pointer_down` flag is
+## exactly what made this impossible: the second press looked like the duplicate event this
+## engine synthesises from every touch and was dropped.
+func _test_cast_while_running() -> void:
+	_log("  section: cast_while_running")
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_heroicStrike"] = 1
+	var screen = SurvivorScreen.new()
+	root.add_child(screen)
+	screen.size = Vector2(390, 844)
+	screen.setup(_state, _find_item, _loot, 0)
+	# Finger 1 takes the stick and drags.
+	screen._on_press(Vector2(120, 640), 1)
+	screen._on_drag(Vector2(170, 640), 1)
+	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
+		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
+	# Finger 2 presses a spell button — and the stick must keep running.
+	var btn: Dictionary = screen._spell_buttons[0]
+	screen._on_press(btn["centre"], 2)
+	_check(screen.run.heroic_queued,
+		"a second finger must be able to cast while the stick is held")
+	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
+		"casting must NOT stop the run: vec=%s" % str(screen._stick_vec))
+	# Lifting the spell finger must not stop the hero either.
+	screen._on_release(2)
+	_check(screen._pointer_down, "releasing the spell finger must not stop the run")
+	screen._on_release(1)
+	_check(not screen._pointer_down and screen._stick_vec == Vector2.ZERO,
+		"releasing the stick finger must stop the hero")
+	screen.queue_free()
+	levels.erase("barbarian_heroicStrike")
 
 
 # ============================================================================ screen

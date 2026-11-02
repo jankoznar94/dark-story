@@ -43,6 +43,13 @@ var _spells := false
 ## in the frame. The row is the one part of the spell work that cannot be judged from a still of
 ## anything else.
 var _flurry := false
+## Cast ONE spell a few frames before the shot, so its effect is mid-animation in the frame.
+## The effects are the whole point of `--cast`: a still of a finished spell proves nothing.
+var _cast_id := ""
+## How many frames before the shot the spell is cast. A shout's wave needs ~20 frames to leave the
+## portrait (at 8 it is still INSIDE the hero's own disc and reads as a rim); a bolt crosses 105 px
+## of body in ~10, so it is caught with 5.
+var _cast_at := 20
 
 var _screen = null
 var _started := false
@@ -89,6 +96,10 @@ func _initialize() -> void:
 				_spells = args[i + 1] != "0"
 			"--flurry":
 				_flurry = args[i + 1] != "0"
+			"--cast":
+				_cast_id = args[i + 1]
+			"--cast-at":
+				_cast_at = int(args[i + 1])
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -126,6 +137,8 @@ func _process(_delta: float) -> bool:
 		_screen._on_drag(Vector2(150, 614))
 	# A flurry has to be OPEN at capture time: its row only exists while the flurry runs, and the
 	# run's own clock burns the deadline in 1.5 s, so it is opened a handful of frames before.
+	if _cast_id != "" and _frames == _frames_to_run - _cast_at and _screen.run != null:
+		_screen._cast_spell(_cast_id)
 	if _flurry and _frames == _frames_to_run - 12 and _screen.run != null:
 		_screen._layout_spells()
 		_screen._cast_spell("whirlwind")
@@ -146,8 +159,8 @@ func _process(_delta: float) -> bool:
 func _grant_spells() -> void:
 	var st = _screen._state
 	var levels: Dictionary = st.data.get("talentLevels", {})
-	for id in ["heroicStrike", "thunderClap", "doubleSwing", "battleShout", "pummel",
-			"whirlwind", "frenzy"]:
+	for id in ["heroicStrike", "thunderClap", "thunderBolt", "doubleSwing", "battleShout",
+			"defensiveShout", "pummel", "whirlwind", "frenzy"]:
 		levels["barbarian_%s" % id] = 2
 	st.data["talentLevels"] = levels
 	_screen._layout_spells()
@@ -158,7 +171,11 @@ func _capture() -> void:
 	var img: Image = root.get_texture().get_image()
 	img.save_png(_out)
 	var run = _screen.run
-	print("look_survivor: %s %dx%d kills=%d drops=%d alive=%d hp=%d/%d wave=%d t=%.1f"
+	var kinds: Array = []
+	for e in run.effects:
+		kinds.append(str(e["kind"]))
+	print("look_survivor: %s %dx%d kills=%d drops=%d alive=%d hp=%d/%d wave=%d t=%.1f effects=%s bolts=%d"
 		% [_out, img.get_width(), img.get_height(), run.kills, run.drops.size(),
-			run.monsters.size(), run.hp, run.max_hp, run.wave, run.elapsed])
+			run.monsters.size(), run.hp, run.max_hp, run.wave, run.elapsed, str(kinds),
+			run.bolts.size()])
 	quit(0)

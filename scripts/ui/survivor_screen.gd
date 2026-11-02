@@ -68,7 +68,15 @@ var _disc_cache: Dictionary = {}
 var _cam := Vector2.ZERO
 
 ## Floating stick. `_stick_origin` is where the thumb landed; `_stick_vec` is 0..1.
+## `_stick_index` is WHICH finger owns the stick (a touch's index, 0 for a mouse). Jan: "kouzla
+## musí jít vykouzlit i za běhu" — so a second finger has to be able to press a spell button
+## while the first one holds the stick, which a single `_pointer_down` flag could not express:
+## the second press was swallowed as a duplicate and the spell never fired.
 var _pointer_down := false
+var _stick_index := -1
+## Has a TOUCH ever arrived? If yes, every mouse event this engine synthesises from a touch is
+## ignored — that is the duplicate that used to be filtered by the single flag.
+var _touch_seen := false
 var _stick_origin := Vector2.ZERO
 var _stick_vec := Vector2.ZERO
 var _pointer_kind := ""
@@ -105,6 +113,7 @@ func _ready() -> void:
 func stop() -> void:
 	set_process(false)
 	_pointer_down = false
+	_stick_index = -1
 	_stick_vec = Vector2.ZERO
 	_accum = 0.0
 
@@ -203,42 +212,47 @@ func _hero_face() -> String:
 # ============================================================================ input
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventScreenTouch or event is InputEventMouseButton:
-		var pressed := false
-		var pos := Vector2.ZERO
-		if event is InputEventScreenTouch:
-			pressed = event.pressed
-			pos = event.position
-			_pointer_kind = "touch"
+	# TWO FINGERS, TWO JOBS. The stick is owned by ONE touch index; a second finger may press a
+	# spell button, the potion or the flurry row at the same time. The old code gated everything
+	# on a single `_pointer_down` flag, so the second press was read as the duplicate this
+	# engine synthesises and dropped — a spell could not be cast while running.
+	if event is InputEventScreenTouch:
+		_touch_seen = true
+		if event.pressed:
+			_on_press(event.position, event.index)
 		else:
-			pressed = event.pressed and event.button_index == MOUSE_BUTTON_LEFT
-			pos = event.position
-			_pointer_kind = "mouse"
-		if pressed:
-			if _pointer_down:
-				return
-			_on_press(pos)
+			_on_release(event.index)
+		accept_event()
+		return
+
+	if event is InputEventMouseButton:
+		if _touch_seen:
+			# The synthetic mouse event of a touch. Ignoring ALL of them (not just the second)
+			# is what keeps a two-finger gesture from turning into a phantom press.
+			return
+		if event.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if event.pressed:
+			_on_press(event.position, 0)
 		else:
-			if not _pointer_down:
-				return
-			_on_release()
+			_on_release(0)
 		accept_event()
 		return
 
 	if event is InputEventScreenDrag:
-		if _pointer_down:
-			_on_drag(event.position)
-			accept_event()
+		_on_drag(event.position, event.index)
+		accept_event()
 		return
 	if event is InputEventMouseMotion:
-		# ⚠️  Gated on `_pointer_down` only, never on the device: a finger drag emits no
-		# MouseMotion at all, so both paths stay open and the one that arrives is used.
-		if _pointer_down:
-			_on_drag(event.position)
-			accept_event()
+		if _touch_seen:
+			return
+		# ⚠️  Motion is never gated on a press: a finger DRAG emits no MouseMotion at all, so a
+		# motion gate breaks dragging on the phone — but a motion from the index that does not
+		# own the stick must be dropped (`_on_drag` checks it).
+		_on_drag(event.position, 0)
 
 
-func _on_press(pos: Vector2) -> void:
+func _on_press(pos: Vector2, index: int = 0) -> void:
 	# A running flurry OWNS the input: its four symbols are the only thing a press may hit, or a
 	# spell would be cast with the thumb that was about to answer the press. `_pointer_down` is
 	# NOT set here — a swallowed press must not leave the stick armed behind the row.
@@ -248,7 +262,8 @@ func _on_press(pos: Vector2) -> void:
 				_tap_whirlwind(str(b["key"]))
 				return
 		return
-	_pointer_down = true
+	# A BUTTON is never the stick — whatever finger presses it. Checked before the stick so the
+	# second thumb cannot make the hero run at his own cast.
 	for b in _spell_buttons:
 		if (b["centre"] as Vector2).distance_to(pos) <= SPELL_BUTTON_RADIUS + 6.0:
 			_cast_spell(str(b["id"]))
@@ -261,12 +276,19 @@ func _on_press(pos: Vector2) -> void:
 		return
 	if pos.y < TOP_BAR:
 		return
+	if _stick_index >= 0:
+		# The stick already has an owner; this finger is not allowed to steal it mid-run.
+		return
+	_stick_index = index
+	_pointer_down = true
 	_stick_origin = pos
 	_stick_vec = Vector2.ZERO
 	queue_redraw()
 
 
-func _on_drag(pos: Vector2) -> void:
+func _on_drag(pos: Vector2, index: int = 0) -> void:
+	if index != _stick_index:
+		return
 	var delta := pos - _stick_origin
 	if delta.length() < STICK_DEADZONE:
 		_stick_vec = Vector2.ZERO
@@ -275,7 +297,11 @@ func _on_drag(pos: Vector2) -> void:
 	queue_redraw()
 
 
-func _on_release() -> void:
+func _on_release(index: int = 0) -> void:
+	# Only the finger that OWNS the stick may stop it; lifting the spell thumb must not.
+	if index != _stick_index:
+		return
+	_stick_index = -1
 	_pointer_down = false
 	_stick_vec = Vector2.ZERO
 	queue_redraw()
@@ -496,8 +522,10 @@ func _draw() -> void:
 	_draw_drops()
 	_draw_actors()
 	_draw_projectiles()
+	_draw_bolts()
 	_draw_slash()
 	_draw_slash_off()
+	_draw_effects()
 	_draw_numbers()
 	_draw_hud()
 	_draw_spells()
@@ -954,6 +982,175 @@ func _clock() -> String:
 
 
 # ============================================================================ spells & flurry
+
+## The HERO's bolt in the air: the same body rules as an enemy orb (shadow, tail, hard dark rim,
+## no glow) in the spell's own colour, so the player can tell HIS bolt from an incoming one by
+## direction and colour at a glance.
+func _draw_bolts() -> void:
+	var radius: float = SurvivorRun.BOLT_RADIUS
+	for b in run.bolts:
+		var pos: Vector2 = (b["pos"] as Vector2) - _cam
+		if pos.x < -40.0 or pos.y < -40.0 or pos.x > size.x + 40.0 or pos.y > size.y + 40.0:
+			continue
+		var col := Color(str(b["colour"]))
+		var vel: Vector2 = b["vel"]
+		var dir := vel.normalized() if vel.length() > 0.001 else Vector2.RIGHT
+		for i in 3:
+			var t := float(i + 1)
+			var trail: Vector2 = pos - dir * (radius + 5.0 + t * 8.0)
+			draw_circle(trail, maxf(1.5, radius * (0.55 - 0.13 * t)),
+				Color(col.r, col.g, col.b, 0.45 - 0.12 * t))
+		draw_set_transform(Vector2(pos.x, pos.y + radius * 1.1), 0.0, Vector2(1.0, 0.34))
+		draw_circle(Vector2.ZERO, radius * 1.1, Color(0, 0, 0, 0.5))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_circle(pos, radius + 2.0, col.darkened(0.6))
+		draw_circle(pos, radius, col)
+		draw_circle(pos, radius * 0.42, Color(1, 1, 1, 0.75))
+
+
+## The spell effects, in the shapes the DUEL uses (the PWA's own canvas animations):
+##   ring   — five expanding circles leaving the hero (Battle/Defensive Shout, Spell Reflect)
+##   flash  — a white full-screen blast (Thunder Clap, its first 200 ms)
+##   cracks — 4-6 jagged lightning lines running out of the centre (Thunder Clap)
+##   shield — a grey shield falling from above a body, shrinking as it lands (Shield Slam)
+##   spiral — a tightening spiral on the body a bolt hit (Thunder Bolt's impact)
+## All of it is drawn flat: no glow, no bloom — Jan's rule, which the PWA's shadowBlur breaks.
+func _draw_effects() -> void:
+	for e in run.effects:
+		var t := clampf(float(e["age"]) / maxf(float(e["life"]), 0.001), 0.0, 1.0)
+		var pos: Vector2 = (e["pos"] as Vector2) - _cam
+		var col := Color(str(e["colour"]))
+		var data: Dictionary = e.get("data", {})
+		match str(e["kind"]):
+			"ring":
+				var count := int(data.get("count", 5))
+				var delay := float(data.get("delay", 0.10))
+				var r0 := float(data.get("r0", 10.0))
+				var r1 := float(data.get("r1", 148.0))
+				var width := float(data.get("width", 4.0))
+				for i in count:
+					var d := float(i) * delay
+					var p := clampf((t - d) / maxf(1.0 - d, 0.05), 0.0, 1.0)
+					if p <= 0.0:
+						continue
+					var radius := lerpf(r0, r1, p)
+					if pos.x < -radius or pos.y < -radius \
+							or pos.x > size.x + radius or pos.y > size.y + radius:
+						continue
+					draw_arc(pos, radius, 0.0, TAU, 48,
+						Color(col.r, col.g, col.b, (1.0 - p) * 0.8), width * (1.0 - 0.4 * p), true)
+			"flash":
+				draw_rect(Rect2(Vector2.ZERO, size),
+					Color(col.r, col.g, col.b, (1.0 - t) * 0.45))
+			"cracks":
+				# ⚠️  AGE and LIFE, not the normalised `t`: this shape's reveal/fade are in
+				# SECONDS of its own (see `_draw_cracks`), and passing the 0..1 progress made the
+				# fade eat it — measured as `effects=["flash","cracks"]` on a frame with no
+				# lightning visible at all.
+				_draw_cracks(pos, col, float(e["age"]), float(e["life"]),
+					int(data.get("count", 5)), float(data.get("length", 96.0)))
+			"shield":
+				# Starts huge and above the body, ends small and on it — the duel's own motion.
+				var shrink := 1.0 - t * 0.55
+				var sx := 118.0 * shrink
+				var sy := pos.y - 120.0 * (1.0 - t)
+				var a := (1.0 - t) * 0.55
+				var pts := PackedVector2Array([
+					Vector2(pos.x - sx * 0.30, sy - sx * 0.40),
+					Vector2(pos.x + sx * 0.30, sy - sx * 0.40),
+					Vector2(pos.x + sx * 0.30, sy + sx * 0.10),
+					Vector2(pos.x, sy + sx * 0.40),
+					Vector2(pos.x - sx * 0.30, sy + sx * 0.10),
+				])
+				draw_colored_polygon(pts, Color(0.53, 0.53, 0.53, a))
+				var outline := pts.duplicate()
+				outline.append(pts[0])
+				draw_polyline(outline, Color(0.67, 0.67, 0.67, a + 0.15), 2.0, true)
+			"spiral":
+				var turns := 4.0 * (1.0 - t)
+				var alpha := 1.0 - t
+				var prev := pos
+				var steps := int(maxf(turns * 24.0, 0.0))
+				for k in steps:
+					var tt := float(k) * 0.12
+					var r := 4.0 + tt * 3.0
+					var sp := pos + Vector2(cos(tt), sin(tt)) * r
+					draw_line(prev, sp, Color(col.r, col.g, col.b, alpha), 2.0, true)
+					prev = sp
+
+
+## The lightning of a Thunder Clap. The shape is generated from a seed derived from the effect's
+## own position, so it does not shimmer between frames — a crack pattern that re-rolls every
+## frame reads as noise, not as lightning.
+##
+## ⚠️  A crack is NOT a spoke. The first version bent each segment by ±0.3 rad, and a still frame
+## was read as "four straight lines, a UI reticle" — which is exactly what a spoke is. Lightning
+## is built from LARGE direction swings (±0.75 rad), uneven segment lengths and short side
+## BRANCHES; without the branches it stays a star.
+func _draw_cracks(pos: Vector2, col: Color, age: float, life: float,
+		count: int, reach: float) -> void:
+	# The reveal is FAST (full length in ~0.18 s) and the fade is the rest. The PWA spread it
+	# over 0.28 s, which at 60 fps caught the crack as a stub no longer than the hero's own
+	# portrait — measured on a frame 0.1 s after the cast, where the vision pass reported "no
+	# lightning at all". Lightning is instant; only its afterglow lingers.
+	var reveal := 0.18
+	var progress := clampf(age / reveal, 0.0, 1.0)
+	if progress <= 0.0:
+		return
+	var alpha := clampf(1.0 - maxf(0.0, age - reveal) / maxf(life - reveal, 0.05), 0.0, 1.0)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(absf(pos.x) * 7.0 + absf(pos.y) * 13.0) + 1
+	var lines: Array = []
+	for i in count:
+		var base := TAU * float(i) / float(count) + rng.randf_range(-0.3, 0.3)
+		var segs := 4 + rng.randi_range(0, 2)
+		var step_len := reach * rng.randf_range(0.55, 1.0) / float(segs)
+		var px := pos
+		var dir := base
+		var pts := PackedVector2Array([pos])
+		for _s in segs:
+			# Pull back toward the base direction each step, or a big swing sends the bolt
+			# curling into a spiral instead of running OUT of the hero.
+			dir = lerp_angle(dir, base, 0.30) + rng.randf_range(-0.75, 0.75)
+			px += Vector2(cos(dir), sin(dir)) * step_len * rng.randf_range(0.55, 1.45)
+			pts.append(px)
+		lines.append(pts)
+		# One or two short forks off the middle of the bolt.
+		for _b in rng.randi_range(1, 2):
+			var k := rng.randi_range(1, maxi(pts.size() - 2, 1))
+			var root: Vector2 = pts[k]
+			var bdir := base + rng.randf_range(-1.5, 1.5)
+			var blen := reach * rng.randf_range(0.16, 0.34)
+			var bp := PackedVector2Array([root])
+			var cur := root
+			var cdir := bdir
+			for _j in 2:
+				cdir += rng.randf_range(-0.7, 0.7)
+				cur += Vector2(cos(cdir), sin(cdir)) * blen * 0.55
+				bp.append(cur)
+			lines.append(bp)
+
+	var total_pts := 0
+	for l in lines:
+		total_pts += (l as PackedVector2Array).size()
+	var wanted := maxi(2, int(ceil(float(total_pts) * progress)))
+	var drawn := 0
+	for l in lines:
+		var pts2: PackedVector2Array = l
+		var take := clampi(wanted - drawn, 0, pts2.size())
+		drawn += take
+		if take < 2:
+			continue
+		var shown := PackedVector2Array()
+		for k in take:
+			shown.append(pts2[k])
+		# The port's contrast recipe, applied to a LINE instead of a ball: a dark rim that
+		# separates it from the grass, the spell's colour, then a near-white core. On this ground
+		# the EDGE is what carries it (no glow — Jan's rule).
+		draw_polyline(shown, Color(0.02, 0.08, 0.16, alpha * 0.75), 9.0, true)
+		draw_polyline(shown, Color(col.r, col.g, col.b, alpha * 0.95), 5.0, true)
+		draw_polyline(shown, Color(0.88, 0.95, 1.0, alpha), 2.0, true)
+
 
 ## The class-spell buttons: the duel's own bar, on a phone-sized column. Each button is a real
 ## circle with the spell's ICON inside (cropped round — the spell art, like the monster art, is
