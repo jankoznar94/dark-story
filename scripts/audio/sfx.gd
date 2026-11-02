@@ -186,9 +186,16 @@ const TABLE := {
 	# The PWA plays these in the spell's PROJECTILE animation rather than at the cast. The
 	# port has no projectile, so the sound lands where the cast STARTS — same school, same
 	# moment the player can see the enemy's wind-up icon.
+	#
+	# ⚠️  `assets/sfx/lightning_spell.mp3` (and its `fire_spell` / `ice_spell` siblings in
+	# that folder) is a 417-byte LAME header followed by zeros — three of the four files this
+	# cue used to draw from carried NO audio at all, so three casts in four were silent and
+	# the file list looked complete. Checked with ffprobe/astats, not by ear. The silent
+	# names are dropped here; the real takes are `assets/audio/{fire,ice}_spell.mp3`,
+	# `assets/sfx/lightning_spell2.mp3` and the bolt pair.
 	CUE_ENEMY_CAST: [
 		{"paths": ["res://assets/audio/fire_spell.mp3", "res://assets/audio/ice_spell.mp3",
-			"res://assets/sfx/lightning_spell.mp3", "res://assets/sfx/lightning_spell2.mp3"],
+			"res://assets/sfx/lightning_spell2.mp3", "res://assets/sfx/frostbolt.mp3"],
 			"volume": 0.70, "chance": 1.0},
 	],
 	CUE_SHOUT: [
@@ -211,8 +218,13 @@ const TABLE := {
 	CUE_ACT_UNLOCK: [
 		{"paths": ["res://assets/audio/treasure.mp3"], "volume": 0.70, "chance": 1.0},
 	],
+	## ⚠️  `assets/sfx/shop.mp3` is a real sound but a very quiet one — measured mean -38.5 dB,
+	## peak -16.2 dBFS, i.e. ~15 dB below the fight hits. At the PWA's 0.70 it was inaudible
+	## under the music bed, which reads as "opening the shop makes no sound". The volume is
+	## raised here rather than by rewriting the asset (a re-encode would lose quality) and
+	## still leaves ~10 dB of headroom under the ceiling.
 	CUE_SHOP: [
-		{"paths": ["res://assets/sfx/shop.mp3"], "volume": 0.70, "chance": 1.0},
+		{"paths": ["res://assets/sfx/shop.mp3"], "volume": 4.0, "chance": 1.0},
 	],
 	CUE_EQUIP: [
 		{"paths": ["res://assets/sfx/equip.mp3"], "volume": 0.70, "chance": 1.0},
@@ -225,8 +237,10 @@ const TABLE := {
 	CUE_POINT_SPENT: [
 		{"paths": ["res://assets/sfx/levelup.mp3"], "volume": 0.70, "chance": 1.0},
 	],
+	## The same story, milder: `click.mp3` peaks at -9.5 dBFS, so at 0.70 it sat 8 dB under
+	## every other cue. It is a tap, not an event — audible, never loud.
 	CUE_CLICK: [
-		{"paths": ["res://assets/sfx/click.mp3"], "volume": 0.70, "chance": 1.0},
+		{"paths": ["res://assets/sfx/click.mp3"], "volume": 1.40, "chance": 1.0},
 	],
 	## The two fight-ending fanfares. Both are the game's own win sting, played as a FILE: the
 	## PWA's oscillator version is gone for good.
@@ -312,18 +326,28 @@ func play(cue: String) -> void:
 
 
 func _ready() -> void:
+	AudioBuses.install()
 	_rng.randomize()
 	# The shared mixer. A screen that owns no mixer of its own (the town, the shop) plays
 	# through this, so one sound for a click is one sound everywhere. The most recent mixer
 	# wins, which is the arena's while a fight is up — and it is the only one that matters
 	# there, since the arena hides the rest of the UI.
 	instance = self
+	var bus := AudioBuses.bus_or_master(AudioBuses.SFX)
 	for i in POOL_SIZE:
 		var p := AudioStreamPlayer.new()
 		p.name = "SfxPlayer%d" % i
-		p.bus = "Master"
+		p.bus = bus
 		add_child(p)
 		_pool.append(p)
+	# ⚠️  Read every cue AT BOOT. Loading a file on the first swing is a disk read (and, on
+	# the web export, an AudioStreamMP3 set-up) landing in the middle of a fight — the
+	# cheap version of the "it stutters sometimes" report. The whole effect set is under a
+	# megabyte, so paying for it once at start costs nothing.
+	for cue in TABLE:
+		for layer in TABLE[cue]:
+			for path in (layer["paths"] as Array):
+				_cached(str(path))
 
 
 ## Play a cue through the shared mixer. The screen-side entry point for anything that owns
@@ -335,21 +359,32 @@ static func play_global(cue: String) -> void:
 	mixer.play(cue)
 
 
-## One free player. The pool is round-robin rather than "find a free one": with eight players
-## and at most four overlapping hits, stealing the oldest is the same thing and cannot fail.
+## One free player.
+##
+## ⚠️  This used to be plain round-robin with the comment "stealing the oldest is the same
+## thing". It is not: a player that is still PLAYING its previous cue is cut mid-waveform
+## when the next sound is handed to it, and a cut in the middle of a sample is a click. With
+## a pool sized above the worst-case overlap a free player is almost always there, so ask
+## for one first and only steal when the pool is genuinely full.
 func _start(path: String, volume: float) -> void:
 	if _pool.is_empty():
 		return
-	var stream: AudioStream = _cache.get(path, null)
-	if stream == null:
-		if not ResourceLoader.exists(path):
-			# An asset that is not there must be loud: a silent miss here is the exact
-			# failure mode this whole system exists to fix.
-			push_error("Sfx: missing audio asset '%s'" % path)
-			return
-		stream = load(path)
-		_cache[path] = stream
-	_start_stream(stream, volume)
+	var stream := _cached(path)
+	if stream != null:
+		_start_stream(stream, volume)
+
+
+## Read a cue's file once and keep it. An asset that is not there must be loud: a silent
+## miss here is the exact failure mode this whole system exists to fix.
+func _cached(path: String) -> AudioStream:
+	if _cache.has(path):
+		return _cache[path]
+	if not ResourceLoader.exists(path):
+		push_error("Sfx: missing audio asset '%s'" % path)
+		return null
+	var stream: AudioStream = load(path)
+	_cache[path] = stream
+	return stream
 
 
 ## Hand an already-built stream to a free player. Split out from `_start` so the caller can
@@ -357,8 +392,7 @@ func _start(path: String, volume: float) -> void:
 func _start_stream(stream: AudioStream, volume: float) -> void:
 	if _pool.is_empty() or stream == null:
 		return
-	var player := _pool[_next]
-	_next = (_next + 1) % _pool.size()
+	var player := _free_player()
 	player.stream = stream
 	player.volume_db = SILENT_DB if volume <= 0.0 else linear_to_db(volume)
 	# ⚠️  NO PITCH JITTER. An earlier revision shifted every hit by ±2 semitones "so forty
@@ -367,6 +401,18 @@ func _start_stream(stream: AudioStream, volume: float) -> void:
 	# was "nezní to dobře". The cue is the FILE, at the file's own pitch (Jan, Nov 2026).
 	player.pitch_scale = 1.0
 	player.play()
+
+
+## A player that is not currently sounding, or — when every one of them is busy — the next
+## in rotation. `playing` is false the moment a sample ends, so a finished cue is reusable
+## without any bookkeeping.
+func _free_player() -> AudioStreamPlayer:
+	for player in _pool:
+		if not player.playing:
+			return player
+	var stolen := _pool[_next]
+	_next = (_next + 1) % _pool.size()
+	return stolen
 
 
 

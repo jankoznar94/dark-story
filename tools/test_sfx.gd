@@ -33,6 +33,7 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
 const PlayerSpells := preload("res://scripts/combat/player_spells.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
+const AudioBuses := preload("res://scripts/audio/buses.gd")
 
 var _failures: Array[String] = []
 var _data: Node
@@ -57,6 +58,8 @@ func _initialize() -> void:
 	_test_the_victory_page_raises_its_own_fanfare()
 	_test_a_resolved_reaction_window_plays_exactly_one_cue()
 	_test_a_completed_flurry_raises_the_strong_strike()
+	_test_a_repeated_cue_starts_a_sound_every_time()
+	_test_the_players_are_routed_through_the_gain_staged_buses()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -483,3 +486,55 @@ func _test_a_completed_flurry_raises_the_strong_strike() -> void:
 	if b2.take_sfx_cues().has(Sfx.CUE_STRONG_STRIKE):
 		_fail("a flurry broken by a wrong press still played the completion fanfare")
 
+
+
+## ⚠️  A cue that has played ONCE used to be silent for the rest of the session.
+##
+## `_start()` had the cache lookup and the playback in the wrong shape: `_start_stream` sat
+## inside the `if stream == null` branch, so the first play of a file worked and every later
+## play of the SAME file returned without handing anything to a player. In a fight that is
+## the weapon sound once and then nothing, which reads as broken audio rather than as a
+## missing call — and no assertion above could see it, because the decision layer is right.
+##
+## The test fills the cache, empties the pool, and asks for the cue again: a cached path that
+## never plays leaves every player with `stream == null`.
+func _test_a_repeated_cue_starts_a_sound_every_time() -> void:
+	var mixer = Sfx.new()
+	# ⚠️  `_ready` is called by HAND: this runs inside `_initialize()`, before the tree starts
+	# propagating readiness, so a node added here has no pool yet and every `play()` would be
+	# a silent no-op — a rig that measures nothing and calls it a game bug.
+	if mixer._pool.is_empty():
+		mixer._ready()
+	mixer.play(Sfx.CUE_DODGE)
+	for player in mixer._pool:
+		player.stop()
+		player.stream = null
+	mixer.play(Sfx.CUE_DODGE)
+	var started := 0
+	for player in mixer._pool:
+		if player.stream != null:
+			started += 1
+	if started != 1:
+		_fail("a REPEATED cue started %d players; the cached path must play, not only the first load" % started)
+	mixer.free()
+
+
+## The mix buses are the crackle fix, and routing is the half of it that a headless run can
+## see: a player left on `Master` bypasses the headroom entirely and the mix clips again.
+func _test_the_players_are_routed_through_the_gain_staged_buses() -> void:
+	AudioBuses.install()
+	var sfx_index := AudioServer.get_bus_index(AudioBuses.SFX)
+	if sfx_index < 0:
+		_fail("no '%s' bus — every effect is back on Master at the PWA's own volumes" % AudioBuses.SFX)
+		return
+	if not is_equal_approx(AudioServer.get_bus_volume_db(sfx_index), AudioBuses.SFX_DB):
+		_fail("the '%s' bus sits at %.1f dB, expected %.1f" % [
+			AudioBuses.SFX, AudioServer.get_bus_volume_db(sfx_index), AudioBuses.SFX_DB])
+	var mixer = Sfx.new()
+	if mixer._pool.is_empty():
+		mixer._ready()
+	for player in mixer._pool:
+		if player.bus != AudioBuses.SFX:
+			_fail("an effect player routes to '%s' instead of '%s'" % [player.bus, AudioBuses.SFX])
+			break
+	mixer.free()

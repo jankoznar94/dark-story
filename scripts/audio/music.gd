@@ -102,9 +102,13 @@ var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	# Its own bus, so the effects' headroom and the music's do not have to be the same
+	# number — and so a mute here can never be a mute of the whole mix (see the note at the
+	# top of `buses.gd`).
+	AudioBuses.install()
 	_player = AudioStreamPlayer.new()
 	_player.name = "MusicPlayer"
-	_player.bus = "Master"
+	_player.bus = AudioBuses.bus_or_master(AudioBuses.MUSIC)
 	add_child(_player)
 	_player.finished.connect(_on_track_finished)
 	_rng.randomize()

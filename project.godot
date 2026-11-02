@@ -24,6 +24,22 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
 
+[audio]
+
+; ⚠️  The web export mixes audio ON THE MAIN THREAD. `index.audio.worklet.js` is built with
+; `threads = false`, so the AudioWorklet only copies whatever the game thread has already
+; mixed into a ring buffer; measured against Godot's own
+; `AudioDriverWeb`: buffer_length = closest_power_of_2(output_latency * mix_rate / 1000).
+; At the default 15 ms that is 1024 frames — 23 ms of sound. One frame that runs long and
+; the buffer is empty: music drops out and the next chunk arrives as a crackle. That is
+; exactly the pair Jan reports together ("hra se občas seká, včetně hudby" + "efekty
+; praskají a šumí"), and on a phone the frame budget is what makes it happen.
+;
+; 40 ms -> 2048 frames -> 46 ms of buffer, twice the tolerance, at the cost of ~23 ms of
+; extra tap-to-sound latency. A native build mixes on its own thread and only gets the
+; same, harmless, latency.
+driver/output_latency=40
+
 [rendering]
 
 ; The PWA's body background is #121212. Godot's default clear colour is a mid grey, and

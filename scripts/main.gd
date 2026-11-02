@@ -100,6 +100,10 @@ func _ready() -> void:
 	_build_nav()
 	# The PWA's `switchBGM`. Built before the first `show_screen`, because the town is the
 	# overworld track and a game that starts silent reads as "the music does not work".
+	# The two mix buses must exist BEFORE the first player is built, or every player is
+	# routed into `Master` and the gain staging silently does nothing. See `buses.gd` for
+	# the measured clipping this fixes.
+	AudioBuses.install()
 	_music = Music.new()
 	_music.name = "Music"
 	_music.mode_provider = Callable(self, "_music_mode_for_current_screen")
