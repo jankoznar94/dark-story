@@ -50,10 +50,59 @@ mkdir -p build/android
 
 ## Signing
 
-Godot signs the APK with `~/.android/debug.keystore` (alias `androiddebugkey`,
-password `android`) when the preset has `package/signed=true`. **Keep that keystore
-backed up** — Android refuses an update signed with a different key, so losing it
-means the tester has to uninstall and reinstall.
+The APK that reaches the phone is signed by CI with a **dedicated release keystore**,
+not with the local debug key. That is the whole delivery rule: Android refuses to
+install an APK signed with a different key than the installed one, so a stable key is
+what makes "download → install over the old build → keep the save" possible.
+
+| What | Where |
+|---|---|
+| Keystore | `~/dr-godot-keys/dungeon-recall-release.jks` (outside the repo, mode 600) |
+| Alias | `dungeonrecall` |
+| Store + key password | `~/dr-godot-keys/password.txt` |
+| Certificate SHA-256 | `C1:0C:E8:30:DE:D1:F3:3F:7F:85:F6:38:99:00:FF:1B:C6:FB:98:92:2F:CC:E9:66:A1:8F:1C:5B:9E:A8:F6:10` |
+| Valid until | 2054 |
+
+**Back this keystore up somewhere outside the box.** Losing it means every installed
+copy has to be uninstalled (and its save deleted) before a new build can go on.
+
+Godot 4.7 reads the signing key from the environment, so no secret is ever written
+into `export_presets.cfg` or any other tracked file:
+
+```
+GODOT_ANDROID_KEYSTORE_RELEASE_PATH
+GODOT_ANDROID_KEYSTORE_RELEASE_USER
+GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD
+```
+
+CI supplies those from repository secrets (`ANDROID_KEYSTORE_BASE64`,
+`ANDROID_KEYSTORE_USER`, `ANDROID_KEYSTORE_PASSWORD`); locally you export with them
+set in the shell, which is what `tools/ci_android_version.py` plus a plain
+`--export-release "Android"` does.
+
+⚠️  Do not move these values into `[preset.2.options.keystore]`. Godot 4.7 *writes*
+that sub-block but its loader only reads the flat `[preset.N.options]` section, so a
+keystore placed there is silently ignored and the export fails with
+"Could not find release keystore" while the file looks perfectly configured.
+
+## Delivery to the phone
+
+Every push to `dr-godot` runs the workflow, which exports the APK, stamps it with
+`version/code = <run number>` and publishes it to a rolling GitHub release:
+
+```
+https://github.com/jankoznar94/dark-story/releases/latest/download/dungeon-recall.apk
+```
+
+Open that link on the phone, install over the old build, save kept. The same URL
+always serves the newest build, so nothing has to be rebuilt or copied by hand. The
+APK is also kept as a workflow artifact for when a release step itself fails.
+
+⚠️  The publish step only runs on `dr-godot` — a feature branch must never become
+"latest" — and only once the keystore secret exists. An APK signed with a throwaway
+key would install but could never be updated over.
+
+First install only: Android asks once for permission to install from this source.
 
 ## Disk
 

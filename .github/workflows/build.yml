@@ -17,6 +17,10 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.7.2"
+  # The Android signing key, base64 of the .jks. It has to be here and not only on the
+  # export step because a `secrets` context is NOT available inside an `if:`, and the
+  # step that decodes it must be skippable while the secret is still missing.
+  ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
 jobs:
   export:
@@ -596,18 +600,38 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "DUAL_WIELD_TIMERS_ALL_PASS=true"
 
+      - name: Decode the Android signing key
+        id: signing
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          set -e
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          test -s "$RUNNER_TEMP/release.jks"
+          echo "keystore=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+          echo "SIGNING_KEY_READY=true"
+
+      # WHY the same key every build: Android refuses to install an APK signed with a
+      # different key than the installed one, so a per-run debug key would force Jan to
+      # uninstall (and lose the save) on every update. Godot 4.7 reads the keystore from
+      # GODOT_ANDROID_KEYSTORE_RELEASE_* — no secret is ever written into a tracked file.
       - name: Export
         run: |
           set -e
           mkdir -p build/web build/windows build/android
-          # Each export is allowed to return non-zero: Godot reports a FAILURE
-          # when the Android signing step cannot find a release keystore and
-          # still writes the unsigned APK. What must not pass silently is a
-          # MISSING artifact, so the step below is the actual gate.
+          # The version code has to grow or Android treats the build as a downgrade.
+          DR_ANDROID_VERSION_CODE="${{ github.run_number }}" \
+          DR_ANDROID_VERSION_NAME="0.1.${{ github.run_number }}" \
+            python3 tools/ci_android_version.py
+          # Each export is allowed to return non-zero: an unsigned Android export still
+          # writes an APK, and it is the artifact gate below that is the real check.
           ./godot --headless --path . --export-release "Web"     || true
           ./godot --headless --path . --export-release "Windows" || true
           ./godot --headless --path . --export-release "Android" || true
           ls -la build/web build/windows build/android
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ steps.signing.outputs.keystore }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.ANDROID_KEYSTORE_USER }}
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
 
       # The gate for the step above. `|| true` on an export is only acceptable
       # when something later asserts the file exists — otherwise a build that
@@ -669,13 +693,35 @@ jobs:
           publish_dir: ./build/web
           publish_branch: gh-pages
 
-      - name: Attach downloads to a Release
-        if: github.ref == 'refs/heads/main'
+      # Jan plays the WEB build, so gh-pages above is the live game. This release is the
+      # Android side-load: one permanently-valid URL he taps on the phone, and the APK
+      # installs OVER the old one because it is signed with the same key every time.
+      #
+      # ⚠️  Rolling tag, not `build-<run>`: a new tag per run buries the repo in releases
+      # and there is no stable link to give the phone. `make_latest` is what makes
+      # `/releases/latest/download/dungeon-recall.apk` resolve.
+      #
+      # ⚠️  Only from `dr-godot`. The workflow runs on every branch push, and any feature
+      # branch publishing itself as "latest" would hand Jan a half-finished build.
+      #
+      # ⚠️  Gated on the signing key: an APK signed with the runner's throwaway debug key
+      # installs (first time) but can never be UPDATED over, so nothing is published until
+      # the real keystore secret exists.
+      - name: Publish the Android build
+        if: github.ref == 'refs/heads/dr-godot' && steps.signing.outputs.keystore != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          tag_name: android-latest
+          name: Android build (latest)
+          make_latest: true
           body: ${{ steps.built.outputs.report }}
           files: |
             build/windows/dungeon-recall.exe
             build/android/dungeon-recall.apk
+
+      - name: Keep the APK as a workflow artifact
+        if: hashFiles('build/android/dungeon-recall.apk') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/android/dungeon-recall.apk
