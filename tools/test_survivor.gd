@@ -66,7 +66,7 @@ func _initialize() -> void:
 	_test_orb_hits_and_can_be_dodged()
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
-	_test_wave_counter()
+	_test_pack_discovery()
 	_test_screen_gesture_and_disc()
 
 	for f in _failures:
@@ -128,8 +128,22 @@ func _test_setup_reads_the_hero() -> void:
 	_check(run.hp == run.max_hp, "a run starts at full health")
 	_check(run.dmg_min > 0 and run.dmg_max >= run.dmg_min,
 		"damage range must be a real range: %d..%d" % [run.dmg_min, run.dmg_max])
-	_check(run.monsters.size() == 2, "an opening wave of 2, got %d" % run.monsters.size())
-	_check(run.wave == 1, "the first wave is 1")
+	_check(run.monsters.is_empty(), "the hero starts in an EMPTY clearing, got %d monsters" % run.monsters.size())
+	_check(run.wave == 0, "no pack has woken yet, wave=%d" % run.wave)
+	# 3x3 cells minus the hero's own clearing: eight packs, each a known quantity before it wakes.
+	_check(run.zones.size() == SurvivorRun.ZONE_COLS * SurvivorRun.ZONE_ROWS - 1,
+		"the area must hold one pack per cell but the clearing, got %d" % run.zones.size())
+	for z in run.zones:
+		var n: int = (z["members"] as Array).size()
+		_check(n >= SurvivorRun.PACK_MIN and n <= SurvivorRun.PACK_MAX,
+			"a pack is %d..%d bodies, got %d" % [SurvivorRun.PACK_MIN, SurvivorRun.PACK_MAX, n])
+		for m in z["members"]:
+			var d: float = (m["pos"] as Vector2).distance_to(z["centre"] as Vector2)
+			_check(d <= SurvivorRun.ZONE_JITTER + 1.0,
+				"a pack member must stand inside its own cell: %.1f > %.1f" % [d, SurvivorRun.ZONE_JITTER])
+		# A pack must never wake on the hero's first frame.
+		_check((z["centre"] as Vector2).distance_to(run.player_pos) > SurvivorRun.ACTIVATE_RADIUS,
+			"a pack centre is inside the activation radius at spawn")
 
 
 func _test_movement_and_clamp() -> void:
@@ -147,18 +161,19 @@ func _test_movement_and_clamp() -> void:
 	run2.step(STEP, Vector2(1, 1))
 	_check(absf(run2.player_pos.distance_to(start2) - run2.hero_speed() * STEP) < 0.01,
 		"a diagonal step must have the same length as a straight one")
-	# The world edge holds.
+	# The world edge holds — at the WALL inset, which is where the boundary props stand.
 	var run3 := _fresh()
 	for _i in 600:
 		run3.step(STEP, Vector2(-1, -1))
-	_check(run3.player_pos.x >= SurvivorRun.HERO_RADIUS - 0.01
-			and run3.player_pos.y >= SurvivorRun.HERO_RADIUS - 0.01,
-		"the hero must not leave the world: %s" % str(run3.player_pos))
+	var wall := SurvivorRun.AREA_MARGIN + SurvivorRun.HERO_RADIUS - 0.01
+	_check(run3.player_pos.x >= wall and run3.player_pos.y >= wall,
+		"the hero must stop at the wall: %s (wall %.1f)" % [str(run3.player_pos), wall])
 
 
 func _test_monsters_close_in() -> void:
 	_log("  section: monsters_close_in")
 	var run := _fresh()
+	run._spawn_one()
 	var m: Dictionary = run.monsters[0]
 	var before := (m["pos"] as Vector2).distance_to(run.player_pos)
 	for _i in 60:
@@ -669,21 +684,59 @@ func _test_spawn_cap_and_clearance() -> void:
 		"the hero must stay clear of every body for a whole run: %.1f" % closest)
 
 
-func _test_wave_counter() -> void:
-	_log("  section: wave_counter")
-	var run := _fresh()
-	# ⚠️  The first version of this case stood still for 27 s and asserted the wave number —
-	# and failed, because the hero DIED at ~12 s and `step()` returns immediately once a run is
-	# over. The clock has to be measured on a run that cannot end.
-	run.monsters.clear()
+## A pack is a DISCOVERY, not a clock: nothing wakes while the hero stands in his clearing, one
+## pack wakes when he walks into the next cell, and the area ends only when every cell has been
+## emptied. This section is the whole area model in three steps.
+func _test_pack_discovery() -> void:
+	_log("  section: pack_discovery")
+	var run := _fresh(4242)
 	run.max_hp = 999999
 	run.hp = 999999
 	run.defense = 999
-	var ticks := int((SurvivorRun.WAVE_SECONDS + 0.5) / STEP)
-	for _i in ticks:
+	# 1. Standing still is not a spawn: 60 s in the clearing leaves the area asleep.
+	for _i in 60 * 60:
 		run.step(STEP, Vector2.ZERO)
-	_check(not run.finished, "the wave clock needs a run that is still alive to be measurable")
-	_check(run.wave == 2, "the wave must advance after WAVE_SECONDS, got %d" % run.wave)
+	_check(run.monsters.is_empty() and run.wave == 0,
+		"a hero who stands still must not be fed enemies: alive=%d wave=%d" % [run.monsters.size(), run.wave])
+
+	# 2. Walking into a cell wakes exactly that pack — and only that one.
+	var z: Dictionary = run.zones[0]
+	var target: Vector2 = z["centre"]
+	# Standing where a player actually arrives: inside the cell, ~250 px off its centre.
+	run.player_pos = target + Vector2(0, 250)
+	run.step(STEP, Vector2.ZERO)
+	var members: int = (z["members"] as Array).size()
+	_check(bool(z["active"]), "walking into a cell must wake its pack")
+	_check(run.monsters.size() == members,
+		"the woken pack must be exactly its members: %d vs %d" % [run.monsters.size(), members])
+	_check(run.wave == 1, "waking one pack is wave 1, got %d" % run.wave)
+	# No pop: every body has to arrive from OUTSIDE the phone screen (390x844, half = 195/422).
+	for m in run.monsters:
+		var d: float = (m["pos"] as Vector2).distance_to(run.player_pos)
+		_check(d >= SurvivorRun.WAKE_MIN_DIST - 2.0,
+			"a pack must wake off screen, %s is %.1f away" % [str(m["name"]), d])
+	# A woken pack is the ONLY source: no trickle may arrive on top of it.
+	var after_wake := run.monsters.size()
+	for _i in 10 * 60:
+		run.step(STEP, Vector2.ZERO)
+	_check(run.monsters.size() <= mini(after_wake, SurvivorRun.MAX_ALIVE),
+		"no monster may arrive from off screen: %d > %d" % [run.monsters.size(), after_wake])
+
+	# 3. Every pack dead = the area is cleared, and the run ends by itself.
+	for zz in run.zones:
+		if not bool(zz["active"]):
+			continue
+		for id in zz["ids"]:
+			for i in range(run.monsters.size() - 1, -1, -1):
+				if int(run.monsters[i]["id"]) == int(id):
+					run.monsters.remove_at(i)
+	for _i in int((SurvivorRun.CLEAR_DELAY + 0.5) / STEP):
+		run.step(STEP, Vector2.ZERO)
+	_check(run.cleared_zones() >= 1, "a visited, emptied cell must count as cleared")
+	_check(not run.finished or run.outcome == "cleared",
+		"the area must only end as 'cleared', outcome='%s'" % run.outcome)
+	_check(not run.finished,
+		"an UNVISITED pack must keep the area open — the run ended with cells still asleep")
 
 
 # ============================================================================ screen

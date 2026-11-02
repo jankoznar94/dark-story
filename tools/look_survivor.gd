@@ -14,6 +14,7 @@ class_name LookSurvivor
 ## photograph a control state that cannot happen.
 
 var _main: Node = null
+const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 var _out := "/tmp/survivor.png"
 var _frames_to_run := 300
 var _walk := true
@@ -30,10 +31,31 @@ var _wait_swing := true
 ## Place N bodies in the hero's reach before the shot. A look-frame needs a fight IN it; waiting
 ## for the spawner to walk one over costs the timeout and photographs an empty field.
 var _pack := 5
+## Where to stand for the shot: "" = the start clearing, "zone" = inside the next cell (whose
+## pack wakes and walks in), "wall" = against the boundary props. A capture of the AREA has to
+## show the thing being judged — the wall line and the discovery beat — not the middle of a field.
+var _spot := ""
 
 var _screen = null
 var _started := false
 var _frames := 0
+
+
+## Stand where the frame's question is. The fake pack below is a RENDERING probe (a fight in the
+## frame); the area itself is judged from real state — the wall line, and a pack that arrived by
+## walking in from off screen.
+func _place_hero() -> void:
+	if _spot == "" or _screen.run == null:
+		return
+	var run = _screen.run
+	match _spot:
+		"wall":
+			run.player_pos = Vector2(SurvivorRun.WORLD.x * 0.5,
+				SurvivorRun.WORLD.y - SurvivorRun.AREA_MARGIN - 40.0)
+		"zone":
+			# Inside the next cell, ~250 px off its centre: the pack wakes OFF SCREEN and walks in.
+			var z: Dictionary = run.zones[0]
+			run.player_pos = (z["centre"] as Vector2) + Vector2(0, 250.0)
 
 
 func _initialize() -> void:
@@ -53,6 +75,8 @@ func _initialize() -> void:
 				_wait_swing = args[i + 1] != "0"
 			"--pack":
 				_pack = int(args[i + 1])
+			"--spot":
+				_spot = args[i + 1]
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -67,6 +91,7 @@ func _process(_delta: float) -> bool:
 		_started = true
 		_main._enter_survivor(0)
 		_screen = _main._screens["survivor"]
+		_place_hero()
 		if _pack > 0 and _screen.run != null:
 			var run = _screen.run
 			run.monsters.clear()

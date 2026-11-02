@@ -123,17 +123,54 @@ func _build_decoration() -> void:
 				rng.randf_range(60, SurvivorRun.WORLD.y - 60)),
 			"rx": rng.randf_range(38, 96), "ry": rng.randf_range(28, 66),
 		})
-	for _i in 46:
+	# THE WALL. A band of boulders and dead bushes standing on the inset rectangle the rules
+	# stop the hero at: the area has ends, and the thing the player runs into is the thing that
+	# stopped him. Spaced ~74 px with a lit rock in every other slot, so there is no gap to read
+	# as an exit. Nothing collides with a prop — the clamp is the wall.
+	var x0 := SurvivorRun.AREA_MARGIN
+	var y0 := SurvivorRun.AREA_MARGIN
+	var x1 := SurvivorRun.WORLD.x - SurvivorRun.AREA_MARGIN
+	var y1 := SurvivorRun.WORLD.y - SurvivorRun.AREA_MARGIN
+	var along := 0
+	var x := x0
+	while x <= x1:
+		for yy in [y0, y1]:
+			_props.append(_wall_prop(Vector2(x + rng.randf_range(-12, 12),
+				yy + rng.randf_range(-9, 9)), along, rng))
+			along += 1
+		x += 74.0
+	var y := y0 + 74.0
+	while y < y1 - 40.0:
+		for xx in [x0, x1]:
+			_props.append(_wall_prop(Vector2(xx + rng.randf_range(-9, 9),
+				y + rng.randf_range(-12, 12)), along, rng))
+			along += 1
+		y += 74.0
+	# Interior cover. Sparse on purpose: it is something to run past, and a pack has to be
+	# readable from a distance instead of hiding behind a bush.
+	for _i in 26:
 		var kind := "rock" if rng.randf() < 0.6 else "bush"
 		_props.append({
-			"pos": Vector2(rng.randf_range(40, SurvivorRun.WORLD.x - 40),
-				rng.randf_range(40, SurvivorRun.WORLD.y - 40)),
+			"pos": Vector2(rng.randf_range(x0 + 60, x1 - 60),
+				rng.randf_range(y0 + 60, y1 - 60)),
 			"kind": kind,
 			"size": rng.randf_range(20, 44) if kind == "rock" else rng.randf_range(22, 40),
 			"seed": rng.randf() * 10.0,
 		})
 	# Nothing may spawn on the hero's first step.
 	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(SurvivorRun.WORLD * 0.5) > 70.0)
+
+
+## One piece of the wall. Bigger and darker than interior cover: at a glance it has to read as
+## "the area ends here", not as one more rock to walk around.
+func _wall_prop(pos: Vector2, index: int, rng: RandomNumberGenerator) -> Dictionary:
+	var rock := index % 3 != 2
+	return {
+		"pos": pos,
+		"kind": "rock" if rock else "bush",
+		"size": rng.randf_range(42, 66) if rock else rng.randf_range(30, 46),
+		"seed": rng.randf() * 10.0,
+	}
 
 
 ## The hero's medallion is the SAME portrait his stat page shows: `hero.face` ->
@@ -261,13 +298,12 @@ func _process(delta: float) -> void:
 		_toast_ticks = maxf(0.0, _toast_ticks - delta)
 	_flash = maxf(0.0, _flash - delta * 3.0)
 	_play_events()
-	# ONE report per run. The old code cleared `finished` after emitting, so a run whose hp had
-	# already reached 0 re-entered `step()`, died again on the next frame and emitted again — with
-	# the player on another screen each `run_finished` dragged him back.
-	if run.finished and run.outcome == "dead" and not _death_reported:
+	# ONE report per run, whatever ended it: contact damage ("dead") or the last pack of the area
+	# ("cleared"). The old code only knew death, so a finished area kept simulating.
+	if run.finished and run.outcome != "" and not _death_reported:
 		_death_reported = true
 		stop()
-		run_finished.emit("dead")
+		run_finished.emit(run.outcome)
 	_place_camera()
 	queue_redraw()
 
@@ -298,6 +334,15 @@ func _play_events() -> void:
 				# The throw itself. A caster that fires silently reads as a bug in the hero's
 				# health bar, so the cue is part of the feature, not decoration.
 				Sfx.play_global(Sfx.CUE_ENEMY_CAST)
+			"pack":
+				# A pack waking is the beat the whole area model exists for: the player has to
+				# HEAR that walking into the next cell started something.
+				Sfx.play_global(Sfx.CUE_SHOUT)
+			"zone":
+				_say("Oblast vyčištěna")
+			"cleared":
+				Sfx.play_global(Sfx.CUE_VICTORY)
+				_say("Celá oblast je čistá")
 
 
 func _place_camera() -> void:
@@ -669,8 +714,9 @@ func _draw_hud() -> void:
 	draw_rect(Rect2(0, 0, size.x, TOP_BAR), Color(0, 0, 0, 0.55))
 	var act_name := "Akt %d" % (run.act_id + 1)
 	draw_string(font_r, Vector2(12, 22), act_name, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
-	draw_string(font, Vector2(12, 42), "Vlna %d" % run.wave, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 15, C_TEXT)
-	draw_string(font_r, Vector2(96, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
+	draw_string(font, Vector2(12, 42), "Oblasti %d/%d" % [run.cleared_zones(), run.zones.size()],
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 15, C_TEXT)
+	draw_string(font_r, Vector2(126, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
 	# ⚠️  `draw_string` with a width of -1 and RIGHT alignment does NOT right-align — it draws
 	# rightwards from the anchor and ran under the Konec box. Give it a box of its own.
 	draw_string(font, Vector2(size.x - 168, 42), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 66.0, 15, C_GOLD)

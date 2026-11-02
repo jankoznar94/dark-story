@@ -99,14 +99,45 @@ const ORB_COLOUR := "#7ac74f"
 ## conversion and the rule silently reverts.
 const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
 
+## --- the area ---------------------------------------------------------------
+## The run happens in ONE FINITE AREA, not in an endless arena. The world is cut into a grid of
+## cells; every cell except the hero's own clearing holds ONE PACK, and a pack only EXISTS once
+## the hero walks close enough to its cell. That is the Diablo-2 shape Jan asked for: an enemy
+## is a DISCOVERY, not a trickle that arrives from off screen, and walking into a new cell is
+## the decision that starts a fight.
+##
+## The cells are laid out so the hero's spawn point is the EXACT middle of the middle cell: that
+## is what gives him a clearing to start in, and it keeps every neighbouring pack at 436 px or
+## more — outside ACTIVATE_RADIUS, so nothing wakes on the first frame.
+const AREA_MARGIN := 96.0
+const ZONE_COLS := 3
+const ZONE_ROWS := 3
+const PACK_MIN := 2
+const PACK_MAX := 4
+## How far a pack's members scatter from its cell centre, and the least gap between two of them.
+## The gap is bigger than one disc (62) on purpose: a pack is a formation, not a pile.
+const ZONE_JITTER := 104.0
+const PACK_SPACING := 70.0
+const ACTIVATE_RADIUS := 330.0
+## How far from the hero a woken pack is placed. The phone screen is 390x844, so half of it is
+## 195 px across and 422 px down: a pack that appeared at 330 would POP into view in the middle of
+## the field, which is exactly the seam Jan would notice. At 470 the bodies arrive from OFF the
+## screen and walk in, which also gives the player the beat of hearing/seeing them come.
+const WAKE_MIN_DIST := 470.0
+## After the LAST pack dies the run keeps running this long: the final kill's loot has to be
+## walkable-over, or the payout of the winning blow is the one drop the player never gets.
+const CLEAR_DELAY := 2.0
+
 ## --- spawning -------------------------------------------------------------
 ## The density is the design dial. The Dark Story pacing rule banned hordes; the survivor
 ## loop needs a CROWD, so the number lives here, named, and the slice stays at 16 alive.
 ## Was 16 on the first pass and Jan's report was "there are too many enemies". Seven is a pack
 ## you can read and back away from; the arena's own pacing lesson is that a crowd on a phone
 ## screen is not difficulty, it is noise.
+##
+## A pack larger than the remaining room WAITS instead of spawning over the cap, so two
+## neighbouring cells can never add up to a wall of bodies.
 const MAX_ALIVE := 7
-const WAVE_SECONDS := 26.0
 const SPAWN_RADIUS_MIN := 300.0
 const SPAWN_RADIUS_MAX := 430.0
 
@@ -151,6 +182,10 @@ var crit_off := 0.0
 var speed_pct := 0
 
 var monsters: Array = []
+## The area's own map: one entry per cell that holds a pack. `members` are the ROWS and their
+## standing positions, decided at setup from the seed, so the layout is reproducible and a pack
+## that has not woken yet is still a known quantity for a test.
+var zones: Array = []
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
 var projectiles: Array = []
 var drops: Array = []
@@ -159,10 +194,14 @@ var numbers: Array = []
 var events: Array = []
 
 var kills := 0
-var wave := 1
+## How many packs have WOKEN. It is the loot table's depth too (`_roll_drop` passes it), so a
+## later pack pays better than the first one.
+var wave := 0
 var elapsed := 0.0
 var gold := 0
 var items_taken := 0
+## Set the moment the last pack dies; `finished` follows after CLEAR_DELAY.
+var area_cleared := false
 ## How long ago the last swing LANDED, in seconds (-1 = no swing yet). The renderer turns this
 ## into the lunge and the slash — the RULES never animate, they only say when and which way.
 var swing_age := -1.0
@@ -176,8 +215,7 @@ var finished := false
 ## "" | "dead"
 var outcome := ""
 
-var _wave_clock := 0.0
-var _spawn_accum := 0.0
+var _clear_clock := 0.0
 var _main_clock := 0.0
 var _off_clock := 0.0
 ## The monster the MAIN hand just hit, so the off hand prefers a different body. -1 = no
@@ -219,15 +257,16 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	drops.clear()
 	numbers.clear()
 	events.clear()
+	_build_area()
 	kills = 0
-	wave = 1
+	wave = 0
 	elapsed = 0.0
 	gold = 0
 	items_taken = 0
 	finished = false
 	outcome = ""
-	_wave_clock = 0.0
-	_spawn_accum = 0.0
+	area_cleared = false
+	_clear_clock = 0.0
 	_main_clock = 0.0
 	_off_clock = 0.0
 	_next_id = 0
@@ -235,7 +274,6 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	swing_dir = Vector2.RIGHT
 	swing_age_off = -1.0
 	swing_dir_off = Vector2.RIGHT
-	_spawn_wave(2)
 
 
 ## Reads BOTH hands off the save: the weapon's own interval (`swingMs` + DEX + IAS), its own
@@ -312,19 +350,16 @@ func step(dt: float, move: Vector2) -> void:
 		swing_age += dt
 	if swing_age_off >= 0.0:
 		swing_age_off += dt
-	_wave_clock += dt
-	if _wave_clock >= WAVE_SECONDS:
-		_wave_clock -= WAVE_SECONDS
-		wave += 1
 
 	_prev_pos = player_pos
 	_move_hero(dt, move)
-	_spawn_tick(dt)
+	_zone_tick()
 	_move_monsters(dt)
 	_auto_attack(dt)
 	_step_projectiles(dt)
 	_move_drops(dt)
 	_age_numbers(dt)
+	_zone_clear_tick(dt)
 
 
 func _move_hero(dt: float, move: Vector2) -> void:
@@ -332,61 +367,205 @@ func _move_hero(dt: float, move: Vector2) -> void:
 	if dir.length_squared() <= 0.0001:
 		return
 	player_pos += dir * hero_speed() * dt
-	player_pos.x = clampf(player_pos.x, HERO_RADIUS, WORLD.x - HERO_RADIUS)
-	player_pos.y = clampf(player_pos.y, HERO_RADIUS, WORLD.y - HERO_RADIUS)
+	player_pos.x = clampf(player_pos.x, AREA_MARGIN + HERO_RADIUS, WORLD.x - AREA_MARGIN - HERO_RADIUS)
+	player_pos.y = clampf(player_pos.y, AREA_MARGIN + HERO_RADIUS, WORLD.y - AREA_MARGIN - HERO_RADIUS)
 
 
-# ============================================================================ spawn
+# ============================================================================ area
 
-func _spawn_tick(dt: float) -> void:
-	_spawn_accum += dt
-	# The cadence tightens with the wave and stops at 0.55 s: a floor exists so the run
-	# cannot turn into a wall of bodies that the 16-alive cap then starves anyway.
-	var interval := maxf(1.10, 2.30 - float(wave - 1) * 0.12)
-	if _spawn_accum < interval:
-		return
-	_spawn_accum -= interval
-	if monsters.size() >= MAX_ALIVE:
-		return
-	_spawn_one()
-
-
-func _spawn_wave(count: int) -> void:
-	for _i in count:
-		_spawn_one()
+## The cell grid, in world pixels. Every centre sits in the middle of its own cell, and the hero
+## spawns in the exact middle of the middle one.
+static func zone_centres() -> Array:
+	var out: Array = []
+	var w := WORLD.x - AREA_MARGIN * 2.0
+	var h := WORLD.y - AREA_MARGIN * 2.0
+	for r in ZONE_ROWS:
+		for c in ZONE_COLS:
+			out.append(Vector2(
+				AREA_MARGIN + w * (float(c) + 0.5) / float(ZONE_COLS),
+				AREA_MARGIN + h * (float(r) + 0.5) / float(ZONE_ROWS)))
+	return out
 
 
-## Every monster is a WALKING PORTRAIT: the record is the data row's own `face`, so a new
-## monster in MONSTER_DB needs no code. `minArea` is honoured — the act's low-tier kinds
-## arrive first and the heavy ones only later in the run, which is what makes the waves
-## read as escalating rather than random.
-func _spawn_one() -> void:
+## One pack per cell, the hero's own cell left EMPTY. `minArea` is honoured by DISTANCE from the
+## start instead of elapsed time: the far corners hold the heavy kinds, so walking deeper is what
+## raises the stakes and the run cannot be farmed by standing still.
+func _build_area() -> void:
+	zones.clear()
+	var centre_start := WORLD * 0.5
+	var centres := zone_centres()
+	var max_d := 1.0
+	for c in centres:
+		max_d = maxf(max_d, (c as Vector2).distance_to(centre_start))
+	for c in centres:
+		var centre: Vector2 = c
+		if centre.distance_to(centre_start) < 1.0:
+			continue
+		var tier := 1 + int(round(3.0 * centre.distance_to(centre_start) / max_d))
+		var members: Array = []
+		for _i in rng.randi_range(PACK_MIN, PACK_MAX):
+			var row := _pick_row(tier)
+			if row.is_empty():
+				continue
+			members.append({"row": row, "pos": _pack_slot(centre, members)})
+		if members.is_empty():
+			continue
+		zones.append({
+			"centre": centre,
+			"members": members,
+			"active": false,
+			"cleared": false,
+			"ids": [],
+		})
+
+
+## A free spot inside a pack, at least PACK_SPACING from every other member. Rejection for a
+## BOUNDED number of tries and then a ring slot: two discs stacked on each other is a bad pack,
+## but a "find room" loop that can fail forever is a hang, which is worse.
+func _pack_slot(centre: Vector2, taken: Array) -> Vector2:
+	for _try in 14:
+		var ang := rng.randf() * TAU
+		var dist := rng.randf_range(26.0, ZONE_JITTER)
+		var p := _clamp_world(centre + Vector2(cos(ang), sin(ang)) * dist)
+		var free := true
+		for m in taken:
+			if p.distance_to(m["pos"] as Vector2) < PACK_SPACING:
+				free = false
+				break
+		if free:
+			return p
+	var slot := TAU * float(taken.size()) / float(PACK_MAX) + rng.randf() * 0.4
+	return _clamp_world(centre + Vector2(cos(slot), sin(slot)) * ZONE_JITTER)
+
+
+## The kind pool for one tier of the area. Same `minArea` rule the temporal waves used, now fed
+## by where the cell is instead of by how long the run has lasted.
+func _pick_row(tier: int) -> Dictionary:
 	var db: Array = []
 	if _data != null:
 		db = _data.monsters_for_theme(act_id)
 	if db.is_empty():
-		return
-	var tier := 1 + int(elapsed / 45.0)
+		return {}
 	var pool: Array = []
 	for row in db:
 		if int(row.get("minArea", 0)) <= tier:
 			pool.append(row)
 	if pool.is_empty():
 		pool = db
-	var row: Dictionary = pool[rng.randi_range(0, pool.size() - 1)]
+	return pool[rng.randi_range(0, pool.size() - 1)]
 
+
+## The discovery tick: a pack wakes when the hero is inside its cell's ACTIVATE_RADIUS, and it
+## WAITS for room rather than spawning over the alive cap.
+func _zone_tick() -> void:
+	for z in zones:
+		if bool(z["active"]):
+			continue
+		if player_pos.distance_to(z["centre"] as Vector2) > ACTIVATE_RADIUS:
+			continue
+		var members: Array = z["members"]
+		if monsters.size() + members.size() > MAX_ALIVE:
+			continue
+		_wake_zone(z)
+
+
+func _wake_zone(z: Dictionary) -> void:
+	var ids: Array = []
+	for m in z["members"]:
+		# A pack is never SEEN popping into being: each member is placed at least WAKE_MIN_DIST
+		# away, on the side of its cell it would have come from, and walks in from the edge of
+		# the screen.
+		var rec := _make_monster(m["row"], _spawn_away((m["pos"] as Vector2) - player_pos))
+		monsters.append(rec)
+		ids.append(int(rec["id"]))
+	z["ids"] = ids
+	z["active"] = true
+	wave += 1
+	events.append("pack")
+
+
+## A point `WAKE_MIN_DIST` from the hero in the direction of `prefer`, rotated in 30° steps until
+## it lands INSIDE the area. Clamping to the wall is what this replaces: a clamp near an edge
+## drags the spawn back toward the hero, which is the visible pop the rule exists to prevent. The
+## sweep is bounded; a hero pinned in a corner takes the best direction it has.
+func _spawn_away(prefer: Vector2) -> Vector2:
+	var base := prefer.normalized() if prefer.length() > 0.001 else Vector2.RIGHT
+	for i in 13:
+		var k := int(ceil(float(i) / 2.0))
+		var dir := base.rotated(deg_to_rad(30.0 * float(k) * (1.0 if i % 2 == 1 else -1.0)))
+		var p := player_pos + dir * WAKE_MIN_DIST
+		if _inside_area(p):
+			return p
+	return _clamp_world(player_pos + base * WAKE_MIN_DIST)
+
+
+func _inside_area(p: Vector2) -> bool:
+	return p.x >= AREA_MARGIN + MON_RADIUS and p.x <= WORLD.x - AREA_MARGIN - MON_RADIUS \
+		and p.y >= AREA_MARGIN + MON_RADIUS and p.y <= WORLD.y - AREA_MARGIN - MON_RADIUS
+
+
+func cleared_zones() -> int:
+	var n := 0
+	for z in zones:
+		if bool(z["cleared"]):
+			n += 1
+	return n
+
+
+## A pack is cleared when none of ITS ids is alive. The area ends only when every cell has been
+## visited and emptied — an unvisited pack is not a cleared area, which is what makes this a map
+## to walk rather than a timer to outlast.
+func _zone_clear_tick(dt: float) -> void:
+	var alive := {}
+	for m in monsters:
+		alive[int(m["id"])] = true
+	for z in zones:
+		if bool(z["cleared"]) or not bool(z["active"]):
+			continue
+		var left := false
+		for id in z["ids"]:
+			if alive.has(int(id)):
+				left = true
+				break
+		if not left:
+			z["cleared"] = true
+			events.append("zone")
+	if zones.is_empty():
+		return
+	if not area_cleared and cleared_zones() >= zones.size():
+		area_cleared = true
+		_clear_clock = CLEAR_DELAY
+		events.append("cleared")
+	if area_cleared and not finished:
+		_clear_clock -= dt
+		if _clear_clock <= 0.0:
+			finished = true
+			outcome = "cleared"
+
+
+# ============================================================================ spawn
+
+## A STRAY spawn next to the hero — kept because every rules test seeds its actor with it. A real
+## run does not trickle enemies any more: they arrive as packs, through `_zone_tick()`.
+func _spawn_one() -> void:
+	var row := _pick_row(1 + int(elapsed / 45.0))
+	if row.is_empty():
+		return
 	var ang := rng.randf() * TAU
 	var dist := rng.randf_range(SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX)
-	var pos := player_pos + Vector2(cos(ang), sin(ang)) * dist
-	pos.x = clampf(pos.x, MON_RADIUS, WORLD.x - MON_RADIUS)
-	pos.y = clampf(pos.y, MON_RADIUS, WORLD.y - MON_RADIUS)
+	var pos := _clamp_world(player_pos + Vector2(cos(ang), sin(ang)) * dist)
+	monsters.append(_make_monster(row, pos))
 
-	# A kind's strength is the DB's own number, scaled by the act's difficulty so a run in
-	# a later act is dangerous without a second table.
+
+## Every monster is a WALKING PORTRAIT: the record is the data row's own `face`, so a new
+## monster in MONSTER_DB needs no code.
+func _make_monster(row: Dictionary, pos: Vector2) -> Dictionary:
+	# A kind's strength is the DB's own number, scaled by the act's difficulty so a run in a
+	# later act is dangerous without a second table.
 	var lvl_scale := 1.0 + float(act_id) * 0.35
 	var mon_hp := int(round(float(row.get("hp", 60)) * lvl_scale))
 	var ranged := _is_ranged(row)
-	monsters.append({
+	var rec := {
 		"id": _next_id,
 		"face": str(row.get("face", "")),
 		"name": str(row.get("name", "")),
@@ -405,8 +584,9 @@ func _spawn_one() -> void:
 		"ranged": ranged,
 		"keep_range": KEEP_RANGE,
 		"orb_colour": str(row.get("orbColor", ORB_COLOUR)),
-	})
+	}
 	_next_id += 1
+	return rec
 
 
 ## A row is a thrower when the PWA itself called it a caster, or when it is on the port's own
@@ -458,9 +638,12 @@ func _move_monsters(dt: float) -> void:
 	_resolve_bodies()
 
 
+## The WALL of the area. It is the same inset the decoration stands on, so the rocks the player
+## runs into are the line the rules stop him at — a boundary drawn anywhere else is a lie.
 func _clamp_world(pos: Vector2) -> Vector2:
-	return Vector2(clampf(pos.x, MON_RADIUS, WORLD.x - MON_RADIUS),
-		clampf(pos.y, MON_RADIUS, WORLD.y - MON_RADIUS))
+	return Vector2(
+		clampf(pos.x, AREA_MARGIN + MON_RADIUS, WORLD.x - AREA_MARGIN - MON_RADIUS),
+		clampf(pos.y, AREA_MARGIN + MON_RADIUS, WORLD.y - AREA_MARGIN - MON_RADIUS))
 
 
 ## One orb, aimed at where the hero IS at the moment of the throw. It is NOT homing: that is
