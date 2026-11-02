@@ -35,6 +35,7 @@ class_name TownScreen
 const GameData := preload("res://scripts/data/game_data.gd")
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const UpdateCheck := preload("res://scripts/ui/update_check.gd")
 
 signal tile_selected(screen_key: String)
 signal stop_requested(act_id: int, stop: int)
@@ -85,6 +86,12 @@ var _find_item: Callable
 var _wilderness_button: Button
 var _portal_row: Control
 var _portal_label: Label
+## Manual PWA update — the same button Zily 2 and Thrower carry. Built only in a web
+## export; on desktop there is nothing to update, so the section is not drawn at all.
+var _update_check: UpdateCheck = null
+var _update_note_label: Label = null
+var _update_button: Button = null
+var _update_build_label: Label = null
 ## The card's own Button. Held so a test can drive the TAP rather than call main's handler —
 ## the wiring between the two is what broke on the map's button, and a test that calls the
 ## handler directly cannot see it.
@@ -166,6 +173,15 @@ func _build() -> void:
 		if key == "wilderness":
 			_wilderness_button = button
 		grid.add_child(button)
+
+	# RUČNÍ AKTUALIZACE SERVICE WORKERA — stejné tlačítko jako v Zily 2 a Thrower
+	# (Jan, Nov 2026: "Abych nemusel stále hru otevírat v anonymním okně"). Pod mřížkou,
+	# nad portálem: je to servisní věc, ne herní dlaždice, a patří k okraji stránky.
+	# Mimo webový export se sekce vůbec nekreslí — na desktopu není co aktualizovat.
+	_update_check = UpdateCheck.new()
+	if _update_check.web:
+		column.add_child(_build_update_section())
+		_update_check.load_build_id()
 
 	# Town portal: `.town-action-card`, a full-width row with the scroll icon, shown only
 	# when a return position is stored.
@@ -300,6 +316,60 @@ func _make_tile(icon_path: String, label_text: String) -> Button:
 	return button
 
 
+## RUČNÍ AKTUALIZACE. Plnohodnotné tlačítko `.btn` (jako "Zpět do města" na ostatních
+## obrazovkách) a pod ním dvě drobné řádky: výsledek poslední aktualizace a otisk buildu.
+## Otisk je jediná poctivá informace o tom, co zařízení opravdu spustilo — bez něj se
+## "pořád je to stejné" nedá rozeznat od "hraje starou verzi z cache".
+func _build_update_section() -> Control:
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_left", 16)
+	pad.add_theme_constant_override("margin_right", 16)
+	pad.add_theme_constant_override("margin_bottom", 16)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	pad.add_child(column)
+
+	var button := UIKit.secondary_button("AKTUALIZOVAT HRU", 44)
+	_update_button = button
+	# Zelená by tu byla druhá akcentní barva, kterou PWA nemá; tlačítko zůstává
+	# v barvě ostatních `.btn` a jediné, co se po klepnutí stane, je hláška pod ním.
+	button.pressed.connect(_on_update_pressed)
+	column.add_child(button)
+
+	_update_note_label = UIKit.label("", 12, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER)
+	column.add_child(_update_note_label)
+
+	_update_build_label = UIKit.label("build ?", 11, UIKit.DIM, HORIZONTAL_ALIGNMENT_CENTER)
+	column.add_child(_update_build_label)
+	return pad
+
+
+## Stav z prohlížeče se bere průběžně (`UpdateCheck.poll`), ne callbackem — viz
+## poznamenka u `pull_js_state` v Zily 2. Pollovat se má jen na viditelné obrazovce.
+func _process(_delta: float) -> void:
+	if _update_check == null or not visible:
+		return
+	if _update_check.poll():
+		refresh_update()
+
+
+## Klepnutí na AKTUALIZOVAT HRU. Pojmenovaná metoda, ne anonymní lambda: test
+## prohání klepnutí a spojení musí být dohledatelné v `get_connections()`.
+func _on_update_pressed() -> void:
+	if _update_check == null:
+		return
+	_update_check.request_update()
+	refresh_update()
+
+
+func refresh_update() -> void:
+	if _update_note_label == null:
+		return
+	_update_note_label.text = _update_check.note
+	_update_build_label.text = "build %s" % _update_check.build_id
+
+
 ## `.town-action-card` — a full-width black row with a 44px icon slot and a label.
 func _make_action_card() -> Dictionary:
 	var button := Button.new()
@@ -387,6 +457,8 @@ func refresh() -> void:
 		var act_id := int(portal.get("actId", 0))
 		var act_name: String = acts[act_id]["name"] if act_id < acts.size() else "Act %d" % (act_id + 1)
 		_portal_label.text = "Navrat do %s, oblast %d" % [act_name, int(portal.get("zoneId", 0)) + 1]
+
+	refresh_update()
 
 
 ## The first act whose boss is still alive at the current difficulty, or -1.

@@ -34,7 +34,26 @@ var _tab := ""
 ## BAG (the shop's sell list) has something in it. Without it a fresh save shows an empty
 ## list, and an empty list is a frame that proves nothing about the card that overflows.
 var _bag := ""
+## `--opp dodge|block|counter` forces an OPEN reaction window on the arena before the shot.
+## The window itself is a roll (12-40 % per enemy swing), so a capture that waits for one
+## writes a different state every run — and a frame of the reaction row is exactly what a
+## "the Dodge button is broken" report needs to be judged against.
+var _opp := ""
+## `--opp-fail` answers the window with a WRONG button first, so the frame shows the cross.
+var _opp_fail := false
+## `--opp-hit` answers it CORRECTLY, so the frame shows the tick. Separate from `--opp-fail`
+## because they are the two halves of the PWA's `showOpportunitySuccess` /
+## `showOpportunityFail` pair and a capture has to be able to ask for either.
+var _opp_hit := false
+## `--shield` equips a real shield before the fight, which is the only way `--opp-fail` has a
+## wrong button to press: `updateDefBtnsVisibility` hides Block from a hero without one, and a
+## window whose wrong answer is hidden cannot be answered wrongly at all.
+var _shield := false
 var _started := false
+## `--web` forces the web-only sections on so a desktop capture can show them.
+var _force_web := false
+## `--scroll max` shows the BOTTOM of the page (the town's update section lives there).
+var _scroll := ""
 ## The stop the `world` capture enters. Act 0, stop 0 — the first one a player sees.
 const STOP_FOR_CAPTURE := 0
 
@@ -43,6 +62,11 @@ func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var i := 0
 	while i < args.size():
+		# ⚠️  A FLAG consumes ONE token, an option consumes TWO. Every token used to be read as
+		# a pair, so `--opp-fail --shield` swallowed `--shield` as `--opp-fail`'s value and the
+		# shield was never equipped — which read as "the wrong button is not visible" rather
+		# than as a parse bug.
+		var step := 2
 		match args[i]:
 			"--out":
 				_out = args[i + 1]
@@ -60,7 +84,30 @@ func _initialize() -> void:
 				_bag = args[i + 1]
 			"--nodes":
 				_node_states = args[i + 1]
-		i += 2
+			"--opp":
+				_opp = args[i + 1]
+			"--opp-fail":
+				_opp_fail = true
+				step = 1
+			"--opp-hit":
+				_opp_hit = true
+				step = 1
+			"--shield":
+				_shield = true
+				step = 1
+			"--scroll":
+				_scroll = args[i + 1]
+			"--web":
+				# Draws the web-only parts a desktop run cannot have — today the town's
+				# AKTUALIZOVAT HRU section. A phone-only feature that is previewed only on
+				# the phone is a feature nobody can look at before shipping it.
+				_force_web = true
+				step = 1
+		i += step
+	# ⚠️  BEFORE main is built: the town decides whether to create the section in _build().
+	if _force_web:
+		var check := preload("res://scripts/ui/update_check.gd")
+		check.force_web = true
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
 
@@ -78,6 +125,21 @@ func _seed_bag() -> void:
 		if clean != "":
 			state.data["hero"]["inventory"].append(clean)
 	state.data["hero"]["gold"] = 5000
+
+
+## `--shield` — a REAL shield from the item table, because `battle.hero_has_shield` reads the
+## item's own `type` and a made-up id would have none. Equipping one is what makes Block
+## visible, and Block is the wrong button `--opp-fail` presses.
+##
+## ⚠️  It runs AFTER `_seed_bag()`, not with it. `enter_arena` calls `main._on_stop_selected`,
+## which winds the act forward and STARTS THE FIGHT — and starting a fight re-applies the
+## class kit, wiping `equip["shield"]`. Seeding before `_entry()` therefore had no effect at
+## all: measured, `--shield --opp-fail` still failed with "no usable wrong button".
+func _seed_shield() -> void:
+	if not _shield:
+		return
+	_main.state.equip()["shield"] = "shield_buckler"
+	_main.state.save()
 
 
 func _process(_delta: float) -> bool:
@@ -103,11 +165,29 @@ func _process(_delta: float) -> bool:
 	_frames += 1
 	if _frames < _target:
 		return false
+	# `--scroll max` BEFORE the shot: the town's update section sits below the fold, and a
+	# capture that only ever shows the top of a page cannot judge it.
+	if _scroll == "max":
+		# A SceneTree script IS the tree — there is no `get_tree()`, `root` is the window.
+		var sc := _find_scroll(_main)
+		if sc != null:
+			sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)
 	# _capture() awaits frame_post_draw, so the tree MUST stay alive this frame or the
 	# await never resumes and no PNG is written (the old `return true` here did exactly
 	# that): quit() only inside _capture, after the image is saved.
 	_capture()
 	return false
+
+
+## The first ScrollContainer under `node` — the page a screen is built on.
+func _find_scroll(node: Node) -> ScrollContainer:
+	if node is ScrollContainer:
+		return node
+	for child in node.get_children():
+		var found := _find_scroll(child)
+		if found != null:
+			return found
+	return null
 
 
 ## Resolve `--screen` to (router key, tab). `inventory`, `talents` and `hero` are the PWA's
@@ -216,7 +296,81 @@ func _entry() -> void:
 		while t < _fight_ticks and arena.battle != null and not arena.battle.ended:
 			arena.step()
 			t += 1
+	_arm_opportunity(key)
 	_apply_tab()
+
+
+## `--opp <kind>` — open a reaction window of a KNOWN kind and (with `--opp-fail`) answer it
+## wrongly, so a capture can show the row, the middle icon, or the cross on purpose.
+##
+## ⚠️  It writes `battle.opp_type` rather than waiting for `arm_opportunity` to roll one. The
+## roll is the RULES' business (`test_reactions` covers it); what a frame is needed for is the
+## LAYOUT of a window, and a capture that waits for the roll writes a different state every run
+## — once produced four frames of a plain fight under reaction-related names.
+func _arm_opportunity(key: String) -> void:
+	if _opp == "" or key != "arena":
+		return
+	var arena = _main._screens.get("arena", null)
+	if arena == null or arena.battle == null:
+		print("capture: FAIL --opp %s but the arena has no fight" % _opp)
+		quit(2)
+		return
+	# ⚠️  AFTER the fight exists, never before: `enter_arena` starts the fight, and starting
+	# one re-applies the class kit, which wipes the shield `--shield` just equipped.
+	if _shield:
+		_main.state.equip()["shield"] = "shield_buckler"
+		print("capture: shield=", _main.state.equip().get("shield", "?"),
+			" has_shield=", arena.battle.hero_has_shield(_main.state, arena._find_item))
+	var battle = arena.battle
+	battle.opp_type = _opp
+	battle.opp_resolved = false
+	battle.opp_failed = false
+	if _opp_hit:
+		# The PWA's `onPsDefButton` correct branch. Through the BUTTON's own signal, and the
+		# button for the OPEN kind, so the tick is raised the way a real tap raises it.
+		arena._refresh_reaction_layer(0.016)
+		var correct: Button = arena._reaction_buttons[_opp]
+		if correct == null or not correct.visible:
+			print("capture: FAIL --opp-hit has no visible button for '%s'" % _opp)
+			quit(2)
+			return
+		correct.pressed.emit()
+		arena._refresh_reaction_layer(0.016)
+		if not battle.opp_resolved:
+			print("capture: FAIL --opp-hit did not answer the window")
+			quit(2)
+			return
+	if _opp_fail:
+		# Through the BUTTON's own signal, exactly as a tap does. A window that went wrong
+		# has to have gone wrong through the real path or the frame proves nothing.
+		#
+		# ⚠️  The wrong button is whichever OTHER reaction is VISIBLE: Block is hidden from a
+		# hero with no shield and Counter from one without the talent, and pressing a hidden
+		# button would close the window through a route no player has. Pass `--shield` to
+		# guarantee one exists.
+		arena._refresh_reaction_layer(0.016)
+		var button: Button = null
+		for other in ["block", "counter"]:
+			if other == _opp:
+				continue
+			var candidate: Button = arena._reaction_buttons[other]
+			if candidate != null and candidate.visible:
+				button = candidate
+				break
+		if button == null:
+			print("capture: FAIL --opp-fail has no usable wrong button against '%s' "
+				% _opp + "(add --shield, or invest the counter talent)")
+			quit(2)
+			return
+		button.pressed.emit()
+		arena._refresh_reaction_layer(0.016)
+		if not battle.opp_failed:
+			print("capture: FAIL --opp-fail did not close the window")
+			quit(2)
+			return
+	arena._refresh_reaction_layer(0.016)
+	print("capture: opp=%s open=%s failed=%s" % [_opp, str(battle.opportunity_open()),
+		str(battle.opp_failed)])
 
 
 ## Press the screen's OWN tab button (`--tab sell`). The shop's Buy/Sell strip is the only
