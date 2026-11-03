@@ -58,6 +58,10 @@ var _orbs := 0
 ## `--dual` freezes a dual-wielding hero mid-swing (one arc per hand, opposite directions).
 var _dual := false
 var _dual_empty := false
+## `--rarity` seeds the bag and the doll with GENERATED items of every quality. A fresh save
+## only has the class kit, whose items are all `normal`, so a capture of the inventory shows a
+## wall of grey borders and cannot answer "does the cell respect the item's quality colour".
+var _rarity := false
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 ## `--scroll max` shows the BOTTOM of the page (the town's update section lives there).
 var _scroll := ""
@@ -115,6 +119,9 @@ func _initialize() -> void:
 				_dual = true
 				_dual_empty = true
 				step = 1
+			"--rarity":
+				_rarity = true
+				step = 1
 			"--scroll":
 				_scroll = args[i + 1]
 			"--web":
@@ -145,6 +152,44 @@ func _seed_bag() -> void:
 		if clean != "":
 			state.data["hero"]["inventory"].append(clean)
 	state.data["hero"]["gold"] = 5000
+
+
+## `--rarity` — one GENERATED item per quality into the bag, plus a rare weapon and a magic
+## belt on the doll. The generator is the game's own (`main.gen`), so the items carry the same
+## `quality` strings and icon paths a real drop would; a hand-written `{quality:"rare"}` would
+## prove nothing about the colour path, which is exactly the part under test.
+func _seed_rarity() -> void:
+	if not _rarity:
+		return
+	var state = _main.state
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261103
+	var hero_level := int(state.hero().get("level", 1))
+	var plan := [
+		["armor_leather", "normal"], ["armor_leather", "magic"], ["armor_leather", "rare"],
+		["armor_leather", "unique"], ["gloves_leather", "magic"], ["boots_boots", "rare"],
+		["belt_sash", "magic"],
+	]
+	state.data["hero"]["inventory"] = []
+	for entry in plan:
+		var base: Dictionary = _main.data.item(str(entry[0]))
+		if base.is_empty():
+			continue
+		var item: Dictionary = _main.gen.generate(base, str(entry[1]), 12, maxi(hero_level, 12), rng)
+		if item.is_empty():
+			continue
+		state.register_loot_item(item)
+		state.data["hero"]["inventory"].append(str(item["id"]))
+	# Equipped: a rare weapon and a magic belt, so the doll shows two different colours.
+	for pair in [["blade_shortSword", "rare", "weapon"], ["belt_sash", "magic", "belt"]]:
+		var base: Dictionary = _main.data.item(str(pair[0]))
+		if base.is_empty():
+			continue
+		var item: Dictionary = _main.gen.generate(base, str(pair[1]), 12, maxi(hero_level, 12), rng)
+		if item.is_empty():
+			continue
+		state.register_loot_item(item)
+		state.data["hero"]["equip"][str(pair[2])] = str(item["id"])
 
 
 ## `--shield` — a REAL shield from the item table, because `battle.hero_has_shield` reads the
@@ -179,6 +224,7 @@ func _process(_delta: float) -> bool:
 			return false
 		_started = true
 		_seed_bag()
+		_seed_rarity()
 		_entry()
 		return false
 

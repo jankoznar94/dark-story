@@ -553,6 +553,7 @@ func _test_a_drag_does_not_fire_the_button_it_started_on() -> void:
 	var hits: Dictionary = rig["hits"]
 	var vp := root
 	vp.size = Vector2i(390, 844)
+	vp.content_scale_size = Vector2i(390, 844)
 	var start := Vector2(120, 240)
 	_touch(vp, start, 0, true)
 	for i in 10:
@@ -586,6 +587,7 @@ func _test_a_tap_still_fires_without_dragging() -> void:
 	var hits: Dictionary = rig["hits"]
 	var vp := root
 	vp.size = Vector2i(390, 844)
+	vp.content_scale_size = Vector2i(390, 844)
 	_touch(vp, Vector2(120, 240), 0, true)
 	_touch(vp, Vector2(120, 240), 0, false)
 	if int(hits["n"]) != 1:

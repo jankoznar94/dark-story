@@ -40,7 +40,7 @@ func _initialize() -> void:
 	# The wheel, pushed UP past the resting disc: the wedge the default binds to ATTACK.
 	var wc: Vector2 = screen.wheel_centre()
 	screen._on_press(wc, 7)
-	screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 7)
+	screen._on_drag(wc + Vector2(0, -(screen.wheel_inner() + 14.0)), 7)
 	print("wheel: slot=%d action='%s' attack_held=%s" % [
 		screen._wheel_slot, screen.wheel_action(screen._wheel_slot), str(run.attack_held)])
 

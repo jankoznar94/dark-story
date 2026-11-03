@@ -98,6 +98,7 @@ func _ready() -> void:
 	if not resumed or str(state.data.get("heroClass", "")) == "":
 		_seed_first_class()
 		state.save()
+	_make_portrait_stage()
 	_build_screens()
 	_build_nav()
 	# The PWA's `switchBGM`. Built before the first `show_screen`, because the town is the
@@ -357,9 +358,59 @@ func _build_nav() -> void:
 	box.add_child(_status)
 
 
+const PORTRAIT_SIZE := Vector2(390.0, 844.0)
+## Screens that use the LANDSCAPE canvas itself rather than the portrait stage. ONE entry, on
+## purpose: the survivor run is the only screen whose layout is about floor space.
+const LANDSCAPE_SCREENS := ["survivor"]
+var _portrait_root: Control
+
+
+func _make_portrait_stage() -> void:
+	_portrait_root = Control.new()
+	_portrait_root.name = "PortraitStage"
+	_portrait_root.size = PORTRAIT_SIZE
+	_portrait_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_portrait_root)
+	var vp := get_viewport()
+	if vp != null:
+		vp.size_changed.connect(_layout_portrait_stage)
+	_layout_portrait_stage()
+
+
+## One factor, no squashing: the portrait column keeps its aspect and is as tall as the canvas.
+## Its `scale` is also what maps a tap: Godot routes GUI input through the control's own
+## transform, so a press in the letterboxed column lands on the control the player sees.
+func _layout_portrait_stage() -> void:
+	if _portrait_root == null:
+		return
+	# ⚠️  THE WINDOW, not `get_viewport_rect()`. In a headless run the viewport rect reports the
+	# canvas as 844x844 (the window height is not applied), which scaled the stage by 1.0 and let
+	# it hang 454 px off the bottom of the screen — measured: every menu screen was shown CROPPED
+	# at 1:1 instead of fitted at 0.46. `get_window().size` is the real canvas in both modes.
+	var canvas := Vector2(get_window().size)
+	if canvas.x <= 0.0 or canvas.y <= 0.0:
+		canvas = get_viewport_rect().size
+	if canvas.x <= 0.0 or canvas.y <= 0.0:
+		return
+	var k := minf(canvas.x / PORTRAIT_SIZE.x, canvas.y / PORTRAIT_SIZE.y)
+	_portrait_root.scale = Vector2(k, k)
+	_portrait_root.position = Vector2((canvas.x - PORTRAIT_SIZE.x * k) * 0.5, 0.0)
+
+
 func _add_screen(key: String, screen: Control) -> void:
 	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(screen)
+	# THE ARENA IS THE LANDSCAPE (see `LANDSCAPE_SCREENS`); everything else keeps its portrait
+	# layout and is scaled into the stage, so no measured offset has to move tonight.
+	if _portrait_root != null and not (key in LANDSCAPE_SCREENS):
+		_portrait_root.add_child(screen)
+		# ⚠️  ANCHORS ALONE ARE NOT ENOUGH. `set_anchors_preset(FULL_RECT)` resolves against the
+		# parent's rect at the NEXT layout pass, and the modal opened on a `size` of 0 before that
+		# — its dim layer and panel simply painted nothing while `show_screen` reported it as the
+		# current screen. Stating the rect here makes every stage screen the PWA's 390x844 from
+		# the first frame.
+		screen.size = PORTRAIT_SIZE
+	else:
+		add_child(screen)
 	_screens[key] = screen
 	# The nav bar is added BEFORE the screens (it is not one of them), so without this
 	# the bar's first paint is UNDER the screens' own full-rect background ColorRect —
@@ -392,6 +443,12 @@ func show_screen(name: String) -> void:
 		var incoming := _screens[name] as Control
 		Juice.enter(incoming)
 		incoming.visible = true
+		# ⚠️  RAISE IT. Screens are siblings and their DRAW ORDER is their creation order, so the
+		# character modal (created first, because it is the one screen every other one opens from)
+		# painted UNDER the town — in landscape that showed the town while the router reported the
+		# modal as current. `move_to_front` makes "the screen that is `_current`" and "the screen a
+		# thumb can hit" the same thing, whatever the order they were built in.
+		incoming.move_to_front()
 	for key in _screens:
 		if str(key) == name:
 			continue
@@ -583,6 +640,11 @@ func open_modal(tab: String) -> void:
 			(_screens[key] as Control).visible = false
 	_modal_under = under
 	var modal = _screens["character"]
+	# ⚠️  THE DIALOG MUST BE RAISED, not merely made visible. The screen underneath stays up on
+	# purpose (the PWA dims it), and the draw order of two Controls is their CHILD ORDER — the
+	# modal is built first, so in the landscape stage the town painted straight over it and the
+	# capture came back as the town while the router reported `character`.
+	(modal as Control).move_to_front()
 	_current = "character"
 	modal.set_tab(tab)
 

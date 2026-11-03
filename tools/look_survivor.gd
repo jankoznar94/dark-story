@@ -153,7 +153,7 @@ func _process(_delta: float) -> bool:
 	if _frames == 6:
 		var wc: Vector2 = _screen.wheel_centre()
 		_screen._on_press(wc, 7)
-		_screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 7)
+		_screen._on_drag(wc + Vector2(0, -(_screen.wheel_inner() + 14.0)), 7)
 	# ⚠️  THE WALK STOPS. A shot taken while still running shows a hero who outran his pack and is
 	# now surrounded from BEHIND — which the facing rule correctly refuses to swing at, so
 	# `--wait_swing` never finds a blow. Standing still is also the beat worth judging: the assist

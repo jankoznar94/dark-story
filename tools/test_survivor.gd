@@ -71,6 +71,7 @@ func _initialize() -> void:
 	_test_pack_discovery()
 	_test_kills_award_xp()
 	_test_facing_gate()
+	_test_aim_retargets()
 	_test_spells_in_the_run()
 	_test_whirlwind_flurry()
 	_test_bolt_flies_at_the_aimed_body()
@@ -1026,6 +1027,63 @@ func _test_facing_gate() -> void:
 	_log("  measured: hp %d -> %d" % [hp0, int(m["hp"])])
 
 
+## Jan, Nov 2026: "když hráč drží útok a během toho mění směr, tak by se měl target změnit. Pokud
+## stojí třeba tři nepřátelé vedle sebe a hráč přejez zleva doprava, tak by se měl útok přesměrovat
+## na toho vpravo."
+##
+## The aim is its own field for exactly this reason: while `facing` follows the target (it has to,
+## the swing must land where the hero looks), the AIM is what the stick writes, and the picker ranks
+## against it. One field for both made the half-plane self-fulfilling and the assist could never
+## re-pick.
+func _test_aim_retargets() -> void:
+	_log("  section: aim_retargets")
+	var run := _fresh(4242, true)
+	run.monsters.clear()
+	# Three bodies side by side to the RIGHT of the hero, all in reach, none moving or hitting.
+	var ids: Array = []
+	for i in 3:
+		run._spawn_one()
+		var m: Dictionary = run.monsters[i]
+		m["hp"] = 999999
+		m["max_hp"] = 999999
+		m["speed"] = 0.0
+		m["ranged"] = false
+		m["dmg_min"] = 0
+		m["dmg_max"] = 0
+		ids.append(int(m["id"]))
+
+	# Push the stick UP-RIGHT: the top body is the one on the line the thumb points down.
+	for _i in 12:
+		run.player_pos = SurvivorRun.WORLD * 0.5
+		for i in 3:
+			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
+		run.step(STEP, Vector2(1, -1))
+	_check(run.target_id == ids[0],
+		"pushing up-right must target the top body (%d), got %d" % [ids[0], run.target_id])
+	_check(run.facing.y < -0.3, "the hero must turn to it, facing=%s" % str(run.facing))
+
+	# ...and slide the thumb DOWN: the same gesture must move the attack to the bottom body.
+	for _i in 12:
+		run.player_pos = SurvivorRun.WORLD * 0.5
+		for i in 3:
+			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
+		run.step(STEP, Vector2(1, 1))
+	_check(run.target_id == ids[2],
+		"pushing down-right must re-target the bottom body (%d), got %d" % [ids[2], run.target_id])
+	_check(run.facing.y > 0.3, "the hero must have turned with it, facing=%s" % str(run.facing))
+
+	# Standing still (no stick) must NOT wander: the aim stays where the player left it.
+	run.aim = Vector2.RIGHT
+	for _i in 6:
+		run.player_pos = SurvivorRun.WORLD * 0.5
+		for i in 3:
+			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
+		run.step(STEP, Vector2.ZERO)
+	_check(run.target_id == ids[1],
+		"with the stick released the middle body (dead ahead) must be the target, got %d"
+			% run.target_id)
+
+
 ## The spell bar is the duel's rule, unchanged: a spell with no talent point in it does not
 ## exist as a button, and an invested one really lands its damage in the run.
 func _test_spells_in_the_run() -> void:
@@ -1265,18 +1323,18 @@ func _test_cast_while_running() -> void:
 	levels["barbarian_heroicStrike"] = 1
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(390, 844)
+	screen.size = Vector2(844, 390)
 	screen.setup(_state, _find_item, _loot, 0)
 	# Finger 1 takes the walking stick (RIGHT half) and drags.
-	screen._on_press(Vector2(250, 640), 1)
-	screen._on_drag(Vector2(300, 640), 1)
+	screen._on_press(Vector2(650, 300), 1)
+	screen._on_drag(Vector2(700, 300), 1)
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
 		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
 	# Finger 2 uses the ACTION WHEEL (bottom-LEFT, fixed) and pushes UP past the resting disc — the
 	# attack wedge. The stick must keep running: one thumb each, two separate indices.
 	var wc: Vector2 = screen.wheel_centre()
 	screen._on_press(wc, 2)
-	screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 2)
+	screen._on_drag(wc + Vector2(0, -(screen.wheel_inner() + 14.0)), 2)
 	_check(screen.run.attack_held,
 		"a second finger must be able to attack while the stick is held")
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
@@ -1310,7 +1368,7 @@ func _test_screen_action_wheel() -> void:
 	_state.data.erase("actionWheel")
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(390, 844)
+	screen.size = Vector2(844, 390)
 	screen.setup(_state, _find_item, _loot, 0)
 	_check(screen._wheel_slots.size() == ActionWheel.SLOTS,
 		"the wheel must have %d sectors, got %d" % [ActionWheel.SLOTS, screen._wheel_slots.size()])
@@ -1324,12 +1382,14 @@ func _test_screen_action_wheel() -> void:
 	# THE WHEEL IS PERMANENT AND FIXED: it sits in the bottom-left before any thumb arrives, and a
 	# press never moves it (Jan: "měl by být viditelný permanentně. I s výsečemi.").
 	var centre: Vector2 = screen.wheel_centre()
-	_check(centre.x < 200.0 and centre.y > 500.0 and centre.y < 700.0,
+	_check(centre.x < 200.0 and centre.y > 120.0 and centre.y < screen.size.y - 100.0,
 		"the wheel must live in the bottom-left, got %s" % str(centre))
+	_check(centre.y + screen.wheel_outer() <= screen.size.y - 40.0,
+		"the wheel must clear the HP/mana bars, bottom=%s" % str(centre.y + screen.wheel_outer()))
 
 	# A press in the LEFT half but OFF the wheel must not arm anything: the sectors are fixed, so a
 	# stray thumb cannot "open" a wheel at its own position any more.
-	screen._on_press(Vector2(60, 300), 4)
+	screen._on_press(Vector2(400, 70), 4)
 	_check(screen._wheel_index == -1, "a press off the wheel must not own it")
 	screen._on_release(4)
 
@@ -1341,18 +1401,18 @@ func _test_screen_action_wheel() -> void:
 	_check(not screen._attack_held, "an untouched wheel must hold nothing")
 
 	# Inside the resting disc nothing happens — a resting thumb is not an action.
-	screen._on_drag(centre + Vector2(0, SurvivorScreen.WHEEL_INNER - 10.0), 1)
+	screen._on_drag(centre + Vector2(0, screen.wheel_inner() - 10.0), 1)
 	_check(screen._wheel_slot == -1, "a thumb inside the disc must not activate a wedge")
 	_check(not screen._attack_held, "a thumb inside the disc must not hold the attack")
 
 	# Into the UP wedge, the whole wedge counting, not an icon: a thumb 10 px past the disc lands
 	# on the attack, and an attack is HELD for as long as it stays.
 	screen._on_drag(centre + Vector2.from_angle(ActionWheel.centre_angle(0))
-		* (SurvivorScreen.WHEEL_INNER + 10.0), 1)
+		* (screen.wheel_inner() + 10.0), 1)
 	_check(screen._wheel_slot == 0, "up must be wedge 0, got %d" % screen._wheel_slot)
 	_check(screen._attack_held and screen.run.attack_held,
 		"the attack wedge must HOLD the attack")
-	_check(screen._wheel_vec.length() <= SurvivorScreen.WHEEL_OUTER + 0.01,
+	_check(screen._wheel_vec.length() <= screen.wheel_outer() + 0.01,
 		"the knob must clamp to the ring, got %.1f" % screen._wheel_vec.length())
 
 	# Coming back into the disc lets go, without lifting the thumb.
@@ -1363,7 +1423,7 @@ func _test_screen_action_wheel() -> void:
 	# A SPELL IS NOT FIRED ON ENTRY any more (Jan): dragging into its wedge only ARMS it.
 	var spell_dir: Vector2 = Vector2.from_angle(ActionWheel.centre_angle(2))
 	screen.run.heroic_queued = false
-	screen._on_drag(centre + spell_dir * (SurvivorScreen.WHEEL_INNER + 10.0), 1)
+	screen._on_drag(centre + spell_dir * (screen.wheel_inner() + 10.0), 1)
 	_check(screen._wheel_slot == 2, "the spell must be in wedge 2, got %d" % screen._wheel_slot)
 	_check(not screen.run.heroic_queued, "a spell wedge must NOT fire while the thumb is down")
 	_check(not screen._attack_held, "a spell wedge must not hold the attack")
@@ -1376,7 +1436,7 @@ func _test_screen_action_wheel() -> void:
 
 	# Drag in, then LIFT: the release is the activation, exactly once per gesture.
 	screen._on_press(centre, 2)
-	screen._on_drag(centre + spell_dir * (SurvivorScreen.WHEEL_OUTER - 8.0), 2)
+	screen._on_drag(centre + spell_dir * (screen.wheel_outer() - 8.0), 2)
 	_check(not screen.run.heroic_queued, "still nothing while the thumb is down")
 	screen._on_release(2)
 	_check(screen.run.heroic_queued, "lifting the thumb in a spell wedge must fire it")
@@ -1418,7 +1478,7 @@ func _test_screen_action_wheel() -> void:
 		_check(dupes == 1, "an action must live in ONE sector, found %d" % dupes)
 		_check(_state.data.get("actionWheel") is Array,
 			"the binding must reach the SAVE, not just the screen")
-	screen._on_press(Vector2(240, 620))  # a press in the field must not answer the panel
+	screen._on_press(Vector2(500, 120))  # a press in the field must not answer the panel
 	_check(screen._bind_pick == -1 or screen._bind_open, "the panel must swallow field presses")
 	screen._on_press(screen._bind_back_rect.get_center())
 	screen._on_press(screen._bind_back_rect.get_center())
@@ -1434,7 +1494,7 @@ func _test_screen_action_wheel() -> void:
 	# action cannot fire with the thumb that was answering the press.
 	screen.run.start_whirlwind(["tri", "circle"], 1500)
 	var before: int = screen.run.ww_index
-	screen._on_press(Vector2(260, 700))
+	screen._on_press(Vector2(600, 330))
 	_check(screen.run.ww_index == before, "a press outside the flurry row must not answer it")
 	_check(not screen._pointer_down, "the flurry must swallow the press (no stick)")
 	var ww: Dictionary = screen._ww_buttons[0]
@@ -1453,7 +1513,7 @@ func _test_screen_gesture_and_disc() -> void:
 	_log("  section: screen_gesture_and_disc")
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(390, 844)
+	screen.size = Vector2(844, 390)
 	screen.setup(_state, _find_item, _loot, 0)
 	_check(screen.run != null, "the screen must own a run after setup")
 	# The hero is a WALKING PORTRAIT built from the same face his stat page shows.
@@ -1462,10 +1522,10 @@ func _test_screen_gesture_and_disc() -> void:
 	_check(hero_tex != null, "the hero's medallion must load (%s)" % screen._hero_face())
 
 	# A press in the field starts the stick THERE (the floating control), and a drag sets it.
-	screen._on_press(Vector2(250, 600))
-	_check(screen._pointer_down and screen._stick_origin == Vector2(250, 600),
+	screen._on_press(Vector2(600, 300))
+	_check(screen._pointer_down and screen._stick_origin == Vector2(600, 300),
 		"a press in the field must plant the stick at the finger")
-	screen._on_drag(Vector2(340, 600))
+	screen._on_drag(Vector2(700, 300))
 	_check(screen._stick_vec.x > 0.9 and absf(screen._stick_vec.y) < 0.01,
 		"a drag must produce a full-strength direction, got %s" % str(screen._stick_vec))
 	screen._on_release()
@@ -1474,7 +1534,7 @@ func _test_screen_gesture_and_disc() -> void:
 
 	# ...and the LEFT half is the action wheel, never the stick: the two thumbs must not fight over
 	# the same gesture.
-	screen._on_press(Vector2(100, 600))
+	screen._on_press(screen.wheel_centre())
 	_check(screen._wheel_index == 0 and not screen._pointer_down and screen._stick_vec == Vector2.ZERO,
 		"a left press must open the wheel, not the stick")
 	screen._on_release()

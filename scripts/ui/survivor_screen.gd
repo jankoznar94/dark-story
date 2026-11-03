@@ -45,14 +45,18 @@ const STICK_DEADZONE := 9.0
 ## `WHEEL_INNER` is the resting disc: a thumb inside it runs nothing. `WHEEL_OUTER` is the ring's
 ## edge. A thumb landing ON the wheel (or just outside it) owns it; anything else in the left half
 ## is not an action, because the sectors are fixed and a stray thumb must not arm one.
-const WHEEL_INNER := 58.0
-const WHEEL_OUTER := 106.0
-const WHEEL_PRESS_SLACK := 30.0
+##
+## ⚠️  THE RADII ARE DERIVED, NOT CONSTANTS (landscape, Nov 2026). On the 844x390 canvas a fixed
+## 106 px ring plus its 44 px bottom pad is most of the screen height; on a tall portrait canvas
+## the same numbers would look small. `wheel_outer()` scales the disc to the canvas and the centre
+## keeps a fixed pad above the HP/mana bars, which are themselves anchored to the bottom.
+const WHEEL_OUTER_MAX := 106.0
+const WHEEL_OUTER_MIN := 64.0
 const WHEEL_ICON_RADIUS := 18.0
-## The wheel's distance from the screen's left edge, and its centre height above the bottom. It has
-## to clear the HP/mana bars (bottom 40 px) and the loot tally, which is why it sits fairly high.
+## The wheel's distance from the screen's left edge, and its centre's clearance above the bottom
+## (the HP/mana bars own the last 40 px and the loot tally sits at `size.y - 6`).
 const WHEEL_MARGIN := 12.0
-const WHEEL_BOTTOM := 176.0
+const WHEEL_BOTTOM_PAD := 58.0
 ## The bind panel's rows. A thumb needs 52 px of height at the very least; the slot rows get more
 ## because they carry two lines (direction + action).
 const BIND_ROW_H := 74.0
@@ -337,10 +341,10 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 	if pos.x < size.x * 0.5:
 		if _wheel_index >= 0:
 			return
-		if pos.distance_to(wheel_centre()) > WHEEL_OUTER + WHEEL_PRESS_SLACK:
+		if pos.distance_to(wheel_centre()) > wheel_outer() + wheel_press_slack():
 			return
 		_wheel_index = index
-		_wheel_vec = (pos - wheel_centre()).limit_length(WHEEL_OUTER)
+		_wheel_vec = (pos - wheel_centre()).limit_length(wheel_outer())
 		_set_wheel_slot(_wheel_slot_for(pos - wheel_centre()))
 		queue_redraw()
 		return
@@ -356,7 +360,7 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 func _on_drag(pos: Vector2, index: int = 0) -> void:
 	if index == _wheel_index:
 		var offset := pos - wheel_centre()
-		_wheel_vec = offset.limit_length(WHEEL_OUTER)
+		_wheel_vec = offset.limit_length(wheel_outer())
 		# Nothing counts inside the resting disc (Jan): a thumb sitting on the wheel must not run
 		# an action. Past it, whichever WEDGE it is in is the action.
 		_set_wheel_slot(_wheel_slot_for(offset))
@@ -375,14 +379,29 @@ func _on_drag(pos: Vector2, index: int = 0) -> void:
 ## Where the wheel lives: FIXED in the bottom-left, because Jan wants it permanently visible — "i s
 ## výsečemi". A fixed wheel is also what makes the wedges learnable: the same action is in the same
 ## place in every fight, so the player can build muscle memory instead of aiming at an icon.
+func wheel_outer() -> float:
+	return clampf(minf(size.y * 0.26, WHEEL_OUTER_MAX), WHEEL_OUTER_MIN, WHEEL_OUTER_MAX)
+
+
+func wheel_inner() -> float:
+	return wheel_outer() * 0.55
+
+
 func wheel_centre() -> Vector2:
-	return Vector2(WHEEL_OUTER + WHEEL_MARGIN, size.y - WHEEL_BOTTOM)
+	var r := wheel_outer()
+	return Vector2(r + WHEEL_MARGIN, size.y - r - WHEEL_BOTTOM_PAD)
+
+
+## A thumb landing this far outside the ring still owns the wheel — the sectors are BIG, and a
+## thumb that lands just past the rim clearly meant to play a wedge.
+func wheel_press_slack() -> float:
+	return wheel_outer() * 0.28
 
 
 ## Which wedge a thumb offset from the centre points into: -1 inside the resting disc, else the
 ## sector. One place, so the press, the drag and the release can never disagree.
 func _wheel_slot_for(offset: Vector2) -> int:
-	if offset.length() < WHEEL_INNER:
+	if offset.length() < wheel_inner():
 		return -1
 	return ActionWheel.sector_at(offset)
 
@@ -1220,10 +1239,12 @@ func _draw_wheel() -> void:
 	var font := UIFonts.bold()
 	var font_r := UIFonts.regular()
 	var engaged := _wheel_index >= 0
+	var r_in := wheel_inner()
+	var r_out := wheel_outer()
 	# The resting disc: the joystick-like area under the thumb. Nothing fires inside it, so it is
 	# drawn darker than the wedges even while a thumb sits in it.
-	draw_circle(o, WHEEL_INNER, Color(0, 0, 0, 0.34 if engaged else 0.26))
-	draw_arc(o, WHEEL_INNER, 0.0, TAU, 48,
+	draw_circle(o, r_in, Color(0, 0, 0, 0.34 if engaged else 0.26))
+	draw_arc(o, r_in, 0.0, TAU, 48,
 		Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.34 if engaged else 0.24), 2.0, true)
 
 	var span := TAU / float(ActionWheel.SLOTS)
@@ -1238,7 +1259,7 @@ func _draw_wheel() -> void:
 			fill = Color(0x16 / 255.0, 0x14 / 255.0, 0x12 / 255.0, 0.50)
 		if active:
 			fill = Color(0x46 / 255.0, 0x3a / 255.0, 0x29 / 255.0, 0.96)
-		_draw_wheel_wedge(o, a0, a1, fill)
+		_draw_wheel_wedge(o, a0, a1, fill, r_in, r_out)
 		# The wedge's own rim: the outline that makes the ring read as six places, not one annulus.
 		var rim := Color(0x7a / 255.0, 0x6f / 255.0, 0x59 / 255.0, 0.90)
 		var rim_w := 1.5
@@ -1247,13 +1268,13 @@ func _draw_wheel() -> void:
 		if active:
 			rim = Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95)
 			rim_w = 3.0
-		draw_arc(o, WHEEL_OUTER, a0 + 0.02, a1 - 0.02, 14, rim, rim_w, true)
+		draw_arc(o, r_out, a0 + 0.02, a1 - 0.02, 14, rim, rim_w, true)
 		# A boundary line on both edges: the fill alone is a quiet map, the lines say where one
 		# action ends and the next begins.
 		for a in [a0, a1]:
-			draw_line(o + Vector2.from_angle(a) * WHEEL_INNER, o + Vector2.from_angle(a) * WHEEL_OUTER,
+			draw_line(o + Vector2.from_angle(a) * r_in, o + Vector2.from_angle(a) * r_out,
 				Color(1, 1, 1, 0.11), 1.0, true)
-		var c := o + Vector2.from_angle(ActionWheel.centre_angle(i)) * ((WHEEL_INNER + WHEEL_OUTER) * 0.5)
+		var c := o + Vector2.from_angle(ActionWheel.centre_angle(i)) * ((r_in + r_out) * 0.5)
 		if not empty:
 			# A round backing, so a square spell texture never shows a black corner plate (Jan).
 			draw_circle(c, WHEEL_ICON_RADIUS, Color(0x14 / 255.0, 0x12 / 255.0, 0x10 / 255.0,
@@ -1273,7 +1294,7 @@ func _draw_wheel() -> void:
 	var held := ActionWheel.is_hold(action_now, RunSpells)
 	var word := ActionWheel.action_name(action_now, run.spell_bar())
 	# ABOVE the wheel: the HP bar and the loot tally own everything below it.
-	var label_y := o.y - WHEEL_OUTER - 18.0
+	var label_y := o.y - r_out - 18.0
 	draw_string(font, Vector2(o.x - 110.0, label_y), word,
 		HORIZONTAL_ALIGNMENT_CENTER, 220.0, 15, C_GOLD)
 	draw_string(font_r, Vector2(o.x - 110.0, label_y + 15.0),
@@ -1282,14 +1303,15 @@ func _draw_wheel() -> void:
 
 ## One wedge of the ring, as a fan of convex quads: `draw_colored_polygon` wants a convex polygon,
 ## and an annular sector is not one.
-func _draw_wheel_wedge(o: Vector2, a0: float, a1: float, fill: Color) -> void:
+func _draw_wheel_wedge(o: Vector2, a0: float, a1: float, fill: Color,
+		r_in: float, r_out: float) -> void:
 	var steps := 8
 	for k in steps:
 		var d0 := Vector2.from_angle(lerpf(a0, a1, float(k) / float(steps)))
 		var d1 := Vector2.from_angle(lerpf(a0, a1, float(k + 1) / float(steps)))
 		draw_colored_polygon(PackedVector2Array([
-			o + d0 * WHEEL_INNER, o + d0 * WHEEL_OUTER,
-			o + d1 * WHEEL_OUTER, o + d1 * WHEEL_INNER,
+			o + d0 * r_in, o + d0 * r_out,
+			o + d1 * r_out, o + d1 * r_in,
 		]), fill)
 
 

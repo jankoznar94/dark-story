@@ -348,49 +348,52 @@ func _build_tabs() -> Control:
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		inner.add_child(label)
 		var badge_text := _tab_badge_text(key)
-		var badge: Label = null
-		if badge_text != "":
-			# `.tab-badge { margin-left:4px; padding:0 5px; background:#e94560; color:#fff;
-			#   border-radius:8px; font-size:10px; line-height:16px }`. MEASURED on the live
-			# PWA: the Skills pill is 24 x 16 at x 187-210 and the Stats one 31 x 16 at
-			# x 289-319, both rows 64-79 — 16 tall, which its `line-height` sets and which is
-			# what makes the whole tab 34 rather than 32.
-			badge = UIKit.label(badge_text, 10, "#ffffff")
-			badge.add_theme_font_size_override("font_size", 10)
-			badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			# ⚠️  THE PILL'S BACKGROUND MUST LIVE ON THE BOX AROUND THE TEXT, not on the text
-			# itself. `padding:0 5px` is part of the pill: putting the stylebox on the Label
-			# drew the red only behind the glyphs — MEASURED, the Skills pill came out 13 wide
-			# against the PWA's 24, i.e. the 10px of padding was missing on both sides, and a
-			# `MarginContainer` around it cannot carry a background at all. A `PanelContainer`
-			# with `content_margin_left/right = 5` is the shape that does both.
-			var pill := PanelContainer.new()
-			var bs := StyleBoxFlat.new()
-			bs.bg_color = Color(UIKit.TAB_BADGE_BG)
-			bs.set_corner_radius_all(8)
-			bs.content_margin_left = 5
-			bs.content_margin_right = 5
-			pill.add_theme_stylebox_override("panel", bs)
-			# ⚠️  THE PILL IS 16 TALL, NOT THE TAB'S INNER HEIGHT. `.tab-badge`'s own
-			# `line-height:16px` is what sizes it, and the PWA's flex row centres that 16px
-			# line in the tab's 8px+8px padding — 16 + 16 = 32... but the INACTIVE tabs
-			# measure 34, because a tab with no badge has no line box bounding it and the
-			# browser falls back to `line-height:normal`. MEASURED before this fix: the port
-			# drew the pill 33 tall (the tab's whole inner box) and 22 wide at y 55, against
-			# the PWA's 16 at y 64 — 2 216 of the 3 032 differing pixels in the tab band, the
-			# largest single block of diff left on the screen. `SHRINK_CENTER` refuses the
-			# row's height; `custom_minimum_size.y` states the 16 the CSS declares.
-			badge.custom_minimum_size = Vector2(0, 16)
-			pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			# `.tab-badge { margin-left:4px }` sits ON TOP of the flex row's own `gap:4px`,
-			# so the gap between the label and the pill is 8 — measured on the live PWA: the
-			# "Skills" glyphs end at x=177 and the pill starts at 187.
-			pill.add_theme_constant_override("margin_left", 4)
-			pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			pill.add_child(badge)
-			inner.add_child(pill)
+		# ⚠️  THE PILL EXISTS EVEN WHEN IT IS EMPTY, and is merely HIDDEN. Building it only for
+		# a tab that has points at BUILD time is what froze the numbers: the pill had no node to
+		# update, so spending a point left "3" on the tab forever (Jan). Built once, refreshed on
+		# every `refresh()`, hidden at zero.
+		# `.tab-badge { margin-left:4px; padding:0 5px; background:#e94560; color:#fff;
+		#   border-radius:8px; font-size:10px; line-height:16px }`. MEASURED on the live
+		# PWA: the Skills pill is 24 x 16 at x 187-210 and the Stats one 31 x 16 at
+		# x 289-319, both rows 64-79 — 16 tall, which its `line-height` sets and which is
+		# what makes the whole tab 34 rather than 32.
+		var badge: Label = UIKit.label(badge_text, 10, "#ffffff")
+		badge.add_theme_font_size_override("font_size", 10)
+		badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# ⚠️  THE PILL'S BACKGROUND MUST LIVE ON THE BOX AROUND THE TEXT, not on the text
+		# itself. `padding:0 5px` is part of the pill: putting the stylebox on the Label
+		# drew the red only behind the glyphs — MEASURED, the Skills pill came out 13 wide
+		# against the PWA's 24, i.e. the 10px of padding was missing on both sides, and a
+		# `MarginContainer` around it cannot carry a background at all. A `PanelContainer`
+		# with `content_margin_left/right = 5` is the shape that does both.
+		var pill := PanelContainer.new()
+		var bs := StyleBoxFlat.new()
+		bs.bg_color = Color(UIKit.TAB_BADGE_BG)
+		bs.set_corner_radius_all(8)
+		bs.content_margin_left = 5
+		bs.content_margin_right = 5
+		pill.add_theme_stylebox_override("panel", bs)
+		# ⚠️  THE PILL IS 16 TALL, NOT THE TAB'S INNER HEIGHT. `.tab-badge`'s own
+		# `line-height:16px` is what sizes it, and the PWA's flex row centres that 16px
+		# line in the tab's 8px+8px padding — 16 + 16 = 32... but the INACTIVE tabs
+		# measure 34, because a tab with no badge has no line box bounding it and the
+		# browser falls back to `line-height:normal`. MEASURED before this fix: the port
+		# drew the pill 33 tall (the tab's whole inner box) and 22 wide at y 55, against
+		# the PWA's 16 at y 64 — 2 216 of the 3 032 differing pixels in the tab band, the
+		# largest single block of diff left on the screen. `SHRINK_CENTER` refuses the
+		# row's height; `custom_minimum_size.y` states the 16 the CSS declares.
+		badge.custom_minimum_size = Vector2(0, 16)
+		pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		# `.tab-badge { margin-left:4px }` sits ON TOP of the flex row's own `gap:4px`,
+		# so the gap between the label and the pill is 8 — measured on the live PWA: the
+		# "Skills" glyphs end at x=177 and the pill starts at 187.
+		pill.add_theme_constant_override("margin_left", 4)
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pill.visible = badge_text != ""
+		pill.add_child(badge)
+		inner.add_child(pill)
 		button.pressed.connect(func(): set_tab(key))
 		row.add_child(button)
 		_tab_buttons[key] = button
@@ -516,6 +519,7 @@ func _apply_panel_height() -> void:
 
 
 func refresh() -> void:
+	_refresh_tab_badges()
 	match _active:
 		"inventory":
 			_inventory.refresh()
@@ -523,6 +527,24 @@ func refresh() -> void:
 			_skills.refresh()
 		"stats":
 			_stats.refresh()
+
+
+## The unspent-point pills are LIVE, not build-time decoration. Spending a talent or an attribute
+## point has to make the number go DOWN in the tab strip (Jan: "čísla se průběžně neaktualizují,
+## takže i když hráč rozdělí body, tak mu to stejně svítí"). Called from `refresh()`, which every
+## spend path in `main.gd` already runs.
+func _refresh_tab_badges() -> void:
+	for key in _tab_badges:
+		var badge: Label = _tab_badges[key]
+		if badge == null:
+			continue
+		var text := _tab_badge_text(key)
+		var pill: Control = badge.get_parent()
+		if pill != null:
+			pill.visible = text != ""
+		if text != "":
+			badge.text = text
+	_apply_panel_height()
 
 
 ## The inventory screen is embedded as a tab rather than being a screen of its own, so

@@ -98,15 +98,24 @@ func UIKit_short(path: String) -> String:
 	return str(parts[parts.size() - 1])
 
 
-## The PWA is a phone game and its CSS assumes it. Landscape is a separate, later job
-## (Jan's call) — until a landscape layout exists, a landscape canvas is a bug.
+## LANDSCAPE EXPERIMENT (Jan, Nov 2026): the canvas is landscape now, and it is allowed to be —
+## but ONLY the arena may rely on it. Every other screen is still written for the PWA's 390x844,
+## so this asserts BOTH halves of the deal: the canvas the arena gets, and the fixed portrait
+## stage the rest of the game hangs in. A future pass that gives the town its own landscape
+## layout has to change `LANDSCAPE_SCREENS`, not delete this check.
 func _test_canvas_is_portrait() -> void:
 	var w := int(ProjectSettings.get_setting("display/window/size/viewport_width", 0))
 	var h := int(ProjectSettings.get_setting("display/window/size/viewport_height", 0))
-	if w != 390 or h != 844:
-		_fail("the canvas is %dx%d, not the PWA's 390x844" % [w, h])
-	if h <= w:
-		_fail("the canvas is not portrait (%dx%d)" % [w, h])
+	if w != 844 or h != 390:
+		_fail("the arena's canvas is %dx%d, expected the landscape 844x390" % [w, h])
+	if w <= h:
+		_fail("the arena's canvas is not landscape (%dx%d)" % [w, h])
+	var main_script = load("res://scripts/main.gd")
+	if main_script.PORTRAIT_SIZE != Vector2(390, 844):
+		_fail("the portrait stage is %s, expected 390x844" % str(main_script.PORTRAIT_SIZE))
+	if main_script.LANDSCAPE_SCREENS.size() != 1 or not ("survivor" in main_script.LANDSCAPE_SCREENS):
+		_fail("only the survivor run may use the landscape canvas, got %s"
+			% str(main_script.LANDSCAPE_SCREENS))
 
 
 ## The PWA's body background is #121212. Godot's default clear colour is mid grey, and any

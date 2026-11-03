@@ -36,6 +36,9 @@ const TAB_BADGE_BG := "#e94560"
 ## in the reference frames, not as black holes.
 const CELL_FILL := "#aaaaaa"
 const CELL_BORDER_EMPTY := "#777777"
+## `border:1px solid` on every cell: both the drawn width and the inset the icon must keep
+## so the border is never painted over (see `item_cell`).
+const CELL_BORDER := 1
 ## `.chest-cell.dimmed` — the PWA's inline `border-color:#e74c3c` for an item the hero's
 ## class cannot use. It is NOT `BD`/`BAD` (#c0392b); that is a different red used for other
 ## messages, and it is off the PWA's rendered border by ~25 levels per channel.
@@ -924,15 +927,29 @@ static func item_cell(item: Dictionary, size: float, dimmed: bool = false,
 				var backing := ColorRect.new()
 				backing.color = Color("000000")
 				backing.set_anchors_preset(Control.PRESET_FULL_RECT)
+				# ⚠️  THE BORDER IS PAINTED INSIDE THE CONTROL'S RECT and children paint OVER
+				# their parent — so a FULL-BLEED icon hid the cell's border completely. That
+				# is exactly Jan's "itemy v batohu nectí barvu rámečku podle kvality": the bag
+				# was the one grid whose icon covered the border, while the equip slots (which
+				# inset theirs by `SLOT_BORDER`) did show a colour, clipped at the corners.
+				# In CSS the `<img width:100%>` fills the CONTENT box, i.e. the cell MINUS its
+				# border, so this inset is the faithful value, not a fudge.
+				backing.offset_left = CELL_BORDER
+				backing.offset_top = CELL_BORDER
+				backing.offset_right = -CELL_BORDER
+				backing.offset_bottom = -CELL_BORDER
 				backing.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				cell.add_child(backing)
 			var icon := TextureRect.new()
 			icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-			# ⚠️ FULL BLEED, no inset. The bag renders its icon with `size === 0`, whose
-			# `<img>` is `width:100%; height:100%; background:#000` — it covers the whole
-			# cell. `.cell-icon img { width:80% }` in style.css is overridden by that inline
-			# style, exactly as `object-fit:cover` is, and reading the stylesheet instead of
-			# the inline style is what put an 80% icon in a 100% cell.
+			icon.offset_left = CELL_BORDER
+			icon.offset_top = CELL_BORDER
+			icon.offset_right = -CELL_BORDER
+			icon.offset_bottom = -CELL_BORDER
+			# ⚠️ The icon fills the CONTENT box (the cell minus its border, set above), which
+			# is what the PWA's `width:100%; height:100%; background:#000` resolves to.
+			# `.cell-icon img { width:80% }` in style.css is overridden by that inline
+			# style, so the icon is the full content box and not 80 % of the cell.
 			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			icon.texture = texture

@@ -82,6 +82,10 @@ const FACING_MIN_DOT := 0.0
 ## from each other every frame (which reads as the hero twitching).
 const TARGET_RANGE := 280.0
 const TARGET_HP_WEIGHT := 160.0
+## How much a body being OFF the aim direction costs it, in pixels. 120 means a body 60° off the
+## stick is penalised 60 px: pushing the stick at the enemy on the right beats a slightly nearer
+## one straight ahead, which is exactly Jan's "přejeď zleva doprava a útok se přesměruje".
+const TARGET_AIM_WEIGHT := 120.0
 const TARGET_SWITCH_MARGIN := 0.12
 
 
@@ -195,6 +199,16 @@ var player_pos := Vector2.ZERO
 ## while an attack is held (see `FACING_MIN_DOT`); RIGHT is the starting direction, which is also
 ## what a still hero who never walked is facing.
 var facing := Vector2.RIGHT
+## THE AIM — the half-plane the target assist looks into, and NOT the same thing as `facing`.
+## Jan, Nov 2026: "když hráč drží útok a během toho mění směr, tak by se měl target změnit. Pokud
+## stojí třeba tři nepřátelé vedle sebe a hráč přejez zleva doprava, tak by se měl útok přesměrovat
+## na toho vpravo."
+##
+## So the aim is written ONLY by the player's stick (and by the assist's turn-around when he stands
+## with nothing in front), while `facing` follows the target so the swing lands where it looks.
+## Keeping one field for both was the bug: `facing` was overwritten by the target's direction every
+## step, so the half-plane never moved and the assist never had a reason to re-pick.
+var aim := Vector2.RIGHT
 ## Is the attack button (or an offensive spell) held RIGHT NOW? The screen owns the gesture and
 ## writes this every frame; the rules read it and nothing else. Default FALSE — a run that has
 ## not been told the player is holding anything does not attack, which is Jan's new rule.
@@ -374,6 +388,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	ww_feedback = ""
 	ww_landed = 0
 	facing = Vector2.RIGHT
+	aim = Vector2.RIGHT
 	# A new run starts with NOTHING held: the screen writes these from its own gesture state
 	# every frame, but a stale `true` from the previous fight would make the hero swing on his own
 	# for as long as it took the first frame to arrive.
@@ -487,8 +502,14 @@ func step(dt: float, move: Vector2) -> void:
 		swing_age_off += dt
 
 	_prev_pos = player_pos
-	# ...and the DIRECTION the player walks outranks the assist while he walks (see `_update_target`).
-	_update_target(move.length_squared() > 0.0001)
+	# ...and the DIRECTION the player walks sets the AIM, and outranks the assist's facing while he
+	# walks (see `_update_target` and `aim`). Set BEFORE the pick, so a thumb that changed sides
+	# re-picks the target on the very same step.
+	var walk := move.limit_length(1.0)
+	var walking := walk.length_squared() > 0.0001
+	if walking:
+		aim = walk.normalized()
+	_update_target(walking)
 	_move_hero(dt, move, target_id >= 0)
 	_zone_tick()
 	_move_monsters(dt)
@@ -515,7 +536,7 @@ func _move_hero(dt: float, move: Vector2, keep_facing: bool = false) -> void:
 	if not keep_facing and walking:
 		# Movement IS the aim while nothing is held: the hero faces where he walks, and a still
 		# hero keeps the last direction (see `FACING_MIN_DOT`).
-		facing = dir.normalized()
+		facing = aim
 	if not walking:
 		if not keep_facing:
 			return
@@ -996,6 +1017,12 @@ func _update_target(walking: bool = false) -> void:
 		# behind him — otherwise "hold attack and run" is the free-hits-while-fleeing exploit the
 		# facing rule was written to close.
 		idx = _nearest_body()
+		# ...and it turns the AIM with him, or the next step would look the old way again and
+		# drop the body it just committed to.
+		if idx >= 0:
+			var turn: Vector2 = (monsters[idx]["pos"] as Vector2) - player_pos
+			if turn.length() > 0.001:
+				aim = turn.normalized()
 	if idx < 0:
 		target_id = -1
 		return
@@ -1006,10 +1033,13 @@ func _update_target(walking: bool = false) -> void:
 
 
 ## The assist's choice. The phone has one thumb on the stick and one on the attack, so there is no
-## second cursor: the game ranks what the player is LOOKING at.
+## second cursor: the game ranks what the player is AIMING at (`aim`, not `facing` — see the field's
+## own note: `facing` follows the target and would make the choice self-fulfilling).
 ##
-##   * only bodies in FRONT (`dot(facing) >= FACING_MIN_DOT`), within `TARGET_RANGE`;
-##   * score = distance + missing-health-weighted penalty, so the kill is finished first;
+##   * only bodies in FRONT of the AIM (`dot(aim) >= FACING_MIN_DOT`), within `TARGET_RANGE`;
+##   * score = distance + missing-health-weighted penalty + an ALIGNMENT penalty, so pushing the
+##     stick at the enemy on the right picks that one even when a body straight ahead is nearer.
+##     That is Jan's "přejeď zleva doprava a útok se přesměruje";
 ##   * a candidate must beat the one already chosen by `TARGET_SWITCH_MARGIN` to steal it —
 ##     without that, two similar bodies trade the target every frame and the hero twitches.
 func _pick_target() -> int:
@@ -1021,14 +1051,17 @@ func _pick_target() -> int:
 	var cur_score := INF
 	for i in monsters.size():
 		var off: Vector2 = (monsters[i]["pos"] as Vector2) - player_pos
-		if off.dot(facing) < FACING_MIN_DOT:
+		if off.dot(aim) < FACING_MIN_DOT:
 			continue
 		var d := off.length()
 		if d > TARGET_RANGE + MON_RADIUS:
 			continue
 		var frac := clampf(float(monsters[i]["hp"]) / maxf(1.0, float(monsters[i]["max_hp"])),
 			0.0, 1.0)
-		var score := d + frac * TARGET_HP_WEIGHT
+		# `1 - dot` is 0 straight ahead and 1 at the edge of the half-plane; multiplied by a pixel
+		# weight it puts the alignment on the SAME scale as distance.
+		var align := 1.0 - off.normalized().dot(aim) if d > 0.001 else 0.0
+		var score := d + frac * TARGET_HP_WEIGHT + align * TARGET_AIM_WEIGHT
 		if int(monsters[i]["id"]) == target_id:
 			cur = i
 			cur_score = score
