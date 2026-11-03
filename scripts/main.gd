@@ -371,9 +371,10 @@ func _build_nav() -> void:
 
 
 const PORTRAIT_SIZE := Vector2(390.0, 844.0)
-## Screens that use the LANDSCAPE canvas itself rather than the portrait stage. ONE entry, on
-## purpose: the survivor run is the only screen whose layout is about floor space.
-const LANDSCAPE_SCREENS := ["survivor"]
+## Screens that use the LANDSCAPE canvas itself rather than the portrait stage. EMPTY: the
+## landscape experiment is parked (Jan: "asi to necháme zatím na výšku"), but the machinery stays
+## so re-opening it is one entry rather than a re-write. Only a screen listed here skips the stage.
+const LANDSCAPE_SCREENS := []
 var _portrait_root: Control
 ## The canvas rect the stage was last fitted to, so `_process` can re-fit the moment it changes.
 var _stage_canvas := Vector2.ZERO

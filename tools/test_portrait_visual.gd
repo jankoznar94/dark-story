@@ -98,23 +98,22 @@ func UIKit_short(path: String) -> String:
 	return str(parts[parts.size() - 1])
 
 
-## LANDSCAPE EXPERIMENT (Jan, Nov 2026): the canvas is landscape now, and it is allowed to be —
-## but ONLY the arena may rely on it. Every other screen is still written for the PWA's 390x844,
-## so this asserts BOTH halves of the deal: the canvas the arena gets, and the fixed portrait
-## stage the rest of the game hangs in. A future pass that gives the town its own landscape
-## layout has to change `LANDSCAPE_SCREENS`, not delete this check.
+## The PWA is a phone game and its CSS assumes it — and Jan tried landscape and sent it back:
+## "asi to necháme zatím na výšku. Tohle se mi moc nezdá." So the canvas is portrait, and the
+## landscape stage in `Main` is PARKED: `LANDSCAPE_SCREENS` must stay EMPTY, because a screen in
+## that list lays out on a canvas this test forbids.
 func _test_canvas_is_portrait() -> void:
 	var w := int(ProjectSettings.get_setting("display/window/size/viewport_width", 0))
 	var h := int(ProjectSettings.get_setting("display/window/size/viewport_height", 0))
-	if w != 844 or h != 390:
-		_fail("the arena's canvas is %dx%d, expected the landscape 844x390" % [w, h])
-	if w <= h:
-		_fail("the arena's canvas is not landscape (%dx%d)" % [w, h])
+	if w != 390 or h != 844:
+		_fail("the canvas is %dx%d, not the PWA's 390x844" % [w, h])
+	if h <= w:
+		_fail("the canvas is not portrait (%dx%d)" % [w, h])
 	var main_script = load("res://scripts/main.gd")
 	if main_script.PORTRAIT_SIZE != Vector2(390, 844):
 		_fail("the portrait stage is %s, expected 390x844" % str(main_script.PORTRAIT_SIZE))
-	if main_script.LANDSCAPE_SCREENS.size() != 1 or not ("survivor" in main_script.LANDSCAPE_SCREENS):
-		_fail("only the survivor run may use the landscape canvas, got %s"
+	if not main_script.LANDSCAPE_SCREENS.is_empty():
+		_fail("the landscape stage is parked — LANDSCAPE_SCREENS must be empty, got %s"
 			% str(main_script.LANDSCAPE_SCREENS))
 
 

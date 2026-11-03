@@ -46,17 +46,18 @@ const STICK_DEADZONE := 9.0
 ## edge. A thumb landing ON the wheel (or just outside it) owns it; anything else in the left half
 ## is not an action, because the sectors are fixed and a stray thumb must not arm one.
 ##
-## ⚠️  THE RADII ARE DERIVED, NOT CONSTANTS (landscape, Nov 2026). On the 844x390 canvas a fixed
-## 106 px ring plus its 44 px bottom pad is most of the screen height; on a tall portrait canvas
-## the same numbers would look small. `wheel_outer()` scales the disc to the canvas and the centre
-## keeps a fixed pad above the HP/mana bars, which are themselves anchored to the bottom.
-const WHEEL_OUTER_MAX := 106.0
-const WHEEL_OUTER_MIN := 64.0
-const WHEEL_ICON_RADIUS := 18.0
+## ⚠️  THE RADII ARE DERIVED FROM THE CANVAS, and they are deliberately SMALL: Jan, after the
+## landscape pass came back to portrait — "zmenšíme oblast pro akce. Teď je zbytečně moc velká."
+## `wheel_outer()` is a tenth of the canvas height (84 px on 844), the resting disc 55 % of that
+## (46 px), and the icons 15 px. The old 106 / 58 pair ate a quarter of the screen and left the
+## whole lower-left unplayable.
+const WHEEL_OUTER_MAX := 88.0
+const WHEEL_OUTER_MIN := 52.0
+const WHEEL_ICON_RADIUS := 15.0
 ## The wheel's distance from the screen's left edge, and its centre's clearance above the bottom
 ## (the HP/mana bars own the last 40 px and the loot tally sits at `size.y - 6`).
 const WHEEL_MARGIN := 12.0
-const WHEEL_BOTTOM_PAD := 58.0
+const WHEEL_BOTTOM_PAD := 52.0
 ## The bind panel's rows. A thumb needs 52 px of height at the very least; the slot rows get more
 ## because they carry two lines (direction + action).
 const BIND_ROW_H := 74.0
@@ -380,7 +381,7 @@ func _on_drag(pos: Vector2, index: int = 0) -> void:
 ## výsečemi". A fixed wheel is also what makes the wedges learnable: the same action is in the same
 ## place in every fight, so the player can build muscle memory instead of aiming at an icon.
 func wheel_outer() -> float:
-	return clampf(minf(size.y * 0.26, WHEEL_OUTER_MAX), WHEEL_OUTER_MIN, WHEEL_OUTER_MAX)
+	return clampf(size.y * 0.10, WHEEL_OUTER_MIN, WHEEL_OUTER_MAX)
 
 
 func wheel_inner() -> float:
@@ -587,13 +588,29 @@ func _whirlwind_feedback() -> void:
 		_say("Whirlwind přerušen")
 
 
+## The zoom the WHOLE fight is drawn at. Jan: "zmenšíme celkový zoom v souboji. Vše je zbytečně
+## velké a blízko. Trochu bych to celé vzdálil a ono to pomůže pocitově i s tím prostorem."
+##
+## Applied as ONE `draw_set_transform` around the world half of `_draw()`, not as a factor in the
+## fifty `pos - _cam` expressions: the camera is computed in world units already (`_cam` is a world
+## point), the transform maps that to the screen, and the HUD is drawn after a reset so text and
+## bars keep their measured pixel sizes. Everything in the world — tiles, portraits, reach rings,
+## damage numbers — shrinks together, which is what "vzdálit" means.
+const ZOOM := 0.82
+
+
+## How much WORLD the screen shows: the canvas divided by the zoom.
+func _view_world_size() -> Vector2:
+	return size / ZOOM
+
+
 func _place_camera() -> void:
 	if run == null:
 		return
-	var half := size * 0.5
-	_cam = run.player_pos - half
-	_cam.x = clampf(_cam.x, 0.0, maxf(0.0, SurvivorRun.WORLD.x - size.x))
-	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - size.y))
+	var view := _view_world_size()
+	_cam = run.player_pos - view * 0.5
+	_cam.x = clampf(_cam.x, 0.0, maxf(0.0, SurvivorRun.WORLD.x - view.x))
+	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - view.y))
 
 
 func _notification(what: int) -> void:
@@ -763,7 +780,13 @@ func _tap_whirlwind(key: String) -> void:
 func _draw() -> void:
 	if run == null:
 		return
+	# The backdrop is NOT zoomed: it has to cover the whole canvas whatever the camera does.
 	draw_rect(Rect2(Vector2.ZERO, size), Color("#1b1712"))
+	# Everything the arena IS — the ground, the bodies, the reach rings, the numbers — is drawn in
+	# SCREEN coordinates that were already shifted by `_cam`, so one scale about the canvas origin
+	# is the whole camera zoom. `_place_camera` divides the view by the same `ZOOM`, which is what
+	# keeps the hero (and the point a tap aims at) in the middle.
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(ZOOM, ZOOM))
 	_draw_ground()
 	_draw_patches()
 	_draw_props()
@@ -776,6 +799,8 @@ func _draw() -> void:
 	_draw_slash_off()
 	_draw_effects()
 	_draw_numbers()
+	# The HUD and the wheel are UI, not world: back to 1:1 or the text would shrink with the zoom.
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_hud()
 	_draw_wheel()
 	_draw_whirlwind()

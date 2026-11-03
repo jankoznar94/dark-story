@@ -17,17 +17,15 @@ config/icon="res://assets/icon/icon.png"
 
 [display]
 
-; LANDSCAPE — the experiment Jan asked for (Nov 2026): "zkusme to na soubojové aréně (nájezdech)
-; a uvidíme jak to bude fungovat." The canvas is landscape now, and ONLY the survivor run uses
-; it (`Main.LANDSCAPE_SCREENS`); every other screen still lays out for 390x844 and hangs in
-; `Main._portrait_root`, a fixed 390x844 Control scaled to the canvas height. So the measured
-; portrait offsets survive while the arena gets the floor space that was the point of the change.
-; When the rest of the game moves to landscape this comment and `_portrait_root` both go.
-window/size/viewport_width=844
-window/size/viewport_height=390
+; PORTRAIT, as the PWA. The landscape experiment (Nov 2026) is PARKED, not deleted: Jan tried it
+; on the arena and said "asi to necháme zatím na výšku. Tohle se mi moc nezdá." `Main` still keeps
+; the 390x844 portrait stage and `LANDSCAPE_SCREENS`, so re-opening it is one constant, but the
+; canvas — and every measured layout written for it — is portrait.
+window/size/viewport_width=390
+window/size/viewport_height=844
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-window/handheld/orientation=4
+window/handheld/orientation=1
 
 [audio]
 

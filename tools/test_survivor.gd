@@ -1323,11 +1323,11 @@ func _test_cast_while_running() -> void:
 	levels["barbarian_heroicStrike"] = 1
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(844, 390)
+	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
 	# Finger 1 takes the walking stick (RIGHT half) and drags.
-	screen._on_press(Vector2(650, 300), 1)
-	screen._on_drag(Vector2(700, 300), 1)
+	screen._on_press(Vector2(250, 600), 1)
+	screen._on_drag(Vector2(300, 600), 1)
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
 		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
 	# Finger 2 uses the ACTION WHEEL (bottom-LEFT, fixed) and pushes UP past the resting disc — the
@@ -1368,7 +1368,7 @@ func _test_screen_action_wheel() -> void:
 	_state.data.erase("actionWheel")
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(844, 390)
+	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
 	_check(screen._wheel_slots.size() == ActionWheel.SLOTS,
 		"the wheel must have %d sectors, got %d" % [ActionWheel.SLOTS, screen._wheel_slots.size()])
@@ -1389,7 +1389,7 @@ func _test_screen_action_wheel() -> void:
 
 	# A press in the LEFT half but OFF the wheel must not arm anything: the sectors are fixed, so a
 	# stray thumb cannot "open" a wheel at its own position any more.
-	screen._on_press(Vector2(400, 70), 4)
+	screen._on_press(Vector2(60, 300), 4)
 	_check(screen._wheel_index == -1, "a press off the wheel must not own it")
 	screen._on_release(4)
 
@@ -1478,7 +1478,7 @@ func _test_screen_action_wheel() -> void:
 		_check(dupes == 1, "an action must live in ONE sector, found %d" % dupes)
 		_check(_state.data.get("actionWheel") is Array,
 			"the binding must reach the SAVE, not just the screen")
-	screen._on_press(Vector2(500, 120))  # a press in the field must not answer the panel
+	screen._on_press(Vector2(240, 620))  # a press in the field must not answer the panel
 	_check(screen._bind_pick == -1 or screen._bind_open, "the panel must swallow field presses")
 	screen._on_press(screen._bind_back_rect.get_center())
 	screen._on_press(screen._bind_back_rect.get_center())
@@ -1494,7 +1494,7 @@ func _test_screen_action_wheel() -> void:
 	# action cannot fire with the thumb that was answering the press.
 	screen.run.start_whirlwind(["tri", "circle"], 1500)
 	var before: int = screen.run.ww_index
-	screen._on_press(Vector2(600, 330))
+	screen._on_press(Vector2(260, 700))
 	_check(screen.run.ww_index == before, "a press outside the flurry row must not answer it")
 	_check(not screen._pointer_down, "the flurry must swallow the press (no stick)")
 	var ww: Dictionary = screen._ww_buttons[0]
@@ -1513,7 +1513,7 @@ func _test_screen_gesture_and_disc() -> void:
 	_log("  section: screen_gesture_and_disc")
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
-	screen.size = Vector2(844, 390)
+	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
 	_check(screen.run != null, "the screen must own a run after setup")
 	# The hero is a WALKING PORTRAIT built from the same face his stat page shows.
@@ -1522,10 +1522,10 @@ func _test_screen_gesture_and_disc() -> void:
 	_check(hero_tex != null, "the hero's medallion must load (%s)" % screen._hero_face())
 
 	# A press in the field starts the stick THERE (the floating control), and a drag sets it.
-	screen._on_press(Vector2(600, 300))
-	_check(screen._pointer_down and screen._stick_origin == Vector2(600, 300),
+	screen._on_press(Vector2(250, 600))
+	_check(screen._pointer_down and screen._stick_origin == Vector2(250, 600),
 		"a press in the field must plant the stick at the finger")
-	screen._on_drag(Vector2(700, 300))
+	screen._on_drag(Vector2(340, 600))
 	_check(screen._stick_vec.x > 0.9 and absf(screen._stick_vec.y) < 0.01,
 		"a drag must produce a full-strength direction, got %s" % str(screen._stick_vec))
 	screen._on_release()
