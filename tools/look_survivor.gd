@@ -146,12 +146,14 @@ func _process(_delta: float) -> bool:
 	if _frames == 4 and _walk:
 		_screen._on_press(Vector2(250, 660))
 		_screen._on_drag(Vector2(290, 610))
-	# THE ATTACK SECTOR IS HELD, or the hero never swings and `--wait_swing` waits forever: since
-	# Jan's D2R rule a thumb that is not on an action means a hero who stands and looks. Pushed UP
-	# past the ring, so the frame also shows the wheel in its active state.
+	# THE ATTACK WEDGE IS HELD, or the hero never swings and `--wait_swing` waits forever: since
+	# Jan's D2R rule a thumb that is not on an action means a hero who stands and looks. The wheel
+	# is FIXED in the bottom-left now, so the thumb goes to ITS centre and pushes up past the
+	# resting disc; the frame also shows the wheel in its active state (which it always has now).
 	if _frames == 6:
-		_screen._on_press(Vector2(96, 630), 7)
-		_screen._on_drag(Vector2(96, 630 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 7)
+		var wc: Vector2 = _screen.wheel_centre()
+		_screen._on_press(wc, 7)
+		_screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 7)
 	# ⚠️  THE WALK STOPS. A shot taken while still running shows a hero who outran his pack and is
 	# now surrounded from BEHIND — which the facing rule correctly refuses to swing at, so
 	# `--wait_swing` never finds a blow. Standing still is also the beat worth judging: the assist

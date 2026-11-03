@@ -9,10 +9,11 @@ class_name SurvivorScreen
 ## own shadow" class of bug that a tree of Container nodes invites.
 ##
 ## Controls, per Jan's decisions: the MOVEMENT is a FLOATING stick on the RIGHT — it appears
-## wherever the thumb lands — and the buttons are FIXED in the bottom-LEFT, so the hand that walks
-## is the other one. The ATTACK is HELD, never automatic: while the button (or an offensive spell)
-## is down, the RULES pick a target in the direction the hero looks and walk him into it (see
-## `survivor_run._pick_target`).
+## wherever the thumb lands — and the ACTION WHEEL is FIXED in the bottom-LEFT and drawn all the
+## time (a disc with six wedges), so the hand that walks is the other one. Only the ATTACK is HELD:
+## while its wedge is under the thumb the RULES pick a target in the direction the hero looks and
+## walk him into it (see `survivor_run._pick_target`). A spell or a potion is ARMED by dragging into
+## its wedge and fires when the thumb LIFTS (Jan: "až puštění kontaktu bude považováno za aktivaci").
 ##
 ## ⚠️  One finger arrives TWICE on this engine (`Input` synthesises a mouse event from every
 ## touch), so the press/release pair goes through `_pointer_down`: the first event of the
@@ -36,13 +37,22 @@ const MAX_STEPS_PER_FRAME := 6
 const TOP_BAR := 54.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
-## The action wheel: the same round area the movement stick uses, and a thumb has to push PAST the
-## ring for the sector to count. `WHEEL_ACTIVATE` is deliberately outside `STICK_RADIUS` — Jan:
-## "když hráč určitým směrem přetáhne mimo kruh, tak se to bere jako aktivace."
-const WHEEL_DEADZONE := 12.0
-const WHEEL_ACTIVATE := 74.0
-const WHEEL_MAX := 92.0
-const WHEEL_ICON_RADIUS := 20.0
+## THE ACTION WHEEL (left thumb). Jan, Nov 2026, second pass: the wheel is PERMANENT — drawn all the
+## time in the bottom-left, sectors and all — and each bound action is a whole WEDGE of an outer
+## ring around the joystick-like disc, so the thumb never has to find an icon:
+## "kolem ovládacího levého kruhu bude vnější větší kruh s akcemi, rozdělený na X výsečí".
+##
+## `WHEEL_INNER` is the resting disc: a thumb inside it runs nothing. `WHEEL_OUTER` is the ring's
+## edge. A thumb landing ON the wheel (or just outside it) owns it; anything else in the left half
+## is not an action, because the sectors are fixed and a stray thumb must not arm one.
+const WHEEL_INNER := 58.0
+const WHEEL_OUTER := 106.0
+const WHEEL_PRESS_SLACK := 30.0
+const WHEEL_ICON_RADIUS := 18.0
+## The wheel's distance from the screen's left edge, and its centre height above the bottom. It has
+## to clear the HP/mana bars (bottom 40 px) and the loot tally, which is why it sits fairly high.
+const WHEEL_MARGIN := 12.0
+const WHEEL_BOTTOM := 176.0
 ## The bind panel's rows. A thumb needs 52 px of height at the very least; the slot rows get more
 ## because they carry two lines (direction + action).
 const BIND_ROW_H := 74.0
@@ -100,10 +110,9 @@ var _pointer_kind := ""
 var _exit_rect := Rect2()
 var _bind_rect := Rect2()
 
-## THE ACTION WHEEL (left thumb). It appears where the thumb lands; the direction it is pushed
-## into is the action. `_wheel_slot` is the sector under the thumb right now (-1 = inside the
-## deadzone, i.e. nothing held), and `_wheel_slots` is what each sector is bound to.
-var _wheel_origin := Vector2.ZERO
+## THE ACTION WHEEL (left thumb). It is FIXED in the bottom-left and always drawn; the wedge the
+## thumb is pushed into is the action. `_wheel_slot` is the wedge under the thumb right now (-1 =
+## inside the resting disc, i.e. nothing), and `_wheel_slots` is what each wedge is bound to.
 var _wheel_index := -1
 var _wheel_vec := Vector2.ZERO
 var _wheel_slot := -1
@@ -322,15 +331,17 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 	if pos.y < TOP_BAR:
 		return
 	# TWO THUMBS, TWO WHEELS, split down the middle of the screen: the LEFT one is the action
-	# wheel, the RIGHT one walks. Nobody has to find a small button any more — a press anywhere in
-	# a half starts that half's control.
+	# wheel, the RIGHT one walks. The action wheel is FIXED and permanently drawn, so only a thumb
+	# that lands on it (or just outside its ring) owns it — a stray thumb elsewhere in the left half
+	# must not arm an action whose wedge it never aimed at.
 	if pos.x < size.x * 0.5:
 		if _wheel_index >= 0:
 			return
+		if pos.distance_to(wheel_centre()) > WHEEL_OUTER + WHEEL_PRESS_SLACK:
+			return
 		_wheel_index = index
-		_wheel_origin = pos
-		_wheel_vec = Vector2.ZERO
-		_set_wheel_slot(-1)
+		_wheel_vec = (pos - wheel_centre()).limit_length(WHEEL_OUTER)
+		_set_wheel_slot(_wheel_slot_for(pos - wheel_centre()))
 		queue_redraw()
 		return
 	if _stick_index >= 0:
@@ -344,13 +355,11 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 
 func _on_drag(pos: Vector2, index: int = 0) -> void:
 	if index == _wheel_index:
-		_wheel_vec = (pos - _wheel_origin).limit_length(WHEEL_MAX)
-		# A sector only counts once the thumb is PAST the ring (Jan): inside it the wheel is a
-		# resting thumb, and a resting thumb must not keep an action running.
-		var slot := -1
-		if _wheel_vec.length() >= WHEEL_ACTIVATE:
-			slot = ActionWheel.sector_at(_wheel_vec)
-		_set_wheel_slot(slot)
+		var offset := pos - wheel_centre()
+		_wheel_vec = offset.limit_length(WHEEL_OUTER)
+		# Nothing counts inside the resting disc (Jan): a thumb sitting on the wheel must not run
+		# an action. Past it, whichever WEDGE it is in is the action.
+		_set_wheel_slot(_wheel_slot_for(offset))
 		queue_redraw()
 		return
 	if index != _stick_index:
@@ -363,24 +372,37 @@ func _on_drag(pos: Vector2, index: int = 0) -> void:
 	queue_redraw()
 
 
-## Enter (or leave) a sector. ONE place decides what the run is being told: the HOLD side (attack /
-## an offensive spell, which keeps playing while the thumb stays) and the TRIGGER side (a potion or
-## a queued spell, fired once on ENTERING the sector — a potion drunk twice because the thumb
-## drifted is a bug the player pays for).
+## Where the wheel lives: FIXED in the bottom-left, because Jan wants it permanently visible — "i s
+## výsečemi". A fixed wheel is also what makes the wedges learnable: the same action is in the same
+## place in every fight, so the player can build muscle memory instead of aiming at an icon.
+func wheel_centre() -> Vector2:
+	return Vector2(WHEEL_OUTER + WHEEL_MARGIN, size.y - WHEEL_BOTTOM)
+
+
+## Which wedge a thumb offset from the centre points into: -1 inside the resting disc, else the
+## sector. One place, so the press, the drag and the release can never disagree.
+func _wheel_slot_for(offset: Vector2) -> int:
+	if offset.length() < WHEEL_INNER:
+		return -1
+	return ActionWheel.sector_at(offset)
+
+
+## Enter (or leave) a wedge. Only the ATTACK is a HOLD, and it is the only thing that starts here;
+## a spell or a potion is merely ARMED by being under the thumb and fires on RELEASE, so a drifted
+## thumb cannot cast it and one gesture cannot fire it twice.
 func _set_wheel_slot(slot: int) -> void:
 	if slot == _wheel_slot:
 		return
 	_wheel_slot = slot
 	var action := wheel_action(slot)
 	var hold_attack := action == ActionWheel.ATTACK
-	var hold_spell := action if RunSpells.is_offensive(action) else ""
 	_attack_held = hold_attack
-	_held_spell = hold_spell
+	# No spell is held any more (Jan: only the attack holds). The run still understands
+	# `held_spell`, but the wheel never sets it — one source of truth, and it is empty.
+	_held_spell = ""
 	if run != null:
 		run.attack_held = hold_attack
-		run.held_spell = hold_spell
-	if action != ActionWheel.EMPTY and not ActionWheel.is_hold(action, RunSpells):
-		_fire_action(action)
+		run.held_spell = ""
 
 
 ## What a sector is bound to, or EMPTY.
@@ -401,9 +423,15 @@ func _fire_action(action: String) -> void:
 
 func _on_release(index: int = 0) -> void:
 	if index == _wheel_index:
+		# RELEASE IS THE ACTIVATION for everything but the attack (Jan): "musí do dané výseče
+		# vyjet prstem a pak prst pustit/sundat". Read the wedge BEFORE clearing it, then lift:
+		# a thumb that drifts back into the resting disc first fires nothing.
+		var action := wheel_action(_wheel_slot)
 		_wheel_index = -1
 		_wheel_vec = Vector2.ZERO
 		_set_wheel_slot(-1)
+		if action != ActionWheel.EMPTY and not ActionWheel.is_hold(action, RunSpells):
+			_fire_action(action)
 		queue_redraw()
 		return
 	# Only the finger that OWNS the stick may stop it; lifting the action thumb must not.
@@ -1178,62 +1206,91 @@ func _draw_hud() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
 
 
-## THE ACTION WHEEL. It appears where the thumb lands, so the player never has to find a button:
-## the six icons sit ON the ring (outside the thumb's own disc), the sector under the thumb is lit,
-## and a knob follows the finger so the gesture has a visible body.
+## THE ACTION WHEEL — ALWAYS on screen, bottom-left (Jan: "měl by být viditelný permanentně. I s
+## výsečemi."). One fixed disc with a ring of six WEDGES around it, each wedge holding one action:
+## the thumb only has to be somewhere in the wedge, never on a small icon.
 ##
-## The activation ring is drawn as a thin DASHED circle OUTSIDE the plate, because it is a line the
-## thumb has to CROSS — Jan's own rule ("když hráč určitým směrem přetáhne mimo kruh, tak se to bere
-## jako aktivace"). Below the wheel, the active action's name is written out: the one thing a
-## player who is NOT looking at his thumb still needs to be sure about.
+## Two states per wedge, because the actions are not the same gesture any more:
+##   · the ATTACK is HELD — the wedge lights the moment the thumb is in it and stays lit while it
+##     stays there; the knob follows the finger so a held action has a visible body.
+##   · a SPELL or a POTION is ARMED — lit, and fired by LIFTING the thumb. The label above the wheel
+##     says so, in words, because "release to use" is the one rule that cannot be read from a shape.
 func _draw_wheel() -> void:
-	if _wheel_index < 0:
-		return
-	var o := _wheel_origin
+	var o := wheel_centre()
 	var font := UIFonts.bold()
 	var font_r := UIFonts.regular()
-	draw_circle(o, STICK_RADIUS, Color(0, 0, 0, 0.34))
-	draw_arc(o, STICK_RADIUS, 0.0, TAU, 48, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.30), 2.0, true)
-	_dashed_ring(o, WHEEL_ACTIVATE, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.22), 1.2)
-	# The boundaries between sectors: faint, so the icons carry the reading and the lines only say
-	# "this wheel has six places".
+	var engaged := _wheel_index >= 0
+	# The resting disc: the joystick-like area under the thumb. Nothing fires inside it, so it is
+	# drawn darker than the wedges even while a thumb sits in it.
+	draw_circle(o, WHEEL_INNER, Color(0, 0, 0, 0.34 if engaged else 0.26))
+	draw_arc(o, WHEEL_INNER, 0.0, TAU, 48,
+		Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.34 if engaged else 0.24), 2.0, true)
+
+	var span := TAU / float(ActionWheel.SLOTS)
 	for i in ActionWheel.SLOTS:
-		var a: float = ActionWheel.centre_angle(i) + PI / float(ActionWheel.SLOTS)
-		draw_line(o + Vector2(cos(a), sin(a)) * 22.0,
-			o + Vector2(cos(a), sin(a)) * STICK_RADIUS,
-			Color(1, 1, 1, 0.055), 1.0, true)
-	# The six slots, on the ring.
-	for i in ActionWheel.SLOTS:
-		var c := o + Vector2.from_angle(ActionWheel.centre_angle(i)) * STICK_RADIUS
+		var a0: float = ActionWheel.centre_angle(i) - span * 0.5
+		var a1: float = ActionWheel.centre_angle(i) + span * 0.5
 		var action := wheel_action(i)
-		var active := i == _wheel_slot
 		var empty := action == ActionWheel.EMPTY
-		var fill := Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.92 if active else 0.72)
-		draw_circle(c, WHEEL_ICON_RADIUS, fill)
-		if not empty:
-			_draw_action_icon(action, c, WHEEL_ICON_RADIUS - 4.0, active)
-		var rim := Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95) if active else Color(
-			0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75)
+		var active := engaged and i == _wheel_slot
+		var fill := Color(0x25 / 255.0, 0x21 / 255.0, 0x1b / 255.0, 0.82)
 		if empty:
-			rim = Color(0x4a / 255.0, 0x44 / 255.0, 0x3a / 255.0, 0.7)
-		draw_arc(c, WHEEL_ICON_RADIUS, 0.0, TAU, 26, rim, 3.0 if active else 1.5, true)
-	# The knob: the thumb itself, at the vector it has pulled.
-	draw_circle(o + _wheel_vec * (STICK_RADIUS / WHEEL_ACTIVATE),
-		20.0, Color(0xd8 / 255.0, 0xc8 / 255.0, 0xa0 / 255.0, 0.55))
-	# What is being held, in words, UNDER the wheel (the wheel is above the thumb, the label above
-	# the wheel would sit under the hero's own portrait).
-	var label_y := o.y + WHEEL_ACTIVATE + 26.0
+			fill = Color(0x16 / 255.0, 0x14 / 255.0, 0x12 / 255.0, 0.50)
+		if active:
+			fill = Color(0x46 / 255.0, 0x3a / 255.0, 0x29 / 255.0, 0.96)
+		_draw_wheel_wedge(o, a0, a1, fill)
+		# The wedge's own rim: the outline that makes the ring read as six places, not one annulus.
+		var rim := Color(0x7a / 255.0, 0x6f / 255.0, 0x59 / 255.0, 0.90)
+		var rim_w := 1.5
+		if empty:
+			rim = Color(0x4a / 255.0, 0x44 / 255.0, 0x3a / 255.0, 0.55)
+		if active:
+			rim = Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95)
+			rim_w = 3.0
+		draw_arc(o, WHEEL_OUTER, a0 + 0.02, a1 - 0.02, 14, rim, rim_w, true)
+		# A boundary line on both edges: the fill alone is a quiet map, the lines say where one
+		# action ends and the next begins.
+		for a in [a0, a1]:
+			draw_line(o + Vector2.from_angle(a) * WHEEL_INNER, o + Vector2.from_angle(a) * WHEEL_OUTER,
+				Color(1, 1, 1, 0.11), 1.0, true)
+		var c := o + Vector2.from_angle(ActionWheel.centre_angle(i)) * ((WHEEL_INNER + WHEEL_OUTER) * 0.5)
+		if not empty:
+			# A round backing, so a square spell texture never shows a black corner plate (Jan).
+			draw_circle(c, WHEEL_ICON_RADIUS, Color(0x14 / 255.0, 0x12 / 255.0, 0x10 / 255.0,
+				0.90 if active else 0.70))
+			_draw_action_icon(action, c, WHEEL_ICON_RADIUS, active)
+
+	# The thumb itself, at the offset it has pulled (clamped to the ring, so it never leaves the
+	# wheel's edge on a hard drag). Drawn as a RING, not a disc: the icon under it has to stay
+	# readable while the action is being aimed.
+	if engaged:
+		draw_arc(o + _wheel_vec, 21.0, 0.0, TAU, 28,
+			Color(0xd8 / 255.0, 0xc8 / 255.0, 0xa0 / 255.0, 0.60), 2.5, true)
+
 	var action_now := wheel_action(_wheel_slot)
 	if action_now == ActionWheel.EMPTY:
-		draw_string(font_r, Vector2(o.x - 90.0, label_y), "přetáhni na akci",
-			HORIZONTAL_ALIGNMENT_CENTER, 180.0, 12, Color(C_DIM.r, C_DIM.g, C_DIM.b, 0.85))
 		return
 	var held := ActionWheel.is_hold(action_now, RunSpells)
 	var word := ActionWheel.action_name(action_now, run.spell_bar())
-	draw_string(font, Vector2(o.x - 90.0, label_y), word,
-		HORIZONTAL_ALIGNMENT_CENTER, 180.0, 14, C_GOLD)
-	draw_string(font_r, Vector2(o.x - 90.0, label_y + 14.0),
-		"držíš" if held else "spuštěno", HORIZONTAL_ALIGNMENT_CENTER, 180.0, 10, C_DIM)
+	# ABOVE the wheel: the HP bar and the loot tally own everything below it.
+	var label_y := o.y - WHEEL_OUTER - 18.0
+	draw_string(font, Vector2(o.x - 110.0, label_y), word,
+		HORIZONTAL_ALIGNMENT_CENTER, 220.0, 15, C_GOLD)
+	draw_string(font_r, Vector2(o.x - 110.0, label_y + 15.0),
+		"drž" if held else "pusť pro aktivaci", HORIZONTAL_ALIGNMENT_CENTER, 220.0, 10, C_DIM)
+
+
+## One wedge of the ring, as a fan of convex quads: `draw_colored_polygon` wants a convex polygon,
+## and an annular sector is not one.
+func _draw_wheel_wedge(o: Vector2, a0: float, a1: float, fill: Color) -> void:
+	var steps := 8
+	for k in steps:
+		var d0 := Vector2.from_angle(lerpf(a0, a1, float(k) / float(steps)))
+		var d1 := Vector2.from_angle(lerpf(a0, a1, float(k + 1) / float(steps)))
+		draw_colored_polygon(PackedVector2Array([
+			o + d0 * WHEEL_INNER, o + d0 * WHEEL_OUTER,
+			o + d1 * WHEEL_OUTER, o + d1 * WHEEL_INNER,
+		]), fill)
 
 
 ## One action's symbol inside a circle: the class's spell art cropped round, a blade for the attack,

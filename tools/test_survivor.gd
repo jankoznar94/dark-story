@@ -1272,10 +1272,11 @@ func _test_cast_while_running() -> void:
 	screen._on_drag(Vector2(300, 640), 1)
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
 		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
-	# Finger 2 opens the ACTION WHEEL (LEFT half) and pushes UP — the attack sector. The stick
-	# must keep running: one thumb each, two separate indices.
-	screen._on_press(Vector2(100, 600), 2)
-	screen._on_drag(Vector2(100, 600 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 2)
+	# Finger 2 uses the ACTION WHEEL (bottom-LEFT, fixed) and pushes UP past the resting disc — the
+	# attack wedge. The stick must keep running: one thumb each, two separate indices.
+	var wc: Vector2 = screen.wheel_centre()
+	screen._on_press(wc, 2)
+	screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 2)
 	_check(screen.run.attack_held,
 		"a second finger must be able to attack while the stick is held")
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
@@ -1320,46 +1321,71 @@ func _test_screen_action_wheel() -> void:
 	_check(screen.wheel_action(2) == "heroicStrike",
 		"the default wheel must carry the class's spells, got '%s'" % screen.wheel_action(2))
 
-	# A press in the LEFT half opens the wheel and must NOT walk the hero.
-	screen._on_press(Vector2(100, 600), 1)
+	# THE WHEEL IS PERMANENT AND FIXED: it sits in the bottom-left before any thumb arrives, and a
+	# press never moves it (Jan: "měl by být viditelný permanentně. I s výsečemi.").
+	var centre: Vector2 = screen.wheel_centre()
+	_check(centre.x < 200.0 and centre.y > 500.0 and centre.y < 700.0,
+		"the wheel must live in the bottom-left, got %s" % str(centre))
+
+	# A press in the LEFT half but OFF the wheel must not arm anything: the sectors are fixed, so a
+	# stray thumb cannot "open" a wheel at its own position any more.
+	screen._on_press(Vector2(60, 300), 4)
+	_check(screen._wheel_index == -1, "a press off the wheel must not own it")
+	screen._on_release(4)
+
+	# A press ON the wheel starts it, and must NOT walk the hero.
+	screen._on_press(centre, 1)
 	_check(screen._wheel_index == 1 and screen._stick_index == -1,
-		"a left press must open the wheel and not the stick")
+		"a press on the wheel must open it and not the stick")
+	_check(screen.wheel_centre() == centre, "the wheel must not move under the thumb")
 	_check(not screen._attack_held, "an untouched wheel must hold nothing")
 
-	# Inside the ring nothing happens — a resting thumb is not an action (Jan: activation only
-	# when the thumb is pulled PAST the circle).
-	screen._on_drag(Vector2(100, 600 - SurvivorScreen.STICK_RADIUS), 1)
-	_check(screen._wheel_slot == -1, "a drag inside the ring must not activate a sector")
-	_check(not screen._attack_held, "a drag inside the ring must not hold the attack")
+	# Inside the resting disc nothing happens — a resting thumb is not an action.
+	screen._on_drag(centre + Vector2(0, SurvivorScreen.WHEEL_INNER - 10.0), 1)
+	_check(screen._wheel_slot == -1, "a thumb inside the disc must not activate a wedge")
+	_check(not screen._attack_held, "a thumb inside the disc must not hold the attack")
 
-	# Past the ring, UP: the attack sector. Held, because attack is a HOLD action.
-	screen._on_drag(Vector2(100, 600 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 1)
-	_check(screen._wheel_slot == 0, "up must be sector 0, got %d" % screen._wheel_slot)
+	# Into the UP wedge, the whole wedge counting, not an icon: a thumb 10 px past the disc lands
+	# on the attack, and an attack is HELD for as long as it stays.
+	screen._on_drag(centre + Vector2.from_angle(ActionWheel.centre_angle(0))
+		* (SurvivorScreen.WHEEL_INNER + 10.0), 1)
+	_check(screen._wheel_slot == 0, "up must be wedge 0, got %d" % screen._wheel_slot)
 	_check(screen._attack_held and screen.run.attack_held,
-		"the attack sector must HOLD the attack")
-	_check(screen._wheel_vec.length() <= SurvivorScreen.WHEEL_MAX + 0.01,
-		"the wheel vector must clamp, got %.1f" % screen._wheel_vec.length())
+		"the attack wedge must HOLD the attack")
+	_check(screen._wheel_vec.length() <= SurvivorScreen.WHEEL_OUTER + 0.01,
+		"the knob must clamp to the ring, got %.1f" % screen._wheel_vec.length())
 
-	# Sliding back inside the deadzone lets go, without lifting the thumb.
-	screen._on_drag(Vector2(100, 600), 1)
+	# Coming back into the disc lets go, without lifting the thumb.
+	screen._on_drag(centre, 1)
 	_check(screen._wheel_slot == -1 and not screen.run.attack_held,
-		"coming back inside the ring must let the attack go")
+		"coming back inside the disc must let the attack go")
 
-	# DOWN-RIGHT is sector 2 = heroicStrike, a TRIGGER: it fires once on entering the sector.
-	screen._on_drag(Vector2(100 + 70.0, 600 + 70.0), 1)
-	_check(screen._wheel_slot == 2, "down-right must be sector 2, got %d" % screen._wheel_slot)
-	_check(screen.run.heroic_queued, "a trigger sector must fire its action on entry")
-	var queued_once: bool = screen.run.heroic_queued
-	screen._on_drag(Vector2(100 + 74.0, 600 + 74.0), 1)
-	_check(screen.run.heroic_queued == queued_once,
-		"staying in a trigger sector must not fire it again")
-	_check(not screen._attack_held, "a trigger sector must not hold the attack")
+	# A SPELL IS NOT FIRED ON ENTRY any more (Jan): dragging into its wedge only ARMS it.
+	var spell_dir: Vector2 = Vector2.from_angle(ActionWheel.centre_angle(2))
+	screen.run.heroic_queued = false
+	screen._on_drag(centre + spell_dir * (SurvivorScreen.WHEEL_INNER + 10.0), 1)
+	_check(screen._wheel_slot == 2, "the spell must be in wedge 2, got %d" % screen._wheel_slot)
+	_check(not screen.run.heroic_queued, "a spell wedge must NOT fire while the thumb is down")
+	_check(not screen._attack_held, "a spell wedge must not hold the attack")
 
-	# The wheel never plants the movement stick, and lifting the thumb clears everything.
-	_check(not screen._pointer_down, "the wheel must never move the hero")
+	# Drifting back into the disc before lifting CANCELS it — the accidental case Jan named.
+	screen._on_drag(centre, 1)
 	screen._on_release(1)
+	_check(not screen.run.heroic_queued,
+		"a thumb that left the wedge before lifting must fire nothing")
+
+	# Drag in, then LIFT: the release is the activation, exactly once per gesture.
+	screen._on_press(centre, 2)
+	screen._on_drag(centre + spell_dir * (SurvivorScreen.WHEEL_OUTER - 8.0), 2)
+	_check(not screen.run.heroic_queued, "still nothing while the thumb is down")
+	screen._on_release(2)
+	_check(screen.run.heroic_queued, "lifting the thumb in a spell wedge must fire it")
 	_check(screen._wheel_index == -1 and screen._wheel_slot == -1,
 		"lifting the thumb must close the wheel")
+	_check(not screen.run.attack_held, "lifting must leave no held action behind")
+
+	# The wheel never plants the movement stick.
+	_check(not screen._pointer_down, "the wheel must never move the hero")
 
 	# THE BIND PANEL — Jan's own requirement: any action on any direction.
 	screen._open_bind()

@@ -8,13 +8,14 @@ class_name ActionWheel
 ## přetáhne mimo kruh, tak se to bere jako aktivace. … hráč musí mít možnost nabindovat akce na
 ## libovolná tlačítka (směry)."
 ##
-## So there are no fixed buttons any more: the wheel appears wherever the thumb lands, six sectors
-## 60° apart, and the direction the thumb is pushed into IS the action. The thumb never has to
-## find a 44 px circle, and the icons sit on the ring — outside the thumb's own disc.
+## So there are no fixed buttons any more: six sectors 60° apart, and the direction the thumb is
+## pushed into IS the action. Jan's second pass made the wheel PERMANENT (it is drawn all the time,
+## bottom-left) and turned each slot into a full WEDGE of an outer ring, so the thumb only has to
+## land in the wedge, never on a small icon.
 ##
-## Six rather than eight: at the ring's 58 px, six sectors put 61 px between two icon centres,
-## which is what lets a 20 px icon read as a symbol on a phone. Eight would leave 5 px of daylight
-## between them and the wheel would be a smear.
+## Six rather than eight: six sectors of one ring leave the icons 61 px apart, which is what lets a
+## 20 px symbol read as a symbol on a phone. Eight would put them 5 px apart and the wheel would be
+## a smear.
 ##
 ## The sector centres are UP, UP-RIGHT, DOWN-RIGHT, DOWN, DOWN-LEFT, UP-LEFT. No sector sits on
 ## the pure horizontal, which is where a thumb resting flat actually points — with one there, a
@@ -67,14 +68,15 @@ static func sector_at(offset: Vector2) -> int:
 	return posmod(int(round((offset.angle() + PI * 0.5) / (TAU / float(SLOTS)))), SLOTS)
 
 
-## Hold or trigger? A held sector keeps playing its action for as long as the thumb stays
-## (`attack`, an offensive spell — the run's own repeat rule paces it). Everything else FIRES once,
-## on entering the sector: a potion drunk twice because the thumb drifted would be a bug the
-## player pays for, and a queued spell or a shout has nothing to hold.
-static func is_hold(action: String, spells) -> bool:
-	if action == ATTACK:
-		return true
-	return spells.is_offensive(action)
+## Hold or release? Jan, second pass: "Útok jako jediný bude takový, že stačí najet na výseč a
+## držet a útok se hned aktivuje a je aktivní dokud tam hráč drží prst. U kouzel a potionů … až
+## puštění kontaktu bude považováno za aktivaci."
+##
+## So the ATTACK is the ONLY hold action. Everything else — the potion AND every spell, offensive
+## ones included — is armed by dragging into its wedge and fires when the thumb LIFTS. That is what
+## stops a spell from firing on a drifted thumb and stops one gesture from firing twice.
+static func is_hold(action: String, _spells = null) -> bool:
+	return action == ATTACK
 
 
 ## The one place the wheel knows what an action is called. Icons and the bind panel both read it,

@@ -37,9 +37,10 @@ func _initialize() -> void:
 		var ang := TAU * float(i) / 5.0 + 0.4
 		run.monsters[i]["pos"] = run.player_pos + Vector2(cos(ang), sin(ang)) * 105.0
 
-	# The wheel, pushed UP past the ring: the sector the default binds to ATTACK.
-	screen._on_press(Vector2(96, 630), 7)
-	screen._on_drag(Vector2(96, 630 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 7)
+	# The wheel, pushed UP past the resting disc: the wedge the default binds to ATTACK.
+	var wc: Vector2 = screen.wheel_centre()
+	screen._on_press(wc, 7)
+	screen._on_drag(wc + Vector2(0, -(SurvivorScreen.WHEEL_INNER + 14.0)), 7)
 	print("wheel: slot=%d action='%s' attack_held=%s" % [
 		screen._wheel_slot, screen.wheel_action(screen._wheel_slot), str(run.attack_held)])
 
