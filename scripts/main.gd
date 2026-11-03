@@ -63,6 +63,8 @@ var _socket_rng_source: RandomNumberGenerator = null
 var _status: Label
 var _status_ticks := 0
 var _nav_bar      # UIKit.NavBar
+## The PWA's `#splashScreen`. Built once per launch, hides itself after ~3.1 s.
+var _splash: SplashScreen = null
 ## The layer the character dialog lives on, above the nav bar. See `_build_screens`.
 var _modal_layer: CanvasLayer = null
 ## The screen that stays visible UNDER the open dialog, because the PWA never hid it.
@@ -137,6 +139,15 @@ func _ready() -> void:
 	transition_layer.layer = 30
 	add_child(transition_layer)
 	transition_layer.add_child(_transition)
+	# The PWA's splash card: black, the shield icon, the game's name, ~3.1 s total. It goes on
+	# its own layer ABOVE the transition overlay because it is the first thing the player
+	# sees and nothing may paint over it.
+	var splash_layer := CanvasLayer.new()
+	splash_layer.name = "SplashLayer"
+	splash_layer.layer = 40
+	add_child(splash_layer)
+	_splash = SplashScreen.new()
+	splash_layer.add_child(_splash)
 	show_screen("town")
 	print("Dungeon Recall — %s" % ("save loaded" if resumed else "new game"))
 	# The data report on boot is what makes a DEPLOYED build checkable from outside:

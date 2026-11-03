@@ -10,7 +10,10 @@ config/name="Dungeon Recall"
 config/description="Portrait auto-combat ARPG — D2-style itemisation, five acts, three difficulties."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="res://icon.svg"
+; The PWA's own shield icon (`public/icon-512.png`), not Godot's default robot: the
+; launcher icon, the OS window icon and the web manifest's 144/180/512 PNGs are all
+; generated from this one file.
+config/icon="res://assets/icon/icon.png"
 
 [display]
 
