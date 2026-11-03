@@ -26,6 +26,7 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
+const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
 
 const STEP := 1.0 / 60.0
@@ -74,7 +75,7 @@ func _initialize() -> void:
 	_test_whirlwind_flurry()
 	_test_bolt_flies_at_the_aimed_body()
 	_test_spell_effects()
-	_test_screen_spell_buttons()
+	_test_screen_action_wheel()
 	_test_cast_while_running()
 	_test_screen_gesture_and_disc()
 
@@ -291,8 +292,7 @@ func _test_held_attack() -> void:
 		"the assist must finish the nearly-dead body first: picked %d, weak is %d"
 			% [int(pick.target_id), int(weak["id"])])
 
-	# A body BEHIND the hero is not a candidate at all — the direction the player looks is the
-	# only thing that says what he means.
+	# A body BEHIND a WALKING hero is not a candidate: the direction he walks is what he means.
 	var back := _fresh(555, true)
 	back.monsters.clear()
 	back._spawn_one()
@@ -304,13 +304,35 @@ func _test_held_attack() -> void:
 	b["dmg_min"] = 0
 	b["dmg_max"] = 0
 	b["pos"] = back.player_pos + Vector2(-90, 0)
-	back.step(STEP, Vector2.ZERO)
-	_check(back.target_id == -1, "a body behind the hero must not be picked")
+	# Walking AWAY while holding the attack: the body stays behind and is never hit.
 	var hp_back := int(b["hp"])
-	for _i in 120:
+	for _i in 60:
+		back.player_pos = SurvivorRun.WORLD * 0.5
 		b["pos"] = back.player_pos + Vector2(-90, 0)
-		back.step(STEP, Vector2.ZERO)
-	_check(int(b["hp"]) == hp_back, "the hero must not swing behind himself")
+		back.facing = Vector2.RIGHT
+		back.step(STEP, Vector2(1, 0))
+	_check(int(b["hp"]) == hp_back,
+		"a body behind a WALKING hero must not be hit: %d -> %d" % [hp_back, int(b["hp"])])
+
+	# ...but a hero who STANDS with the attack held and everything behind him must not freeze: the
+	# assist turns him. Without it a thumb holding the attack could never turn the hero at all,
+	# because the facing only ever changed by walking.
+	var turn := _fresh(556, true)
+	turn.monsters.clear()
+	turn._spawn_one()
+	var t: Dictionary = turn.monsters[0]
+	t["hp"] = 999999
+	t["max_hp"] = 999999
+	t["speed"] = 0.0
+	t["ranged"] = false
+	t["dmg_min"] = 0
+	t["dmg_max"] = 0
+	t["pos"] = turn.player_pos + Vector2(-90, 0)
+	turn.facing = Vector2.RIGHT
+	turn.step(STEP, Vector2.ZERO)
+	_check(turn.target_id == int(t["id"]),
+		"a STANDING hero must turn to a body behind him instead of freezing")
+	_check(turn.facing.x < -0.9, "the turn must be a real turn, facing=%s" % str(turn.facing))
 
 	# The ASSIST walks him into reach and stops at the WEAPON's arm, not at contact.
 	var walk := _fresh(777, true)
@@ -950,6 +972,13 @@ func _test_kills_award_xp() -> void:
 ## Jan, Nov 2026: a swing needs the body in REACH **and** in FRONT. Attacking backwards while
 ## running away was the exploit being closed, so the section pins both halves: a body behind an
 ## untouched hero is never hit, and the same body IS hit the moment he walks toward it.
+## Jan, Nov 2026: a swing needs the body in the direction the hero is pointed. Since the attack
+## became a HELD action the gate means one thing only — **a WALKING hero does not hit what is
+## behind him** — because a standing hero holding the attack is turned to the nearest body by the
+## assist (a thumb on the attack has no way to turn him otherwise).
+##
+## Walking away from a pack while holding the attack therefore still costs nothing: the pack stays
+## behind and stays unhit. That is the exploit this section exists to keep closed.
 func _test_facing_gate() -> void:
 	_log("  section: facing_gate")
 	var run := _fresh(31337, true)
@@ -964,41 +993,37 @@ func _test_facing_gate() -> void:
 	m["dmg_max"] = 0
 	_check(run.facing == Vector2.RIGHT, "a hero who never walked faces RIGHT, got %s" % str(run.facing))
 	var hp0 := int(m["hp"])
+	# WALKING away from a body right behind him: the facing is right, the body is left, no swing.
 	for _i in 120:
-		# Well inside the reach, straight BEHIND him.
+		run.player_pos = SurvivorRun.WORLD * 0.5
+		m["pos"] = run.player_pos + Vector2(-70, 0)
+		run.facing = Vector2.RIGHT
+		run.step(STEP, Vector2(1, 0))
+	_check(int(m["hp"]) == hp0,
+		"a body BEHIND a walking hero must not be hit: %d -> %d" % [hp0, int(m["hp"])])
+
+	# Standing still with the attack held: the assist turns him, so the same body IS hit.
+	run.player_pos = SurvivorRun.WORLD * 0.5
+	m["pos"] = run.player_pos + Vector2(-70, 0)
+	run.facing = Vector2.RIGHT
+	for _i in 120:
 		m["pos"] = run.player_pos + Vector2(-70, 0)
 		run.step(STEP, Vector2.ZERO)
-	_check(int(m["hp"]) == hp0,
-		"a body BEHIND the hero must not be hit: %d -> %d" % [hp0, int(m["hp"])])
+	_check(int(m["hp"]) < hp0, "a standing hero must turn and fight — the assist owns the facing")
+	_check(run.facing.x < -0.9, "the assist must have turned him, facing=%s" % str(run.facing))
 
-	# Walking at it turns him: the same body, the same gap, now in front.
-	for _i in 120:
-		m["pos"] = run.player_pos + Vector2(70, 0)
-		run.step(STEP, Vector2.ZERO)
-	_check(int(m["hp"]) < hp0, "a body in FRONT must be hit")
-
-	# And the turn is the MOVEMENT's: running right then left flips the facing, and the body
-	# that was hittable is behind again.
+	# The facing is the MOVEMENT's whenever nothing is held: running left then right flips it.
 	#
-	# ⚠️  The attack must be RELEASED for this half. Since Jan's D2R change the assist owns the
-	# facing while a button is held, so holding it here would pin the hero to the body and the
-	# assertion would measure the assist instead of the walk.
-	var hp1 := int(m["hp"])
-	m["pos"] = run.player_pos + Vector2(70, 0)
+	# ⚠️  The attack must be RELEASED for this half: while it is held the assist owns the facing,
+	# so the assertion would measure the assist instead of the walk.
 	run.attack_held = false
 	for _i in 30:
 		run.step(STEP, Vector2(-1, 0))
-	var facing_left: bool = run.facing.x < -0.9
-	_check(facing_left, "walking left must turn the hero left, got %s" % str(run.facing))
-	var hp2 := int(m["hp"])
-	# Attacking again, looking the other way: the body is behind him and stays untouched.
-	run.attack_held = true
-	for _i in 120:
-		m["pos"] = run.player_pos + Vector2(70, 0)
-		run.step(STEP, Vector2.ZERO)
-	_check(int(m["hp"]) == hp2,
-		"after turning away, a body at +X must not be hit: %d -> %d" % [hp2, int(m["hp"])])
-	_log("  measured: hp %d -> %d -> %d" % [hp0, hp1, hp2])
+	_check(run.facing.x < -0.9, "walking left must turn the hero left, got %s" % str(run.facing))
+	for _i in 30:
+		run.step(STEP, Vector2(1, 0))
+	_check(run.facing.x > 0.9, "walking right must turn him back, got %s" % str(run.facing))
+	_log("  measured: hp %d -> %d" % [hp0, int(m["hp"])])
 
 
 ## The spell bar is the duel's rule, unchanged: a spell with no talent point in it does not
@@ -1242,22 +1267,23 @@ func _test_cast_while_running() -> void:
 	root.add_child(screen)
 	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
-	# Finger 1 takes the stick and drags.
-	# RIGHT of the action column: that is where the walking thumb lives now.
+	# Finger 1 takes the walking stick (RIGHT half) and drags.
 	screen._on_press(Vector2(250, 640), 1)
 	screen._on_drag(Vector2(300, 640), 1)
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
 		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
-	# Finger 2 presses a spell button — and the stick must keep running.
-	var btn: Dictionary = screen._spell_buttons[0]
-	screen._on_press(btn["centre"], 2)
-	_check(screen.run.heroic_queued,
-		"a second finger must be able to cast while the stick is held")
+	# Finger 2 opens the ACTION WHEEL (LEFT half) and pushes UP — the attack sector. The stick
+	# must keep running: one thumb each, two separate indices.
+	screen._on_press(Vector2(100, 600), 2)
+	screen._on_drag(Vector2(100, 600 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 2)
+	_check(screen.run.attack_held,
+		"a second finger must be able to attack while the stick is held")
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
-		"casting must NOT stop the run: vec=%s" % str(screen._stick_vec))
-	# Lifting the spell finger must not stop the hero either.
+		"the wheel must NOT stop the run: vec=%s" % str(screen._stick_vec))
+	# Lifting the wheel finger must not stop the hero either, and must let the attack go.
 	screen._on_release(2)
-	_check(screen._pointer_down, "releasing the spell finger must not stop the run")
+	_check(screen._pointer_down, "releasing the wheel finger must not stop the run")
+	_check(not screen.run.attack_held, "releasing the wheel finger must let the attack go")
 	screen._on_release(1)
 	_check(not screen._pointer_down and screen._stick_vec == Vector2.ZERO,
 		"releasing the stick finger must stop the hero")
@@ -1267,73 +1293,122 @@ func _test_cast_while_running() -> void:
 
 # ============================================================================ screen
 
-## The spell column and the flurry row are TOUCH targets, and a button that also plants the
-## movement stick would make the hero run in the direction of a cast. Asserted through the
-## screen's own press handler, because that is the path a thumb takes.
-func _test_screen_spell_buttons() -> void:
-	_log("  section: screen_spell_buttons")
+## THE ACTION WHEEL and the flurry row are TOUCH targets. Jan, Nov 2026: "Kouzla a lektvary
+## zabírají příliš mnoho místa a hlavně hráč se musí neustále koukat kam kliká … levý joystick, kdy
+## podle toho kterým směrem hráč táhne, podle toho se použije kouzlo/lektvar/útok."
+##
+## So there are no buttons to find any more: a press anywhere in the LEFT half opens the wheel, a
+## drag PAST the ring picks a sector, and the sectors hold whatever the player bound. Asserted
+## through the screen's own press/drag handlers, because that is the path a thumb takes.
+func _test_screen_action_wheel() -> void:
+	_log("  section: screen_action_wheel")
 	var levels: Dictionary = _state.data.get("talentLevels", {})
 	levels["barbarian_heroicStrike"] = 1
 	levels["barbarian_whirlwind"] = 1
+	# A save without bindings: the wheel is DERIVED (attack, potion, then the bar's spells).
+	_state.data.erase("actionWheel")
 	var screen = SurvivorScreen.new()
 	root.add_child(screen)
 	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
-	_check(screen._spell_buttons.size() >= 2,
-		"invested spells must produce buttons, got %d" % screen._spell_buttons.size())
+	_check(screen._wheel_slots.size() == ActionWheel.SLOTS,
+		"the wheel must have %d sectors, got %d" % [ActionWheel.SLOTS, screen._wheel_slots.size()])
+	_check(screen.wheel_action(0) == ActionWheel.ATTACK,
+		"the default wheel must start with ATTACK, got '%s'" % screen.wheel_action(0))
+	_check(screen.wheel_action(1) == ActionWheel.POTION,
+		"the default wheel must hold the potion next, got '%s'" % screen.wheel_action(1))
+	_check(screen.wheel_action(2) == "heroicStrike",
+		"the default wheel must carry the class's spells, got '%s'" % screen.wheel_action(2))
 
-	# A tap on a spell button must NOT plant the stick.
-	var first: Dictionary = screen._spell_buttons[0]
-	screen._on_press(first["centre"])
-	_check(not screen._pointer_down or screen._stick_origin == Vector2.ZERO,
-		"a spell button must not start the movement stick")
-	screen._on_release()
+	# A press in the LEFT half opens the wheel and must NOT walk the hero.
+	screen._on_press(Vector2(100, 600), 1)
+	_check(screen._wheel_index == 1 and screen._stick_index == -1,
+		"a left press must open the wheel and not the stick")
+	_check(not screen._attack_held, "an untouched wheel must hold nothing")
 
-	# The buttons must stay inside the screen, clear of the potion button, and on the LEFT — the
-	# right thumb is the one walking (Jan, Nov 2026).
-	for b in screen._spell_buttons:
-		var c: Vector2 = b["centre"]
-		_check(c.x - SurvivorScreen.SPELL_BUTTON_RADIUS > 0.0 and c.x < 195.0 and c.y > 60.0,
-			"a spell button must be on screen and in the LEFT column, got %s" % str(c))
-		_check(c.distance_to(screen._potion_centre)
-			> SurvivorScreen.SPELL_BUTTON_RADIUS + SurvivorScreen.BUTTON_RADIUS + 8.0,
-			"a spell button must clear the potion button, gap %.1f"
-				% c.distance_to(screen._potion_centre))
-	_check(screen._attack_centre.x < 195.0 and screen._potion_centre.x < 195.0,
-		"the attack and the potion must sit in the LEFT column: attack %s potion %s"
-			% [str(screen._attack_centre), str(screen._potion_centre)])
-	_check(screen._attack_centre.y > screen._potion_centre.y,
-		"the attack must be the button closest to the resting thumb")
-	_check(screen._attack_centre.distance_to(screen._potion_centre)
-		> SurvivorScreen.ATTACK_RADIUS + SurvivorScreen.BUTTON_RADIUS,
-		"the attack must not overlap the potion")
-	# ⚠️  The HP and the mana bar span the FULL width at the bottom. A button placed at the raw
-	# bottom edge paints over them — measured on the first frame, where the attack disc covered the
-	# left end of the health bar and its number.
-	_check(screen._attack_centre.y + SurvivorScreen.ATTACK_RADIUS < screen.size.y - 45.0,
-		"the action column must clear the bottom bars: attack bottom %.1f, bars start %.1f"
-			% [screen._attack_centre.y + SurvivorScreen.ATTACK_RADIUS, screen.size.y - 45.0])
+	# Inside the ring nothing happens — a resting thumb is not an action (Jan: activation only
+	# when the thumb is pulled PAST the circle).
+	screen._on_drag(Vector2(100, 600 - SurvivorScreen.STICK_RADIUS), 1)
+	_check(screen._wheel_slot == -1, "a drag inside the ring must not activate a sector")
+	_check(not screen._attack_held, "a drag inside the ring must not hold the attack")
 
-	# HOLDING the attack is what makes the hero swing — the screen's own press path.
-	screen._on_press(screen._attack_centre, 3)
+	# Past the ring, UP: the attack sector. Held, because attack is a HOLD action.
+	screen._on_drag(Vector2(100, 600 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 1)
+	_check(screen._wheel_slot == 0, "up must be sector 0, got %d" % screen._wheel_slot)
 	_check(screen._attack_held and screen.run.attack_held,
-		"pressing the attack button must hold it")
-	_check(screen._stick_index == -1, "the attack button must not plant the stick")
-	screen._on_release(3)
-	_check(not screen._attack_held and not screen.run.attack_held,
-		"lifting the attack button must let go")
+		"the attack sector must HOLD the attack")
+	_check(screen._wheel_vec.length() <= SurvivorScreen.WHEEL_MAX + 0.01,
+		"the wheel vector must clamp, got %.1f" % screen._wheel_vec.length())
 
-	# ...and a press in the ACTION BAND between two buttons must not walk the hero either.
-	screen._on_press(Vector2(screen._action_rect.position.x + 4.0,
-		screen._action_rect.position.y + 4.0), 4)
-	_check(not screen._pointer_down, "the action column must not plant the stick")
-	screen._on_release(4)
+	# Sliding back inside the deadzone lets go, without lifting the thumb.
+	screen._on_drag(Vector2(100, 600), 1)
+	_check(screen._wheel_slot == -1 and not screen.run.attack_held,
+		"coming back inside the ring must let the attack go")
 
-	# The flurry row owns the input while it runs: a press anywhere else is swallowed, so a
-	# spell cannot be cast with the thumb that was answering the press.
+	# DOWN-RIGHT is sector 2 = heroicStrike, a TRIGGER: it fires once on entering the sector.
+	screen._on_drag(Vector2(100 + 70.0, 600 + 70.0), 1)
+	_check(screen._wheel_slot == 2, "down-right must be sector 2, got %d" % screen._wheel_slot)
+	_check(screen.run.heroic_queued, "a trigger sector must fire its action on entry")
+	var queued_once: bool = screen.run.heroic_queued
+	screen._on_drag(Vector2(100 + 74.0, 600 + 74.0), 1)
+	_check(screen.run.heroic_queued == queued_once,
+		"staying in a trigger sector must not fire it again")
+	_check(not screen._attack_held, "a trigger sector must not hold the attack")
+
+	# The wheel never plants the movement stick, and lifting the thumb clears everything.
+	_check(not screen._pointer_down, "the wheel must never move the hero")
+	screen._on_release(1)
+	_check(screen._wheel_index == -1 and screen._wheel_slot == -1,
+		"lifting the thumb must close the wheel")
+
+	# THE BIND PANEL — Jan's own requirement: any action on any direction.
+	screen._open_bind()
+	_check(screen._bind_open and screen._bind_rects.size() == ActionWheel.SLOTS,
+		"the panel must list every sector, got %d rows" % screen._bind_rects.size())
+	var row0: Dictionary = screen._bind_rects[0]
+	screen._on_press((row0["rect"] as Rect2).get_center())
+	_check(screen._bind_pick == 0, "tapping a row must open its action list")
+	# Every action the hero could use is listable, plus the empty sector and the two built-ins.
+	var names: Array = []
+	for r in screen._bind_rects:
+		names.append(str(r["action"]))
+	_check(ActionWheel.EMPTY in names and ActionWheel.ATTACK in names and ActionWheel.POTION in names,
+		"the list must offer empty, attack and potion: %s" % str(names))
+	_check("heroicStrike" in names, "the list must offer the class's spells: %s" % str(names))
+	# Bind Whirlwind to sector 0 (up) — and it must MOVE there from wherever it was.
+	var ww_row := -1
+	for i in screen._bind_rects.size():
+		if str(screen._bind_rects[i]["action"]) == "whirlwind":
+			ww_row = i
+	_check(ww_row >= 0, "whirlwind must be offered")
+	if ww_row >= 0:
+		screen._on_press((screen._bind_rects[ww_row]["rect"] as Rect2).get_center())
+		_check(screen.wheel_action(0) == "whirlwind",
+			"sector 0 must now hold whirlwind, got '%s'" % screen.wheel_action(0))
+		var dupes := 0
+		for i in screen._wheel_slots.size():
+			if str(screen._wheel_slots[i]) == "whirlwind":
+				dupes += 1
+		_check(dupes == 1, "an action must live in ONE sector, found %d" % dupes)
+		_check(_state.data.get("actionWheel") is Array,
+			"the binding must reach the SAVE, not just the screen")
+	screen._on_press(Vector2(240, 620))  # a press in the field must not answer the panel
+	_check(screen._bind_pick == -1 or screen._bind_open, "the panel must swallow field presses")
+	screen._on_press(screen._bind_back_rect.get_center())
+	screen._on_press(screen._bind_back_rect.get_center())
+	_check(not screen._bind_open, "the back button must close the panel")
+
+	# A saved binding must be re-read on the next run (a run does not fall back to the default).
+	screen.setup(_state, _find_item, _loot, 0)
+	_check(screen.wheel_action(0) == "whirlwind",
+		"a saved binding must survive the next run, got '%s'" % screen.wheel_action(0))
+	_state.data.erase("actionWheel")
+
+	# The flurry row owns the input while it runs: a press anywhere else is swallowed, so an
+	# action cannot fire with the thumb that was answering the press.
 	screen.run.start_whirlwind(["tri", "circle"], 1500)
 	var before: int = screen.run.ww_index
-	screen._on_press(Vector2(60, 700))
+	screen._on_press(Vector2(260, 700))
 	_check(screen.run.ww_index == before, "a press outside the flurry row must not answer it")
 	_check(not screen._pointer_down, "the flurry must swallow the press (no stick)")
 	var ww: Dictionary = screen._ww_buttons[0]
@@ -1371,10 +1446,11 @@ func _test_screen_gesture_and_disc() -> void:
 	_check(not screen._pointer_down and screen._stick_vec == Vector2.ZERO,
 		"releasing must stop the hero")
 
-	# The fixed buttons must NOT be reachable by the stick: they are a separate control area.
-	screen._on_press(screen._potion_centre)
-	_check(screen._stick_vec == Vector2.ZERO and screen._stick_origin != screen._potion_centre,
-		"a tap on the potion button must not start the stick")
+	# ...and the LEFT half is the action wheel, never the stick: the two thumbs must not fight over
+	# the same gesture.
+	screen._on_press(Vector2(100, 600))
+	_check(screen._wheel_index == 0 and not screen._pointer_down and screen._stick_vec == Vector2.ZERO,
+		"a left press must open the wheel, not the stick")
 	screen._on_release()
 
 	# A portrait cropped to a disc has TRANSPARENT corners — the black plate Jan rejected.

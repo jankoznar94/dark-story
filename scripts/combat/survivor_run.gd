@@ -487,7 +487,8 @@ func step(dt: float, move: Vector2) -> void:
 		swing_age_off += dt
 
 	_prev_pos = player_pos
-	_update_target()
+	# ...and the DIRECTION the player walks outranks the assist while he walks (see `_update_target`).
+	_update_target(move.length_squared() > 0.0001)
 	_move_hero(dt, move, target_id >= 0)
 	_zone_tick()
 	_move_monsters(dt)
@@ -980,12 +981,21 @@ func _take_damage(raw: int) -> void:
 ## ⚠️  This REPLACED the old per-hand "nearest body in reach" auto-attack. Jan, Nov 2026: the hero
 ## no longer attacks on his own at all — Diablo 2 Resurrected with a gamepad. Nothing held → no
 ## target, no swing, and the facing stays the player's.
-func _update_target() -> void:
+func _update_target(walking: bool = false) -> void:
 	var wants := attack_held or (held_spell != "" and RunSpells.is_offensive(held_spell))
 	if not wants or ww_active:
 		target_id = -1
 		return
 	var idx := _pick_target()
+	if idx < 0 and not walking:
+		# ⚠️  Standing still and holding the attack with everything BEHIND him used to be a dead
+		# lock: the facing only changes by walking, and a player holding an attack has no thumb
+		# free to walk with. So the assist turns him to the nearest body instead.
+		#
+		# It only does that while he STANDS. Walking away from a pack must still keep the pack
+		# behind him — otherwise "hold attack and run" is the free-hits-while-fleeing exploit the
+		# facing rule was written to close.
+		idx = _nearest_body()
 	if idx < 0:
 		target_id = -1
 		return
@@ -1030,6 +1040,21 @@ func _pick_target() -> int:
 	if cur >= 0 and cur != best and best_score > cur_score * (1.0 - TARGET_SWITCH_MARGIN):
 		return cur
 	return best
+
+
+## The nearest body in ANY direction, inside the picker's range. The turn-around case only: the
+## aim rule is still "in front", and this is what lets a standing hero face a pack that surrounded
+## him instead of freezing.
+func _nearest_body() -> int:
+	var limit := TARGET_RANGE + MON_RADIUS
+	var best := limit * limit
+	var found := -1
+	for i in monsters.size():
+		var d2: float = (monsters[i]["pos"] as Vector2).distance_squared_to(player_pos)
+		if d2 <= best:
+			best = d2
+			found = i
+	return found
 
 
 ## The chosen body's index in `monsters`, or -1 when it died / was never picked. The screen reads

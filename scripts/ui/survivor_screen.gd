@@ -24,6 +24,8 @@ signal leave_requested
 signal run_finished(outcome: String)
 
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
+const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
+const RunSpells := preload("res://scripts/combat/run_spells.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
@@ -34,15 +36,20 @@ const MAX_STEPS_PER_FRAME := 6
 const TOP_BAR := 54.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
-const BUTTON_RADIUS := 38.0
-## The ATTACK button is the biggest control on the screen: it is HELD for the whole fight (Jan's
-## D2R rule), so it has to be reachable without looking and big enough that a thumb resting on it
-## cannot slip off mid-swing.
-const ATTACK_RADIUS := 44.0
-## Spell buttons: smaller than the potion, two columns, bottom-LEFT. 25 px is the smallest
-## circle on which a 256 px icon still reads as a symbol on a phone.
-const SPELL_BUTTON_RADIUS := 25.0
-const SPELL_GAP := 8.0
+## The action wheel: the same round area the movement stick uses, and a thumb has to push PAST the
+## ring for the sector to count. `WHEEL_ACTIVATE` is deliberately outside `STICK_RADIUS` — Jan:
+## "když hráč určitým směrem přetáhne mimo kruh, tak se to bere jako aktivace."
+const WHEEL_DEADZONE := 12.0
+const WHEEL_ACTIVATE := 74.0
+const WHEEL_MAX := 92.0
+const WHEEL_ICON_RADIUS := 20.0
+## The bind panel's rows. A thumb needs 52 px of height at the very least; the slot rows get more
+## because they carry two lines (direction + action).
+const BIND_ROW_H := 74.0
+const BIND_PICK_ROW_H := 52.0
+const BIND_GAP := 10.0
+const BIND_PAD := 14.0
+const BIND_BACK_H := 46.0
 ## The Whirlwind row: the duel's `ps_*.png` symbols, drawn as a body of their own. 26 px matches
 ## the spell buttons so the thumb does not have to relearn a size mid-fight.
 const WW_BUTTON_RADIUS := 26.0
@@ -88,25 +95,30 @@ var _stick_origin := Vector2.ZERO
 var _stick_vec := Vector2.ZERO
 var _pointer_kind := ""
 
-## Buttons, fixed in the bottom-LEFT. Rebuilt on resize.
+## The EXIT and the wheel's BIND button, both fixed in the TOP bar (the only fixed controls left in
+## the fight — everything a thumb plays is on the two wheels).
 var _exit_rect := Rect2()
-## The attack button: HELD, and the only way the hero ever swings (Jan's D2R rule).
-var _attack_centre := Vector2.ZERO
+var _bind_rect := Rect2()
+
+## THE ACTION WHEEL (left thumb). It appears where the thumb lands; the direction it is pushed
+## into is the action. `_wheel_slot` is the sector under the thumb right now (-1 = inside the
+## deadzone, i.e. nothing held), and `_wheel_slots` is what each sector is bound to.
+var _wheel_origin := Vector2.ZERO
+var _wheel_index := -1
+var _wheel_vec := Vector2.ZERO
+var _wheel_slot := -1
+var _wheel_slots: Array = []
+## The attack / held-spell state the RUN reads. Written from the wheel's active sector, never from
+## a button: the wheel IS the input.
 var _attack_held := false
-## Which finger owns the attack. A separate index from the stick's, because the two thumbs are
-## down at the same time for the whole fight.
-var _attack_index := -1
-## The band the action buttons own: a press inside it never plants the movement stick.
-var _action_rect := Rect2()
-var _potion_centre := Vector2.ZERO
-## The class-spell column, built from `run.spell_bar()` on every layout: `[{id, centre}]`.
-## The column grows UPWARDS from just above the potion button, two per row, so adding a spell to
-## a class never reflows the fight or moves a button the thumb already knows.
-var _spell_buttons: Array = []
-## The spell whose button is being HELD, and its finger. A held offensive spell repeats itself on
-## the rules' own cooldowns — the same "hold means keep doing it" the attack button has.
 var _held_spell := ""
-var _spell_index := -1
+
+## The bind panel: the wheel's editor, drawn by this screen like everything else. `_bind_pick` is
+## -1 while it lists the slots and the slot index while it lists the actions for that slot.
+var _bind_open := false
+var _bind_pick := -1
+var _bind_rects: Array = []
+var _bind_back_rect := Rect2()
 ## The Whirlwind reaction row (four PS symbols). Only live during a flurry.
 var _ww_buttons: Array = []
 var _spell_tex_cache: Dictionary = {}
@@ -134,9 +146,10 @@ func stop() -> void:
 	_pointer_down = false
 	_stick_index = -1
 	_stick_vec = Vector2.ZERO
-	_attack_index = -1
+	_wheel_index = -1
+	_wheel_vec = Vector2.ZERO
+	_wheel_slot = -1
 	_attack_held = false
-	_spell_index = -1
 	_held_spell = ""
 	if run != null:
 		run.attack_held = false
@@ -158,10 +171,14 @@ func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
 	_stick_vec = Vector2.ZERO
 	_pointer_down = false
 	_stick_index = -1
-	_attack_index = -1
+	_wheel_index = -1
+	_wheel_vec = Vector2.ZERO
+	_wheel_slot = -1
 	_attack_held = false
-	_spell_index = -1
 	_held_spell = ""
+	_bind_open = false
+	_bind_pick = -1
+	_wheel_slots = _resolve_wheel()
 	_build_decoration()
 	_place_camera()
 	_layout_buttons()
@@ -284,48 +301,39 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _on_press(pos: Vector2, index: int = 0) -> void:
-	# A running flurry OWNS the input: its four symbols are the only thing a press may hit, or a
-	# spell would be cast with the thumb that was about to answer the press. `_pointer_down` is
-	# NOT set here — a swallowed press must not leave the stick armed behind the row.
+	# The bind panel owns every press while it is open: it is a modal over a live fight.
+	if _bind_open:
+		_bind_press(pos)
+		return
+	# A running flurry OWNS the input: its four symbols are the only thing a press may hit, or an
+	# action would fire with the thumb that was about to answer the press.
 	if run != null and run.whirlwind_open():
 		for b in _ww_buttons:
 			if (b["centre"] as Vector2).distance_to(pos) <= WW_BUTTON_RADIUS + 8.0:
 				_tap_whirlwind(str(b["key"]))
 				return
 		return
-	# A BUTTON is never the stick — whatever finger presses it. Checked before the stick so the
-	# second thumb cannot make the hero run at his own cast.
-	if _attack_centre.distance_to(pos) <= ATTACK_RADIUS + 6.0:
-		if not _attack_held:
-			_attack_index = index
-			_attack_held = true
-			if run != null:
-				run.attack_held = true
-		return
-	for b in _spell_buttons:
-		if (b["centre"] as Vector2).distance_to(pos) <= SPELL_BUTTON_RADIUS + 6.0:
-			# A tap casts once; holding keeps casting on the rules' own cooldowns.
-			if _spell_index < 0:
-				_spell_index = index
-				_held_spell = str(b["id"])
-				if run != null:
-					run.held_spell = _held_spell
-			_cast_spell(str(b["id"]))
-			return
-	if _potion_centre.distance_to(pos) <= BUTTON_RADIUS + 6.0:
-		_drink_potion()
-		return
 	if _exit_rect.has_point(pos):
 		leave_requested.emit()
 		return
+	if _bind_rect.has_point(pos):
+		_open_bind()
+		return
 	if pos.y < TOP_BAR:
 		return
-	# The action band belongs to the LEFT thumb. A press between two buttons must not plant the
-	# stick: the hero would walk every time the player reached for the attack.
-	if _action_rect.has_point(pos):
+	# TWO THUMBS, TWO WHEELS, split down the middle of the screen: the LEFT one is the action
+	# wheel, the RIGHT one walks. Nobody has to find a small button any more — a press anywhere in
+	# a half starts that half's control.
+	if pos.x < size.x * 0.5:
+		if _wheel_index >= 0:
+			return
+		_wheel_index = index
+		_wheel_origin = pos
+		_wheel_vec = Vector2.ZERO
+		_set_wheel_slot(-1)
+		queue_redraw()
 		return
 	if _stick_index >= 0:
-		# The stick already has an owner; this finger is not allowed to steal it mid-run.
 		return
 	_stick_index = index
 	_pointer_down = true
@@ -335,6 +343,16 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 
 
 func _on_drag(pos: Vector2, index: int = 0) -> void:
+	if index == _wheel_index:
+		_wheel_vec = (pos - _wheel_origin).limit_length(WHEEL_MAX)
+		# A sector only counts once the thumb is PAST the ring (Jan): inside it the wheel is a
+		# resting thumb, and a resting thumb must not keep an action running.
+		var slot := -1
+		if _wheel_vec.length() >= WHEEL_ACTIVATE:
+			slot = ActionWheel.sector_at(_wheel_vec)
+		_set_wheel_slot(slot)
+		queue_redraw()
+		return
 	if index != _stick_index:
 		return
 	var delta := pos - _stick_origin
@@ -345,20 +363,50 @@ func _on_drag(pos: Vector2, index: int = 0) -> void:
 	queue_redraw()
 
 
+## Enter (or leave) a sector. ONE place decides what the run is being told: the HOLD side (attack /
+## an offensive spell, which keeps playing while the thumb stays) and the TRIGGER side (a potion or
+## a queued spell, fired once on ENTERING the sector — a potion drunk twice because the thumb
+## drifted is a bug the player pays for).
+func _set_wheel_slot(slot: int) -> void:
+	if slot == _wheel_slot:
+		return
+	_wheel_slot = slot
+	var action := wheel_action(slot)
+	var hold_attack := action == ActionWheel.ATTACK
+	var hold_spell := action if RunSpells.is_offensive(action) else ""
+	_attack_held = hold_attack
+	_held_spell = hold_spell
+	if run != null:
+		run.attack_held = hold_attack
+		run.held_spell = hold_spell
+	if action != ActionWheel.EMPTY and not ActionWheel.is_hold(action, RunSpells):
+		_fire_action(action)
+
+
+## What a sector is bound to, or EMPTY.
+func wheel_action(slot: int) -> String:
+	if slot < 0 or slot >= _wheel_slots.size():
+		return ActionWheel.EMPTY
+	return str(_wheel_slots[slot])
+
+
+## A one-shot action. A refused cast still SAYS why (the toast over the arena) — a trigger that
+## silently does nothing is indistinguishable from a binding that is wrong.
+func _fire_action(action: String) -> void:
+	if action == ActionWheel.POTION:
+		_drink_potion()
+		return
+	_cast_spell(action)
+
+
 func _on_release(index: int = 0) -> void:
-	# The attack and a held spell release on their OWN finger, before the stick is looked at: a
-	# player lifting the attack thumb must not be asked about the stick, and vice versa.
-	if index == _attack_index:
-		_attack_index = -1
-		_attack_held = false
-		if run != null:
-			run.attack_held = false
-	if index == _spell_index:
-		_spell_index = -1
-		_held_spell = ""
-		if run != null:
-			run.held_spell = ""
-	# Only the finger that OWNS the stick may stop it; lifting the spell thumb must not.
+	if index == _wheel_index:
+		_wheel_index = -1
+		_wheel_vec = Vector2.ZERO
+		_set_wheel_slot(-1)
+		queue_redraw()
+		return
+	# Only the finger that OWNS the stick may stop it; lifting the action thumb must not.
 	if index != _stick_index:
 		return
 	_stick_index = -1
@@ -515,53 +563,121 @@ func _notification(what: int) -> void:
 			set_process(true)
 
 
-## The action column lives on the LEFT (Jan, Nov 2026: "Kouzla a lektvary v Nájezdu přesuneme
-## doleva, aby hráč mohl pravou rukou chodit"). Bottom-up: the ATTACK sits in the corner, the
-## potion above it and the spells above that, so the control a thumb holds for the whole fight is
-## the one closest to the resting thumb and nothing learned ever moves.
+## The two fixed controls left in the fight: the way out and the wheel's editor. Both sit in the
+## top bar, out of both thumbs' way.
 func _layout_buttons() -> void:
-	var bottom := size.y - 42.0
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
-	# ⚠️  The column stops ABOVE the HP/mana bars. They span the full width at the bottom of the
-	# screen (`_draw_hud`), so a button placed at the raw bottom edge paints over them: measured on
-	# the first frame, the attack disc covered the left end of the health bar and its number.
-	# 110 px of clearance = the two bars (8+3+14) + the 26 px margin + a thumb's worth of gap.
-	_attack_centre = Vector2(58.0, size.y - 110.0)
-	_potion_centre = Vector2(58.0, _attack_centre.y - ATTACK_RADIUS - 18.0 - BUTTON_RADIUS)
-	_layout_spells()
+	_bind_rect = Rect2(size.x - 180.0, 10.0, 76.0, 34.0)
 	_layout_whirlwind()
-	_layout_action_rect()
 
 
-## The spell column: two per row, first row just above the potion button, the column growing
-## UPWARDS. Bottom-up on purpose — the newest-learned spell must not push the ones already
-## learned out from under the thumb, and the bottom of a phone is the only place a thumb rests.
-func _layout_spells() -> void:
-	_spell_buttons.clear()
-	if run == null:
+## What the wheel is bound to RIGHT NOW. The player's own bindings win; a save without any gets the
+## DERIVED default (attack, potion, then the class's spells in bar order) every run. The default is
+## never written to disk on its own — it has to keep following the bar as spells are learned, and a
+## default written once would freeze the first level's bar into the save forever.
+func _resolve_wheel() -> Array:
+	var bar: Array = run.spell_bar() if run != null else []
+	var saved: Variant = _state.data.get("actionWheel", null) if _state != null else null
+	if saved is Array:
+		return ActionWheel.normalize(saved)
+	return ActionWheel.default_slots(bar)
+
+
+# ============================================================================ bind panel
+
+func _open_bind() -> void:
+	_bind_open = true
+	_bind_pick = -1
+	# Opening the editor must not leave an action held behind it.
+	_set_wheel_slot(-1)
+	_layout_bind()
+	queue_redraw()
+
+
+func _close_bind() -> void:
+	_bind_open = false
+	_bind_pick = -1
+	_layout_bind()
+	queue_redraw()
+
+
+## Every action a sector may hold: empty, the two built-ins, then everything the hero could cast
+## (bar order — an unbought spell is still listable, it just refuses with a reason).
+func _bind_choices() -> Array:
+	var out: Array = [ActionWheel.EMPTY, ActionWheel.ATTACK, ActionWheel.POTION]
+	if run != null:
+		for e in run.spell_bar():
+			out.append(str((e as Dictionary).get("id", "")))
+	return out
+
+
+## Rows for BOTH states of the panel, in one place: the slot list (6 rows, two columns) or the
+## action list for one slot. `_bind_rects` is what the press handler tests, so a row can never be
+## drawn somewhere a tap is not expected.
+func _layout_bind() -> void:
+	_bind_rects.clear()
+	var left := 12.0 + BIND_PAD
+	var width := size.x - 24.0 - BIND_PAD * 2.0
+	var col_w := (width - BIND_GAP) * 0.5
+	var top := 150.0
+	if _bind_pick < 0:
+		for i in ActionWheel.SLOTS:
+			var col := i % 2
+			var row := i / 2
+			_bind_rects.append({
+				"slot": i,
+				"action": "",
+				"rect": Rect2(left + float(col) * (col_w + BIND_GAP),
+					top + float(row) * (BIND_ROW_H + BIND_GAP), col_w, BIND_ROW_H),
+			})
+		_bind_back_rect = Rect2(left, size.y - 78.0, col_w, BIND_BACK_H)
+	else:
+		var choices := _bind_choices()
+		for i in choices.size():
+			var col := i % 2
+			var row := i / 2
+			_bind_rects.append({
+				"slot": i,
+				"action": str(choices[i]),
+				"rect": Rect2(left + float(col) * (col_w + BIND_GAP),
+					top + float(row) * (BIND_PICK_ROW_H + BIND_GAP), col_w, BIND_PICK_ROW_H),
+			})
+		_bind_back_rect = Rect2(left, size.y - 78.0, col_w, BIND_BACK_H)
+
+
+func _bind_press(pos: Vector2) -> void:
+	if _bind_back_rect.has_point(pos):
+		if _bind_pick >= 0:
+			_bind_pick = -1
+			_layout_bind()
+		else:
+			_close_bind()
+		queue_redraw()
 		return
-	var bar: Array = run.spell_bar()
-	var start_y := _potion_centre.y - BUTTON_RADIUS - 22.0 - SPELL_BUTTON_RADIUS
-	var step := SPELL_BUTTON_RADIUS * 2.0 + SPELL_GAP + 8.0
-	for i in bar.size():
-		var row := i / 2
-		var col := i % 2
-		var centre := Vector2(
-			58.0 + float(col) * step,
-			start_y - float(row) * step)
-		_spell_buttons.append({"id": str((bar[i] as Dictionary)["id"]), "centre": centre})
+	for r in _bind_rects:
+		if (r["rect"] as Rect2).has_point(pos):
+			if _bind_pick < 0:
+				_bind_pick = int(r["slot"])
+				_layout_bind()
+			else:
+				_assign_slot(_bind_pick, str(r["action"]))
+			queue_redraw()
+			return
 
 
-## The band the action buttons own, derived from the buttons themselves: the highest button's top
-## minus a thumb's padding, across the left column. A press here never plants the stick — without
-## it, reaching for the attack between two spells walked the hero sideways.
-func _layout_action_rect() -> void:
-	var top := _attack_centre.y - ATTACK_RADIUS
-	top = minf(top, _potion_centre.y - BUTTON_RADIUS)
-	for b in _spell_buttons:
-		top = minf(top, (b["centre"] as Vector2).y - SPELL_BUTTON_RADIUS)
-	top -= 18.0
-	_action_rect = Rect2(0.0, top, 170.0, maxf(0.0, size.y - top))
+## Put `action` into `slot` and save it. An action lives in ONE sector: binding it elsewhere MOVES
+## it, so the player cannot end up with two "attack" sectors and a spell that fires when he means
+## to swing.
+func _assign_slot(slot: int, action: String) -> void:
+	for i in _wheel_slots.size():
+		if i != slot and str(_wheel_slots[i]) == action:
+			_wheel_slots[i] = ActionWheel.EMPTY
+	_wheel_slots[slot] = action
+	if _state != null:
+		_state.data["actionWheel"] = _wheel_slots.duplicate()
+		_state.save()
+	_bind_pick = -1
+	_layout_bind()
 
 
 ## The flurry's four symbols, in one row across the upper middle of the screen. Above the hero on
@@ -583,7 +699,6 @@ func _cast_spell(spell_id: String) -> void:
 	var result: Dictionary = run.cast_spell(spell_id)
 	if not bool(result.get("ok", false)):
 		_say("Nelze: %s" % str(result.get("message", "")))
-	_layout_spells()
 	queue_redraw()
 
 
@@ -615,8 +730,12 @@ func _draw() -> void:
 	_draw_effects()
 	_draw_numbers()
 	_draw_hud()
-	_draw_spells()
+	_draw_wheel()
 	_draw_whirlwind()
+	# The bind panel is the LAST paint: it is a modal over a live fight and nothing may come up
+	# over it.
+	if _bind_open:
+		_draw_bind_panel()
 
 
 func _draw_ground() -> void:
@@ -995,14 +1114,21 @@ func _draw_hud() -> void:
 	draw_rect(Rect2(0, 0, size.x, TOP_BAR), Color(0, 0, 0, 0.55))
 	var act_name := "Akt %d" % (run.act_id + 1)
 	draw_string(font_r, Vector2(12, 22), act_name, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
+	# ⚠️  The clock sits on the FIRST line, beside the act. It used to be at `size.x - 168` on the
+	# second line — exactly where the wheel's "Akce" button now lives, so the two drew over each
+	# other (measured: the timer was hidden behind the button). Nothing on this bar may share a
+	# rectangle with another element.
+	draw_string(font, Vector2(64, 22), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 66.0, 13, C_GOLD)
 	draw_string(font, Vector2(12, 42), "Oblasti %d/%d" % [run.cleared_zones(), run.zones.size()],
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 15, C_TEXT)
 	draw_string(font_r, Vector2(126, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
-	# ⚠️  `draw_string` with a width of -1 and RIGHT alignment does NOT right-align — it draws
-	# rightwards from the anchor and ran under the Konec box. Give it a box of its own.
-	draw_string(font, Vector2(size.x - 168, 42), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 66.0, 15, C_GOLD)
 
-	# Exit (a fixed, always-visible way out — a run must never trap the player on a phone)
+	# Exit (a fixed, always-visible way out — a run must never trap the player on a phone) and the
+	# wheel's editor beside it. Both are TOP bar controls: the bottom belongs to the two thumbs.
+	draw_rect(_bind_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
+	draw_rect(_bind_rect, Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75), false, 1.5)
+	draw_string(font_r, Vector2(_bind_rect.position.x + _bind_rect.size.x * 0.5,
+		_bind_rect.position.y + 23), "Akce", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_DIM)
 	draw_rect(_exit_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
 	draw_rect(_exit_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
 	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
@@ -1031,9 +1157,6 @@ func _draw_hud() -> void:
 	draw_string(font_r, Vector2(8, mana_y - 2.0), "%d / %d" % [int(run.mana), run.max_mana],
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 9, C_DIM)
 
-	# Fixed action column (attack, potion, and the spells drawn on top of it)
-	_draw_actions()
-
 	# Floating stick
 	if _pointer_down and _stick_vec != Vector2.ZERO:
 		draw_circle(_stick_origin, STICK_RADIUS, Color(0, 0, 0, 0.28))
@@ -1055,34 +1178,156 @@ func _draw_hud() -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
 
 
-## The left action column. The ATTACK is the biggest circle on the screen and it is the only way
-## the hero ever swings, so it must never be a guess: a filled disc, a blade glyph, and a PRESSED
-## state (a warmer fill and a thicker rim) — state only on a click, never on hover (Jan's rule).
-func _draw_actions() -> void:
+## THE ACTION WHEEL. It appears where the thumb lands, so the player never has to find a button:
+## the six icons sit ON the ring (outside the thumb's own disc), the sector under the thumb is lit,
+## and a knob follows the finger so the gesture has a visible body.
+##
+## The activation ring is drawn as a thin DASHED circle OUTSIDE the plate, because it is a line the
+## thumb has to CROSS — Jan's own rule ("když hráč určitým směrem přetáhne mimo kruh, tak se to bere
+## jako aktivace"). Below the wheel, the active action's name is written out: the one thing a
+## player who is NOT looking at his thumb still needs to be sure about.
+func _draw_wheel() -> void:
+	if _wheel_index < 0:
+		return
+	var o := _wheel_origin
 	var font := UIFonts.bold()
-	var edge := Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95 if _attack_held else 0.70)
-	draw_circle(_attack_centre, ATTACK_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.92))
-	if _attack_held:
-		draw_circle(_attack_centre, ATTACK_RADIUS - 4.0,
-			Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.20))
-	draw_arc(_attack_centre, ATTACK_RADIUS, 0.0, TAU, 40, edge,
-		3.0 if _attack_held else 2.0, true)
-	# A blade, drawn flat: no icon file, no emoji. Tip, edge, cross-guard and grip.
-	var c := _attack_centre
-	var blade := PackedVector2Array([
-		c + Vector2(0, -27), c + Vector2(5.5, -16), c + Vector2(5.5, 8),
-		c + Vector2(-5.5, 8), c + Vector2(-5.5, -16),
-	])
-	draw_colored_polygon(blade, C_TEXT if _attack_held else Color(0xd8 / 255.0, 0xce / 255.0, 0xb4 / 255.0))
-	draw_line(c + Vector2(-15, 10), c + Vector2(15, 10), C_GOLD, 4.0, true)
-	draw_line(c + Vector2(0, 10), c + Vector2(0, 25), C_GOLD, 4.0, true)
+	var font_r := UIFonts.regular()
+	draw_circle(o, STICK_RADIUS, Color(0, 0, 0, 0.34))
+	draw_arc(o, STICK_RADIUS, 0.0, TAU, 48, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.30), 2.0, true)
+	_dashed_ring(o, WHEEL_ACTIVATE, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.22), 1.2)
+	# The boundaries between sectors: faint, so the icons carry the reading and the lines only say
+	# "this wheel has six places".
+	for i in ActionWheel.SLOTS:
+		var a: float = ActionWheel.centre_angle(i) + PI / float(ActionWheel.SLOTS)
+		draw_line(o + Vector2(cos(a), sin(a)) * 22.0,
+			o + Vector2(cos(a), sin(a)) * STICK_RADIUS,
+			Color(1, 1, 1, 0.055), 1.0, true)
+	# The six slots, on the ring.
+	for i in ActionWheel.SLOTS:
+		var c := o + Vector2.from_angle(ActionWheel.centre_angle(i)) * STICK_RADIUS
+		var action := wheel_action(i)
+		var active := i == _wheel_slot
+		var empty := action == ActionWheel.EMPTY
+		var fill := Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.92 if active else 0.72)
+		draw_circle(c, WHEEL_ICON_RADIUS, fill)
+		if not empty:
+			_draw_action_icon(action, c, WHEEL_ICON_RADIUS - 4.0, active)
+		var rim := Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95) if active else Color(
+			0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75)
+		if empty:
+			rim = Color(0x4a / 255.0, 0x44 / 255.0, 0x3a / 255.0, 0.7)
+		draw_arc(c, WHEEL_ICON_RADIUS, 0.0, TAU, 26, rim, 3.0 if active else 1.5, true)
+	# The knob: the thumb itself, at the vector it has pulled.
+	draw_circle(o + _wheel_vec * (STICK_RADIUS / WHEEL_ACTIVATE),
+		20.0, Color(0xd8 / 255.0, 0xc8 / 255.0, 0xa0 / 255.0, 0.55))
+	# What is being held, in words, UNDER the wheel (the wheel is above the thumb, the label above
+	# the wheel would sit under the hero's own portrait).
+	var label_y := o.y + WHEEL_ACTIVATE + 26.0
+	var action_now := wheel_action(_wheel_slot)
+	if action_now == ActionWheel.EMPTY:
+		draw_string(font_r, Vector2(o.x - 90.0, label_y), "přetáhni na akci",
+			HORIZONTAL_ALIGNMENT_CENTER, 180.0, 12, Color(C_DIM.r, C_DIM.g, C_DIM.b, 0.85))
+		return
+	var held := ActionWheel.is_hold(action_now, RunSpells)
+	var word := ActionWheel.action_name(action_now, run.spell_bar())
+	draw_string(font, Vector2(o.x - 90.0, label_y), word,
+		HORIZONTAL_ALIGNMENT_CENTER, 180.0, 14, C_GOLD)
+	draw_string(font_r, Vector2(o.x - 90.0, label_y + 14.0),
+		"držíš" if held else "spuštěno", HORIZONTAL_ALIGNMENT_CENTER, 180.0, 10, C_DIM)
 
-	# The potion, above it: the same "L" tile the fight has always had.
-	draw_circle(_potion_centre, BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.85))
-	draw_arc(_potion_centre, BUTTON_RADIUS, 0.0, TAU, 32,
-		Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.75), 2.0, true)
-	draw_string(font, _potion_centre + Vector2(0, 6), "L",
-		HORIZONTAL_ALIGNMENT_CENTER, -1.0, 18, C_GOLD)
+
+## One action's symbol inside a circle: the class's spell art cropped round, a blade for the attack,
+## an "L" for the potion. No emoji, no icon file invented for the two built-ins.
+func _draw_action_icon(action: String, centre: Vector2, radius: float, lit: bool) -> void:
+	var tint := Color(1, 1, 1, 1.0 if lit else 0.62)
+	if action == ActionWheel.ATTACK:
+		var blade := PackedVector2Array([
+			centre + Vector2(0, -radius * 0.95), centre + Vector2(radius * 0.26, -radius * 0.55),
+			centre + Vector2(radius * 0.26, radius * 0.42),
+			centre + Vector2(-radius * 0.26, radius * 0.42),
+			centre + Vector2(-radius * 0.26, -radius * 0.55),
+		])
+		draw_colored_polygon(blade, Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, tint.a))
+		draw_line(centre + Vector2(-radius * 0.62, radius * 0.5),
+			centre + Vector2(radius * 0.62, radius * 0.5), Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, tint.a), 3.0, true)
+		draw_line(centre + Vector2(0, radius * 0.5), centre + Vector2(0, radius * 0.95),
+			Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, tint.a), 3.0, true)
+		return
+	if action == ActionWheel.POTION:
+		draw_string(UIFonts.bold(), centre + Vector2(-radius, radius * 0.62), "L",
+			HORIZONTAL_ALIGNMENT_CENTER, radius * 2.0, int(radius * 1.5), Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, tint.a))
+		return
+	var tex: Texture2D = _disc("assets/spells/%s.png" % action)
+	if tex != null:
+		draw_texture_rect(tex, Rect2(centre - Vector2(radius, radius), Vector2(radius, radius) * 2.0),
+			false, tint)
+
+
+## The wheel's editor. Two states, one panel: the six sectors (tap one), then the list of every
+## action it may hold (tap one) — the answer to "hráč musí mít možnost nabindovat akce na libovolná
+## tlačítka (směry)".
+func _draw_bind_panel() -> void:
+	var font := UIFonts.bold()
+	var font_r := UIFonts.regular()
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.86))
+	draw_rect(Rect2(12, 62, size.x - 24, size.y - 76), Color(0x12 / 255.0, 0x12 / 255.0, 0x12 / 255.0, 1.0))
+	draw_rect(Rect2(12, 62, size.x - 24, size.y - 76), Color(0x33 / 255.0, 0x33 / 255.0, 0x33 / 255.0, 1.0), false, 1.5)
+	if _bind_pick < 0:
+		draw_string(font, Vector2(26, 96), "Akce na směrech", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 17, C_TEXT)
+		draw_string(font_r, Vector2(26, 118), "Klepni na směr a vyber akci.", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+	else:
+		draw_string(font, Vector2(26, 96), "Směr %s" % _direction_name(_bind_pick),
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, 17, C_TEXT)
+		draw_string(font_r, Vector2(26, 118), "Co má tenhle směr dělat?", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+
+	for r in _bind_rects:
+		var rect: Rect2 = r["rect"]
+		var slot := int(r["slot"])
+		var action := str(r["action"]) if _bind_pick >= 0 else wheel_action(slot)
+		var selected := _bind_pick >= 0 and action == wheel_action(_bind_pick)
+		draw_rect(rect, Color(0x1a / 255.0, 0x1a / 255.0, 0x1a / 255.0, 1.0))
+		draw_rect(rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.9) if selected
+			else Color(0x33 / 255.0, 0x33 / 255.0, 0x33 / 255.0, 1.0), false, 2.0 if selected else 1.0)
+		if _bind_pick < 0:
+			# A slot row: the direction on the left, the action on the right.
+			draw_string(font, Vector2(rect.position.x + 12.0, rect.position.y + 30.0),
+				_direction_name(slot), HORIZONTAL_ALIGNMENT_LEFT, -1.0, 20, C_GOLD)
+			draw_string(font, Vector2(rect.position.x + 12.0, rect.position.y + 56.0),
+				ActionWheel.action_name(action, run.spell_bar()), HORIZONTAL_ALIGNMENT_LEFT,
+				rect.size.x - 24.0, 12, C_TEXT if action != ActionWheel.EMPTY else C_DIM)
+		else:
+			var name := ActionWheel.action_name(action, run.spell_bar())
+			var dim := _action_available(action)
+			draw_string(font, Vector2(rect.position.x + 10.0, rect.position.y + 32.0), name,
+				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 20.0, 13,
+				C_TEXT if dim else Color(C_DIM.r, C_DIM.g, C_DIM.b, 0.55))
+
+	# Back / close. One button: it steps out of the action list first, then out of the panel.
+	var back_text := "Zpět" if _bind_pick >= 0 else "Zavřít"
+	draw_rect(_bind_back_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 1.0))
+	draw_rect(_bind_back_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.75), false, 1.5)
+	draw_string(font, Vector2(_bind_back_rect.position.x, _bind_back_rect.position.y + 28.0),
+		back_text, HORIZONTAL_ALIGNMENT_CENTER, _bind_back_rect.size.x, 14, C_TEXT)
+	draw_string(font_r, Vector2(size.x - 26.0 - 190.0, _bind_back_rect.position.y + 28.0),
+		"Uloženo hned", HORIZONTAL_ALIGNMENT_RIGHT, 190.0, 11, C_DIM)
+
+
+## The word a sector is called by, in the panel. Kept apart from the ANGLE maths so the panel can
+## name a direction without knowing where it is drawn.
+func _direction_name(slot: int) -> String:
+	var names := ["nahoru", "vpravo nahoru", "vpravo dolů", "dolů", "vlevo dolů", "vlevo nahoru"]
+	return names[posmod(slot, names.size())]
+
+
+## Can this action do anything right now? Only used to DIM a choice, never to refuse it: a player
+## may bind a spell he has not learned yet.
+func _action_available(action: String) -> bool:
+	if action == ActionWheel.EMPTY or action == ActionWheel.ATTACK or action == ActionWheel.POTION:
+		return true
+	for e in run.spell_bar():
+		if str((e as Dictionary).get("id", "")) == action:
+			return bool((e as Dictionary).get("can", false))
+	return false
 
 
 ## Czech counts must not read "2 předmětu". One helper, used by every count on this screen.
@@ -1276,58 +1521,6 @@ func _draw_cracks(pos: Vector2, col: Color, age: float, life: float,
 		draw_polyline(shown, Color(0.02, 0.08, 0.16, alpha * 0.75), 9.0, true)
 		draw_polyline(shown, Color(col.r, col.g, col.b, alpha * 0.95), 5.0, true)
 		draw_polyline(shown, Color(0.88, 0.95, 1.0, alpha), 2.0, true)
-
-
-## The class-spell buttons: the duel's own bar, on a phone-sized column. Each button is a real
-## circle with the spell's ICON inside (cropped round — the spell art, like the monster art, is
-## a near-black square plate and the port forbids a black square), a rim that says whether it can
-## be cast right now, the mana cost, and a cooldown arc plus its seconds when it is spent.
-func _draw_spells() -> void:
-	if run == null or _spell_buttons.is_empty():
-		return
-	var bar: Array = run.spell_bar()
-	var font := UIFonts.bold()
-	var font_r := UIFonts.regular()
-	var n := mini(bar.size(), _spell_buttons.size())
-	for i in n:
-		var e: Dictionary = bar[i]
-		var c: Vector2 = _spell_buttons[i]["centre"]
-		var can := bool(e.get("can", false))
-		var cd := int(e.get("cooldown", 0))
-		var queued := bool(e.get("queued", false))
-		var dim := 1.0 if can else 0.40
-		draw_circle(c, SPELL_BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.90))
-		var tex: Texture2D = _disc("assets/spells/%s.png" % str(e["id"]))
-		if tex != null:
-			var ir := SPELL_BUTTON_RADIUS - 3.0
-			draw_texture_rect(tex, Rect2(c - Vector2(ir, ir), Vector2(ir, ir) * 2.0), false,
-				Color(1, 1, 1, dim))
-		var rim := C_GOLD if can else Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0)
-		if queued:
-			# A queued spell (Heroic Strike, Frenzy) is ARMED, and the bar has to say so or the
-			# second tap is a mystery.
-			rim = Color("#f4e4b8")
-		draw_arc(c, SPELL_BUTTON_RADIUS, 0.0, TAU, 28, rim, 2.0, true)
-		if cd > 0:
-			# The veil is an ARC over the icon rather than a number alone: the ring reads at a
-			# glance, and the seconds answer the exact question.
-			var def: Dictionary = e.get("def", {})
-			var total := maxf(float(def.get("cooldown", 1.0)) * 1000.0, 1000.0)
-			var frac := clampf(float(cd) / total, 0.0, 1.0)
-			draw_arc(c, SPELL_BUTTON_RADIUS - 2.0, -PI * 0.5,
-				-PI * 0.5 + TAU * frac, 28, Color(0, 0, 0, 0.62), 6.0, true)
-			draw_string(font, Vector2(c.x - 20.0, c.y + 6.0), str(int(ceil(float(cd) / 1000.0))),
-				HORIZONTAL_ALIGNMENT_CENTER, 40.0, 14, C_TEXT)
-		else:
-			# ⚠️  The cost is the ONE number a player needs before tapping and the one a 10 px
-			# label over grass loses. A dark chip behind it, 11 px, full-strength text: measured
-			# on the first frame, where no cost was readable at all.
-			var cost_txt := str(int(e.get("cost", 0)))
-			var chip := Rect2(c.x + 1.0, c.y + SPELL_BUTTON_RADIUS - 13.0, 15.0, 12.0)
-			draw_rect(chip, Color(0, 0, 0, 0.72))
-			draw_string(font, Vector2(chip.position.x, chip.position.y + 10.0), cost_txt,
-				HORIZONTAL_ALIGNMENT_CENTER, chip.size.x, 11,
-				Color(C_TEXT.r, C_TEXT.g, C_TEXT.b, maxf(dim, 0.75)))
 
 
 ## The Whirlwind row: the duel's four PS symbols, the one being asked for pulled OUT of the row

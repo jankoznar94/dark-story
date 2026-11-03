@@ -54,6 +54,11 @@ var _cast_at := 20
 var _screen = null
 var _started := false
 var _frames := 0
+## How many extra frames the swing wait has spent looking for a blow. A run that ENDS (the hero
+## dies to the pack the frame was staged around) freezes `swing_age`, so an unbounded wait here
+## hangs the tool instead of producing a frame — measured on a 320-frame shot that never wrote a
+## PNG. Give up after a stretch and capture what there is.
+var _stall := 0
 
 
 ## Stand where the frame's question is. The fake pack below is a RENDERING probe (a fight in the
@@ -109,7 +114,15 @@ func _process(_delta: float) -> bool:
 	if not _started:
 		# `_nav_bar` is the last cheap marker of "main is fully built" — the same gate
 		# capture_screen.gd uses, because entering a screen before that gets overwritten.
+		#
+		# ⚠️  AND WAIT OUT THE SPLASH. It is a `CanvasLayer` at layer 40 that sits over EVERY
+		# screen for ~3.9 s (`HOLD_MS + FADE_OUT_MS`), so a capture taken before it finishes is a
+		# photograph of the logo with the fight invisible behind it — measured: an 80-frame run
+		# returned the splash card, and the file looked like "the game has no HUD at all".
 		if not _main._screens.has("survivor") or _main._nav_bar == null:
+			return false
+		if _main._splash != null and _main._splash.visible:
+			_main._splash._tick(60000.0)
 			return false
 		_started = true
 		_main._enter_survivor(0)
@@ -128,20 +141,23 @@ func _process(_delta: float) -> bool:
 
 	if _screen == null:
 		return false
-	# ⚠️  The stick is planted RIGHT of the action column: the left band belongs to the attack, the
-	# potion and the spells (Jan, Nov 2026), and a press there plants nothing at all any more.
+	# ⚠️  TWO WHEELS, TWO HALVES: the stick is planted on the RIGHT, the action wheel on the LEFT
+	# (Jan, Nov 2026). A press on the wrong side starts the other control.
 	if _frames == 4 and _walk:
 		_screen._on_press(Vector2(250, 660))
 		_screen._on_drag(Vector2(290, 610))
-	# THE ATTACK IS HELD, or the hero never swings and `--wait_swing` waits forever: since Jan's
-	# D2R rule a released button means a hero who stands and looks. Held through the capture, so
-	# the button's PRESSED state is in the frame too.
+	# THE ATTACK SECTOR IS HELD, or the hero never swings and `--wait_swing` waits forever: since
+	# Jan's D2R rule a thumb that is not on an action means a hero who stands and looks. Pushed UP
+	# past the ring, so the frame also shows the wheel in its active state.
 	if _frames == 6:
-		_screen._on_press(_screen._attack_centre, 7)
-	if _frames == 4 + _walk_frames and _walk and _stick == "0":
+		_screen._on_press(Vector2(96, 630), 7)
+		_screen._on_drag(Vector2(96, 630 - SurvivorScreen.WHEEL_ACTIVATE - 10.0), 7)
+	# ⚠️  THE WALK STOPS. A shot taken while still running shows a hero who outran his pack and is
+	# now surrounded from BEHIND — which the facing rule correctly refuses to swing at, so
+	# `--wait_swing` never finds a blow. Standing still is also the beat worth judging: the assist
+	# turns him and the fight happens under the wheel.
+	if _frames == 4 + _walk_frames and _walk:
 		_screen._on_release()
-	if _frames == _frames_to_run - 3 and _walk and _stick == "1":
-		_screen._on_drag(Vector2(290, 614))
 	# A flurry has to be OPEN at capture time: its row only exists while the flurry runs, and the
 	# run's own clock burns the deadline in 1.5 s, so it is opened a handful of frames before.
 	if _cast_id != "" and _frames == _frames_to_run - _cast_at and _screen.run != null:
@@ -155,8 +171,17 @@ func _process(_delta: float) -> bool:
 	if _wait_swing and _screen.run != null:
 		var age: float = _screen.run.swing_age
 		if age < 0.0 or age > 0.07:
-			_frames -= 1
-			return false
+			_stall += 1
+			if _stall < 180:
+				_frames -= 1
+				return false
+			print("look_survivor: no swing window (held=%s screen_held=%s held_spell='%s' slots=%s idx=%d slot=%d target=%d pick=%d facing=%s closest=%.0f)"
+				% [str(_screen.run.attack_held), str(_screen._attack_held), str(_screen._held_spell),
+					str(_screen._wheel_slots), _screen._wheel_index,
+					_screen._wheel_slot, int(_screen.run.target_id),
+					_screen.run._pick_target(), str(_screen.run.facing),
+					(_screen.run.monsters[0]["pos"] as Vector2).distance_to(_screen.run.player_pos)
+						if not _screen.run.monsters.is_empty() else -1.0])
 	_capture()
 	return false
 
@@ -170,7 +195,9 @@ func _grant_spells() -> void:
 			"defensiveShout", "pummel", "whirlwind", "frenzy"]:
 		levels["barbarian_%s" % id] = 2
 	st.data["talentLevels"] = levels
-	_screen._layout_spells()
+	# The wheel's defaults are DERIVED from the bar, so a freshly granted spell has to re-resolve
+	# them or the frame shows a wheel with the old (shorter) bar.
+	_screen._wheel_slots = _screen._resolve_wheel()
 
 
 func _capture() -> void:
