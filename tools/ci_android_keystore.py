@@ -62,32 +62,43 @@ def main() -> int:
     candidates.sort(key=len, reverse=True)
 
     data = b""
+
+    def _accept(decoded: bytes) -> bool:
+        # A PKCS#12/JKS holding one RSA-2048 key is ~2.7 kB. Anything under 1.5 kB is a
+        # TRUNCATED secret that still starts with the right magic — accept it and the export
+        # fails later with a confusing keytool error instead of here.
+        return len(decoded) >= 1500 and (decoded.startswith(JKS_MAGIC)
+                                         or decoded.startswith(b"\x30\x82"))
+
+    def _decode(blob: str) -> bytes:
+        core = blob[:len(blob) - (len(blob) % 4)]
+        try:
+            return base64.b64decode(core + "=" * (-len(core) % 4), validate=False)
+        except Exception:
+            return b""
+
     for blob in candidates:
-        # A pasted secret is often one character longer than the file it came from — a
-        # stray letter at the end, a stray one at the start. Rather than reject a key that
-        # is 99.97 % correct, try the small trims; the magic + size check below is what
-        # decides whether the result is really a keystore.
-        for drop_tail in range(0, 8):
-            for drop_head in range(0, 4):
-                core = blob[drop_head:len(blob) - drop_tail]
-                if len(core) < 1000:
-                    continue
-                core = core[:len(core) - (len(core) % 4)]
-                try:
-                    decoded = base64.b64decode(
-                        core + "=" * (-len(core) % 4), validate=False)
-                except Exception:
-                    continue
-                # A PKCS#12/JKS holding one RSA-2048 key is ~2.7 kB. Anything under 1.5 kB
-                # is a TRUNCATED secret that still starts with the right magic — accept it
-                # and the export fails later with a confusing keytool error instead of here.
-                if len(decoded) >= 1500 and (decoded.startswith(JKS_MAGIC)
-                                             or decoded.startswith(b"\x30\x82")):
-                    data = decoded
-                    break
-            if data != b"":
+        if len(blob) < 1000:
+            continue
+        # 1. as pasted
+        decoded = _decode(blob)
+        if _accept(decoded):
+            data = decoded
+            break
+        # 2. a paste that gained ONE character near an edge (measured: an extra letter at
+        #    position 1 shifted the whole DER header, so no amount of trimming the ends
+        #    helps). Only the first/last few positions are tried: the magic check can only
+        #    see the first bytes, so a character removed from the MIDDLE would decode to
+        #    something that still starts with `30 82` and would be accepted as a corrupt
+        #    key. The workflow's `keytool -list` is the real gate for that case.
+        repaired = b""
+        for at in list(range(0, 8)) + list(range(max(0, len(blob) - 8), len(blob))):
+            decoded = _decode(blob[:at] + blob[at + 1:])
+            if _accept(decoded):
+                repaired = decoded
                 break
-        if data != b"":
+        if repaired != b"":
+            data = repaired
             break
     if data == b"":
         # Diagnostics that are safe to publish: lengths, and the base64 header/tail — the
