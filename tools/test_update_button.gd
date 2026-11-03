@@ -7,7 +7,7 @@ extends SceneTree
 ## pass a screenshot and both are wrong on the phone.
 ##
 ## What is asserted:
-##   1. Off the web the section is NOT built (no dead button on the desktop build).
+##   1. Off the web AND off Android the section is NOT built (no dead button on desktop).
 ##   2. With the web hook on, the section exists: a full-width button labelled
 ##      AKTUALIZOVAT HRU plus the note and the build stamp.
 ##   3. Pressing the button reaches the logic — with no JavaScriptBridge the result is
@@ -35,6 +35,7 @@ func _initialize() -> void:
 
 	_test_desktop_has_no_section()
 	_test_web_section_and_tap()
+	_test_android_section_and_tap()
 	_test_check_off_web()
 
 	for f in _failures:
@@ -124,6 +125,37 @@ func _test_web_section_and_tap() -> void:
 
 	town.queue_free()
 	UpdateCheck.force_web = false
+
+
+## The APK cannot install itself, so the Android button opens the ONE stable download
+## link. A test cannot let `OS.shell_open` run (it would launch a browser), so the opener is
+## injected — what is asserted is the URL and that the tap reached the logic at all.
+func _test_android_section_and_tap() -> void:
+	UpdateCheck.force_web = false
+	UpdateCheck.force_android = true
+	var town = _make_town()
+	if town._update_note_label == null or town._update_build_label == null:
+		_fail("Android build did not build the update labels")
+		town.queue_free()
+		UpdateCheck.force_android = false
+		return
+	town._update_check.open_url = func(_url: String) -> void: pass
+	var button: Button = _find_button(town, "AKTUALIZOVAT HRU")
+	if button == null:
+		_fail("no button labelled AKTUALIZOVAT HRU in the Android build")
+		town.queue_free()
+		UpdateCheck.force_android = false
+		return
+	button.pressed.emit()
+	if town._update_check.opened_url != UpdateCheck.APK_URL:
+		_fail("the Android tap opened '%s', expected the release link '%s'" % [
+			town._update_check.opened_url, UpdateCheck.APK_URL])
+	if not town._update_note_label.text.contains("stáhni"):
+		_fail("the Android tap says '%s' — it must tell the player to download and install" % town._update_note_label.text)
+	else:
+		print("  android tap opens %s" % town._update_check.opened_url)
+	town.queue_free()
+	UpdateCheck.force_android = false
 
 
 func _test_check_off_web() -> void:

@@ -179,9 +179,12 @@ func _build() -> void:
 	# nad portálem: je to servisní věc, ne herní dlaždice, a patří k okraji stránky.
 	# Mimo webový export se sekce vůbec nekreslí — na desktopu není co aktualizovat.
 	_update_check = UpdateCheck.new()
-	if _update_check.web:
+	# Android gets the same button for a different reason: the APK cannot install itself, so
+	# the button opens the stable download link instead of reloading a service worker.
+	if _update_check.web or _update_check.android:
 		column.add_child(_build_update_section())
-		_update_check.load_build_id()
+		if _update_check.web:
+			_update_check.load_build_id()
 
 	# Town portal: `.town-action-card`, a full-width row with the scroll icon, shown only
 	# when a return position is stored.

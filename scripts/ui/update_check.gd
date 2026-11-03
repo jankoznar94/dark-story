@@ -31,12 +31,26 @@ class_name UpdateCheck
 const JS_BUILD := "__dr_build"
 const JS_UPDATE := "__dr_update"
 
+## The Android side-load. The APK cannot install itself (Android always asks the player to
+## confirm), so the button's whole job is to open the ONE stable download link and let the
+## system do the rest — no browser bookmarks, no hunting for the release page.
+const APK_URL := "https://github.com/jankoznar94/dark-story/releases/download/android-latest/dungeon-recall.apk"
+
 ## True only in a web export. Everything else is a no-op there.
 var web: bool = false
+## True only in an Android build. The button exists there too, but it is a different
+## mechanism: `OS.shell_open` on the download link instead of a service-worker reload.
+var android: bool = false
 ## Preview/test hook: a desktop run cannot be a web export, so a headless test or an
 ## offscreen preview sets this to TRUE before the town is built to see the section the
 ## phone really draws. A real web build never touches it.
 static var force_web: bool = false
+## The same hook for the Android branch (a desktop run cannot be an APK either).
+static var force_android: bool = false
+## Set by a test instead of `OS.shell_open`, so a headless run never launches a browser.
+var open_url: Callable = Callable()
+## What the last request tried to open — the handle a test asserts on.
+var opened_url: String = ""
 ## Build stamp read from `version.txt` — the only honest statement about what the
 ## device really runs. `?` until the first fetch lands, `dev` off the web.
 var build_id: String = "dev"
@@ -48,8 +62,17 @@ var _ticks: int = 0
 
 func _init() -> void:
 	web = OS.has_feature("web") or force_web
+	android = not web and (OS.has_feature("android") or force_android)
 	if not web:
-		build_id = "dev"
+		build_id = _android_build_id() if android else "dev"
+
+
+## The APK's own version, baked into the pack by CI (`application/config/version`). Without
+## it a player cannot tell "it did not update" from "I am running yesterday's build", which
+## is the exact question the update button exists to answer.
+func _android_build_id() -> String:
+	var version := str(ProjectSettings.get_setting("application/config/version", ""))
+	return version if version != "" else "dev"
 
 
 ## The JavaScriptBridge singleton. NEVER referenced as a global identifier: a
@@ -125,8 +148,15 @@ func poll() -> bool:
 ## cache-busting query. The reload ALWAYS happens — a watchdog arms it up front.
 func request_update() -> void:
 	note = ""
+	if android:
+		# The APK cannot install itself: Android always shows its own "install?" prompt. So
+		# the button opens the ONE stable link; the browser downloads and the player taps the
+		# file. The save is kept because every build carries the same signing key.
+		note = "Otevírám odkaz s nejnovější verzí — stáhni a nainstaluj, hra zůstane."
+		_open(APK_URL)
+		return
 	if not web:
-		note = "Aktualizace je jen pro webovou verzi."
+		note = "Aktualizace je jen pro webovou a Android verzi."
 		return
 	var jb: Object = _js_bridge()
 	if jb == null:
@@ -172,6 +202,16 @@ func request_update() -> void:
 	""" % JS_UPDATE
 	# `false` = necekat na dokonceni: slib bezi dal a stranka se restartuje.
 	jb.call("eval", js, false)
+
+
+## Open a URL the platform's own way, unless a test supplied `open_url`. Kept separate so
+## a headless run can assert WHAT would be opened without launching anything.
+func _open(url: String) -> void:
+	opened_url = url
+	if open_url.is_valid():
+		open_url.call(url)
+		return
+	OS.shell_open(url)
 
 
 func apply_note(code: String) -> void:

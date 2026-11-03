@@ -83,9 +83,49 @@ def main() -> int:
 
     with open(CFG, "w", encoding="utf-8") as f:
         f.writelines(lines)
+
+    # Also stamp the RUNNING build: `application/config/version` is baked into the pack, and
+    # the Android build shows it under the update button. Without it the player cannot tell
+    # "the update did nothing" from "I am running yesterday's build".
+    if not _stamp_project_version(name or code):
+        return 1
+
     print("ci_android_version: preset %s -> code %s name %s"
           % (index, code, name or "unchanged"))
     return 0
+
+
+PROJECT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "project.godot")
+
+
+def _stamp_project_version(version: str) -> bool:
+    """Write `config/version` into project.godot's [application] block."""
+    with open(PROJECT, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == "[application]":
+            start = i
+            break
+    if start is None:
+        print("ci_android_version: no [application] block in project.godot", file=sys.stderr)
+        return False
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].strip().startswith("["):
+            end = i
+            break
+    for i in range(start, end):
+        if lines[i].startswith("config/version="):
+            lines[i] = 'config/version="%s"\n' % version
+            break
+    else:
+        lines.insert(start + 1, 'config/version="%s"\n' % version)
+    with open(PROJECT, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    print("ci_android_version: project version -> %s" % version)
+    return True
 
 
 if __name__ == "__main__":
