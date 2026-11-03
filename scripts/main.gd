@@ -325,19 +325,31 @@ func _build_screens() -> void:
 ## what the node order says. The bar was correct, visible and completely hidden — the
 ## town showed an empty box where its chrome should have been.
 func _build_nav() -> void:
-	var nav_layer := CanvasLayer.new()
-	nav_layer.name = "Nav"
-	nav_layer.layer = 5
-	add_child(nav_layer)
+	# ⚠️  THE NAV BAR BELONGS IN THE PORTRAIT STAGE, not on a CanvasLayer over the whole canvas.
+	# A CanvasLayer IGNORES the stage's transform, so in landscape the bar was laid out across the
+	# full 866 px canvas while the screens sat in the 390 px column — the bar then covered the
+	# bottom 120 stage px, which is exactly where the road's action row lives ("Nájezd" was under
+	# it, unreachable: Jan, "tlačítko nájezd je mimo obraz"). Inside the stage it is 390 wide and
+	# scaled with everything else, so `NAV_RESERVE` means what it always meant.
+	var nav_parent: Node = _portrait_root
+	if nav_parent == null:
+		var nav_layer := CanvasLayer.new()
+		nav_layer.name = "Nav"
+		nav_layer.layer = 5
+		add_child(nav_layer)
+		nav_parent = nav_layer
 
 	_nav_bar = UIKit.NavBar.build("town")
 	_nav_bar.nav_selected.connect(_on_nav_selected)
-	nav_layer.add_child(_nav_bar)
+	nav_parent.add_child(_nav_bar)
 
-	var status_layer := CanvasLayer.new()
-	status_layer.name = "Status"
-	status_layer.layer = 10
-	add_child(status_layer)
+	var status_parent: Node = _portrait_root
+	if status_parent == null:
+		var status_layer := CanvasLayer.new()
+		status_layer.name = "Status"
+		status_layer.layer = 10
+		add_child(status_layer)
+		status_parent = status_layer
 	var box := VBoxContainer.new()
 	# The status strip sits just ABOVE the 56px nav bar, so it never covers it.
 	box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -351,7 +363,7 @@ func _build_nav() -> void:
 	# this is hardening against a reorder, not the fix for a bug. Do not read it as the cause of
 	# the dead road buttons: that was the missing tap handler in `world_screen.gd`.)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_layer.add_child(box)
+	status_parent.add_child(box)
 	_status = UIKit.label("", 14, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER)
 	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -453,6 +465,11 @@ func show_screen(name: String) -> void:
 		# modal as current. `move_to_front` makes "the screen that is `_current`" and "the screen a
 		# thumb can hit" the same thing, whatever the order they were built in.
 		incoming.move_to_front()
+		# ...but the nav bar is a SIBLING of the screens now, so raising the screen must not bury
+		# it. The bar is the one control that stays on top of ordinary screens (and is hidden on
+		# the ones `NAV_HIDDEN` lists, where the fight owns the whole canvas).
+		if _nav_bar != null and not (name in NAV_HIDDEN):
+			_nav_bar.move_to_front()
 	for key in _screens:
 		if str(key) == name:
 			continue
