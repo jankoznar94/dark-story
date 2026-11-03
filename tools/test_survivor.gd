@@ -52,6 +52,7 @@ func _initialize() -> void:
 	_test_movement_and_clamp()
 	_test_monsters_close_in()
 	_test_auto_attack_kills_and_drops()
+	_test_held_attack()
 	_test_walk_over_pays_into_the_save()
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
@@ -103,9 +104,15 @@ func _check(cond: bool, msg: String) -> void:
 		_failures.append(msg)
 
 
-func _fresh(seed_value: int = 12345) -> SurvivorRun:
+## The one factory for a run. `attacking` is what the SCREEN would write every frame: Jan's new
+## rule is that the hero only swings while the attack button is held, so a section that measures
+## something else (movement, bodies, a thrower's stand-off) must NOT have the hero walking into a
+## pack on his own. Default FALSE — the honest starting state — and the sections that need a fight
+## opt in.
+func _fresh(seed_value: int = 12345, attacking: bool = false) -> SurvivorRun:
 	var run := SurvivorRun.new()
 	run.setup(_state, _find_item, _loot, 0, seed_value)
+	run.attack_held = attacking
 	return run
 
 
@@ -192,7 +199,8 @@ func _test_monsters_close_in() -> void:
 
 func _test_auto_attack_kills_and_drops() -> void:
 	_log("  section: auto attack")
-	var run := _fresh()
+	# The button is HELD for this section — nothing swings otherwise.
+	var run := _fresh(12345, true)
 	# Put one monster inside the attack range and keep it there; hold the DICTIONARY, not the
 	# index — `_kill()` removes it from the array and `monsters[0]` then reads the next one (or
 	# throws), which is how a test loop turns into a hang instead of a failure.
@@ -221,6 +229,160 @@ func _test_auto_attack_kills_and_drops() -> void:
 		ticks += 1
 	_check(run.kills >= 1, "the monster must die to repeated swings")
 	_check(not run.drops.is_empty(), "a kill must leave loot on the ground")
+
+
+## Jan, Nov 2026 — the Diablo 2 Resurrected rule. The hero does NOT attack on his own: a swing
+## happens only while the attack button (or an offensive spell) is HELD. While it is held the game
+## picks the target in the direction the player looks, prefers the nearly-dead body, and walks the
+## hero into reach — the assist, because a phone has no second cursor.
+func _test_held_attack() -> void:
+	_log("  section: held_attack")
+	var idle := SurvivorRun.new()
+	idle.setup(_state, _find_item, _loot, 0, 999)
+	_check(not idle.attack_held and idle.held_spell == "" and idle.target_id == -1,
+		"a fresh run must start with NOTHING held")
+	idle.monsters.clear()
+	idle._spawn_one()
+	var m: Dictionary = idle.monsters[0]
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["speed"] = 0.0
+	m["ranged"] = false
+	m["dmg_min"] = 0
+	m["dmg_max"] = 0
+	var hp0 := int(m["hp"])
+	for _i in 180:
+		m["pos"] = idle.player_pos + Vector2(90, 0)
+		idle.step(STEP, Vector2.ZERO)
+	_check(int(m["hp"]) == hp0,
+		"an UNHELD attack must not swing: %d -> %d" % [hp0, int(m["hp"])])
+	_check(idle.target_id == -1, "no attack held = no target picked")
+
+	# Held: the same body is hit, and it is the one the assist chose.
+	idle.attack_held = true
+	var ticks := 0
+	while int(m["hp"]) == hp0 and ticks < 180:
+		m["pos"] = idle.player_pos + Vector2(90, 0)
+		idle.step(STEP, Vector2.ZERO)
+		ticks += 1
+	_check(int(m["hp"]) < hp0, "holding the attack must swing")
+	_check(idle.target_id == int(m["id"]), "the held attack must pick the body in front")
+
+	# The ranking: a nearly-dead body a little further away beats a healthy one in the face.
+	var pick := _fresh(4242, true)
+	pick.monsters.clear()
+	pick._spawn_one()
+	pick._spawn_one()
+	var near: Dictionary = pick.monsters[0]
+	var weak: Dictionary = pick.monsters[1]
+	for mm in [near, weak]:
+		mm["speed"] = 0.0
+		mm["ranged"] = false
+		mm["dmg_min"] = 0
+		mm["dmg_max"] = 0
+		mm["max_hp"] = 1000
+	near["hp"] = 1000
+	weak["hp"] = 100
+	near["pos"] = pick.player_pos + Vector2(90, 0)
+	weak["pos"] = pick.player_pos + Vector2(200, 0)
+	pick.facing = Vector2.RIGHT
+	pick.step(STEP, Vector2.ZERO)
+	_check(pick.target_id == int(weak["id"]),
+		"the assist must finish the nearly-dead body first: picked %d, weak is %d"
+			% [int(pick.target_id), int(weak["id"])])
+
+	# A body BEHIND the hero is not a candidate at all — the direction the player looks is the
+	# only thing that says what he means.
+	var back := _fresh(555, true)
+	back.monsters.clear()
+	back._spawn_one()
+	var b: Dictionary = back.monsters[0]
+	b["hp"] = 999999
+	b["max_hp"] = 999999
+	b["speed"] = 0.0
+	b["ranged"] = false
+	b["dmg_min"] = 0
+	b["dmg_max"] = 0
+	b["pos"] = back.player_pos + Vector2(-90, 0)
+	back.step(STEP, Vector2.ZERO)
+	_check(back.target_id == -1, "a body behind the hero must not be picked")
+	var hp_back := int(b["hp"])
+	for _i in 120:
+		b["pos"] = back.player_pos + Vector2(-90, 0)
+		back.step(STEP, Vector2.ZERO)
+	_check(int(b["hp"]) == hp_back, "the hero must not swing behind himself")
+
+	# The ASSIST walks him into reach and stops at the WEAPON's arm, not at contact.
+	var walk := _fresh(777, true)
+	walk.monsters.clear()
+	walk._spawn_one()
+	var w: Dictionary = walk.monsters[0]
+	w["hp"] = 999999
+	w["max_hp"] = 999999
+	w["speed"] = 0.0
+	w["ranged"] = false
+	w["dmg_min"] = 0
+	w["dmg_max"] = 0
+	w["pos"] = walk.player_pos + Vector2(260, 0)
+	var d0: float = (w["pos"] as Vector2).distance_to(walk.player_pos)
+	for _i in 70:
+		walk.step(STEP, Vector2.ZERO)
+	var d1: float = (w["pos"] as Vector2).distance_to(walk.player_pos)
+	var stop_at: float = walk.reach_main + SurvivorRun.MON_RADIUS
+	_check(d1 < d0 - 60.0, "holding the attack must close the distance: %.1f -> %.1f" % [d0, d1])
+	_check(absf(d1 - stop_at) < 8.0,
+		"the assist must stop AT the weapon's reach (%.1f), got %.1f" % [stop_at, d1])
+
+	# ...but the PLAYER's stick always outranks the assist's step.
+	var steer := _fresh(888, true)
+	steer.monsters.clear()
+	steer._spawn_one()
+	var s: Dictionary = steer.monsters[0]
+	s["hp"] = 999999
+	s["max_hp"] = 999999
+	s["speed"] = 0.0
+	s["ranged"] = false
+	s["dmg_min"] = 0
+	s["dmg_max"] = 0
+	s["pos"] = steer.player_pos + Vector2(260, 0)
+	var pos_before: Vector2 = steer.player_pos
+	for _i in 40:
+		steer.step(STEP, Vector2(0, -1))
+	_check(steer.player_pos.y < pos_before.y - 40.0,
+		"the stick must move the hero, got %s" % str(steer.player_pos - pos_before))
+	_check(absf(steer.player_pos.x - pos_before.x) < 3.0,
+		"a sideways walk must not be turned into an approach: dx=%.1f"
+			% (steer.player_pos.x - pos_before.x))
+
+	# A HELD offensive spell repeats itself on the rules' own cooldowns. Double Swing is the one
+	# with a 0 s cooldown (its pace IS the weapon's), so the GCD is all that paces it — which is
+	# exactly the rule under test: hold = "cast whenever it is ready", never a faster rule.
+	var levels: Dictionary = _state.data.get("talentLevels", {})
+	levels["barbarian_doubleSwing"] = 1
+	_state.equip()["shield"] = "blade_scimitar"
+	var cast_run := _fresh(1111)
+	cast_run.monsters.clear()
+	cast_run._spawn_one()
+	var c: Dictionary = cast_run.monsters[0]
+	c["hp"] = 999999
+	c["max_hp"] = 999999
+	c["speed"] = 0.0
+	c["ranged"] = false
+	c["dmg_min"] = 0
+	c["dmg_max"] = 0
+	cast_run.held_spell = "doubleSwing"
+	var casts := 0
+	for _i in 120:
+		c["pos"] = cast_run.player_pos + Vector2(80, 0)
+		cast_run.step(STEP, Vector2.ZERO)
+		for e in cast_run.drain_events():
+			if str(e) == "cast":
+				casts += 1
+	_check(casts >= 2, "a held spell must repeat on its cooldowns, got %d casts" % casts)
+	_check(int(c["hp"]) < 999999, "a held spell must land its damage")
+	_check(not cast_run.attack_held, "the spell must not also swing the weapon")
+	levels.erase("barbarian_doubleSwing")
+	_reset_kit()
 
 
 func _test_walk_over_pays_into_the_save() -> void:
@@ -445,7 +607,7 @@ func _test_bodies_are_solid() -> void:
 ## a CENTRE-based check against a 31 px body looks like on screen.
 func _test_reach_is_the_drawn_circle() -> void:
 	_log("  section: reach_is_the_drawn_circle")
-	var inside := _fresh()
+	var inside := _fresh(12345, true)
 	inside.monsters.clear()
 	inside._spawn_one()
 	var m: Dictionary = inside.monsters[0]
@@ -459,7 +621,7 @@ func _test_reach_is_the_drawn_circle() -> void:
 	_check(int(m["hp"]) < hp_before,
 		"a body whose rim touches the drawn circle must be hit at gap %.1f" % gap)
 
-	var outside := _fresh()
+	var outside := _fresh(12345, true)
 	outside.monsters.clear()
 	outside._spawn_one()
 	var m2: Dictionary = outside.monsters[0]
@@ -486,7 +648,7 @@ func _test_weapon_pace_and_two_hands() -> void:
 	# could never land more often than the main one.
 	equip["weapon"] = "blade_shortSword"
 	equip["shield"] = "blade_scimitar"
-	var run := _fresh()
+	var run := _fresh(12345, true)
 	_check(not run.off_weapon.is_empty(), "a dual-wielding class must read the OFF hand weapon")
 	_check(run.main_swing > run.off_swing,
 		"each hand swings at its own weapon's pace: main %.3f s vs off %.3f s"
@@ -570,6 +732,7 @@ func _test_two_hander_reach() -> void:
 
 ## Puts one stationary, harmless body at `gap` and reports whether a swing landed within 4 frames.
 func _hit_once_at(run: SurvivorRun, gap: float) -> bool:
+	run.attack_held = true
 	run.monsters.clear()
 	run._spawn_one()
 	var m: Dictionary = run.monsters[0]
@@ -755,7 +918,7 @@ func _test_pack_discovery() -> void:
 ## a fight that pays no experience is the whole progression missing.
 func _test_kills_award_xp() -> void:
 	_log("  section: kills_award_xp")
-	var run := _fresh(2024)
+	var run := _fresh(2024, true)
 	var hero: Dictionary = _state.hero()
 	hero["xp"] = 0
 	hero["level"] = 2
@@ -789,7 +952,7 @@ func _test_kills_award_xp() -> void:
 ## untouched hero is never hit, and the same body IS hit the moment he walks toward it.
 func _test_facing_gate() -> void:
 	_log("  section: facing_gate")
-	var run := _fresh(31337)
+	var run := _fresh(31337, true)
 	run.monsters.clear()
 	run._spawn_one()
 	var m: Dictionary = run.monsters[0]
@@ -816,13 +979,20 @@ func _test_facing_gate() -> void:
 
 	# And the turn is the MOVEMENT's: running right then left flips the facing, and the body
 	# that was hittable is behind again.
+	#
+	# ⚠️  The attack must be RELEASED for this half. Since Jan's D2R change the assist owns the
+	# facing while a button is held, so holding it here would pin the hero to the body and the
+	# assertion would measure the assist instead of the walk.
 	var hp1 := int(m["hp"])
 	m["pos"] = run.player_pos + Vector2(70, 0)
+	run.attack_held = false
 	for _i in 30:
 		run.step(STEP, Vector2(-1, 0))
 	var facing_left: bool = run.facing.x < -0.9
 	_check(facing_left, "walking left must turn the hero left, got %s" % str(run.facing))
 	var hp2 := int(m["hp"])
+	# Attacking again, looking the other way: the body is behind him and stays untouched.
+	run.attack_held = true
 	for _i in 120:
 		m["pos"] = run.player_pos + Vector2(70, 0)
 		run.step(STEP, Vector2.ZERO)
@@ -1073,8 +1243,9 @@ func _test_cast_while_running() -> void:
 	screen.size = Vector2(390, 844)
 	screen.setup(_state, _find_item, _loot, 0)
 	# Finger 1 takes the stick and drags.
-	screen._on_press(Vector2(120, 640), 1)
-	screen._on_drag(Vector2(170, 640), 1)
+	# RIGHT of the action column: that is where the walking thumb lives now.
+	screen._on_press(Vector2(250, 640), 1)
+	screen._on_drag(Vector2(300, 640), 1)
 	_check(screen._pointer_down and screen._stick_vec.x > 0.8,
 		"the first finger must own the stick, vec=%s" % str(screen._stick_vec))
 	# Finger 2 presses a spell button — and the stick must keep running.
@@ -1118,15 +1289,45 @@ func _test_screen_spell_buttons() -> void:
 		"a spell button must not start the movement stick")
 	screen._on_release()
 
-	# The buttons must stay inside the screen and clear of the potion button.
+	# The buttons must stay inside the screen, clear of the potion button, and on the LEFT — the
+	# right thumb is the one walking (Jan, Nov 2026).
 	for b in screen._spell_buttons:
 		var c: Vector2 = b["centre"]
-		_check(c.x + SurvivorScreen.SPELL_BUTTON_RADIUS < 390.0 and c.y > 60.0,
-			"a spell button must be on screen, got %s" % str(c))
+		_check(c.x - SurvivorScreen.SPELL_BUTTON_RADIUS > 0.0 and c.x < 195.0 and c.y > 60.0,
+			"a spell button must be on screen and in the LEFT column, got %s" % str(c))
 		_check(c.distance_to(screen._potion_centre)
 			> SurvivorScreen.SPELL_BUTTON_RADIUS + SurvivorScreen.BUTTON_RADIUS + 8.0,
 			"a spell button must clear the potion button, gap %.1f"
 				% c.distance_to(screen._potion_centre))
+	_check(screen._attack_centre.x < 195.0 and screen._potion_centre.x < 195.0,
+		"the attack and the potion must sit in the LEFT column: attack %s potion %s"
+			% [str(screen._attack_centre), str(screen._potion_centre)])
+	_check(screen._attack_centre.y > screen._potion_centre.y,
+		"the attack must be the button closest to the resting thumb")
+	_check(screen._attack_centre.distance_to(screen._potion_centre)
+		> SurvivorScreen.ATTACK_RADIUS + SurvivorScreen.BUTTON_RADIUS,
+		"the attack must not overlap the potion")
+	# ⚠️  The HP and the mana bar span the FULL width at the bottom. A button placed at the raw
+	# bottom edge paints over them — measured on the first frame, where the attack disc covered the
+	# left end of the health bar and its number.
+	_check(screen._attack_centre.y + SurvivorScreen.ATTACK_RADIUS < screen.size.y - 45.0,
+		"the action column must clear the bottom bars: attack bottom %.1f, bars start %.1f"
+			% [screen._attack_centre.y + SurvivorScreen.ATTACK_RADIUS, screen.size.y - 45.0])
+
+	# HOLDING the attack is what makes the hero swing — the screen's own press path.
+	screen._on_press(screen._attack_centre, 3)
+	_check(screen._attack_held and screen.run.attack_held,
+		"pressing the attack button must hold it")
+	_check(screen._stick_index == -1, "the attack button must not plant the stick")
+	screen._on_release(3)
+	_check(not screen._attack_held and not screen.run.attack_held,
+		"lifting the attack button must let go")
+
+	# ...and a press in the ACTION BAND between two buttons must not walk the hero either.
+	screen._on_press(Vector2(screen._action_rect.position.x + 4.0,
+		screen._action_rect.position.y + 4.0), 4)
+	_check(not screen._pointer_down, "the action column must not plant the stick")
+	screen._on_release(4)
 
 	# The flurry row owns the input while it runs: a press anywhere else is swallowed, so a
 	# spell cannot be cast with the thumb that was answering the press.
@@ -1160,10 +1361,10 @@ func _test_screen_gesture_and_disc() -> void:
 	_check(hero_tex != null, "the hero's medallion must load (%s)" % screen._hero_face())
 
 	# A press in the field starts the stick THERE (the floating control), and a drag sets it.
-	screen._on_press(Vector2(140, 600))
-	_check(screen._pointer_down and screen._stick_origin == Vector2(140, 600),
+	screen._on_press(Vector2(250, 600))
+	_check(screen._pointer_down and screen._stick_origin == Vector2(250, 600),
 		"a press in the field must plant the stick at the finger")
-	screen._on_drag(Vector2(230, 600))
+	screen._on_drag(Vector2(340, 600))
 	_check(screen._stick_vec.x > 0.9 and absf(screen._stick_vec.y) < 0.01,
 		"a drag must produce a full-strength direction, got %s" % str(screen._stick_vec))
 	screen._on_release()

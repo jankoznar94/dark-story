@@ -63,11 +63,26 @@ const CONTACT_PAD := 3.0
 ## výhoda."
 ##
 ## So a swing needs TWO things: the body inside the hand's drawn reach AND in FRONT of the hero.
-## The front is the half-plane the hero faces — 90° each side of `facing`, i.e. `dot >= 0`. The
-## facing comes from MOVEMENT and is never re-aimed automatically: running is how the player
-## points the hero, and a hero who stands still keeps the direction he last walked in. That is
-## what turns "walk away from the pack" from a free swing into a choice.
+## The front is the half-plane the hero faces — 90° each side of `facing`, i.e. `dot >= 0`.
+##
+## ⚠️  Jan, Nov 2026 CHANGED WHO TURNS THE HERO: "Hrdina neútočí automaticky. Jen když hráč drží
+## tlačítko útoku … hra vybere target podle směru, kterým hráč kouká, hrdina k němu automaticky
+## směřuje pohyb a útočí." So the facing is the PLAYER's walk direction until an attack is held;
+## from then on the ASSIST owns it and points the hero at the chosen target (see `_pick_target`).
+## Walking still outranks the assist's own step — the player may always spend movement.
 const FACING_MIN_DOT := 0.0
+
+## --- the held attack and the target assist ---------------------------------
+## A swing happens ONLY while `attack_held` (or an offensive spell button held) is true. With no
+## thumb free to pick a target on a phone, the game picks it: candidates are the bodies in FRONT
+## of the hero within `TARGET_RANGE`, ranked by their distance PLUS their missing health — so a
+## nearly-dead body a little further away wins over a healthy one in the face. `TARGET_HP_WEIGHT`
+## is that trade in pixels: 160 means "a full-health body must be 160 px closer to be preferred
+## over a corpse-to-be". The switch margin stops two equal candidates from stealing the target
+## from each other every frame (which reads as the hero twitching).
+const TARGET_RANGE := 280.0
+const TARGET_HP_WEIGHT := 160.0
+const TARGET_SWITCH_MARGIN := 0.12
 
 
 ## The reach of one weapon, in world pixels. Static so the screen can ask the same question the
@@ -176,9 +191,20 @@ var rng := RandomNumberGenerator.new()
 
 var act_id := 0
 var player_pos := Vector2.ZERO
-## Where the hero is pointing. Driven by movement only (see `FACING_MIN_DOT`); RIGHT is the
-## starting direction, which is also what a still hero who never walked is facing.
+## Where the hero is pointing. The PLAYER owns it by walking, and the target assist takes it over
+## while an attack is held (see `FACING_MIN_DOT`); RIGHT is the starting direction, which is also
+## what a still hero who never walked is facing.
 var facing := Vector2.RIGHT
+## Is the attack button (or an offensive spell) held RIGHT NOW? The screen owns the gesture and
+## writes this every frame; the rules read it and nothing else. Default FALSE — a run that has
+## not been told the player is holding anything does not attack, which is Jan's new rule.
+var attack_held := false
+## The spell whose button is being HELD, or "". A held offensive spell repeats on its own
+## cooldowns (the GCD paces it) and uses the same target picker as the weapon.
+var held_spell := ""
+## The body the assist picked for the CURRENT frame, as a monster id (-1 = nothing in front).
+## Kept as an ID because an index is invalid the moment a kill removes an entry.
+var target_id := -1
 var hp := 1
 var max_hp := 1
 var defense := 0
@@ -348,6 +374,12 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	ww_feedback = ""
 	ww_landed = 0
 	facing = Vector2.RIGHT
+	# A new run starts with NOTHING held: the screen writes these from its own gesture state
+	# every frame, but a stale `true` from the previous fight would make the hero swing on his own
+	# for as long as it took the first frame to arrive.
+	attack_held = false
+	held_spell = ""
+	target_id = -1
 
 	player_pos = WORLD * 0.5
 	monsters.clear()
@@ -455,10 +487,11 @@ func step(dt: float, move: Vector2) -> void:
 		swing_age_off += dt
 
 	_prev_pos = player_pos
-	_move_hero(dt, move)
+	_update_target()
+	_move_hero(dt, move, target_id >= 0)
 	_zone_tick()
 	_move_monsters(dt)
-	_auto_attack(dt)
+	_attack_tick(dt)
 	_step_projectiles(dt)
 	_step_bolts(dt)
 	_age_effects(dt)
@@ -468,17 +501,54 @@ func step(dt: float, move: Vector2) -> void:
 	_zone_clear_tick(dt)
 
 
-func _move_hero(dt: float, move: Vector2) -> void:
+## One step of the walk. `keep_facing` is the TARGET ASSIST talking: while an attack is held the
+## hero keeps looking at the body the game picked for him, even if the player walks him sideways,
+## and with no stick input he closes the distance on his own (`_approach_step`).
+##
+## ⚠️  The player's own stick ALWAYS wins the movement. A hero the game walks for the player is a
+## hero the player cannot back out of a fight with, and "unhittable while holding attack" is worse
+## than no assist at all.
+func _move_hero(dt: float, move: Vector2, keep_facing: bool = false) -> void:
 	var dir := move.limit_length(1.0)
-	if dir.length_squared() <= 0.0001:
-		return
-	# Movement IS the aim: the hero faces where he walks, and a still hero keeps the last
-	# direction (see `FACING_MIN_DOT`). Nothing else may turn him — an auto-facing hero would
-	# hit in every direction while standing still, which is the advantage being removed.
-	facing = dir.normalized()
+	var walking := dir.length_squared() > 0.0001
+	if not keep_facing and walking:
+		# Movement IS the aim while nothing is held: the hero faces where he walks, and a still
+		# hero keeps the last direction (see `FACING_MIN_DOT`).
+		facing = dir.normalized()
+	if not walking:
+		if not keep_facing:
+			return
+		dir = _approach_step()
+		if dir == Vector2.ZERO:
+			return
 	player_pos += dir * hero_speed() * dt
 	player_pos.x = clampf(player_pos.x, AREA_MARGIN + HERO_RADIUS, WORLD.x - AREA_MARGIN - HERO_RADIUS)
 	player_pos.y = clampf(player_pos.y, AREA_MARGIN + HERO_RADIUS, WORLD.y - AREA_MARGIN - HERO_RADIUS)
+
+
+## Where the ASSIST would walk the hero this frame, or ZERO if he is already close enough. The
+## stop is measured to BODIES like every reach in this fight (`reach + the target's radius`), so
+## the hero halts exactly where a swing can land instead of walking into the portrait.
+func _approach_step() -> Vector2:
+	var idx := target_index()
+	if idx < 0:
+		return Vector2.ZERO
+	var want := _approach_distance()
+	if want <= 0.0:
+		return Vector2.ZERO
+	var off: Vector2 = (monsters[idx]["pos"] as Vector2) - player_pos
+	if off.length() <= want or off.length() < 0.001:
+		return Vector2.ZERO
+	return off.normalized()
+
+
+## How close the current ACTION needs the body: the weapon's arm for a swing or a melee spell, and
+## nothing at all for an aimed spell — a bolt that reaches further than the picker's own range has
+## no reason to walk the player into the pack.
+func _approach_distance() -> float:
+	if held_spell != "" and not RunSpells.needs_melee_reach(held_spell):
+		return 0.0
+	return reach_main + MON_RADIUS
 
 
 # ============================================================================ area
@@ -904,30 +974,106 @@ func _take_damage(raw: int) -> void:
 
 # ============================================================================ attack
 
-## The auto-attack picks, PER HAND, the NEAREST monster whose BODY reaches inside that hand's
-## drawn reach and nothing else. No cone, no aiming, no target assist: in a survivor fight the
-## player steers the hero, and each hand spends what its own timer gives it.
+## Pick the body the assist fights, and turn the hero to it. Called once per step, BEFORE the walk,
+## so the turn and the closing step are the same frame's decision.
+##
+## ⚠️  This REPLACED the old per-hand "nearest body in reach" auto-attack. Jan, Nov 2026: the hero
+## no longer attacks on his own at all — Diablo 2 Resurrected with a gamepad. Nothing held → no
+## target, no swing, and the facing stays the player's.
+func _update_target() -> void:
+	var wants := attack_held or (held_spell != "" and RunSpells.is_offensive(held_spell))
+	if not wants or ww_active:
+		target_id = -1
+		return
+	var idx := _pick_target()
+	if idx < 0:
+		target_id = -1
+		return
+	target_id = int(monsters[idx]["id"])
+	var off: Vector2 = (monsters[idx]["pos"] as Vector2) - player_pos
+	if off.length() > 0.001:
+		facing = off.normalized()
+
+
+## The assist's choice. The phone has one thumb on the stick and one on the attack, so there is no
+## second cursor: the game ranks what the player is LOOKING at.
+##
+##   * only bodies in FRONT (`dot(facing) >= FACING_MIN_DOT`), within `TARGET_RANGE`;
+##   * score = distance + missing-health-weighted penalty, so the kill is finished first;
+##   * a candidate must beat the one already chosen by `TARGET_SWITCH_MARGIN` to steal it —
+##     without that, two similar bodies trade the target every frame and the hero twitches.
+func _pick_target() -> int:
+	if monsters.is_empty():
+		return -1
+	var best := -1
+	var best_score := INF
+	var cur := -1
+	var cur_score := INF
+	for i in monsters.size():
+		var off: Vector2 = (monsters[i]["pos"] as Vector2) - player_pos
+		if off.dot(facing) < FACING_MIN_DOT:
+			continue
+		var d := off.length()
+		if d > TARGET_RANGE + MON_RADIUS:
+			continue
+		var frac := clampf(float(monsters[i]["hp"]) / maxf(1.0, float(monsters[i]["max_hp"])),
+			0.0, 1.0)
+		var score := d + frac * TARGET_HP_WEIGHT
+		if int(monsters[i]["id"]) == target_id:
+			cur = i
+			cur_score = score
+		if score < best_score:
+			best_score = score
+			best = i
+	if best < 0:
+		return -1
+	if cur >= 0 and cur != best and best_score > cur_score * (1.0 - TARGET_SWITCH_MARGIN):
+		return cur
+	return best
+
+
+## The chosen body's index in `monsters`, or -1 when it died / was never picked. The screen reads
+## this to mark the target, so it must be cheap and safe to call anywhere.
+func target_index() -> int:
+	if target_id < 0:
+		return -1
+	return _index_of_monster(target_id)
+
+
+## One clock per hand, and a blow ONLY while the attack is held — Jan's new rule (Diablo 2
+## Resurrected with a gamepad): "hrdina neútočí automaticky". The clocks always run down, so a
+## hero who lets go keeps his swing's progress.
 ##
 ## Everything a swing lands on is a real roll from the weapon that hand holds through
 ## `Progression`, so the loot loop stays honest and a fast 1H is not the same weapon as a slow
 ## 2H. The two hands are INDEPENDENT: a 700 ms scimitar in the off hand swings on its own clock
 ## while a 1580 ms axe keeps its own pace in the main hand.
-func _auto_attack(dt: float) -> void:
+func _attack_tick(dt: float) -> void:
 	_main_clock = maxf(0.0, _main_clock - dt)
 	if off_swing > 0.0:
 		_off_clock = maxf(0.0, _off_clock - dt)
-	if monsters.is_empty():
+	# A HELD spell button repeats itself: the GCD and the spell's cooldown are the pacing, so
+	# holding Thunder Clap is "cast it whenever it is ready", not a second, faster rule.
+	if held_spell != "":
+		_repeat_held_spell()
+	if not attack_held:
 		return
-	if _main_clock <= 0.0:
-		var idx := _nearest_in_reach(reach_main, -1)
-		if idx >= 0:
-			_main_clock = _main_interval()
-			var hit_id := int(monsters[idx]["id"])
-			_swing_hand(idx, false)
-			# The off hand AIMS SOMEWHERE ELSE when there is something else: two arcs on one
-			# portrait read as one weapon swinging twice, which is the exact thing the second
-			# weapon must not look like.
-			_off_prefer_id = hit_id
+	# A spell on hold owns the attack button: swings would be a second action under one thumb.
+	if ww_active or held_spell != "" or monsters.is_empty():
+		return
+	var idx := target_index()
+	if idx < 0:
+		return
+	if _main_clock <= 0.0 and _in_reach(idx, reach_main):
+		_main_clock = _main_interval()
+		# ⚠️  Read the ID BEFORE the blow: this swing can KILL, and `_kill` removes the entry —
+		# `monsters[idx]` after it is either the next body or an index error.
+		var hit_id := int(monsters[idx]["id"])
+		_swing_hand(idx, false)
+		# The off hand AIMS SOMEWHERE ELSE when there is something else: two arcs on one
+		# portrait read as one weapon swinging twice, which is the exact thing the second
+		# weapon must not look like.
+		_off_prefer_id = hit_id
 	if off_swing > 0.0 and _off_clock <= 0.0:
 		var idx_off := _nearest_in_reach(reach_off, _off_prefer_id)
 		if idx_off < 0:
@@ -935,6 +1081,24 @@ func _auto_attack(dt: float) -> void:
 		if idx_off >= 0:
 			_off_clock = _off_interval()
 			_swing_hand(idx_off, true)
+
+
+## Cast the held spell again if it is ready. A refusal is NOT reported here: the button is held,
+## so "Globalni cooldown" every half second would be a wall of text instead of a cast.
+func _repeat_held_spell() -> void:
+	if not RunSpells.is_offensive(held_spell):
+		return
+	if not RunSpells.can_cast(self, held_spell):
+		return
+	cast_spell(held_spell)
+
+
+## Is a body's own rim inside a hand's drawn circle? Bodies, not centres — the same semantics the
+## drawn reach ring promises (`HIT_REACH`).
+func _in_reach(index: int, reach: float) -> bool:
+	if index < 0 or index >= monsters.size():
+		return false
+	return (monsters[index]["pos"] as Vector2).distance_to(player_pos) <= reach + MON_RADIUS
 
 
 ## Seconds per swing of each hand RIGHT NOW. Frenzy is the only thing that changes it: each stack

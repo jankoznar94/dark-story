@@ -128,13 +128,20 @@ func _process(_delta: float) -> bool:
 
 	if _screen == null:
 		return false
+	# ⚠️  The stick is planted RIGHT of the action column: the left band belongs to the attack, the
+	# potion and the spells (Jan, Nov 2026), and a press there plants nothing at all any more.
 	if _frames == 4 and _walk:
-		_screen._on_press(Vector2(110, 660))
-		_screen._on_drag(Vector2(150, 610))
+		_screen._on_press(Vector2(250, 660))
+		_screen._on_drag(Vector2(290, 610))
+	# THE ATTACK IS HELD, or the hero never swings and `--wait_swing` waits forever: since Jan's
+	# D2R rule a released button means a hero who stands and looks. Held through the capture, so
+	# the button's PRESSED state is in the frame too.
+	if _frames == 6:
+		_screen._on_press(_screen._attack_centre, 7)
 	if _frames == 4 + _walk_frames and _walk and _stick == "0":
 		_screen._on_release()
 	if _frames == _frames_to_run - 3 and _walk and _stick == "1":
-		_screen._on_drag(Vector2(150, 614))
+		_screen._on_drag(Vector2(290, 614))
 	# A flurry has to be OPEN at capture time: its row only exists while the flurry runs, and the
 	# run's own clock burns the deadline in 1.5 s, so it is opened a handful of frames before.
 	if _cast_id != "" and _frames == _frames_to_run - _cast_at and _screen.run != null:

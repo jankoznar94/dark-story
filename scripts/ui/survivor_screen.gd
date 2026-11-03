@@ -8,8 +8,11 @@ class_name SurvivorScreen
 ## (world pixels, camera subtracted), which is what stops the "the figure is 12px off its
 ## own shadow" class of bug that a tree of Container nodes invites.
 ##
-## Controls, per Jan's decision: the MOVEMENT is a FLOATING stick — it appears wherever the
-## thumb lands — and the buttons are FIXED in the bottom-right. The attack is automatic.
+## Controls, per Jan's decisions: the MOVEMENT is a FLOATING stick on the RIGHT — it appears
+## wherever the thumb lands — and the buttons are FIXED in the bottom-LEFT, so the hand that walks
+## is the other one. The ATTACK is HELD, never automatic: while the button (or an offensive spell)
+## is down, the RULES pick a target in the direction the hero looks and walk him into it (see
+## `survivor_run._pick_target`).
 ##
 ## ⚠️  One finger arrives TWICE on this engine (`Input` synthesises a mouse event from every
 ## touch), so the press/release pair goes through `_pointer_down`: the first event of the
@@ -32,7 +35,11 @@ const TOP_BAR := 54.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
 const BUTTON_RADIUS := 38.0
-## Spell buttons: smaller than the potion, two columns, bottom-right. 25 px is the smallest
+## The ATTACK button is the biggest control on the screen: it is HELD for the whole fight (Jan's
+## D2R rule), so it has to be reachable without looking and big enough that a thumb resting on it
+## cannot slip off mid-swing.
+const ATTACK_RADIUS := 44.0
+## Spell buttons: smaller than the potion, two columns, bottom-LEFT. 25 px is the smallest
 ## circle on which a 256 px icon still reads as a symbol on a phone.
 const SPELL_BUTTON_RADIUS := 25.0
 const SPELL_GAP := 8.0
@@ -81,13 +88,25 @@ var _stick_origin := Vector2.ZERO
 var _stick_vec := Vector2.ZERO
 var _pointer_kind := ""
 
-## Buttons, fixed in the bottom-right. Rebuilt on resize.
+## Buttons, fixed in the bottom-LEFT. Rebuilt on resize.
 var _exit_rect := Rect2()
+## The attack button: HELD, and the only way the hero ever swings (Jan's D2R rule).
+var _attack_centre := Vector2.ZERO
+var _attack_held := false
+## Which finger owns the attack. A separate index from the stick's, because the two thumbs are
+## down at the same time for the whole fight.
+var _attack_index := -1
+## The band the action buttons own: a press inside it never plants the movement stick.
+var _action_rect := Rect2()
 var _potion_centre := Vector2.ZERO
 ## The class-spell column, built from `run.spell_bar()` on every layout: `[{id, centre}]`.
 ## The column grows UPWARDS from just above the potion button, two per row, so adding a spell to
 ## a class never reflows the fight or moves a button the thumb already knows.
 var _spell_buttons: Array = []
+## The spell whose button is being HELD, and its finger. A held offensive spell repeats itself on
+## the rules' own cooldowns — the same "hold means keep doing it" the attack button has.
+var _held_spell := ""
+var _spell_index := -1
 ## The Whirlwind reaction row (four PS symbols). Only live during a flurry.
 var _ww_buttons: Array = []
 var _spell_tex_cache: Dictionary = {}
@@ -115,6 +134,13 @@ func stop() -> void:
 	_pointer_down = false
 	_stick_index = -1
 	_stick_vec = Vector2.ZERO
+	_attack_index = -1
+	_attack_held = false
+	_spell_index = -1
+	_held_spell = ""
+	if run != null:
+		run.attack_held = false
+		run.held_spell = ""
 	_accum = 0.0
 
 
@@ -131,6 +157,11 @@ func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
 	_flash = 0.0
 	_stick_vec = Vector2.ZERO
 	_pointer_down = false
+	_stick_index = -1
+	_attack_index = -1
+	_attack_held = false
+	_spell_index = -1
+	_held_spell = ""
 	_build_decoration()
 	_place_camera()
 	_layout_buttons()
@@ -264,8 +295,21 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 		return
 	# A BUTTON is never the stick — whatever finger presses it. Checked before the stick so the
 	# second thumb cannot make the hero run at his own cast.
+	if _attack_centre.distance_to(pos) <= ATTACK_RADIUS + 6.0:
+		if not _attack_held:
+			_attack_index = index
+			_attack_held = true
+			if run != null:
+				run.attack_held = true
+		return
 	for b in _spell_buttons:
 		if (b["centre"] as Vector2).distance_to(pos) <= SPELL_BUTTON_RADIUS + 6.0:
+			# A tap casts once; holding keeps casting on the rules' own cooldowns.
+			if _spell_index < 0:
+				_spell_index = index
+				_held_spell = str(b["id"])
+				if run != null:
+					run.held_spell = _held_spell
 			_cast_spell(str(b["id"]))
 			return
 	if _potion_centre.distance_to(pos) <= BUTTON_RADIUS + 6.0:
@@ -275,6 +319,10 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 		leave_requested.emit()
 		return
 	if pos.y < TOP_BAR:
+		return
+	# The action band belongs to the LEFT thumb. A press between two buttons must not plant the
+	# stick: the hero would walk every time the player reached for the attack.
+	if _action_rect.has_point(pos):
 		return
 	if _stick_index >= 0:
 		# The stick already has an owner; this finger is not allowed to steal it mid-run.
@@ -298,6 +346,18 @@ func _on_drag(pos: Vector2, index: int = 0) -> void:
 
 
 func _on_release(index: int = 0) -> void:
+	# The attack and a held spell release on their OWN finger, before the stick is looked at: a
+	# player lifting the attack thumb must not be asked about the stick, and vice versa.
+	if index == _attack_index:
+		_attack_index = -1
+		_attack_held = false
+		if run != null:
+			run.attack_held = false
+	if index == _spell_index:
+		_spell_index = -1
+		_held_spell = ""
+		if run != null:
+			run.held_spell = ""
 	# Only the finger that OWNS the stick may stop it; lifting the spell thumb must not.
 	if index != _stick_index:
 		return
@@ -346,6 +406,11 @@ func _say(text: String) -> void:
 func _process(delta: float) -> void:
 	if run == null:
 		return
+	# The gesture state IS the rule's input. Written every frame, because a release can be lost
+	# (the phone hands us no event at all when the app is backgrounded mid-hold) and a stale
+	# `true` would leave the hero swinging on his own.
+	run.attack_held = _attack_held
+	run.held_spell = _held_spell
 	_accum += minf(delta, 0.25)
 	var steps := 0
 	while _accum >= STEP and steps < MAX_STEPS_PER_FRAME:
@@ -450,12 +515,22 @@ func _notification(what: int) -> void:
 			set_process(true)
 
 
+## The action column lives on the LEFT (Jan, Nov 2026: "Kouzla a lektvary v Nájezdu přesuneme
+## doleva, aby hráč mohl pravou rukou chodit"). Bottom-up: the ATTACK sits in the corner, the
+## potion above it and the spells above that, so the control a thumb holds for the whole fight is
+## the one closest to the resting thumb and nothing learned ever moves.
 func _layout_buttons() -> void:
 	var bottom := size.y - 42.0
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
-	_potion_centre = Vector2(size.x - 58.0, bottom - 34.0)
+	# ⚠️  The column stops ABOVE the HP/mana bars. They span the full width at the bottom of the
+	# screen (`_draw_hud`), so a button placed at the raw bottom edge paints over them: measured on
+	# the first frame, the attack disc covered the left end of the health bar and its number.
+	# 110 px of clearance = the two bars (8+3+14) + the 26 px margin + a thumb's worth of gap.
+	_attack_centre = Vector2(58.0, size.y - 110.0)
+	_potion_centre = Vector2(58.0, _attack_centre.y - ATTACK_RADIUS - 18.0 - BUTTON_RADIUS)
 	_layout_spells()
 	_layout_whirlwind()
+	_layout_action_rect()
 
 
 ## The spell column: two per row, first row just above the potion button, the column growing
@@ -472,9 +547,21 @@ func _layout_spells() -> void:
 		var row := i / 2
 		var col := i % 2
 		var centre := Vector2(
-			size.x - 58.0 - float(col) * (SPELL_BUTTON_RADIUS * 2.0 + SPELL_GAP + 8.0),
+			58.0 + float(col) * step,
 			start_y - float(row) * step)
 		_spell_buttons.append({"id": str((bar[i] as Dictionary)["id"]), "centre": centre})
+
+
+## The band the action buttons own, derived from the buttons themselves: the highest button's top
+## minus a thumb's padding, across the left column. A press here never plants the stick — without
+## it, reaching for the attack between two spells walked the hero sideways.
+func _layout_action_rect() -> void:
+	var top := _attack_centre.y - ATTACK_RADIUS
+	top = minf(top, _potion_centre.y - BUTTON_RADIUS)
+	for b in _spell_buttons:
+		top = minf(top, (b["centre"] as Vector2).y - SPELL_BUTTON_RADIUS)
+	top -= 18.0
+	_action_rect = Rect2(0.0, top, 170.0, maxf(0.0, size.y - top))
 
 
 ## The flurry's four symbols, in one row across the upper middle of the screen. Above the hero on
@@ -647,6 +734,17 @@ func _draw_monster(m: Dictionary) -> void:
 	if float(m["hit_flash"]) > 0.0:
 		ring = Color("#f0d8a0")
 	draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5, 0.0, TAU, 28, ring, 2.0, true)
+	# WHICH BODY THE ASSIST PICKED. Without this the player cannot tell what he is hitting: the
+	# game chooses the target, so it has to show its choice. A blue ring outside the bronze one
+	# plus a small chevron over the portrait — the hero's own colour, so nobody reads it as a buff.
+	if int(m["id"]) == int(run.target_id):
+		var mark := Color(UIKit.MOD_BLUE)
+		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5 + 7.0, 0.0, TAU, 30,
+			Color(mark.r, mark.g, mark.b, 0.85), 2.0, true)
+		var ty := pos.y - DISC_DIA * 0.5 - 8.0 + bob * 0.5
+		draw_polyline(PackedVector2Array([
+			Vector2(pos.x - 7.0, ty - 7.0), Vector2(pos.x, ty), Vector2(pos.x + 7.0, ty - 7.0),
+		]), mark, 2.5, true)
 	# HP: a thin bar under the disc, only while it is hurt (a full bar is noise).
 	var frac := clampf(float(m["hp"]) / maxf(1.0, float(m["max_hp"])), 0.0, 1.0)
 	if frac < 0.999:
@@ -933,10 +1031,8 @@ func _draw_hud() -> void:
 	draw_string(font_r, Vector2(8, mana_y - 2.0), "%d / %d" % [int(run.mana), run.max_mana],
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 9, C_DIM)
 
-	# Fixed potion button
-	draw_circle(_potion_centre, BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.85))
-	draw_arc(_potion_centre, BUTTON_RADIUS, 0.0, TAU, 32, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.75), 2.0, true)
-	draw_string(font, _potion_centre + Vector2(0, 6), "L", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 18, C_GOLD)
+	# Fixed action column (attack, potion, and the spells drawn on top of it)
+	_draw_actions()
 
 	# Floating stick
 	if _pointer_down and _stick_vec != Vector2.ZERO:
@@ -957,6 +1053,36 @@ func _draw_hud() -> void:
 		run.items_taken, _plural(run.items_taken, "predmet", "predmety", "predmetu")]
 	draw_string(font_r, Vector2(8, size.y - 6), _with_diacritics(tally),
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+
+
+## The left action column. The ATTACK is the biggest circle on the screen and it is the only way
+## the hero ever swings, so it must never be a guess: a filled disc, a blade glyph, and a PRESSED
+## state (a warmer fill and a thicker rim) — state only on a click, never on hover (Jan's rule).
+func _draw_actions() -> void:
+	var font := UIFonts.bold()
+	var edge := Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.95 if _attack_held else 0.70)
+	draw_circle(_attack_centre, ATTACK_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.92))
+	if _attack_held:
+		draw_circle(_attack_centre, ATTACK_RADIUS - 4.0,
+			Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.20))
+	draw_arc(_attack_centre, ATTACK_RADIUS, 0.0, TAU, 40, edge,
+		3.0 if _attack_held else 2.0, true)
+	# A blade, drawn flat: no icon file, no emoji. Tip, edge, cross-guard and grip.
+	var c := _attack_centre
+	var blade := PackedVector2Array([
+		c + Vector2(0, -27), c + Vector2(5.5, -16), c + Vector2(5.5, 8),
+		c + Vector2(-5.5, 8), c + Vector2(-5.5, -16),
+	])
+	draw_colored_polygon(blade, C_TEXT if _attack_held else Color(0xd8 / 255.0, 0xce / 255.0, 0xb4 / 255.0))
+	draw_line(c + Vector2(-15, 10), c + Vector2(15, 10), C_GOLD, 4.0, true)
+	draw_line(c + Vector2(0, 10), c + Vector2(0, 25), C_GOLD, 4.0, true)
+
+	# The potion, above it: the same "L" tile the fight has always had.
+	draw_circle(_potion_centre, BUTTON_RADIUS, Color(0x1e / 255.0, 0x1b / 255.0, 0x17 / 255.0, 0.85))
+	draw_arc(_potion_centre, BUTTON_RADIUS, 0.0, TAU, 32,
+		Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.75), 2.0, true)
+	draw_string(font, _potion_centre + Vector2(0, 6), "L",
+		HORIZONTAL_ALIGNMENT_CENTER, -1.0, 18, C_GOLD)
 
 
 ## Czech counts must not read "2 předmětu". One helper, used by every count on this screen.

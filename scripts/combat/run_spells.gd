@@ -37,6 +37,33 @@ const FRENZY_MS := 10000
 ## How long the player has to press each PS button of a Whirlwind strike.
 const WHIRLWIND_REACTION_MS := 1500
 
+## Jan, Nov 2026: holding a button means "keep doing it". A held OFFENSIVE spell repeats itself on
+## the run's own cooldowns, and it picks its target with the same assist the weapon uses — so the
+## list is exactly the spells that aim at a body. Heroic Strike and Frenzy are queued on a swing
+## and both Shouts are self-buffs: holding one of those would spend mana every GCD for nothing, so
+## they stay tap-only and are deliberately NOT here.
+const HELD_OFFENSIVE := [
+	"doubleSwing", "thunderClap", "thunderBolt", "shieldSlam", "pummel", "spellReflect",
+	"whirlwind",
+]
+## The offensive spells that hurt a BODY THE HERO IS TOUCHING. The target assist walks him into
+## that reach for these and stands still for the aimed ones (a bolt outranges its own picker).
+const MELEE_SPELLS := ["doubleSwing", "thunderClap", "shieldSlam", "pummel", "whirlwind"]
+
+
+static func is_offensive(spell_id: String) -> bool:
+	return spell_id in HELD_OFFENSIVE
+
+
+## Does the assist have to close to the weapon's arm for this one? An empty id means the WEAPON,
+## which always does.
+static func needs_melee_reach(spell_id: String) -> bool:
+	if spell_id == "":
+		return true
+	if not is_offensive(spell_id):
+		return true
+	return spell_id in MELEE_SPELLS
+
 
 static func class_id(run) -> String:
 	if run == null or run._state == null:
