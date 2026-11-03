@@ -363,6 +363,8 @@ const PORTRAIT_SIZE := Vector2(390.0, 844.0)
 ## purpose: the survivor run is the only screen whose layout is about floor space.
 const LANDSCAPE_SCREENS := ["survivor"]
 var _portrait_root: Control
+## The canvas rect the stage was last fitted to, so `_process` can re-fit the moment it changes.
+var _stage_canvas := Vector2.ZERO
 
 
 func _make_portrait_stage() -> void:
@@ -383,16 +385,18 @@ func _make_portrait_stage() -> void:
 func _layout_portrait_stage() -> void:
 	if _portrait_root == null:
 		return
-	# ⚠️  THE WINDOW, not `get_viewport_rect()`. In a headless run the viewport rect reports the
-	# canvas as 844x844 (the window height is not applied), which scaled the stage by 1.0 and let
-	# it hang 454 px off the bottom of the screen — measured: every menu screen was shown CROPPED
-	# at 1:1 instead of fitted at 0.46. `get_window().size` is the real canvas in both modes.
-	var canvas := Vector2(get_window().size)
-	if canvas.x <= 0.0 or canvas.y <= 0.0:
-		canvas = get_viewport_rect().size
-	if canvas.x <= 0.0 or canvas.y <= 0.0:
+	# ⚠️  THE VIEWPORT'S CONTENT RECT, NEVER `get_window().size()` (the bug Jan hit on the phone:
+	# "obrazovky se vůbec nezobrazují"). On a device the window size is in DEVICE PIXELS — 2400x1080
+	# against a 844x390 content rect — so the centring offset was computed in the wrong space and
+	# put the whole portrait column OFF THE RIGHT EDGE of the canvas. `get_viewport_rect()` is the
+	# space the Controls actually live in, on desktop and on the web build alike.
+	var canvas := get_viewport_rect().size
+	if canvas.x < 100.0 or canvas.y < 100.0:
+		# Before the first layout pass there is nothing to fit; keeping the previous transform is
+		# better than shrinking the game to nothing.
 		return
 	var k := minf(canvas.x / PORTRAIT_SIZE.x, canvas.y / PORTRAIT_SIZE.y)
+	_stage_canvas = canvas
 	_portrait_root.scale = Vector2(k, k)
 	_portrait_root.position = Vector2((canvas.x - PORTRAIT_SIZE.x * k) * 0.5, 0.0)
 
@@ -818,6 +822,12 @@ func _set_status(text: String) -> void:
 
 
 func _process(_delta: float) -> void:
+	# The portrait stage re-fits itself whenever the canvas changes size. On the web build the
+	# canvas settles a frame or two AFTER `_ready`, and a stage fitted to the boot rect is a game
+	# whose whole menu column opens off screen — the exact report this line prevents. Comparing two
+	# numbers per frame is cheaper than any resize signal that might not fire.
+	if _portrait_root != null and get_viewport_rect().size != _stage_canvas:
+		_layout_portrait_stage()
 	if _status_ticks > 0:
 		_status_ticks -= 1
 		if _status_ticks == 0:
