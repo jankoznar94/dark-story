@@ -144,11 +144,13 @@ func _swing_order(b: Battle) -> Array:
 	return order
 
 
-# --- 1. the pair beats at the AVERAGE of the two hands ---------------------------
+# --- 1. the pair beats at the HARMONIC mean of the two hands ---------------------
 
-## D2's rule: the hands do not each keep their own pace, the PAIR beats at the average of their
-## intervals. A 1000 ms axe and a 400 ms blade therefore meet at ~700 ms; the off hand's own
-## number is still carried, as INFORMATION for the HUD, not as a clock.
+## The hands do not each keep their own pace, the PAIR beats at 1/T = 1/T_main + 1/T_off — both
+## rates SUMMED. Jan's second report: "každá čeká na svůj plný swing … i když jsou to jednoruční
+## zbraně, tak se chovají jako velmi pomalé zbraně." An AVERAGE halves each hand's rate; the
+## harmonic mean keeps it, so two identical blades really do swing at their own speed.
+## The off hand's own number is still carried, as INFORMATION for the HUD, not as a clock.
 func _test_the_pair_swings_at_the_average() -> void:
 	var s = _hero()
 	var b := _rig(s)
@@ -164,22 +166,22 @@ func _test_the_pair_swings_at_the_average() -> void:
 	var want_main := Progression.swing_time(b.rng, main_item, dex_total, glove_ias,
 		s.data.get("_speedBoostPct", 0.0))
 	var want_off := Progression.swing_time(b.rng, off_item, dex_total, glove_ias, 0.0)
-	var want_pair := int(round((float(want_main) + float(want_off)) / 2.0))
-	print("  intervals: main %d ms (%s), off %d ms (%s) -> pair %d ms"
+	var want_pair := maxi(150, int(round(1.0 / (1.0 / float(want_main) + 1.0 / float(want_off)))))
+	print("  intervals: main %d ms (%s), off %d ms (%s) -> pair %d ms (rates summed)"
 		% [want_main, MAIN_WEAPON, want_off, OFF_WEAPON, want_pair])
 
 	if not b.dual_swing:
 		_fail("a second weapon in the off hand must arm the alternation (dual_swing is false)")
 		return
 	if b.player_swing_ms != want_pair:
-		_fail("the pair must beat at the average: want %d ms, got %d ms"
+		_fail("the pair must beat at the harmonic mean of the two hands: want %d ms, got %d ms"
 			% [want_pair, b.player_swing_ms])
 	if b.offhand_swing_ms != want_off:
 		_fail("the off hand's own interval must still be carried: want %d ms, got %d ms"
 			% [want_off, b.offhand_swing_ms])
-	if b.player_swing_ms <= want_off or b.player_swing_ms >= want_main:
-		_fail("the averaged interval must sit strictly between the hands: %d (off %d, main %d)"
-			% [b.player_swing_ms, want_off, want_main])
+	if b.player_swing_ms >= want_off:
+		_fail("the pair must be FASTER than its fastest weapon, not slower: %d ms vs %d ms off hand"
+			% [b.player_swing_ms, want_off])
 
 
 # --- 2. the hands strictly ALTERNATE ---------------------------------------------

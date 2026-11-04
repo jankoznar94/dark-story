@@ -125,22 +125,26 @@ var ended := false
 var won := false
 var pending_kill := false
 
-## The two hands share ONE clock and STRICTLY ALTERNATE, which is Diablo 2's dual wield
-## (a barbarian's two weapons strike one after the other, and the speed of the pair is the
-## AVERAGE of the two weapons, not each one's own).
+## The two hands share ONE clock and STRICTLY ALTERNATE — but the beat is the HARMONIC mean of
+## the two intervals, i.e. the pair swings at the SUM of the two hands' rates.
 ##
-## ⚠️  This is the third shape the pair has had, so the history matters:
+## ⚠️  Four shapes, and the last two corrections are Jan's own words:
 ##   1. the PWA ran one clock at the MAIN hand's pace and alternated (`_dualWieldTurn`);
-##   2. this port then gave each hand its OWN timer, so a fast dagger in the off hand swung
-##      at its own pace — correct in numbers, but the two arcs on screen drifted apart and
-##      the hero visibly struck with both weapons at once, which reads as one weapon hitting
-##      twice ("obě zbraně sekají ve stejnou dobu", Jan);
-##   3. now: one clock at the AVERAGE of the two intervals, one hand per beat. Jan's rule is
-##      the alternation, and it is exactly what D2 does — the engine replaces one hand's speed
-##      modifier with the average of both (`d2r.org/mechanics/attack-speed`).
-## The off-hand damage penalty stays a PER-HIT multiplier (`Talents.offHandMult`), so the
-## second weapon is still worth holding: it lands every other blow at its own weapon's damage.
-var player_swing_ms := 2000      # the shared interval (for a dual wield: the average)
+##   2. this port gave each hand its OWN timer — correct in numbers, wrong on screen: the arcs
+##      drifted apart and the hero struck with both weapons at once ("obě zbraně sekají ve
+##      stejnou dobu");
+##   3. then one clock at the AVERAGE — alternation fixed, but "každá čeká na svůj plný swing.
+##      To znamená, že i když jsou to jednoruční zbraně, tak se chovají jako velmi pomalé
+##      zbraně": an average HALVES each hand's rate, so two 330 ms daggers swung like 660 ms
+##      axes;
+##   4. now the beat keeps BOTH rates: 1/T = 1/T_main + 1/T_off, so two identical weapons give
+##      each hand exactly its own speed, and a fast + slow pair gives the sum of the two.
+## `PAIR_FLOOR_MS` is the sanity floor — the fastest possible IAS + dual-wield build must not
+## turn the animation into a blur.
+##
+## The off-hand damage penalty stays a PER-HIT multiplier (`Talents.offHandMult`), so the second
+## weapon is still worth holding.
+var player_swing_ms := 2000      # the shared interval (for a dual wield: both rates summed)
 var player_swing_elapsed := 0.0  # how far the hero is into the next swing
 ## The off hand's OWN interval, as information (the HUD prints it). `0` means there is no
 ## second weapon and every beat is a main-hand blow. It is NOT a clock any more.
@@ -152,6 +156,9 @@ var offhand_swing_elapsed := 0.0
 var dual_swing := false
 ## Which hand takes the NEXT beat. False = main hand (the hero opens with it).
 var next_hand_off := false
+## The shortest beat the pair may take, in ms. Below this the alternating arcs stop reading as
+## two weapons and start reading as a flicker.
+const PAIR_FLOOR_MS := 150
 var enemy_swing_ms := 2000
 var enemy_swing_elapsed := 0.0
 
@@ -441,14 +448,11 @@ func _reset_clocks() -> void:
 
 ## The player's swing interval for this fight, from the equipped weapon(s).
 ##
-## ⚠️  ONE clock, the AVERAGE of the two hands (D2's rule for a dual wielder). The port spent
-## a whole branch on the opposite — two independent timers, each hand at its own weapon's
-## pace — and it is wrong for the FEEL: the hero then struck with both weapons at the same
-## instant and the two arcs drifted apart. Jan: "Hráč má dvě zbraně, ale obě sekají ve
-## stejnou dobu. Daleko uspokojivější je, když se zbraně plynule střídají."
-##
-## The second weapon is not wasted by the averaging: it lands every other blow with its OWN
-## damage roll and the off-hand multiplier that One-Hand Specialization raises.
+## ⚠️  ONE clock, and the pair's interval is the HARMONIC mean of the two hands — see the field
+## block above for why the average was wrong ("každá čeká na svůj plný swing … chovají se jako
+## velmi pomalé zbraně"). The second weapon is what keeps its own speed: two identical blades
+## swing at their own rate, and a slow axe beside a fast dagger gives the sum of both rates,
+## split evenly between the hands because they alternate.
 ##
 ## Also stores the main-hand weapon TYPE, because the duel arena's reach and closing
 ## speed are keyed off it (`getWeaponReach()` reads the equipped weapon live in the PWA,
@@ -468,14 +472,16 @@ func apply_swing_timers(state, find_item: Callable) -> void:
 	offhand_swing_ms = 0
 	dual_swing = false
 	next_hand_off = false
-	# A second weapon in the off hand: the pair swings at the AVERAGE of the two intervals.
+	# A second weapon in the off hand: the pair swings at the SUM of the two hands' rates.
 	if bool(cls.get("dualWield", false)):
 		var off_item: Dictionary = find_item.call(state.equip().get("shield"))
 		if not off_item.is_empty() and off_item.has("weaponType"):
 			var off_ms := Progression.swing_time(rng, off_item, dex_total, glove_ias, 0.0)
 			offhand_swing_ms = off_ms
 			dual_swing = true
-			player_swing_ms = int(round((float(main_ms) + float(off_ms)) / 2.0))
+			# 1/T = 1/T_main + 1/T_off: the pair keeps BOTH hands' rates instead of halving each.
+			player_swing_ms = maxi(PAIR_FLOOR_MS,
+				int(round(1.0 / (1.0 / float(main_ms) + 1.0 / float(off_ms)))))
 	# The fight begins with the hero's first beat already wound up.
 	player_swing_elapsed = 0.0
 	offhand_swing_elapsed = 0.0

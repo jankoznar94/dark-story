@@ -688,12 +688,13 @@ func _test_weapon_pace_and_two_hands() -> void:
 		+ int(Progression._equip_attr(equip, _find_item, "dex"))
 	_check(run.off_swing < float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0)) / 1000.0,
 		"the faster weapon must still be read as the faster one: off %.3f s" % run.off_swing)
-	# The PAIR's beat is the AVERAGE of the two hands' own intervals (D2's dual-wield rule), so
-	# `main_swing` is no longer the main weapon's own number.
-	var want := (float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0))
-		+ float(Progression.swing_time(run.rng, run.off_weapon, dex_total, 0))) / 2000.0
+	# The PAIR's beat is the HARMONIC mean of the two hands (both rates summed), so `main_swing`
+	# is no longer the main weapon's own number.
+	var m_s := float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0)) / 1000.0
+	var o_s := float(Progression.swing_time(run.rng, run.off_weapon, dex_total, 0)) / 1000.0
+	var want := maxf(SurvivorRun.PAIR_FLOOR, 1.0 / (1.0 / m_s + 1.0 / o_s))
 	_check(absf(run.main_swing - want) < 0.002,
-		"the pair's interval must be the average of the two hands: want %.3f got %.3f"
+		"the pair's interval must be the harmonic mean of the two hands: want %.3f got %.3f"
 			% [want, run.main_swing])
 
 	run.monsters.clear()

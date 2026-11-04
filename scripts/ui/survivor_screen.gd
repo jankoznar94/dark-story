@@ -938,46 +938,34 @@ func _touches_floor(cx: int, cy: int) -> bool:
 		or run.is_floor_cell(cx, cy - 1) or run.is_floor_cell(cx, cy + 1)
 
 
-## FOG OF WAR, Warcraft 2's three states:
-##   * a cell the hero has never been near  -> full black, the map does not exist yet;
-##   * a cell he has seen and left behind   -> the same world under a black veil (0.55), so the
-##     layout is remembered but nothing there is lit;
-##   * a cell inside `FOG_REVEAL`           -> untouched.
+## FOG OF WAR — and after Jan's second pass it has exactly TWO states, not three:
+##   * a cell the hero has never been near -> the world under a dark veil (0.45), readable as
+##     "there is something there, you have not been there yet", NOT black;
+##   * a cell he has been near -> fully lit and it STAYS fully lit. "Již objevená oblast by mohla
+##     zůstat normálně barevná. Jen ta neobjevená bude tmavá, ale ne úplně černá."
 ##
-## Painted over the props and the bodies, because that is what fog does: a pack standing in the
-## dark is a silhouette, not a fully lit portrait. The hero's own cell is always visible.
+## The first version had Warcraft 2's third state (explored-but-not-visible = veiled again) and it
+## read as too aggressive: the map went dark behind the hero every time he walked on.
 func _draw_fog() -> void:
 	if run == null:
 		return
 	var view := _view_world_size()
 	var c0: Vector2i = run.cell_of(_cam)
 	var c1: Vector2i = run.cell_of(_cam + view)
-	var unknown := Color(0.02, 0.02, 0.02, 1.0)
-	var seen := Color(0.0, 0.0, 0.0, 0.55)
+	var veil := Color(0.0, 0.0, 0.0, 0.45)
 	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
 		var x := maxi(c0.x, 0)
 		var stop := mini(c1.x + 1, SurvivorRun.COLS)
 		while x < stop:
-			var level := _fog_level(x, cy)
-			var start := x
-			while x < stop and _fog_level(x, cy) == level:
+			if run.is_explored_cell(x, cy):
 				x += 1
-			if level == 0:
 				continue
+			var start := x
+			while x < stop and not run.is_explored_cell(x, cy):
+				x += 1
 			draw_rect(Rect2(Vector2(float(start) * SurvivorRun.TILE,
 				float(cy) * SurvivorRun.TILE) - _cam,
-				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE)),
-				unknown if level == 2 else seen)
-
-
-## 0 = lit, 1 = explored but dark, 2 = never seen.
-func _fog_level(cx: int, cy: int) -> int:
-	if not run.is_explored_cell(cx, cy):
-		return 2
-	var centre: Vector2 = run.cell_centre(cx, cy)
-	if centre.distance_to(run.player_pos) <= SurvivorRun.FOG_REVEAL:
-		return 0
-	return 1
+				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE)), veil)
 
 
 ## Is a world-space shape — `pos` is already camera-shifted, `extent` its half-size — inside

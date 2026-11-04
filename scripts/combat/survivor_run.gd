@@ -56,6 +56,10 @@ const WEAPON_REACH := {
 }
 const TWO_HAND_REACH_BONUS := 10.0
 const CONTACT_PAD := 3.0
+## The shortest beat a dual-wielded PAIR may take, in seconds. The pair's interval is the harmonic
+## mean of the two hands (both rates summed), so two IAS-stacked daggers could otherwise push the
+## alternation below the animation's readability.
+const PAIR_FLOOR := 0.15
 
 ## --- facing ----------------------------------------------------------------
 ## Jan, Nov 2026: "hrdina může útočit na nepřítele jen když je nepřítel v dosahu zbraní a když je
@@ -495,11 +499,11 @@ func _read_hands() -> void:
 		crit_off = 0.0
 	else:
 		# Each hand's OWN interval is kept: the off hand's number is what the HUD shows and what
-		# the beat's reach test uses. The PAIR, though, swings at the AVERAGE of the two — see
-		# `_attack_tick` and `Battle.apply_swing_timers` for why.
+		# the beat's reach test uses. The PAIR swings at the HARMONIC mean of the two, i.e. both
+		# rates summed — an average would halve each hand's speed (see `_attack_tick`).
 		var off_ms := float(Progression.swing_time(rng, off_weapon, dex_total, glove_ias)) / 1000.0
 		off_swing = off_ms
-		main_swing = (main_swing + off_ms) * 0.5
+		main_swing = maxf(PAIR_FLOOR, 1.0 / (1.0 / main_swing + 1.0 / off_ms))
 		reach_off = reach_for(off_weapon)
 
 	# Damage per hand: the weapon's own roll, times its specialisation, times D2's off-hand
@@ -1347,16 +1351,15 @@ func target_index() -> int:
 	return _index_of_monster(target_id)
 
 
-## ONE clock for both hands, and the hands STRICTLY ALTERNATE — Diablo 2's dual wield. The
-## pair swings at the AVERAGE of the two weapons' intervals (the engine there replaces one
-## hand's speed modifier with the average of both), and each beat belongs to one weapon, which
-## brings its own reach, its own damage roll and its own arc on screen.
+## ONE clock for both hands, and the hands STRICTLY ALTERNATE. The pair's interval is the
+## HARMONIC mean of the two hands (1/T = 1/T_main + 1/T_off), so each weapon keeps its own speed:
+## an average halves both rates, which is exactly what Jan felt — "každá čeká na svůj plný swing
+## … i když jsou to jednoruční zbraně, tak se chovají jako velmi pomalé zbraně."
 ##
-## ⚠️  The port ran two independent clocks here for one branch. The numbers were right and the
-## FEEL was wrong: the two arcs drifted apart and the hero struck with both weapons at the same
-## instant, which reads as one weapon hitting twice. Jan's report, verbatim: "Hráč má dvě
-## zbraně, ale obě sekají ve stejnou dobu. Daleko uspokojivější je, když se zbraně plynule
-## střídají."
+## ⚠️  The port also ran two INDEPENDENT clocks here for one branch. The numbers were right and
+## the FEEL was wrong: the arcs drifted apart and the hero struck with both weapons at the same
+## instant. Jan: "obě zbraně sekají ve stejnou dobu … daleko uspokojivější je, když se zbraně
+## plynule střídají."
 ##
 ## A HELD attack button swings as soon as the clock is ready — Jan's own rule ("hrdina neútočí
 ## automaticky"), and the clock always runs down, so a hero who lets go keeps his progress.
@@ -1416,7 +1419,7 @@ func _in_reach(index: int, reach: float) -> bool:
 
 
 ## Seconds per beat. One clock for both hands (they alternate), so this is the PAIR's interval:
-## the main hand's own when he holds one weapon, the average of the two when he holds two.
+## the main hand's own when he holds one weapon, the harmonic mean of the two when he holds two.
 ## Frenzy is the only thing that changes it — each stack takes `lv + 1` % off the pair, and the
 ## 0.45 s floor is kept so a buffed hero cannot swing faster than the animation can be read.
 func _main_interval() -> float:

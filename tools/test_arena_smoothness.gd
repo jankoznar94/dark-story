@@ -149,7 +149,13 @@ func _test_the_swing_ring_moves_every_frame() -> void:
 			_fail("the swing arc read %.3f, outside 0..1" % now)
 		prev = now
 
-	if moved < frames - 2:
+	# ⚠️  The tolerance is a WRAP allowance, not a loosened gate. A weapon now swings in as little
+	# as 330 ms, so one second of frames contains three full sweeps; on a wrap the value lands on
+	# a low number that can round to the same float as the frame before it. Ten static frames a
+	# second would still be the "drawn ten times a second" bug this test exists for, so the gate
+	# is a share of the frames rather than all-but-two.
+	var floor_moved := int(float(frames) * 0.90)
+	if moved < floor_moved:
 		_fail("the swing arc changed in only %d of %d frames - the screen is drawing ten times a second"
 			% [moved, frames])
 	else:

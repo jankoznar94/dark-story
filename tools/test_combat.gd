@@ -176,7 +176,8 @@ func _test_hit_chance() -> void:
 ##
 ## The three properties asserted here are the ones the player can feel:
 ##   1. a weapon with no IAS swings at its OWN table value (the DEX collapse is gone — it used to
-##      floor every weapon at 550 ms, so the table stopped mattering);
+##      floor every weapon at 550 ms, so the table stopped mattering); the band is Jan's
+##      330-1000 ms, i.e. 3.0 down to 1.0 attacks a second;
 ##   2. IAS always shortens and never below `SWING_FLOOR_MS`;
 ##   3. the best roll the affix table can give (40 on a weapon + 20 on gloves) brings the FASTEST
 ##      weapon in the item table to 200 ms, i.e. 5 attacks a second.
@@ -192,16 +193,16 @@ func _test_swing_time() -> void:
 	var capped := Progression.swing_time(rng, slow, 5000)
 	if capped != 920:
 		_fail("the DEX cap must hold the swing at 920 ms on a 1000 ms weapon, got %d" % capped)
-	var fast := Progression.swing_time(rng, {"swingMs": 400, "ias": 20}, 0)
-	if fast >= 400 or fast <= 200:
-		_fail("20 IAS on a 400 ms weapon must land between 200 and 400 ms, got %d" % fast)
-	var faster := Progression.swing_time(rng, {"swingMs": 400, "ias": 60}, 0)
+	var fast := Progression.swing_time(rng, {"swingMs": 330, "ias": 20}, 0)
+	if fast >= 330 or fast <= 200:
+		_fail("20 IAS on a 330 ms weapon must land between 200 and 330 ms, got %d" % fast)
+	var faster := Progression.swing_time(rng, {"swingMs": 330, "ias": 60}, 0)
 	if faster >= fast:
 		_fail("tripling IAS did not shorten the swing further")
 	if faster != Progression.SWING_FLOOR_MS:
 		_fail("60 IAS on the fastest weapon must hit the %d ms floor (5 attacks a second), got %d"
 			% [Progression.SWING_FLOOR_MS, faster])
-	var silly := Progression.swing_time(rng, {"swingMs": 400, "ias": 100000}, 5000)
+	var silly := Progression.swing_time(rng, {"swingMs": 330, "ias": 100000}, 5000)
 	if silly != Progression.SWING_FLOOR_MS:
 		_fail("nothing may swing faster than the floor: got %d" % silly)
 
@@ -218,8 +219,8 @@ func _test_swing_time() -> void:
 		var topped := Progression.swing_time(rng, item, 0, 60)
 		if topped < Progression.SWING_FLOOR_MS:
 			_fail("%s swings faster than the floor: %d ms" % [item.get("id"), topped])
-	if slowest > 1000 or quickest < 400:
-		_fail("the weapon band must be 400..1000 ms, got %d..%d" % [quickest, slowest])
+	if slowest > 1000 or quickest < 330:
+		_fail("the weapon band must be 330..1000 ms, got %d..%d" % [quickest, slowest])
 	print("  band: %d..%d ms (%.2f..%.2f attacks a second), best IAS %.2f"
 		% [quickest, slowest, 1000.0 / float(quickest), 1000.0 / float(slowest),
 			1000.0 / float(Progression.swing_time(rng, {"swingMs": quickest, "ias": 60}, 0))])

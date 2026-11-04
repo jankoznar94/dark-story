@@ -144,17 +144,17 @@ function loadTables(srcDir, log) {
 /** DR Godot retune of the SPEED axes.
  *
  *  The PWA's weapon band was 700-1800 ms (1.43 down to 0.56 attacks a second), which on a
- *  portrait phone reads as one sluggish hit at a time. Jan's target for the port:
- *  the slowest weapon lands ~1 blow a second, the fastest 2-2.5 a second with no IAS, and a
- *  fully stacked IAS build takes the fastest weapon to ~5 a second (see
- *  `Progression.SWING_FLOOR_MS`).
+ *  portrait phone reads as one sluggish hit at a time. Jan's target for the port, in his own
+ *  words: "všechny zbraně zrychlit tak, aby ty nejrychlejší měly bez IAS rychlost třeba
+ *  3 útoky / s a ty nejpomalejší 1 útok / s" — the RATIOS stay the PWA's own (every weapon keeps
+ *  its place in the table, a dagger is still ~2.6x a great maul), only the band is stretched.
  *
- *  700 ms -> 400 ms and 1800 ms -> 1000 ms, linear in between and snapped to 10 ms, so the
- *  RELATIVE spread of the table survives (a dagger is still twice a maul).
+ *  700 ms -> 333 ms (3.0 attacks a second) and 1800 ms -> 1000 ms (1.0), linear in between and
+ *  snapped to 10 ms.
  *
- *  Monsters are scaled by the same kind of factor (0.65) and NOT left alone: the hero's DPS
- *  would otherwise roughly double against an unchanged enemy and every fight would end in a
- *  third of the time. The pairing is what keeps the pacing Jan tuned earlier.
+ *  Monsters are scaled by 0.65 and NOT left alone: the hero's DPS against an unchanged enemy
+ *  would grow by the same factor the swings did and every fight would end in a third of the
+ *  time. The pairing is what keeps the pacing Jan tuned earlier.
  *
  *  It lives here rather than in `data/*.json` because those files are generated: a retune
  *  written straight into them would be silently undone by the next import.
@@ -163,7 +163,7 @@ function retune(tables, log) {
 	const snap = v => Math.round(v / 10) * 10;
 	const weapons = (tables.ITEMS ?? []).filter(i => i.type === 'weapon' && i.swingMs);
 	for (const w of weapons) {
-		w.swingMs = Math.min(1000, Math.max(400, snap(400 + (w.swingMs - 700) * (600 / 1100))));
+		w.swingMs = Math.min(1000, Math.max(330, snap(333 + (w.swingMs - 700) * (667 / 1100))));
 	}
 	let monsters = 0;
 	for (const theme of tables.MONSTER_DB ?? []) {
