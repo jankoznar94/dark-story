@@ -92,6 +92,13 @@ var _find_item: Callable
 var _accum := 0.0
 var _grass: Texture2D = null
 var _disc_cache: Dictionary = {}
+## The fog of war as ONE texture: a (COLS+1)x(ROWS+1) grid of CORNER alphas, resampled
+## bilinearly over the whole world. The per-cell polygon pass it replaces was one draw call
+## per veiled cell — measured 180 of the frame's 623 draw calls and ~4.2 ms of a 24.5 ms
+## frame at device resolution — and it drew the same bilinear ramp the texture's own
+## filtering produces for free.
+var _fog_tex: ImageTexture = null
+var _fog_version := -1
 
 ## Camera, in world pixels (top-left of the view).
 var _cam := Vector2.ZERO
@@ -192,6 +199,9 @@ func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
 	_held_spell = ""
 	_bind_open = false
 	_bind_pick = -1
+	# A fresh run has a fresh fog; the cache must not survive into it.
+	_fog_tex = null
+	_fog_version = -1
 	_wheel_slots = _resolve_wheel()
 	_build_decoration()
 	_place_camera()
@@ -616,6 +626,8 @@ func _whirlwind_feedback() -> void:
 ## bars keep their measured pixel sizes. Everything in the world — tiles, portraits, reach rings,
 ## damage numbers — shrinks together, which is what "vzdálit" means.
 const ZOOM := 0.82
+## The unexplored veil's alpha (`veil := Color(0,0,0,0.45)` in the old per-cell pass).
+const FOG_VEIL_ALPHA := 0.45
 
 
 ## The world transform as a MATRIX, because `draw_set_transform()` REPLACES the canvas transform
@@ -960,31 +972,32 @@ func _touches_floor(cx: int, cy: int) -> bool:
 func _draw_fog() -> void:
 	if run == null:
 		return
-	var view := _view_world_size()
-	var c0: Vector2i = run.cell_of(_cam)
-	var c1: Vector2i = run.cell_of(_cam + view)
-	var veil := Color(0.0, 0.0, 0.0, 0.45)
-	var t := SurvivorRun.TILE
-	# One cell of margin on every side: a quad reaching in from just off screen still has its
-	# ramp drawn instead of a visible seam at the edge of the viewport.
-	for cy in range(maxi(c0.y - 1, 0), min(c1.y + 2, SurvivorRun.ROWS)):
-		for cx in range(maxi(c0.x - 1, 0), min(c1.x + 2, SurvivorRun.COLS)):
-			var a_tl := _veil_corner(cx, cy)
-			var a_tr := _veil_corner(cx + 1, cy)
-			var a_br := _veil_corner(cx + 1, cy + 1)
-			var a_bl := _veil_corner(cx, cy + 1)
-			if a_tl <= 0.0 and a_tr <= 0.0 and a_br <= 0.0 and a_bl <= 0.0:
-				continue
-			var origin := Vector2(float(cx) * t, float(cy) * t) - _cam
-			var pts := PackedVector2Array([
-				origin, origin + Vector2(t, 0.0),
-				origin + Vector2(t, t), origin + Vector2(0.0, t)])
-			var cols := PackedColorArray([
-				Color(veil.r, veil.g, veil.b, veil.a * a_tl),
-				Color(veil.r, veil.g, veil.b, veil.a * a_tr),
-				Color(veil.r, veil.g, veil.b, veil.a * a_br),
-				Color(veil.r, veil.g, veil.b, veil.a * a_bl)])
-			draw_polygon(pts, cols)
+	if _fog_tex == null or _fog_version != run.explored_version:
+		_rebuild_fog_texture()
+		_fog_version = run.explored_version
+	# One textured quad. The texture holds a CORNER per texel, so it is drawn half a cell
+	# larger on every side: a texel CENTRE then lands exactly on a cell corner and the
+	# hardware's bilinear filter reproduces the per-cell corner-alpha ramp for free.
+	var t := float(SurvivorRun.TILE)
+	var rect := Rect2(Vector2(-0.5 * t, -0.5 * t) - _cam,
+		Vector2(float(SurvivorRun.COLS + 1) * t, float(SurvivorRun.ROWS + 1) * t))
+	draw_texture_rect(_fog_tex, rect, false)
+
+
+## Bake the corner-alpha grid the veil is drawn from. Called only when a cell was newly
+## explored (`explored_version`), so a frame with no discovery costs zero uploads.
+func _rebuild_fog_texture() -> void:
+	var w := SurvivorRun.COLS + 1
+	var h := SurvivorRun.ROWS + 1
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for vy in h:
+		for vx in w:
+			var a := _veil_corner(vx, vy) * FOG_VEIL_ALPHA
+			img.set_pixel(vx, vy, Color(0.0, 0.0, 0.0, a))
+	if _fog_tex == null:
+		_fog_tex = ImageTexture.create_from_image(img)
+	else:
+		_fog_tex.update(img)
 
 
 ## The veil weight at a cell CORNER, i.e. the share of the four cells meeting there that the hero

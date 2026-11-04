@@ -167,13 +167,15 @@ const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
 const TILE := 60.0
 const COLS := 25
 const ROWS := 35
-## Half-width of a corridor leg, in cells (so a leg is 5 cells = 300 px wide: two hero discs
-## side by side and room to walk past a pack).
-const CORRIDOR_HALF := 2
+## Half-width of a corridor leg, in cells. 3 = a 7-cell leg (420 px): two hero discs pass a pack
+## with room to spare. It was 2 (300 px) and Jan: "teď je příliš úzký s přímý" — a 5-cell tube
+## reads as a pipe, not as a dungeon corridor.
+const CORRIDOR_HALF := 3
 ## Half-width of the clearing the hero starts in, in cells (9x9 = 540 px).
 const START_ROOM_HALF := 4
-## Half-width of the occasional wider room along the corridor.
-const ROOM_HALF := 3
+## Half-width of the occasional wider room along the corridor. 4 = 9x9 (540 px), enough for a
+## pack to form up and for the player to circle it.
+const ROOM_HALF := 4
 ## How far the hero sees, in world px. Also the radius that marks cells as explored.
 const FOG_REVEAL := 300.0
 const AREA_MARGIN := 96.0
@@ -282,6 +284,9 @@ var floor_cells := PackedByteArray()
 ## Fog of war, one byte per cell: 1 once the hero has been within `FOG_REVEAL` of it. A cell
 ## that is still 0 is drawn BLACK — nothing about the map leaks before he walks there.
 var explored_cells := PackedByteArray()
+## Bumped every time a cell flips 0 -> 1. The screen bakes the fog veil into a texture and
+## re-bakes it ONLY when this changes, so a frame with no discovery uploads nothing.
+var explored_version := 0
 ## The corridor's centreline, in world px, from the start clearing to the far end. Packs are
 ## placed along it in order, so walking deeper is what raises the stakes.
 var path_points: Array = []
@@ -681,6 +686,7 @@ func _build_corridor() -> void:
 	floor_cells.fill(0)
 	explored_cells.resize(COLS * ROWS)
 	explored_cells.fill(0)
+	explored_version = 0
 	path_points.clear()
 
 	# The start clearing sits low and central: the hero spawns in its middle, with room to fight
@@ -694,21 +700,23 @@ func _build_corridor() -> void:
 	var side := 1 if rng.randf() < 0.5 else -1
 	var rooms: Array = []
 	while cy > 3:
-		# --- one vertical leg, upward
-		var up := rng.randi_range(4, 7)
+		# --- one vertical leg, upward. SHORT legs and more of them: the first corridor ran 4-7
+		# cells straight between turns, which is what read as "přímý". 3-5 cells keeps a turn in
+		# sight almost always, and the width below is what stops it feeling like a pipe.
+		var up := rng.randi_range(3, 5)
 		var ny := maxi(3, cy - up)
 		_carve_leg(Vector2i(cx, cy), Vector2i(cx, ny), CORRIDOR_HALF)
 		cy = ny
 		path_points.append(cell_centre(cx, cy))
 		# A room every other turn gives the corridor places to breathe — and places for a pack to
 		# stand in formation instead of in single file.
-		if rng.randf() < 0.45:
+		if rng.randf() < 0.6:
 			_carve_square(cx, cy, ROOM_HALF)
 			rooms.append(cell_centre(cx, cy))
 		if cy <= 4:
 			break
 		# --- one horizontal turn
-		var run := rng.randi_range(3, 6) * side
+		var run := rng.randi_range(5, 9) * side
 		var nx := clampi(cx + run, 2 + CORRIDOR_HALF, COLS - 3 - CORRIDOR_HALF)
 		if nx != cx:
 			_carve_leg(Vector2i(cx, cy), Vector2i(nx, cy), CORRIDOR_HALF)
@@ -800,10 +808,20 @@ func _reveal_around(p: Vector2) -> void:
 				# Rock next to the hero is explored too, so the wall he is standing against is
 				# DRAWN instead of being a black tile he is pressed into.
 				if cell_centre(x, y).distance_to(p) <= FOG_REVEAL + TILE:
-					explored_cells[cell_index(x, y)] = 1
+					_mark_explored(x, y)
 				continue
 			if cell_centre(x, y).distance_to(p) <= FOG_REVEAL:
-				explored_cells[cell_index(x, y)] = 1
+				_mark_explored(x, y)
+
+
+## Set one explored flag, bumping `explored_version` only on a real change — the screen's
+## fog texture keys off this counter.
+func _mark_explored(x: int, y: int) -> void:
+	var i := cell_index(x, y)
+	if explored_cells[i] == 1:
+		return
+	explored_cells[i] = 1
+	explored_version += 1
 
 
 ## One pack per STOP along the corridor, the hero's own clearing left EMPTY. `minArea` is honoured

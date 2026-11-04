@@ -127,7 +127,7 @@ func _report(arena) -> void:
 			_proc_ms / n, _phys_ms / n, arena.battle.enemy_hp, str(arena.battle.ended)])
 	else:
 		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f run_over=%s" % [
-			_proc_ms / n, _phys_ms / n, str(arena.run.over)])
+			_proc_ms / n, _phys_ms / n, str(arena.run.finished)])
 	if _isolate:
 		print("SCRIPT_COST avg=%.3fms max=%.3fms over4ms=%d of %d" % [
 			_script_ms / n, _script_max, _script_over4, n])
