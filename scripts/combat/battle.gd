@@ -2070,11 +2070,20 @@ func hero_school_resist(state, school: String) -> float:
 
 ## The battle only carries the caller's `find_item` for its own lifetime, and the
 ## resistance lookup happens on the save's equipped items too, so this keeps the
-## simplest possible resolution: the same table the rest of the battle reads.
+## simplest possible resolution: the save's generated/mutated items FIRST, then the
+## static table. Static-only lookup silently ignored every resist a gem put on a
+## generated shield (measured: mult 1.000 against an expected 0.840).
 func _find_item_any(state, item_id: Variant) -> Dictionary:
+	var id := str(item_id)
+	if id == "":
+		return {}
+	if state != null and state.has_method("loot_item"):
+		var loot: Dictionary = state.loot_item(id)
+		if not loot.is_empty():
+			return loot
 	if _data == null:
 		return {}
-	return _data.item(str(item_id))
+	return _data.item(id)
 
 
 ## The resist multiplier for the hero's own spells, from the ENEMY's resistances. The

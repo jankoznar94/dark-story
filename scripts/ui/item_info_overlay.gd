@@ -712,14 +712,22 @@ func _circle(fill: Color, border: Color) -> PanelContainer:
 
 
 ## The gem or jewel recorded in a socket. The PWA stored two shapes: a jewel as
-## `{type:'jewel', jewelId}` and a gem as `{type:<gemType>, quality}`.
+## `{type:'jewel', jewelId}` and a gem as `{type:<gemType>, quality}` — note NO id, so
+## looking one up by `id` returned {} and a filled socket drew as an EMPTY circle (Jan:
+## "ve slotu itemu se dále zobrazuje prázdné místo"). The gem id is rebuilt from
+## type+quality, which is exactly how `GameData._build_gem_items()` names them.
 func _gem_of(record: Variant) -> Dictionary:
 	if not (record is Dictionary):
 		return {}
 	var entry: Dictionary = record
 	if str(entry.get("type", "")) == "jewel":
 		return _find_item.call(str(entry.get("jewelId", "")))
-	return _find_item.call(str(entry.get("id", "")))
+	var gem_type := str(entry.get("type", ""))
+	var quality := str(entry.get("quality", ""))
+	if gem_type == "":
+		return _find_item.call(str(entry.get("id", "")))
+	var gem_id := gem_type if quality == "" or quality == "normal" else "%s_%s" % [gem_type, quality]
+	return _find_item.call(gem_id)
 
 
 ## `── Equipped ──` followed by the worn item(s). Returns null when there is nothing to

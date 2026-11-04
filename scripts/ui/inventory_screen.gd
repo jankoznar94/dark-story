@@ -981,17 +981,16 @@ func _quality_color(item: Dictionary) -> Color:
 
 # --- resolvers ---------------------------------------------------------------
 
-## An item id can be a static base (ITEMS), a generated gem, or a generated loot item
-## on the save. All three must resolve, in that order of likelihood.
+## An item id can be a MUTATED/generated item on the save, a static base, or a gem.
+## The save's own entry comes FIRST: socketing writes onto the item dictionary, so a
+## static-first lookup would show the pristine base and lose the gem's stats.
 func _resolve(item_id: String) -> Dictionary:
 	if item_id == "":
 		return {}
-	var static_item: Dictionary = _data.item(item_id)
-	if not static_item.is_empty():
-		return static_item
-	# Gems are registered into the same index by game_data, so the lookup above
-	# already covers them; anything left is a generated loot item.
-	return _state.loot_item(item_id)
+	var loot: Dictionary = _state.loot_item(item_id)
+	if not loot.is_empty():
+		return loot
+	return _data.item(item_id)
 
 
 func _find_item_callable() -> Callable:

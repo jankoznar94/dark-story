@@ -114,6 +114,15 @@ func _run() -> void:
 		_fail("tapping an empty socket did not open the gem picker")
 	if picker._grid.get_child_count() != 1:
 		_fail("gem picker lists %d gems, want 1" % picker._grid.get_child_count())
+	# The cell must SIZE TO ITS CONTENT. A Button does not: it kept its 78px minimum while
+	# the name and three stat families painted outside the box (Jan: "popisky utíkají
+	# mimo svůj slot"). A PanelContainer reports the content's height as its minimum.
+	for cell in picker._grid.get_children():
+		if not (cell is PanelContainer):
+			_fail("gem cell is a %s, not a PanelContainer — it cannot size to its content" % cell.get_class())
+		elif cell.get_combined_minimum_size().y <= 90.0:
+			_fail("gem cell minimum height is %.1f — content is not counted in the cell's size"
+				% cell.get_combined_minimum_size().y)
 
 	# A choice routes through the picker -> overlay -> inventory -> main (the real wiring;
 	# calling `_on_gem_tapped` directly would skip the two signals this change is about).
@@ -122,6 +131,19 @@ func _run() -> void:
 	print("after insert socketedGems=%s bag size=%d" % [str(live.get("socketedGems", [])), state.inventory().size()])
 	if live.get("socketedGems", []).size() == 0:
 		_fail("the gem never landed in the socket")
+	# A FILLED socket must draw its gem. The save stores {type, quality} — no id — and the
+	# old lookup asked for `id`, so the circle stayed empty and the socket refused a second
+	# gem while looking free (Jan's second report).
+	var record: Variant = live["socketedGems"][0]
+	if inventory._item_overlay._gem_of(record).is_empty():
+		_fail("a socket record does not resolve back to a gem — the socket draws empty")
+	var filled_cell: Control = inventory._item_overlay._socket_row.get_child(0)
+	var has_icon := false
+	for child in filled_cell.get_children():
+		if child is TextureRect and (child as TextureRect).texture != null:
+			has_icon = true
+	if not has_icon:
+		_fail("the filled socket drew no gem icon")
 	inventory.close_item_info()
 
 	# --- the SAME kind of item, EQUIPPED ---

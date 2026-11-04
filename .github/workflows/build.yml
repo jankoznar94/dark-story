@@ -161,6 +161,17 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SOCKETS_VISIBILITY_PASS=true"
 
+      # Every stat every gem grants, on every host family, AND the consumer that reads it.
+      # Jan: "Rovnou zkontroluj, aby se správně přičítaly všechny staty gemů k itemům."
+      # Caught a real one: battle's resist lookup read only the static table, so a fire
+      # resist gem in a generated shield was applied to the item and ignored by damage.
+      - name: Gem stats test (all gems x all host families x consumers)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_gem_stats.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "GEM_STATS_ALL_PASS=true"
+
       # Jan's report: "the vertical scrollbar is visible, the page can only be scrolled with
       # it, and a normal swipe does nothing." Both halves are invisible to every other test —
       # a `ScrollContainer` only drags with a finger where Godot's own touch drag is live

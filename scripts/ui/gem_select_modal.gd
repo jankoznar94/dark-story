@@ -52,6 +52,7 @@ var _find_item: Callable
 var _dim: ColorRect
 var _panel: PanelContainer
 var _grid: GridContainer
+var _scroll: ScrollContainer
 var _empty: Label
 var _content: VBoxContainer
 
@@ -112,7 +113,16 @@ func _build() -> void:
 	_grid.columns = COLS
 	_grid.add_theme_constant_override("h_separation", int(GRID_GAP))
 	_grid.add_theme_constant_override("v_separation", int(GRID_GAP))
-	_content.add_child(_grid)
+	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# `.gem-select-modal-content { max-height:80vh; overflow-y:auto }` — with real gems the
+	# list can be taller than the dialog, and an unscrolled grid paints past the panel's
+	# bottom edge. The scroll container is what turns that into a swipe.
+	_scroll = ScrollContainer.new()
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(_grid)
+	_content.add_child(_scroll)
 
 	_empty = UIKit.label("V batohu neni zadny gem.", 14, "#666666", HORIZONTAL_ALIGNMENT_CENTER)
 	_content.add_child(_empty)
@@ -201,32 +211,30 @@ func _rebuild() -> void:
 
 ## `.gem-select-item`: icon, name, then the stat block the PWA prints for that gem family
 ## (`buildGemStatsHtml`) or the jewel's affix list.
+##
+## ⚠️  A `Button` IS NOT A CONTAINER, so a cell built as a Button with anchored children
+## keeps its `custom_minimum_size` no matter how tall its contents are — the name and the
+## gem's three stat families then painted OUTSIDE the cell, over its neighbours (Jan:
+## "gemy a jejich popisky utíkají mimo svůj slot"). The visible cell is therefore a
+## `PanelContainer`, which sizes itself to its content; the tap target is a transparent
+## Button laid over it, so the box can never be smaller than what it draws.
 func _gem_cell(item: Dictionary, item_id: String) -> Control:
-	var button := Button.new()
-	button.focus_mode = Control.FOCUS_NONE
-	button.custom_minimum_size = CELL_MIN
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var cell := PanelContainer.new()
+	cell.custom_minimum_size = Vector2(CELL_MIN.x, 0)
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color("#0a0a0a")
 	normal.border_color = Color("#333333")
 	normal.set_border_width_all(1)
 	normal.set_corner_radius_all(8)
 	normal.set_content_margin_all(0)
-	var pressed := normal.duplicate()
-	pressed.bg_color = Color("#111111")
-	pressed.border_color = Color("#ffd700")
-	# NO hover and no focus style: the PWA's `:hover` is a desktop-only cue and this game
-	# is a phone PWA first. Every state shares the normal box.
-	for state_name in ["normal", "hover", "focus", "disabled"]:
-		button.add_theme_stylebox_override(state_name, normal)
-	button.add_theme_stylebox_override("pressed", pressed)
+	cell.add_theme_stylebox_override("panel", normal)
 
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 4)
-	button.add_child(margin)
+	cell.add_child(margin)
 
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
@@ -248,18 +256,41 @@ func _gem_cell(item: Dictionary, item_id: String) -> Control:
 
 	var lines: Array = ItemDetail.build_text(item, _data, true).split("\n")
 	var name_text := str(lines[0]) if lines.size() > 0 else str(item.get("name", "Gem"))
-	var name_label := UIKit.label(name_text, 11, "#aaaaaa", HORIZONTAL_ALIGNMENT_CENTER)
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var name_label := _cell_label(name_text, 11, "#aaaaaa")
 	box.add_child(name_label)
 	if lines.size() > 1:
 		var stats := "\n".join(lines.slice(1))
-		var stats_label := UIKit.label(stats, 9, "#888888", HORIZONTAL_ALIGNMENT_CENTER)
-		stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		box.add_child(stats_label)
+		box.add_child(_cell_label(stats, 9, "#888888"))
 
+	# The invisible tap target, over the whole cell. `flat = true` is banned by
+	# `test_portrait_visual`; a StyleBoxEmpty on every state is the same invisible result.
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_NONE
+	var blank := StyleBoxEmpty.new()
+	for state_name in ["normal", "hover", "focus", "disabled"]:
+		button.add_theme_stylebox_override(state_name, blank)
+	var pressed := StyleBoxFlat.new()
+	pressed.bg_color = Color("#111111")
+	pressed.border_color = Color("#ffd700")
+	pressed.set_border_width_all(1)
+	pressed.set_corner_radius_all(8)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var gem_id := item_id
 	button.pressed.connect(func(): _choose(gem_id))
-	return button
+	cell.add_child(button)
+	return cell
+
+
+## A label that WRAPS inside the cell instead of forcing the grid wider. `UIKit.label`
+## sets its minimum to the longest word (the browser's `min-width:auto`), which is what
+## makes a 4-column grid overflow when one gem has a long word in its stat block.
+func _cell_label(text: String, size: int, colour: String) -> Label:
+	var label := UIKit.label(text, size, colour, HORIZONTAL_ALIGNMENT_CENTER)
+	label.custom_minimum_size = Vector2(0, 0)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
 
 
 func _choose(gem_id: String) -> void:
@@ -271,12 +302,18 @@ func _choose(gem_id: String) -> void:
 	gem_chosen.emit(gem_id)
 
 
-## `.gem-select-modal-content { max-width:340px; width:90% }`, height content-driven.
+## `.gem-select-modal-content { max-width:340px; width:90% }`, height content-driven and
+## capped at 80vh like the PWA; past that the grid scrolls inside the panel.
 func _layout() -> void:
 	var view := size
 	if view.x <= 0.0:
 		return
 	var want_w: float = minf(MAX_WIDTH, maxf(240.0, view.x * 0.9))
+	var max_inner := view.y * 0.8 - PAD * 2.0
+	# The scroll's own height is what keeps a long gem list inside the box: without a cap
+	# the grid's minimum is its full height and the panel just overflows.
+	var grid_h: float = _grid.get_combined_minimum_size().y
+	_scroll.custom_minimum_size = Vector2(0, minf(grid_h, maxf(120.0, max_inner - 72.0)))
 	var inner := _content.get_combined_minimum_size()
 	var want_h: float = minf(inner.y + PAD * 2.0, view.y * 0.8)
 	_panel.offset_left = -want_w * 0.5

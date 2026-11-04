@@ -1363,6 +1363,10 @@ func _on_socket_armed(host_id: String, socket_index: int) -> void:
 func _on_gem_tapped(host_id: String, gem_id: String) -> void:
 	var inventory = _modal().inventory()
 	var host: Dictionary = _resolve(host_id)
+	# A STATIC base (the shop's tables, a starting item) is a SHARED dictionary — mutating
+	# it would change every instance of that id. Work on a copy; it becomes a save entry.
+	if state.loot_item(host_id).is_empty():
+		host = host.duplicate(true)
 	var gem: Dictionary = _resolve(gem_id)
 	if host.is_empty() or gem.is_empty():
 		_set_status("Predmet nebo gem se nenasel")
@@ -1384,10 +1388,10 @@ func _on_gem_tapped(host_id: String, gem_id: String) -> void:
 		_set_status(str(result["message"]))
 		return
 	# A socketed item is a MUTATED item, so it has to be re-registered: the resolver
-	# hands out the live loot entry, but a static base must be stored or the stats are
-	# lost on the next resolve.
-	if not state.loot_item(host_id).is_empty():
-		state.register_loot_item(host)
+	# reads the save's entries FIRST, and a static base stored here is how its gem
+	# survives a reload. (Registering it unconditionally also covers the copy made above
+	# for a static base; for a generated item the dict is already the live one.)
+	state.register_loot_item(host)
 	state.save()
 	inventory._armed_socket = -1
 	inventory.refresh()
@@ -1404,12 +1408,14 @@ func _socket_rng() -> RandomNumberGenerator:
 	return _socket_rng_source
 
 
-## Resolve any item id: a static base, a generated gem, or loot stored on the save.
+## Resolve any item id: a generated or MUTATED item on the save first, then the static
+## table. The order matters — a socketed gem writes onto the item's own dictionary, and a
+## static-first lookup would hand back the pristine base and lose the gem's stats.
 func _resolve(id: Variant) -> Dictionary:
 	var item_id := str(id)
 	if item_id == "":
 		return {}
-	var static_item: Dictionary = data.item(item_id)
-	if not static_item.is_empty():
-		return static_item
-	return state.loot_item(item_id)
+	var loot: Dictionary = state.loot_item(item_id)
+	if not loot.is_empty():
+		return loot
+	return data.item(item_id)
