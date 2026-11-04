@@ -909,7 +909,7 @@ func _build_buttons() -> Control:
 		row.add_child(_button("Prsten 1", "equip_r1", "ring1"))
 		row.add_child(_button("Prsten 2", "equip_r2", "ring2"))
 	else:
-		row.add_child(_button("Nasadi", "equip", str(SLOT_OF_TYPE.get(item_type, ""))))
+		row.add_child(_button("Nasadit", "equip", str(SLOT_OF_TYPE.get(item_type, ""))))
 	return row
 
 
