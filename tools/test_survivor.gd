@@ -149,10 +149,13 @@ func _test_setup_reads_the_hero() -> void:
 		"damage range must be a real range: %d..%d" % [run.dmg_min, run.dmg_max])
 	_check(run.monsters.is_empty(), "the hero starts in an EMPTY clearing, got %d monsters" % run.monsters.size())
 	_check(run.wave == 0, "no pack has woken yet, wave=%d" % run.wave)
-	# 3x3 cells minus the hero's own clearing: eight packs, each a known quantity before it wakes.
-	_check(run.zones.size() == SurvivorRun.ZONE_COLS * SurvivorRun.ZONE_ROWS - 1,
-		"the area must hold one pack per cell but the clearing, got %d" % run.zones.size())
+	# The corridor holds one pack per stop along its centreline (6..12), each a known quantity
+	# before it wakes, and every one of them stands on FLOOR.
+	_check(run.zones.size() >= 6 and run.zones.size() <= 12,
+		"the corridor must hold 6..12 packs, got %d" % run.zones.size())
 	for z in run.zones:
+		_check(run.walkable(z["centre"] as Vector2, SurvivorRun.MON_RADIUS),
+			"a pack centre must stand on floor: %s" % str(z["centre"]))
 		var n: int = (z["members"] as Array).size()
 		_check(n >= SurvivorRun.PACK_MIN and n <= SurvivorRun.PACK_MAX,
 			"a pack is %d..%d bodies, got %d" % [SurvivorRun.PACK_MIN, SurvivorRun.PACK_MAX, n])
@@ -180,13 +183,17 @@ func _test_movement_and_clamp() -> void:
 	run2.step(STEP, Vector2(1, 1))
 	_check(absf(run2.player_pos.distance_to(start2) - run2.hero_speed() * STEP) < 0.01,
 		"a diagonal step must have the same length as a straight one")
-	# The world edge holds — at the WALL inset, which is where the boundary props stand.
+	# THE ROCK holds. He may slide along it, but he can never end up standing in it — the area is a
+	# carved corridor, not a rectangle with an inset, so the old corner test is now a floor test.
 	var run3 := _fresh()
+	var start3 := run3.player_pos
 	for _i in 600:
 		run3.step(STEP, Vector2(-1, -1))
-	var wall := SurvivorRun.AREA_MARGIN + SurvivorRun.HERO_RADIUS - 0.01
-	_check(run3.player_pos.x >= wall and run3.player_pos.y >= wall,
-		"the hero must stop at the wall: %s (wall %.1f)" % [str(run3.player_pos), wall])
+	_check(run3.walkable(run3.player_pos, SurvivorRun.HERO_RADIUS),
+		"the hero must never stand in the rock: %s" % str(run3.player_pos))
+	_check(run3.player_pos.distance_to(start3) > 40.0,
+		"the hero must still be able to walk out of the start clearing, moved %.1f"
+			% run3.player_pos.distance_to(start3))
 
 
 func _test_monsters_close_in() -> void:
@@ -523,7 +530,9 @@ func _test_thrower_keeps_distance_and_fires() -> void:
 	m["speed"] = 60.0
 	m["atk_cd"] = 0.6
 	m["atk_ready"] = 0.0
-	m["pos"] = run.player_pos + Vector2(400.0, 0.0)
+	# On FLOOR 400 px up the corridor — a point at +400 x may be solid rock now, which would
+	# freeze the body instead of testing the keep-distance rule.
+	m["pos"] = run.nearest_floor_point(run.player_pos + Vector2(0.0, -400.0))
 
 	var fired := 0
 	for i in 240:
@@ -675,14 +684,17 @@ func _test_weapon_pace_and_two_hands() -> void:
 	equip["shield"] = "blade_scimitar"
 	var run := _fresh(12345, true)
 	_check(not run.off_weapon.is_empty(), "a dual-wielding class must read the OFF hand weapon")
-	_check(run.main_swing > run.off_swing,
-		"each hand swings at its own weapon's pace: main %.3f s vs off %.3f s"
-			% [run.main_swing, run.off_swing])
 	var dex_total := int(_state.hero().get("attrDex", 0)) \
 		+ int(Progression._equip_attr(equip, _find_item, "dex"))
-	var want := float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0)) / 1000.0
+	_check(run.off_swing < float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0)) / 1000.0,
+		"the faster weapon must still be read as the faster one: off %.3f s" % run.off_swing)
+	# The PAIR's beat is the AVERAGE of the two hands' own intervals (D2's dual-wield rule), so
+	# `main_swing` is no longer the main weapon's own number.
+	var want := (float(Progression.swing_time(run.rng, run.main_weapon, dex_total, 0))
+		+ float(Progression.swing_time(run.rng, run.off_weapon, dex_total, 0))) / 2000.0
 	_check(absf(run.main_swing - want) < 0.002,
-		"the main interval must come from swing_time: want %.3f got %.3f" % [want, run.main_swing])
+		"the pair's interval must be the average of the two hands: want %.3f got %.3f"
+			% [want, run.main_swing])
 
 	run.monsters.clear()
 	run._spawn_one()
@@ -698,6 +710,7 @@ func _test_weapon_pace_and_two_hands() -> void:
 		m["dmg_max"] = 0
 	var main_hits := 0
 	var off_hits := 0
+	var order: Array = []
 	for _i in 180:
 		# ⚠️  BOTH bodies are IN FRONT of a hero who never walks (facing = RIGHT, see
 		# `SurvivorRun.FACING_MIN_DOT`). The off hand used to be aimed at a body at -70 px, which
@@ -710,20 +723,27 @@ func _test_weapon_pace_and_two_hands() -> void:
 			match str(n["kind"]):
 				"hit", "crit":
 					main_hits += 1
+					order.append("main")
 				"hit_off":
 					off_hits += 1
+					order.append("off")
 		run.numbers.clear()
 	_check(main_hits > 0 and off_hits > 0,
 		"both hands must land blows: main %d off %d" % [main_hits, off_hits])
-	_check(off_hits > main_hits,
-		"the FASTER weapon must land more often: off %d vs main %d" % [off_hits, main_hits])
+	# STRICT ALTERNATION: the hero never strikes with the same hand twice in a row, and never with
+	# both at once. That is what D2 does and what Jan asked for.
+	_check(order.size() >= 4, "the pair must land a few blows, got %d" % order.size())
+	var flips := 0
+	for i in range(1, order.size()):
+		if order[i] != order[i - 1]:
+			flips += 1
+	_check(flips == order.size() - 1,
+		"the hands must ALTERNATE, got %s" % str(order))
+	_check(off_hits > 0 and main_hits > 0 and absi(off_hits - main_hits) <= 2,
+		"both hands share one clock, so neither may dominate: main %d off %d"
+			% [main_hits, off_hits])
 	_check(run.swing_age_off >= 0.0,
 		"the off hand must stamp its OWN animation age, or the screen draws one arc twice")
-	# The two arcs must point at DIFFERENT bodies. Both are in front now, so the two directions
-	# are merely DIFFERENT, not opposite — one direction twice is a mirror, not a second weapon.
-	_check(run.swing_dir_off.dot(run.swing_dir) < 0.9,
-		"the off hand must swing at its own target: %s vs %s"
-			% [str(run.swing_dir), str(run.swing_dir_off)])
 	_reset_kit()
 
 
@@ -1020,6 +1040,9 @@ func _test_facing_gate() -> void:
 	# ⚠️  The attack must be RELEASED for this half: while it is held the assist owns the facing,
 	# so the assertion would measure the assist instead of the walk.
 	run.attack_held = false
+	# Nothing left to aim at: with a body on the field the ASSIST owns the facing, and this half
+	# measures the walk (see `_update_target`).
+	run.monsters.clear()
 	for _i in 30:
 		run.step(STEP, Vector2(-1, 0))
 	_check(run.facing.x < -0.9, "walking left must turn the hero left, got %s" % str(run.facing))

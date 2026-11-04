@@ -202,53 +202,72 @@ func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
 ## The "procedurally generated environment": a handful of rules over one seed, not a map.
 ## Dirt patches break the grass into places; boulders and dead bushes give the eye something
 ## to run past. Every entry is world-space data and is drawn only when it is on screen.
+##
+## ⚠️  The props follow the CORRIDOR now, not a rectangle. The wall used to be two rings of rock
+## standing on the world's inset border — with the area carved out of a cell grid, that ring would
+## stand in the middle of solid rock and the corridor's own turns would have no edge at all. So:
+## every FLOOR cell that touches rock gets a boulder, and the interior cover is scattered on floor
+## only. The player runs into the same thing that stopped him.
 func _build_decoration() -> void:
 	_props.clear()
 	_patches.clear()
+	if run == null:
+		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = randi()
-	for _i in 18:
+	# Dirt patches: only on floor, and never on the wall line.
+	for _i in 26:
+		var c := Vector2i(rng.randi_range(0, SurvivorRun.COLS - 1), rng.randi_range(0, SurvivorRun.ROWS - 1))
+		if not run.is_floor_cell(c.x, c.y):
+			continue
 		_patches.append({
-			"pos": Vector2(rng.randf_range(60, SurvivorRun.WORLD.x - 60),
-				rng.randf_range(60, SurvivorRun.WORLD.y - 60)),
+			"pos": run.cell_centre(c.x, c.y)
+				+ Vector2(rng.randf_range(-24, 24), rng.randf_range(-24, 24)),
 			"rx": rng.randf_range(38, 96), "ry": rng.randf_range(28, 66),
 		})
-	# THE WALL. A band of boulders and dead bushes standing on the inset rectangle the rules
-	# stop the hero at: the area has ends, and the thing the player runs into is the thing that
-	# stopped him. Spaced ~74 px with a lit rock in every other slot, so there is no gap to read
-	# as an exit. Nothing collides with a prop — the clamp is the wall.
-	var x0 := SurvivorRun.AREA_MARGIN
-	var y0 := SurvivorRun.AREA_MARGIN
-	var x1 := SurvivorRun.WORLD.x - SurvivorRun.AREA_MARGIN
-	var y1 := SurvivorRun.WORLD.y - SurvivorRun.AREA_MARGIN
+	# THE WALL. One prop per floor cell that touches rock, pushed a little toward the rock so the
+	# rock line the rules stop the hero at is the line the boulders stand on.
 	var along := 0
-	var x := x0
-	while x <= x1:
-		for yy in [y0, y1]:
-			_props.append(_wall_prop(Vector2(x + rng.randf_range(-12, 12),
-				yy + rng.randf_range(-9, 9)), along, rng))
+	for cy in SurvivorRun.ROWS:
+		for cx in SurvivorRun.COLS:
+			if not run.is_floor_cell(cx, cy):
+				continue
+			var to_rock := _rock_direction(cx, cy)
+			if to_rock == Vector2i.ZERO:
+				continue
+			# Every other cell only: a boulder per 120 px reads as a wall, one per 60 as a hedge.
+			if (cx + cy) % 2 == 1 and rng.randf() < 0.6:
+				continue
+			var centre: Vector2 = run.cell_centre(cx, cy)
+			var pos := centre + Vector2(to_rock) * (SurvivorRun.TILE * 0.5 - 14.0) \
+				+ Vector2(rng.randf_range(-7, 7), rng.randf_range(-7, 7))
+			_props.append(_wall_prop(pos, along, rng))
 			along += 1
-		x += 74.0
-	var y := y0 + 74.0
-	while y < y1 - 40.0:
-		for xx in [x0, x1]:
-			_props.append(_wall_prop(Vector2(xx + rng.randf_range(-9, 9),
-				y + rng.randf_range(-12, 12)), along, rng))
-			along += 1
-		y += 74.0
 	# Interior cover. Sparse on purpose: it is something to run past, and a pack has to be
 	# readable from a distance instead of hiding behind a bush.
 	for _i in 26:
+		var c := Vector2i(rng.randi_range(0, SurvivorRun.COLS - 1), rng.randi_range(0, SurvivorRun.ROWS - 1))
+		if not run.is_floor_cell(c.x, c.y) or _rock_direction(c.x, c.y) != Vector2i.ZERO:
+			continue
+		var pos: Vector2 = run.cell_centre(c.x, c.y) \
+			+ Vector2(rng.randf_range(-20, 20), rng.randf_range(-20, 20))
 		var kind := "rock" if rng.randf() < 0.6 else "bush"
 		_props.append({
-			"pos": Vector2(rng.randf_range(x0 + 60, x1 - 60),
-				rng.randf_range(y0 + 60, y1 - 60)),
+			"pos": pos,
 			"kind": kind,
 			"size": rng.randf_range(20, 44) if kind == "rock" else rng.randf_range(22, 40),
 			"seed": rng.randf() * 10.0,
 		})
-	# Nothing may spawn on the hero's first step.
-	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(SurvivorRun.WORLD * 0.5) > 70.0)
+	# Nothing may stand on the hero's first step.
+	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(run.player_pos) > 70.0)
+
+
+## The direction from a floor cell to the rock next to it, or ZERO if the cell is interior.
+func _rock_direction(cx: int, cy: int) -> Vector2i:
+	for d in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		if not run.is_floor_cell(cx + d.x, cy + d.y):
+			return d
+	return Vector2i.ZERO
 
 
 ## One piece of the wall. Bigger and darker than interior cover: at a glance it has to read as
@@ -828,6 +847,9 @@ func _draw() -> void:
 	_draw_slash_off()
 	_draw_effects()
 	_draw_numbers()
+	# The fog sits OVER the world — props, bodies, loot and numbers included. That is the point:
+	# a pack standing in an unexplored cell is not a fully lit portrait on a black screen.
+	_draw_fog()
 	# The HUD and the wheel are UI, not world: back to 1:1 or the text would shrink with the zoom.
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_hud()
@@ -847,7 +869,115 @@ func _draw_ground() -> void:
 		return
 	# One tiling call for the whole world, shifted by the camera. `tile = true` repeats the
 	# seamless 256px tile; there is no per-tile loop and therefore no tile grid to drift.
+	#
+	# ⚠️  The grass is painted EVERYWHERE and then the rock is painted OVER it, rather than one
+	# draw call per floor cell. `TILE` (60) does not divide the 256 px tile, so drawing the
+	# texture cell by cell would break the seamless repeat and the ground would show its grid —
+	# exactly the "jednotvárná a nic neříkající" surface Jan complained about.
 	draw_texture_rect(_grass, Rect2(-_cam, SurvivorRun.WORLD), true)
+	_draw_rock()
+
+
+## Everything that is NOT the corridor's floor, painted as rock. Cells are merged into runs per
+## row, so a wall is one rectangle instead of a row of 60 px squares with seams between them.
+func _draw_rock() -> void:
+	if run == null:
+		return
+	var view := _view_world_size()
+	var c0: Vector2i = run.cell_of(_cam)
+	var c1: Vector2i = run.cell_of(_cam + view)
+	var dark := Color("#191510")
+	var edge := Color("#241d15")
+	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
+		var x := maxi(c0.x, 0)
+		var stop := mini(c1.x + 1, SurvivorRun.COLS)
+		while x < stop:
+			if run.is_floor_cell(x, cy):
+				x += 1
+				continue
+			var start := x
+			while x < stop and not run.is_floor_cell(x, cy):
+				x += 1
+			var rect := Rect2(Vector2(float(start) * SurvivorRun.TILE,
+				float(cy) * SurvivorRun.TILE) - _cam,
+				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE))
+			draw_rect(rect, dark)
+	# Pass 2: an ORGANIC edge. Filling whole cells makes the corridor a staircase of 60 px
+	# squares — the first capture read as "vyříznuté z papíru" — so every rock cell that touches
+	# floor is redrawn as a jittered polygon that may overhang the path by a few pixels. The
+	# overshoot reads as rock leaning over the trail; where it shrinks the dark pass-1 fill shows
+	# through as a crevice, so no bright grass ever leaks between two rocks.
+	for cy in range(maxi(c0.y - 1, 0), mini(c1.y + 2, SurvivorRun.ROWS)):
+		for cx in range(maxi(c0.x - 1, 0), mini(c1.x + 2, SurvivorRun.COLS)):
+			if run.is_floor_cell(cx, cy) or not _touches_floor(cx, cy):
+				continue
+			var poly := _rock_polygon(cx, cy)
+			for i in poly.size():
+				poly[i] -= _cam
+			draw_colored_polygon(poly, Color("#241d15"))
+			draw_polyline(poly, Color("#2e2619"), 1.5)
+
+
+## A rock cell's silhouette: a hexagon with every corner pushed out by a stable pseudo-random
+## 4-14 px, so the same cell always draws the same shape (a per-frame `randf()` would make the
+## whole wall crawl).
+func _rock_polygon(cx: int, cy: int) -> PackedVector2Array:
+	var origin := Vector2(float(cx) * SurvivorRun.TILE, float(cy) * SurvivorRun.TILE)
+	var seed_v := float((cx * 73856093) ^ (cy * 19349663)) * 0.0001
+	var out := PackedVector2Array()
+	for i in 6:
+		var a := TAU * float(i) / 6.0 + 0.2618
+		var wobble := 0.72 + fposmod(sin(seed_v * (float(i) + 1.7) * 3.1) * 0.5 + 0.5, 1.0) * 0.34
+		out.append(origin + Vector2(SurvivorRun.TILE * 0.5, SurvivorRun.TILE * 0.5)
+			+ Vector2(cos(a), sin(a)) * (SurvivorRun.TILE * 0.78 * wobble))
+	return out
+
+
+func _touches_floor(cx: int, cy: int) -> bool:
+	return run.is_floor_cell(cx - 1, cy) or run.is_floor_cell(cx + 1, cy) \
+		or run.is_floor_cell(cx, cy - 1) or run.is_floor_cell(cx, cy + 1)
+
+
+## FOG OF WAR, Warcraft 2's three states:
+##   * a cell the hero has never been near  -> full black, the map does not exist yet;
+##   * a cell he has seen and left behind   -> the same world under a black veil (0.55), so the
+##     layout is remembered but nothing there is lit;
+##   * a cell inside `FOG_REVEAL`           -> untouched.
+##
+## Painted over the props and the bodies, because that is what fog does: a pack standing in the
+## dark is a silhouette, not a fully lit portrait. The hero's own cell is always visible.
+func _draw_fog() -> void:
+	if run == null:
+		return
+	var view := _view_world_size()
+	var c0: Vector2i = run.cell_of(_cam)
+	var c1: Vector2i = run.cell_of(_cam + view)
+	var unknown := Color(0.02, 0.02, 0.02, 1.0)
+	var seen := Color(0.0, 0.0, 0.0, 0.55)
+	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
+		var x := maxi(c0.x, 0)
+		var stop := mini(c1.x + 1, SurvivorRun.COLS)
+		while x < stop:
+			var level := _fog_level(x, cy)
+			var start := x
+			while x < stop and _fog_level(x, cy) == level:
+				x += 1
+			if level == 0:
+				continue
+			draw_rect(Rect2(Vector2(float(start) * SurvivorRun.TILE,
+				float(cy) * SurvivorRun.TILE) - _cam,
+				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE)),
+				unknown if level == 2 else seen)
+
+
+## 0 = lit, 1 = explored but dark, 2 = never seen.
+func _fog_level(cx: int, cy: int) -> int:
+	if not run.is_explored_cell(cx, cy):
+		return 2
+	var centre: Vector2 = run.cell_centre(cx, cy)
+	if centre.distance_to(run.player_pos) <= SurvivorRun.FOG_REVEAL:
+		return 0
+	return 1
 
 
 ## Is a world-space shape — `pos` is already camera-shifted, `extent` its half-size — inside

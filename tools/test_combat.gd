@@ -171,34 +171,58 @@ func _test_hit_chance() -> void:
 		_fail("more attack rating gave a lower hit chance")
 
 
-## Weapon speed: DEX and IAS both shorten a swing, and neither can take it below the
-## hard floors (550 ms by DEX, 450 ms once IAS applies).
+## Weapon speed: the band Jan set (400-1000 ms = 2.5 down to 1.0 attacks a second) and the IAS
+## curve that takes the fast end to ~5 a second.
 ##
-## The IAS numbers are the D2 diminishing curve as the PWA wrote it: a weapon with
-## 100 IAS on a 2 s base lands at 1379 ms, not 1000 — the formula is
-## ms * 100 / (100 + ias * 100 / (ias + 120)), so the bonus saturates near +120%.
+## The three properties asserted here are the ones the player can feel:
+##   1. a weapon with no IAS swings at its OWN table value (the DEX collapse is gone — it used to
+##      floor every weapon at 550 ms, so the table stopped mattering);
+##   2. IAS always shortens and never below `SWING_FLOOR_MS`;
+##   3. the best roll the affix table can give (40 on a weapon + 20 on gloves) brings the FASTEST
+##      weapon in the item table to 200 ms, i.e. 5 attacks a second.
 func _test_swing_time() -> void:
 	var rng := RandomNumberGenerator.new()
-	var weapon := {"swingMs": 2000, "ias": 0}
-	var base := Progression.swing_time(rng, weapon, 0)
-	if base != 2000:
-		_fail("a 2s weapon with no DEX should swing in 2000 ms, got %d" % base)
-	var dexxy := Progression.swing_time(rng, weapon, 50)
-	if dexxy >= base:
+	var slow := {"swingMs": 1000, "ias": 0}
+	if Progression.swing_time(rng, slow, 0) != 1000:
+		_fail("a 1000 ms weapon with no IAS must swing in 1000 ms, got %d"
+			% Progression.swing_time(rng, slow, 0))
+	# DEX is a small, CAPPED bonus: 0.05 % a point, at most 8 %.
+	if Progression.swing_time(rng, slow, 60) >= 1000:
 		_fail("DEX did not shorten the swing")
-	var floored := Progression.swing_time(rng, weapon, 500)
-	if floored != 550:
-		_fail("DEX floor should be 550 ms, got %d" % floored)
-	var fast := Progression.swing_time(rng, {"swingMs": 2000, "ias": 100}, 0)
-	if fast != 1379:
-		_fail("100 IAS on a 2s weapon should give 1379 ms (D2 diminishing), got %d" % fast)
-	# More IAS must always mean a shorter swing, even if it saturates.
-	var faster := Progression.swing_time(rng, {"swingMs": 2000, "ias": 200}, 0)
+	var capped := Progression.swing_time(rng, slow, 5000)
+	if capped != 920:
+		_fail("the DEX cap must hold the swing at 920 ms on a 1000 ms weapon, got %d" % capped)
+	var fast := Progression.swing_time(rng, {"swingMs": 400, "ias": 20}, 0)
+	if fast >= 400 or fast <= 200:
+		_fail("20 IAS on a 400 ms weapon must land between 200 and 400 ms, got %d" % fast)
+	var faster := Progression.swing_time(rng, {"swingMs": 400, "ias": 60}, 0)
 	if faster >= fast:
-		_fail("doubling IAS did not shorten the swing further")
-	var silly := Progression.swing_time(rng, {"swingMs": 2000, "ias": 100000}, 500)
-	if silly != 450:
-		_fail("IAS floor should be 450 ms, got %d" % silly)
+		_fail("tripling IAS did not shorten the swing further")
+	if faster != Progression.SWING_FLOOR_MS:
+		_fail("60 IAS on the fastest weapon must hit the %d ms floor (5 attacks a second), got %d"
+			% [Progression.SWING_FLOOR_MS, faster])
+	var silly := Progression.swing_time(rng, {"swingMs": 400, "ias": 100000}, 5000)
+	if silly != Progression.SWING_FLOOR_MS:
+		_fail("nothing may swing faster than the floor: got %d" % silly)
+
+	# The BAND, read off the real item table: every weapon in the shipped data, with and without
+	# the best IAS roll the affixes can give.
+	var slowest := 0
+	var quickest := 100000
+	for item in _data.items():
+		if str(item.get("type", "")) != "weapon" or not item.has("swingMs"):
+			continue
+		var base := int(item["swingMs"])
+		slowest = maxi(slowest, base)
+		quickest = mini(quickest, base)
+		var topped := Progression.swing_time(rng, item, 0, 60)
+		if topped < Progression.SWING_FLOOR_MS:
+			_fail("%s swings faster than the floor: %d ms" % [item.get("id"), topped])
+	if slowest > 1000 or quickest < 400:
+		_fail("the weapon band must be 400..1000 ms, got %d..%d" % [quickest, slowest])
+	print("  band: %d..%d ms (%.2f..%.2f attacks a second), best IAS %.2f"
+		% [quickest, slowest, 1000.0 / float(quickest), 1000.0 / float(slowest),
+			1000.0 / float(Progression.swing_time(rng, {"swingMs": quickest, "ias": 60}, 0))])
 
 
 # --- 2. pacing ---------------------------------------------------------------

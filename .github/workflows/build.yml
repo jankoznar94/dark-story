@@ -317,6 +317,17 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SURVIVOR_ALL_PASS=true"
 
+      # The AREA: a carved corridor with turns, connected from the spawn to every pack, revealed
+      # as the hero walks (Warcraft 2 fog). A screenshot cannot prove connectivity — a pocket
+      # behind the rock is a pack the player can see and never reach — so the flood fill is the
+      # gate, over five seeds.
+      - name: Corridor and fog test (shape, connectivity, reveal)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_corridor_fog.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "CORRIDOR_FOG_ALL_PASS=true"
+
       # The nav bar's test button. It is a GATE, and a gate whose failure is "the button says
       # a message" looks exactly like a working button: nothing crashes, nothing is logged.
       # The numbers are asserted one by one against the PWA's `toggleTestMode()`, and the last

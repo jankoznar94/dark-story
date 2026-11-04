@@ -2271,7 +2271,11 @@ func render() -> void:
 	# The enemy's mana ring appears only where the enemy actually casts: the PWA hid
 	# `.enemy-mana-ring` for melee monsters. The ring's VALUE is in `_smooth_update()`.
 	_arc_enemy_mana.visible = not battle.enemy_spells.is_empty()
-	_arc_offhand.visible = battle.offhand_swing_ms > 0
+	# ⚠️  The off-hand ring is GONE, not hidden by accident. With the two hands on one shared
+	# clock that strictly alternates (see `Battle.dual_swing`), a second ring would be the same
+	# clock drawn twice — and the pair's order is already visible on the hero, where only one
+	# weapon's arc is drawn per beat.
+	_arc_offhand.visible = false
 
 	# The hero's resource bar. EVERY class uses mana in this game — the barbarian too
 	# (CLASSES.json: resource 'mana', maxResource 100, baseMana 10, manaPerLevel 1) —
@@ -2334,18 +2338,14 @@ func _smooth_update() -> void:
 	_enemy_hp_shown = _ease_value("enemy_hp")
 	_enemy_hp_max_shown = _ease_value("enemy_hp_max")
 
-	# The player's two gold arcs, ONE PER HAND, each drawn straight off its own clock. A full
-	# ring is a swing just landed and the arc fills as the next one approaches.
+	# The player's gold arc, off ONE clock that carries BOTH hands in strict alternation.
 	#
-	# ⚠️  The off-hand arc used to be driven by `battle.player_swing_elapsed` — the MAIN
-	# hand's clock — divided by the off-hand's interval, which is why Jan saw it reset
-	# together with the main ring: one clock, two arcs. Two independent clocks now, so two
-	# independent arcs.
+	# ⚠️  Two arcs over two independent clocks was the previous shape, and it is what made
+	# the hero strike with both weapons at the same instant. `player_swing_ms` is the average
+	# of the pair when a second weapon is held (D2's rule), so this single ring is the whole
+	# truth about when the next blow lands — whichever hand it belongs to.
 	var player_ms := maxf(float(battle.player_swing_ms), 1.0)
 	_arc_player.set_value_ratio(clampf((battle.player_swing_elapsed + ahead) / player_ms, 0.0, 1.0))
-	if battle.offhand_swing_ms > 0:
-		_arc_offhand.set_value_ratio(clampf((battle.offhand_swing_elapsed + ahead)
-			/ float(battle.offhand_swing_ms), 0.0, 1.0))
 	# The enemy's timer is the ONE gauge that must NOT be eased, and easing it was the
 	# whole of Jan's "the enemy's swing timer never finishes, it always resets at ~90 %".
 	#

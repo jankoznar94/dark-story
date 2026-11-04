@@ -141,6 +141,42 @@ function loadTables(srcDir, log) {
 	return picked;
 }
 
+/** DR Godot retune of the SPEED axes.
+ *
+ *  The PWA's weapon band was 700-1800 ms (1.43 down to 0.56 attacks a second), which on a
+ *  portrait phone reads as one sluggish hit at a time. Jan's target for the port:
+ *  the slowest weapon lands ~1 blow a second, the fastest 2-2.5 a second with no IAS, and a
+ *  fully stacked IAS build takes the fastest weapon to ~5 a second (see
+ *  `Progression.SWING_FLOOR_MS`).
+ *
+ *  700 ms -> 400 ms and 1800 ms -> 1000 ms, linear in between and snapped to 10 ms, so the
+ *  RELATIVE spread of the table survives (a dagger is still twice a maul).
+ *
+ *  Monsters are scaled by the same kind of factor (0.65) and NOT left alone: the hero's DPS
+ *  would otherwise roughly double against an unchanged enemy and every fight would end in a
+ *  third of the time. The pairing is what keeps the pacing Jan tuned earlier.
+ *
+ *  It lives here rather than in `data/*.json` because those files are generated: a retune
+ *  written straight into them would be silently undone by the next import.
+ */
+function retune(tables, log) {
+	const snap = v => Math.round(v / 10) * 10;
+	const weapons = (tables.ITEMS ?? []).filter(i => i.type === 'weapon' && i.swingMs);
+	for (const w of weapons) {
+		w.swingMs = Math.min(1000, Math.max(400, snap(400 + (w.swingMs - 700) * (600 / 1100))));
+	}
+	let monsters = 0;
+	for (const theme of tables.MONSTER_DB ?? []) {
+		for (const row of theme) {
+			if (!row.attackSpeed) continue;
+			row.attackSpeed = Math.max(700, snap(row.attackSpeed * 0.65));
+			monsters++;
+		}
+	}
+	log?.(`  retune: ${weapons.length} weapon speeds -> 400-1000 ms, ${monsters} monster attack speeds x0.65`);
+	return tables;
+}
+
 /** One JSON file per top-level table: the Godot side then has a stable contract
  *  (data/<TABLE>.json) instead of one 240 KB blob that has to be sliced. */
 function writeTables(tables, outDir, log) {
@@ -179,6 +215,7 @@ function main() {
 	}
 
 	const tables = loadTables(srcDir, log);
+	retune(tables, log);
 	summarise(tables, log);
 
 	if (args.check) {

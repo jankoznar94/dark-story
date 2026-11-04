@@ -125,22 +125,33 @@ var ended := false
 var won := false
 var pending_kill := false
 
-## The two hands run TWO INDEPENDENT CLOCKS. Each is a full swing that lands on its own,
-## and each has its own interval — a fast dagger in the off hand lands more often than a
-## slow axe in the main one, which is the whole point of holding two weapons.
+## The two hands share ONE clock and STRICTLY ALTERNATE, which is Diablo 2's dual wield
+## (a barbarian's two weapons strike one after the other, and the speed of the pair is the
+## AVERAGE of the two weapons, not each one's own).
 ##
-## ⚠️  The port used to run ONE clock at the AVERAGE of the two weapons that alternated
-## hands, which is what the PWA did (`mb.offhandSwingMs = 0 // offhand nemá vlastní timer`)
-## — and that made a dagger in the off hand swing at the axe's pace. Jan's rule: "každý
-## swing timer by si měl jet svým tempem. Neměly by být na sebe navzájem navázané."
-## The off-hand penalty became a PER-HIT damage multiplier (`Talents.offHandMult`) rather
-## than a longer interval, and Double Swing's own cooldown is now the longer of the two.
-##
-## A class that does not dual wield leaves `offhand_swing_ms` at 0 and one clock runs.
-var player_swing_ms := 2000      # the MAIN hand's interval
-var player_swing_elapsed := 0.0  # how far the MAIN hand is into its swing
-var offhand_swing_ms := 0        # the OFF hand's interval, 0 when there is no off hand
-var offhand_swing_elapsed := 0.0 # the OFF hand's OWN clock — never reset by the main hand
+## ⚠️  This is the third shape the pair has had, so the history matters:
+##   1. the PWA ran one clock at the MAIN hand's pace and alternated (`_dualWieldTurn`);
+##   2. this port then gave each hand its OWN timer, so a fast dagger in the off hand swung
+##      at its own pace — correct in numbers, but the two arcs on screen drifted apart and
+##      the hero visibly struck with both weapons at once, which reads as one weapon hitting
+##      twice ("obě zbraně sekají ve stejnou dobu", Jan);
+##   3. now: one clock at the AVERAGE of the two intervals, one hand per beat. Jan's rule is
+##      the alternation, and it is exactly what D2 does — the engine replaces one hand's speed
+##      modifier with the average of both (`d2r.org/mechanics/attack-speed`).
+## The off-hand damage penalty stays a PER-HIT multiplier (`Talents.offHandMult`), so the
+## second weapon is still worth holding: it lands every other blow at its own weapon's damage.
+var player_swing_ms := 2000      # the shared interval (for a dual wield: the average)
+var player_swing_elapsed := 0.0  # how far the hero is into the next swing
+## The off hand's OWN interval, as information (the HUD prints it). `0` means there is no
+## second weapon and every beat is a main-hand blow. It is NOT a clock any more.
+var offhand_swing_ms := 0
+## Kept for the screens and the older tests: with one shared clock this is always 0. It is the
+## elapsed count of a clock that no longer exists, so nothing may drive a hand from it.
+var offhand_swing_elapsed := 0.0
+## A real second weapon is held: every other beat is an off-hand blow.
+var dual_swing := false
+## Which hand takes the NEXT beat. False = main hand (the hero opens with it).
+var next_hand_off := false
 var enemy_swing_ms := 2000
 var enemy_swing_elapsed := 0.0
 
@@ -428,17 +439,16 @@ func _reset_clocks() -> void:
 	# old single-clock bug look intentional.
 
 
-## The player's swing intervals for this fight, from the equipped weapon(s).
+## The player's swing interval for this fight, from the equipped weapon(s).
 ##
-## ⚠️  TWO clocks, one per hand. The port used to collapse them into ONE at the AVERAGE of
-## the two weapons (the PWA's `mb.offhandSwingMs = 0`, hands alternating on the shared
-## clock) — so an off hand holding a 700 ms dagger swung at the main hand's 1580 ms axe
-## pace, and the off-hand ring on screen was only a second arc over the SAME elapsed count:
-## "off hand timer se neustále resetuje s main hand timerem".
+## ⚠️  ONE clock, the AVERAGE of the two hands (D2's rule for a dual wielder). The port spent
+## a whole branch on the opposite — two independent timers, each hand at its own weapon's
+## pace — and it is wrong for the FEEL: the hero then struck with both weapons at the same
+## instant and the two arcs drifted apart. Jan: "Hráč má dvě zbraně, ale obě sekají ve
+## stejnou dobu. Daleko uspokojivější je, když se zbraně plynule střídají."
 ##
-## Jan's rule is that the two are INDEPENDENT: each hand swings at its own weapon's pace
-## and neither reset touches the other. The D2 off-hand damage penalty is unaffected — it
-## is `Talents.offHandMult` on the hit itself, not a longer interval.
+## The second weapon is not wasted by the averaging: it lands every other blow with its OWN
+## damage roll and the off-hand multiplier that One-Hand Specialization raises.
 ##
 ## Also stores the main-hand weapon TYPE, because the duel arena's reach and closing
 ## speed are keyed off it (`getWeaponReach()` reads the equipped weapon live in the PWA,
@@ -452,15 +462,21 @@ func apply_swing_timers(state, find_item: Callable) -> void:
 	var gloves: Dictionary = find_item.call(state.equip().get("gloves"))
 	var glove_ias := int(gloves.get("ias", 0)) if not gloves.is_empty() else 0
 
-	player_swing_ms = Progression.swing_time(rng, main_weapon, dex_total, glove_ias,
+	var main_ms := Progression.swing_time(rng, main_weapon, dex_total, glove_ias,
 		state.data.get("_speedBoostPct", 0.0))
+	player_swing_ms = main_ms
 	offhand_swing_ms = 0
-	# The off hand's own weapon, its own interval. NO averaging with the main hand.
+	dual_swing = false
+	next_hand_off = false
+	# A second weapon in the off hand: the pair swings at the AVERAGE of the two intervals.
 	if bool(cls.get("dualWield", false)):
 		var off_item: Dictionary = find_item.call(state.equip().get("shield"))
 		if not off_item.is_empty() and off_item.has("weaponType"):
-			offhand_swing_ms = Progression.swing_time(rng, off_item, dex_total, glove_ias, 0.0)
-	# Both hands start their own swing from zero, at the same instant — the fight begins.
+			var off_ms := Progression.swing_time(rng, off_item, dex_total, glove_ias, 0.0)
+			offhand_swing_ms = off_ms
+			dual_swing = true
+			player_swing_ms = int(round((float(main_ms) + float(off_ms)) / 2.0))
+	# The fight begins with the hero's first beat already wound up.
 	player_swing_elapsed = 0.0
 	offhand_swing_elapsed = 0.0
 	enemy_swing_ms = prog.enemy_swing_time(enemy_attack_speed, enemy_slow_pct, enemy_slow_ms)
@@ -834,7 +850,7 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 			whirlwind_timeout()
 
 	player_swing_elapsed += delta_ms
-	offhand_swing_elapsed += delta_ms
+	# `offhand_swing_elapsed` is deliberately NOT advanced: there is no second clock.
 	enemy_swing_elapsed += delta_ms
 	if player_slow_ms > 0:
 		player_slow_ms = maxi(0, player_slow_ms - int(delta_ms))
@@ -851,10 +867,9 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 		_on_enemy_dead(state, find_item)
 		return false
 
-	# Each hand's interval carries the fight-wide modifiers that shorten a swing (a slow on
-	# the hero, Frenzy's speed, the Assassin's Speed Boost). ONE set of modifiers — a slow
-	# cannot affect one hand and not the other — but applied PER HAND, because the two
-	# weapons do not start from the same interval.
+	# ONE clock, and the hand is decided by the beat. The interval carries the fight-wide
+	# modifiers that shorten a swing (a slow on the hero, Frenzy's speed, the Assassin's Speed
+	# Boost) — one set of modifiers, applied to the pair.
 	var main_interval := _effective_swing_ms(float(player_swing_ms))
 	if player_swing_elapsed >= main_interval:
 		player_swing_elapsed -= main_interval
@@ -863,23 +878,16 @@ func tick(delta_ms: float, state, find_item: Callable) -> bool:
 		if not player_in_reach():
 			player_swing_elapsed = 0.0
 		else:
-			player_attack(state, find_item)
+			# STRICT ALTERNATION: the hero never strikes with both weapons on one beat, and
+			# never with the same one twice in a row while he holds two.
+			if dual_swing and next_hand_off:
+				_offhand_attack(state, find_item)
+			else:
+				player_attack(state, find_item)
+			if dual_swing:
+				next_hand_off = not next_hand_off
 			if ended or enemy_hp <= 0.0:
 				return not ended
-
-	# The OFF hand runs its OWN clock at its OWN weapon\u2019s pace. Landing a main-hand blow
-	# does NOT touch it: independent hands are the rule, and a skill that means to restart
-	# both says so explicitly (`_reset_swing_timers`).
-	if offhand_swing_ms > 0:
-		var off_interval := _effective_swing_ms(float(offhand_swing_ms))
-		if offhand_swing_elapsed >= off_interval:
-			offhand_swing_elapsed -= off_interval
-			if not player_in_reach():
-				offhand_swing_elapsed = 0.0
-			else:
-				_offhand_attack(state, find_item)
-				if ended or enemy_hp <= 0.0:
-					return not ended
 
 	# A stunned enemy does not swing, and its swing clock does not advance either.
 	if enemy_stun_ms <= 0 and enemy_swing_elapsed >= float(enemy_swing_ms):
@@ -1222,12 +1230,16 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 	var hero: Dictionary = state.hero()
 	var cls_id := str(state.data.get("heroClass", ""))
 	var is_staff := str(weapon.get("weaponType", "")) == "staff"
+	# Every outcome carries WHICH HAND threw the swing, misses included. Without it the log reads
+	# as "MISS" with no owner and nothing — a test or a player — can tell a whiffed off hand from a
+	# whiffed main hand, which is exactly what an alternating pair needs to be legible.
+	var hand := " offhand" if is_offhand else ""
 
 	if not is_staff:
 		var ar := int(round(float(prog.hero_attack_rating(hero, state.equip(), cls_id, find_item)) * ar_mult))
 		var chance := prog.hit_chance(ar, enemy_defense, int(hero.get("level", 1)), monster_level_value)
 		if rng.randf() * 100.0 >= chance:
-			_note("MISS", 0, false)
+			_note("MISS" + hand, 0, false)
 			# The PWA plays the DODGE sound on a MISS too — its own `playSFX(dodgeSfx)`
 			# in the attack-table branch. A whiff and a dodge are the same noise there,
 			# so they are the same cue here.
@@ -1235,14 +1247,14 @@ func _resolve_player_hit(state, find_item: Callable, weapon: Dictionary, mult: f
 			return {"hit": false, "reason": "miss"}
 
 	if enemy_block_chance > 0.0 and rng.randf() * 100.0 < enemy_block_chance:
-		_note("BLOCK", 0, false)
+		_note("BLOCK" + hand, 0, false)
 		sound(Sfx.CUE_BLOCK)
 		return {"hit": false, "reason": "block"}
 
 	# The enemy's own Evasion: 30 % of the hero's swings miss outright while it lasts.
 	# This is the mirror of the hero's dodge and the only thing the spell does.
 	if enemy_evasion_ms > 0 and rng.randf() < 0.3:
-		_note("ENEMY EVASION DODGE", 0, false)
+		_note("ENEMY EVASION DODGE" + hand, 0, false)
 		sound(Sfx.CUE_DODGE)
 		return {"hit": false, "reason": "evasion"}
 
@@ -1904,6 +1916,9 @@ func _whirlwind_strike(state, find_item: Callable) -> bool:
 func _reset_swing_timers() -> void:
 	player_swing_elapsed = 0.0
 	offhand_swing_elapsed = 0.0
+	# The hero starts over with the MAIN hand: a flurry's strikes are not "beats" of the pair,
+	# so the alternating order restarts with it.
+	next_hand_off = false
 
 
 ## Is a flurry running? The screen asks, and the ROW it draws is chosen by this rather

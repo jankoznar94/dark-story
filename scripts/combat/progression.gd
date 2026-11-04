@@ -15,6 +15,14 @@ const GameData := preload("res://scripts/data/game_data.gd")
 ## Player level cap — `applyLevelUp` stops here in the PWA.
 const LEVEL_CAP := 60
 
+## Swing timing (see `swing_time`). The floor is what makes "no amount of IAS makes a swing
+## instant" true; 200 ms is Jan's 5 attacks a second.
+const SWING_FLOOR_MS := 200
+## The interval of a weapon whose table row is missing — the slow end of the band.
+const SWING_BASE_FALLBACK_MS := 1000
+## DEX shortens a swing by 0.05 % a point, capped here so the weapon's own speed survives.
+const SWING_DEX_CAP_PCT := 8.0
+
 ## Zone scaling. Normal starts at x1.0 and adds 0.50 per zone; Nightmare starts at
 ## 5.5 (where act 5 Normal ends) and adds 0.72; Hell starts at 12.0 and adds 0.89.
 const ZONE_SCALING := [
@@ -206,19 +214,35 @@ static func _equip_attr(equip: Dictionary, find_item: Callable, key: String) -> 
 # --- swing timing ------------------------------------------------------------
 
 ## getSwingTime — weapon speed in ms, shortened by DEX and by Increased Attack
-## Speed. IAS uses D2's diminishing returns and the result is floored at 450 ms
-## (550 before IAS is applied), so no amount of gear makes a swing instant.
+## Speed.
+##
+## ⚠️  The band is Jan's, not the PWA's. The item table now runs 400 ms (2.5 attacks a
+## second) to 1000 ms (1.0), and IAS is what pushes the fast end to ~5 a second:
+##   * 20 IAS on a 400 ms weapon -> ~340 ms (2.9/s)
+##   * 60 IAS (the best roll the affix table can give: 40 on a weapon + 20 on gloves)
+##     -> 200 ms on a 400 ms blade, i.e. the floor, 5/s.
+## That is the D2 shape (diminishing returns, no IAS ever makes a swing instant) with the
+## curve retuned for our small IAS numbers: the PWA's `ias * 100 / (ias + 120)` saturates at
+## +120 % which this game never reaches, so IAS was worth almost nothing here.
+##
+## DEX is capped at +8 % on purpose. The PWA shortened a swing by 1 % per DEX point and
+## floored at 550 ms, which meant every weapon in the table converged on the same 550 ms
+## speed once the hero had any DEX at all — the weapon's own `swingMs` stopped mattering.
 static func swing_time(rng: RandomNumberGenerator, weapon: Dictionary, dex_total: int,
 		ias_bonus: int = 0, speed_boost_pct: float = 0.0) -> int:
-	var base := int(weapon.get("swingMs", 2000)) if not weapon.is_empty() else 2000
-	var ms := maxi(550, int(round(float(base) * (1.0 - float(dex_total) * 0.01))))
+	var base := int(weapon.get("swingMs", SWING_BASE_FALLBACK_MS)) if not weapon.is_empty() else SWING_BASE_FALLBACK_MS
+	var ms := float(base)
+	# DEX: at most SWING_DEX_CAP_PCT off the interval, and never enough to erase the weapon.
+	ms *= 1.0 - minf(float(dex_total) * 0.0005, SWING_DEX_CAP_PCT / 100.0)
 	var ias := int(weapon.get("ias", 0)) + ias_bonus
 	if ias > 0:
-		var eias := int(round(float(ias) * 100.0 / float(ias + 120)))
-		ms = maxi(450, int(round(float(ms) * 100.0 / (100.0 + float(eias)))))
+		# D2's diminishing curve, restretched: 180 * ias / (ias + 45) reaches ~103 "effective
+		# IAS" at the 60 the affix table can roll, so the fastest weapon lands on the floor.
+		var eias := 180.0 * float(ias) / (float(ias) + 45.0)
+		ms *= 100.0 / (100.0 + eias)
 	if speed_boost_pct > 0.0:
-		ms = maxi(450, int(round(float(ms) * (1.0 - speed_boost_pct / 100.0))))
-	return ms
+		ms *= 1.0 - speed_boost_pct / 100.0
+	return maxi(SWING_FLOOR_MS, int(round(ms)))
 
 
 # --- attack resolution -------------------------------------------------------

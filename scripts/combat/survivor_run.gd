@@ -148,9 +148,31 @@ const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
 ## The cells are laid out so the hero's spawn point is the EXACT middle of the middle cell: that
 ## is what gives him a clearing to start in, and it keeps every neighbouring pack at 436 px or
 ## more — outside ACTIVATE_RADIUS, so nothing wakes on the first frame.
+## ⚠️  THE AREA IS A CORRIDOR NOW, NOT A RECTANGLE. It used to be the whole 1500x2100 world
+## with a wall inset, i.e. one open field with nine packs scattered on a 3x3 grid — Jan: "Oblast
+## by neměla být čtverec nebo obdélník. Spíš takový jakýsi koridor, který má různé zatáčky, atd.
+## Teď je mapa strašně jednotvárná a nic neříkající."
+##
+## The walkable world is a GRID OF CELLS (`TILE` px), and only the cells the generator carved are
+## floor: a wide start clearing, then a winding corridor that turns left and right on its way up
+## the map, widening into the occasional room. Everything else is rock the hero cannot enter.
+##
+## The corridor is also what makes the FOG OF WAR read: `explored_cells` is one flag per cell, and
+## a cell the hero has never been near is drawn black — Warcraft 2's shape, which is what Jan
+## asked for ("tam, kde hráč ještě fyzicky nebyl, by to mělo být černé, nebo minimálně zašedlé").
+const TILE := 60.0
+const COLS := 25
+const ROWS := 35
+## Half-width of a corridor leg, in cells (so a leg is 5 cells = 300 px wide: two hero discs
+## side by side and room to walk past a pack).
+const CORRIDOR_HALF := 2
+## Half-width of the clearing the hero starts in, in cells (9x9 = 540 px).
+const START_ROOM_HALF := 4
+## Half-width of the occasional wider room along the corridor.
+const ROOM_HALF := 3
+## How far the hero sees, in world px. Also the radius that marks cells as explored.
+const FOG_REVEAL := 300.0
 const AREA_MARGIN := 96.0
-const ZONE_COLS := 3
-const ZONE_ROWS := 3
 const PACK_MIN := 2
 const PACK_MAX := 4
 ## How far a pack's members scatter from its cell centre, and the least gap between two of them.
@@ -250,6 +272,17 @@ var monsters: Array = []
 ## standing positions, decided at setup from the seed, so the layout is reproducible and a pack
 ## that has not woken yet is still a known quantity for a test.
 var zones: Array = []
+## The walkable grid, one byte per cell (1 = floor). `COLS` x `ROWS`, index `cy * COLS + cx`.
+## Built by `_build_corridor()`, read by the walk (`walkable`), the spawns and the screen.
+var floor_cells := PackedByteArray()
+## Fog of war, one byte per cell: 1 once the hero has been within `FOG_REVEAL` of it. A cell
+## that is still 0 is drawn BLACK — nothing about the map leaks before he walks there.
+var explored_cells := PackedByteArray()
+## The corridor's centreline, in world px, from the start clearing to the far end. Packs are
+## placed along it in order, so walking deeper is what raises the stakes.
+var path_points: Array = []
+## Where the hero starts: the middle of the start clearing.
+var start_point := Vector2.ZERO
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
 var projectiles: Array = []
 ## The HERO's own spells in the air (`thunderBolt`): {pos, vel, dmg, stun_ms, age, colour}.
@@ -330,10 +363,11 @@ var ww_landed := 0
 
 var _clear_clock := 0.0
 var _main_clock := 0.0
+## Kept at 0: there is no second clock any more (the hands alternate on `_main_clock`).
 var _off_clock := 0.0
-## The monster the MAIN hand just hit, so the off hand prefers a different body. -1 = no
-## preference (the main hand has not swung at anything).
-var _off_prefer_id := -1
+## Which hand takes the NEXT beat. False = main hand (the hero opens with it), and it flips on
+## every landed swing while a second weapon is held.
+var _next_hand_off := false
 var _next_id := 0
 ## The hero's position at the START of the frame: the only honest place to send him back to
 ## when his own step would put him inside a body.
@@ -396,7 +430,6 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	held_spell = ""
 	target_id = -1
 
-	player_pos = WORLD * 0.5
 	monsters.clear()
 	projectiles.clear()
 	bolts.clear()
@@ -405,6 +438,10 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	numbers.clear()
 	events.clear()
 	_build_area()
+	# The hero starts in the middle of the start clearing, and the fog is lifted only around him.
+	player_pos = start_point
+	_reveal_around(player_pos)
+	_prev_pos = player_pos
 	kills = 0
 	wave = 0
 	elapsed = 0.0
@@ -442,7 +479,6 @@ func _read_hands() -> void:
 	var glove_ias := int(gloves.get("ias", 0)) if not gloves.is_empty() else 0
 	main_swing = float(Progression.swing_time(rng, main_weapon, dex_total, glove_ias)) / 1000.0
 	reach_main = reach_for(main_weapon)
-
 	var cls: Dictionary = {}
 	if _data != null:
 		cls = _data.class_by_id(str(_state.data.get("heroClass", "")))
@@ -458,9 +494,12 @@ func _read_hands() -> void:
 		dmg_off_max = 0
 		crit_off = 0.0
 	else:
-		# Each hand swings at its OWN pace. Averaging the two is what made an off-hand dagger
-		# obey the main hand's axe, and it also hid the whole point of a fast weapon.
-		off_swing = float(Progression.swing_time(rng, off_weapon, dex_total, glove_ias)) / 1000.0
+		# Each hand's OWN interval is kept: the off hand's number is what the HUD shows and what
+		# the beat's reach test uses. The PAIR, though, swings at the AVERAGE of the two — see
+		# `_attack_tick` and `Battle.apply_swing_timers` for why.
+		var off_ms := float(Progression.swing_time(rng, off_weapon, dex_total, glove_ias)) / 1000.0
+		off_swing = off_ms
+		main_swing = (main_swing + off_ms) * 0.5
 		reach_off = reach_for(off_weapon)
 
 	# Damage per hand: the weapon's own roll, times its specialisation, times D2's off-hand
@@ -511,6 +550,9 @@ func step(dt: float, move: Vector2) -> void:
 		aim = walk.normalized()
 	_update_target(walking)
 	_move_hero(dt, move, target_id >= 0)
+	# FOG OF WAR: everything the hero can see from where he now stands is marked explored. Done
+	# once per step, off the grid cells, so it costs nothing per frame.
+	_reveal_around(player_pos)
 	_zone_tick()
 	_move_monsters(dt)
 	_attack_tick(dt)
@@ -543,9 +585,9 @@ func _move_hero(dt: float, move: Vector2, keep_facing: bool = false) -> void:
 		dir = _approach_step()
 		if dir == Vector2.ZERO:
 			return
-	player_pos += dir * hero_speed() * dt
-	player_pos.x = clampf(player_pos.x, AREA_MARGIN + HERO_RADIUS, WORLD.x - AREA_MARGIN - HERO_RADIUS)
-	player_pos.y = clampf(player_pos.y, AREA_MARGIN + HERO_RADIUS, WORLD.y - AREA_MARGIN - HERO_RADIUS)
+	# THE CORRIDOR, not a rectangle: the step is taken through `_step_body`, so the hero slides
+	# along the rock at a turn instead of stopping dead against it.
+	player_pos = _step_body(player_pos, dir * hero_speed() * dt, HERO_RADIUS)
 
 
 ## Where the ASSIST would walk the hero this frame, or ZERO if he is already close enough. The
@@ -574,36 +616,223 @@ func _approach_distance() -> float:
 
 
 # ============================================================================ area
+#
+# The map: a grid of `TILE` px cells, a start clearing, and a carved corridor that turns on its
+# way up the world. The walk, the spawns and the fog all read this grid, so there is exactly one
+# answer to "is this a place the hero can stand".
 
-## The cell grid, in world pixels. Every centre sits in the middle of its own cell, and the hero
-## spawns in the exact middle of the middle one.
-static func zone_centres() -> Array:
-	var out: Array = []
-	var w := WORLD.x - AREA_MARGIN * 2.0
-	var h := WORLD.y - AREA_MARGIN * 2.0
-	for r in ZONE_ROWS:
-		for c in ZONE_COLS:
-			out.append(Vector2(
-				AREA_MARGIN + w * (float(c) + 0.5) / float(ZONE_COLS),
-				AREA_MARGIN + h * (float(r) + 0.5) / float(ZONE_ROWS)))
-	return out
+func cell_index(cx: int, cy: int) -> int:
+	return cy * COLS + cx
 
 
-## One pack per cell, the hero's own cell left EMPTY. `minArea` is honoured by DISTANCE from the
-## start instead of elapsed time: the far corners hold the heavy kinds, so walking deeper is what
-## raises the stakes and the run cannot be farmed by standing still.
+func in_grid(cx: int, cy: int) -> bool:
+	return cx >= 0 and cy >= 0 and cx < COLS and cy < ROWS
+
+
+## Is this cell floor? A cell OUTSIDE the grid is rock, which is what makes the corridor's ends
+## and edges solid without any special case at the border.
+func is_floor_cell(cx: int, cy: int) -> bool:
+	if not in_grid(cx, cy) or floor_cells.size() != COLS * ROWS:
+		return false
+	return floor_cells[cell_index(cx, cy)] == 1
+
+
+func cell_of(p: Vector2) -> Vector2i:
+	return Vector2i(int(floor(p.x / TILE)), int(floor(p.y / TILE)))
+
+
+func cell_centre(cx: int, cy: int) -> Vector2:
+	return Vector2((float(cx) + 0.5) * TILE, (float(cy) + 0.5) * TILE)
+
+
+func is_explored_cell(cx: int, cy: int) -> bool:
+	if not in_grid(cx, cy) or explored_cells.size() != COLS * ROWS:
+		return false
+	return explored_cells[cell_index(cx, cy)] == 1
+
+
+func _carve_square(cx: int, cy: int, half: int) -> void:
+	for y in range(cy - half, cy + half + 1):
+		for x in range(cx - half, cx + half + 1):
+			if in_grid(x, y):
+				floor_cells[cell_index(x, y)] = 1
+
+
+## A straight leg between two cell centres, carved at `half`. Axis-aligned in practice (the
+## generator only ever makes vertical or horizontal legs), which is what gives the corridor its
+## square-cut turns instead of a diagonal smear.
+func _carve_leg(a: Vector2i, b: Vector2i, half: int) -> void:
+	var steps := maxi(absi(b.x - a.x), absi(b.y - a.y))
+	for s in steps + 1:
+		var t := float(s) / float(maxi(steps, 1))
+		_carve_square(int(round(lerpf(float(a.x), float(b.x), t))),
+			int(round(lerpf(float(a.y), float(b.y), t))), half)
+
+
+## Build the area. A clearing at the bottom, then legs upward with a horizontal turn between
+## them; the horizontal direction flips every leg so the map snakes instead of drifting off one
+## side. The result is reproducible from `rng`, like every other layout in this run.
+func _build_corridor() -> void:
+	floor_cells.resize(COLS * ROWS)
+	floor_cells.fill(0)
+	explored_cells.resize(COLS * ROWS)
+	explored_cells.fill(0)
+	path_points.clear()
+
+	# The start clearing sits low and central: the hero spawns in its middle, with room to fight
+	# the first pack without a wall at his back.
+	var cx := COLS / 2
+	var cy := ROWS - 4
+	_carve_square(cx, cy, START_ROOM_HALF)
+	start_point = cell_centre(cx, cy)
+	path_points.append(start_point)
+
+	var side := 1 if rng.randf() < 0.5 else -1
+	var rooms: Array = []
+	while cy > 3:
+		# --- one vertical leg, upward
+		var up := rng.randi_range(4, 7)
+		var ny := maxi(3, cy - up)
+		_carve_leg(Vector2i(cx, cy), Vector2i(cx, ny), CORRIDOR_HALF)
+		cy = ny
+		path_points.append(cell_centre(cx, cy))
+		# A room every other turn gives the corridor places to breathe — and places for a pack to
+		# stand in formation instead of in single file.
+		if rng.randf() < 0.45:
+			_carve_square(cx, cy, ROOM_HALF)
+			rooms.append(cell_centre(cx, cy))
+		if cy <= 4:
+			break
+		# --- one horizontal turn
+		var run := rng.randi_range(3, 6) * side
+		var nx := clampi(cx + run, 2 + CORRIDOR_HALF, COLS - 3 - CORRIDOR_HALF)
+		if nx != cx:
+			_carve_leg(Vector2i(cx, cy), Vector2i(nx, cy), CORRIDOR_HALF)
+			cx = nx
+			path_points.append(cell_centre(cx, cy))
+		# Flip the side only now and then, so the snake has long and short switchbacks rather
+		# than a metronome.
+		if rng.randf() < 0.55:
+			side = -side
+	# The far end: a last room, so the deepest pack has somewhere to be fought.
+	_carve_square(cx, cy, ROOM_HALF)
+	path_points.append(cell_centre(cx, cy))
+
+
+## Can a body of radius `r` stand at `p`? The WHOLE disc has to be on floor, not just its centre:
+## a hero whose centre is on the last floor cell would otherwise hang his shoulder over the rock,
+## and the drawn wall would be inside him.
+##
+## Eight sample points on the rim (the four cardinals and the four diagonals) are enough for a
+## 60 px grid and a ~31 px body: a corner of rock cannot slip between them.
+func walkable(p: Vector2, r: float) -> bool:
+	if not is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE))):
+		return false
+	if is_floor_cell(int(floor((p.x - r) / TILE)), int(floor((p.y - r) / TILE))) \
+			and is_floor_cell(int(floor((p.x + r) / TILE)), int(floor((p.y - r) / TILE))) \
+			and is_floor_cell(int(floor((p.x - r) / TILE)), int(floor((p.y + r) / TILE))) \
+			and is_floor_cell(int(floor((p.x + r) / TILE)), int(floor((p.y + r) / TILE))):
+		return true
+	for i in 8:
+		var a := TAU * float(i) / 8.0
+		if not is_floor_cell(int(floor((p.x + cos(a) * r) / TILE)),
+				int(floor((p.y + sin(a) * r) / TILE))):
+			return false
+	return true
+
+
+## Move a body from `from` by `delta`, sliding along the rock instead of stopping dead: a full
+## move, else the x component only, else the y component only. Without the slide the corridor's
+## turns would be sticky — the player pushes into a wall and the walk stops even though the thumb
+## is aiming down the leg.
+func _step_body(from: Vector2, delta: Vector2, r: float) -> Vector2:
+	var target := from + delta
+	if walkable(target, r):
+		return target
+	var slide_x := Vector2(target.x, from.y)
+	if is_zero_approx(delta.x) == false and walkable(slide_x, r):
+		return slide_x
+	var slide_y := Vector2(from.x, target.y)
+	if is_zero_approx(delta.y) == false and walkable(slide_y, r):
+		return slide_y
+	return from
+
+
+## The nearest point a body of radius `r` can stand on, searched outward from `p` in cell steps.
+## Used by the spawns, which used to clamp to a rectangle and now have to find floor.
+func nearest_floor_point(p: Vector2, r: float = MON_RADIUS) -> Vector2:
+	if walkable(p, r):
+		return p
+	var c := cell_of(p)
+	for radius in range(1, 8):
+		var best := Vector2.ZERO
+		var best_d := INF
+		for y in range(c.y - radius, c.y + radius + 1):
+			for x in range(c.x - radius, c.x + radius + 1):
+				if absi(x - c.x) != radius and absi(y - c.y) != radius:
+					continue
+				if not is_floor_cell(x, y):
+					continue
+				var q := cell_centre(x, y)
+				var d: float = q.distance_squared_to(p)
+				if d < best_d and walkable(q, r):
+					best_d = d
+					best = q
+		if best_d < INF:
+			return best
+	return start_point
+
+
+## Mark every cell the hero can see as explored. Called once per step; 5x5 to 7x7 cells is all
+## the work a 60 px grid needs, so the fog costs nothing per frame.
+func _reveal_around(p: Vector2) -> void:
+	var c := cell_of(p)
+	var reach := int(ceil(FOG_REVEAL / TILE))
+	for y in range(c.y - reach, c.y + reach + 1):
+		for x in range(c.x - reach, c.x + reach + 1):
+			if not in_grid(x, y):
+				continue
+			if not is_floor_cell(x, y):
+				# Rock next to the hero is explored too, so the wall he is standing against is
+				# DRAWN instead of being a black tile he is pressed into.
+				if cell_centre(x, y).distance_to(p) <= FOG_REVEAL + TILE:
+					explored_cells[cell_index(x, y)] = 1
+				continue
+			if cell_centre(x, y).distance_to(p) <= FOG_REVEAL:
+				explored_cells[cell_index(x, y)] = 1
+
+
+## One pack per STOP along the corridor, the hero's own clearing left EMPTY. `minArea` is honoured
+## by DISTANCE from the start instead of elapsed time: the far end holds the heavy kinds, so
+## walking deeper is what raises the stakes and the run cannot be farmed by standing still.
 func _build_area() -> void:
 	zones.clear()
-	var centre_start := WORLD * 0.5
-	var centres := zone_centres()
-	var max_d := 1.0
-	for c in centres:
-		max_d = maxf(max_d, (c as Vector2).distance_to(centre_start))
-	for c in centres:
-		var centre: Vector2 = c
-		if centre.distance_to(centre_start) < 1.0:
+	path_points.clear()
+	_build_corridor()
+	# How many packs the corridor holds: one per ~330 px of path, clamped to something a phone
+	# run can finish.
+	var total := 0.0
+	var prev: Vector2 = path_points[0]
+	var lengths: Array = [0.0]
+	for i in range(1, path_points.size()):
+		var p: Vector2 = path_points[i]
+		total += prev.distance_to(p)
+		lengths.append(total)
+		prev = p
+	var count := clampi(int(round(total / 330.0)), 6, 12)
+	var max_d := maxf(1.0, total)
+	# The first pack must be OUTSIDE the activation radius of the spawn point, or it would be
+	# standing on the hero before he takes a step — so the samples start past the clearing
+	# instead of being dropped after the fact (dropping them left the corridor with five packs
+	# and no far end).
+	var d_min := minf(ACTIVATE_RADIUS + 120.0, max_d * 0.5)
+	for k in range(count):
+		# Evenly spaced along the path, from past the clearing to the far end.
+		var want := d_min + (max_d - d_min) * float(k + 1) / float(count + 1)
+		var centre := _point_at_distance(lengths, want)
+		if centre.distance_to(start_point) < ACTIVATE_RADIUS + 60.0:
 			continue
-		var tier := 1 + int(round(3.0 * centre.distance_to(centre_start) / max_d))
+		var tier := 1 + int(round(3.0 * float(k) / float(maxi(count - 1, 1))))
 		var members: Array = []
 		for _i in rng.randi_range(PACK_MIN, PACK_MAX):
 			var row := _pick_row(tier)
@@ -612,7 +841,7 @@ func _build_area() -> void:
 			members.append({"row": row, "pos": _pack_slot(centre, members)})
 		if members.is_empty():
 			continue
-		var prog_idx := clampi(int(round(9.0 * centre.distance_to(centre_start) / max_d)), 0, 9)
+		var prog_idx := clampi(int(round(9.0 * float(k) / float(maxi(count - 1, 1)))), 0, 9)
 		zones.append({
 			"centre": centre,
 			"progress": prog_idx,
@@ -623,6 +852,18 @@ func _build_area() -> void:
 		})
 
 
+## The world point at `distance` along the corridor's centreline.
+func _point_at_distance(lengths: Array, distance: float) -> Vector2:
+	for i in range(1, path_points.size()):
+		if float(lengths[i]) >= distance:
+			var a: Vector2 = path_points[i - 1]
+			var b: Vector2 = path_points[i]
+			var span := maxf(float(lengths[i]) - float(lengths[i - 1]), 0.001)
+			var t := (distance - float(lengths[i - 1])) / span
+			return a.lerp(b, clampf(t, 0.0, 1.0))
+	return path_points[path_points.size() - 1]
+
+
 ## A free spot inside a pack, at least PACK_SPACING from every other member. Rejection for a
 ## BOUNDED number of tries and then a ring slot: two discs stacked on each other is a bad pack,
 ## but a "find room" loop that can fail forever is a hang, which is worse.
@@ -630,7 +871,9 @@ func _pack_slot(centre: Vector2, taken: Array) -> Vector2:
 	for _try in 14:
 		var ang := rng.randf() * TAU
 		var dist := rng.randf_range(26.0, ZONE_JITTER)
-		var p := _clamp_world(centre + Vector2(cos(ang), sin(ang)) * dist)
+		var p := centre + Vector2(cos(ang), sin(ang)) * dist
+		if not walkable(p, MON_RADIUS):
+			continue
 		var free := true
 		for m in taken:
 			if p.distance_to(m["pos"] as Vector2) < PACK_SPACING:
@@ -639,7 +882,7 @@ func _pack_slot(centre: Vector2, taken: Array) -> Vector2:
 		if free:
 			return p
 	var slot := TAU * float(taken.size()) / float(PACK_MAX) + rng.randf() * 0.4
-	return _clamp_world(centre + Vector2(cos(slot), sin(slot)) * ZONE_JITTER)
+	return nearest_floor_point(centre + Vector2(cos(slot), sin(slot)) * ZONE_JITTER)
 
 
 ## The kind pool for one tier of the area. Same `minArea` rule the temporal waves used, now fed
@@ -699,14 +942,15 @@ func _spawn_away(prefer: Vector2) -> Vector2:
 		var k := int(ceil(float(i) / 2.0))
 		var dir := base.rotated(deg_to_rad(30.0 * float(k) * (1.0 if i % 2 == 1 else -1.0)))
 		var p := player_pos + dir * WAKE_MIN_DIST
-		if _inside_area(p):
+		if walkable(p, MON_RADIUS):
 			return p
-	return _clamp_world(player_pos + base * WAKE_MIN_DIST)
+	return nearest_floor_point(player_pos + base * WAKE_MIN_DIST)
 
 
+## Is this a place a body of `MON_RADIUS` can stand? The old rectangle test is gone: the area is
+## the carved corridor, and a point in the middle of the map can be solid rock.
 func _inside_area(p: Vector2) -> bool:
-	return p.x >= AREA_MARGIN + MON_RADIUS and p.x <= WORLD.x - AREA_MARGIN - MON_RADIUS \
-		and p.y >= AREA_MARGIN + MON_RADIUS and p.y <= WORLD.y - AREA_MARGIN - MON_RADIUS
+	return walkable(p, MON_RADIUS)
 
 
 func cleared_zones() -> int:
@@ -758,7 +1002,7 @@ func _spawn_one() -> void:
 		return
 	var ang := rng.randf() * TAU
 	var dist := rng.randf_range(SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX)
-	var pos := _clamp_world(player_pos + Vector2(cos(ang), sin(ang)) * dist)
+	var pos := nearest_floor_point(player_pos + Vector2(cos(ang), sin(ang)) * dist)
 	var lvl: int = _prog.monster_level(act_id, 0, 0) if _prog != null else 1
 	monsters.append(_make_monster(row, pos, lvl))
 
@@ -833,12 +1077,12 @@ func _move_monsters(dt: float) -> void:
 		var stop_at := float(m["keep_range"]) if ranged else BODY_RADIUS * 2.0
 		if gap > stop_at:
 			var step_len := minf(float(m["speed"]) / walk_mult * dt, gap - stop_at)
-			m["pos"] = _clamp_world((m["pos"] as Vector2) + dir * step_len)
+			m["pos"] = _step_body(m["pos"] as Vector2, dir * step_len, MON_RADIUS)
 		elif ranged and gap < RETREAT_RANGE:
 			# Backing off is SLOWER than walking in, and it can be cornered: the arena's
 			# edge wins over the caster's comfort.
 			var back := minf(float(m["speed"]) * 0.8 / walk_mult * dt, RETREAT_RANGE - gap)
-			m["pos"] = _clamp_world((m["pos"] as Vector2) - dir * back)
+			m["pos"] = _step_body(m["pos"] as Vector2, -dir * back, MON_RADIUS)
 
 		# The gap AFTER the move: the attack must be judged on where the bodies really are,
 		# or a caster fires from a distance it has already left.
@@ -864,12 +1108,11 @@ func _move_monsters(dt: float) -> void:
 	_resolve_bodies()
 
 
-## The WALL of the area. It is the same inset the decoration stands on, so the rocks the player
-## runs into are the line the rules stop him at — a boundary drawn anywhere else is a lie.
+## The corridor's edge, for anything that only has a TARGET point and no previous one: pull the
+## point back onto the nearest floor. The walk itself uses `_step_body`, which slides along the
+## rock instead of snapping, but a spawn or a knock-back correction has no previous position.
 func _clamp_world(pos: Vector2) -> Vector2:
-	return Vector2(
-		clampf(pos.x, AREA_MARGIN + MON_RADIUS, WORLD.x - AREA_MARGIN - MON_RADIUS),
-		clampf(pos.y, AREA_MARGIN + MON_RADIUS, WORLD.y - AREA_MARGIN - MON_RADIUS))
+	return nearest_floor_point(pos, MON_RADIUS)
 
 
 ## One orb, aimed at where the hero IS at the moment of the throw. It is NOT homing: that is
@@ -958,16 +1201,22 @@ func _resolve_bodies() -> void:
 				var dist := off.length()
 				if dist >= min_gap or dist <= 0.001:
 					continue
-				m["pos"] = player_pos + off / dist * min_gap
+				var shoved: Vector2 = player_pos + off / dist * min_gap
+				if walkable(shoved, MON_RADIUS):
+					m["pos"] = shoved
 
 
-## A body pushed by its neighbour may not be pushed INTO the hero.
+## A body pushed by its neighbour may not be pushed INTO the hero — and it may not be pushed into
+## the rock either: a shove that would put it outside the corridor is simply refused, because the
+## wall wins over the spacing rule.
 func _keep_off_hero(pos: Vector2, min_gap: float) -> Vector2:
 	var off: Vector2 = pos - player_pos
 	var dist := off.length()
-	if dist >= min_gap or dist <= 0.001:
+	if dist < min_gap and dist > 0.001:
+		pos = player_pos + off / dist * min_gap
+	if walkable(pos, MON_RADIUS):
 		return pos
-	return player_pos + off / dist * min_gap
+	return pos
 
 
 func _hero_is_free(min_gap: float) -> bool:
@@ -1098,18 +1347,24 @@ func target_index() -> int:
 	return _index_of_monster(target_id)
 
 
-## One clock per hand, and a blow ONLY while the attack is held — Jan's new rule (Diablo 2
-## Resurrected with a gamepad): "hrdina neútočí automaticky". The clocks always run down, so a
-## hero who lets go keeps his swing's progress.
+## ONE clock for both hands, and the hands STRICTLY ALTERNATE — Diablo 2's dual wield. The
+## pair swings at the AVERAGE of the two weapons' intervals (the engine there replaces one
+## hand's speed modifier with the average of both), and each beat belongs to one weapon, which
+## brings its own reach, its own damage roll and its own arc on screen.
 ##
-## Everything a swing lands on is a real roll from the weapon that hand holds through
-## `Progression`, so the loot loop stays honest and a fast 1H is not the same weapon as a slow
-## 2H. The two hands are INDEPENDENT: a 700 ms scimitar in the off hand swings on its own clock
-## while a 1580 ms axe keeps its own pace in the main hand.
+## ⚠️  The port ran two independent clocks here for one branch. The numbers were right and the
+## FEEL was wrong: the two arcs drifted apart and the hero struck with both weapons at the same
+## instant, which reads as one weapon hitting twice. Jan's report, verbatim: "Hráč má dvě
+## zbraně, ale obě sekají ve stejnou dobu. Daleko uspokojivější je, když se zbraně plynule
+## střídají."
+##
+## A HELD attack button swings as soon as the clock is ready — Jan's own rule ("hrdina neútočí
+## automaticky"), and the clock always runs down, so a hero who lets go keeps his progress.
 func _attack_tick(dt: float) -> void:
 	_main_clock = maxf(0.0, _main_clock - dt)
-	if off_swing > 0.0:
-		_off_clock = maxf(0.0, _off_clock - dt)
+	# `_off_clock` is kept only so a save/test that pokes it cannot break: there is no second
+	# clock any more, and nothing reads it to decide a swing.
+	_off_clock = 0.0
 	# A HELD spell button repeats itself: the GCD and the spell's cooldown are the pacing, so
 	# holding Thunder Clap is "cast it whenever it is ready", not a second, faster rule.
 	if held_spell != "":
@@ -1119,26 +1374,27 @@ func _attack_tick(dt: float) -> void:
 	# A spell on hold owns the attack button: swings would be a second action under one thumb.
 	if ww_active or held_spell != "" or monsters.is_empty():
 		return
-	var idx := target_index()
-	if idx < 0:
+	if _main_clock > 0.0:
 		return
-	if _main_clock <= 0.0 and _in_reach(idx, reach_main):
-		_main_clock = _main_interval()
-		# ⚠️  Read the ID BEFORE the blow: this swing can KILL, and `_kill` removes the entry —
-		# `monsters[idx]` after it is either the next body or an index error.
-		var hit_id := int(monsters[idx]["id"])
-		_swing_hand(idx, false)
-		# The off hand AIMS SOMEWHERE ELSE when there is something else: two arcs on one
-		# portrait read as one weapon swinging twice, which is the exact thing the second
-		# weapon must not look like.
-		_off_prefer_id = hit_id
-	if off_swing > 0.0 and _off_clock <= 0.0:
-		var idx_off := _nearest_in_reach(reach_off, _off_prefer_id)
-		if idx_off < 0:
-			idx_off = _nearest_in_reach(reach_off, -1)
-		if idx_off >= 0:
-			_off_clock = _off_interval()
-			_swing_hand(idx_off, true)
+	# The hand that takes this beat. An off-hand beat needs a body inside the OFF weapon's own
+	# reach; with nothing there, the main hand takes the beat rather than the swing being lost.
+	var is_off := off_swing > 0.0 and _next_hand_off
+	var reach := reach_off if is_off else reach_main
+	var idx := target_index()
+	if idx < 0 or not _in_reach(idx, reach):
+		if is_off:
+			# Fall back to the main hand — and keep the pair in alternation.
+			is_off = false
+			reach = reach_main
+			idx = target_index()
+		if idx < 0 or not _in_reach(idx, reach):
+			return
+	_main_clock = _main_interval()
+	# ⚠️  Read the ID BEFORE the blow: this swing can KILL, and `_kill` removes the entry —
+	# `monsters[idx]` after it is either the next body or an index error.
+	_swing_hand(idx, is_off)
+	if off_swing > 0.0:
+		_next_hand_off = not is_off
 
 
 ## Cast the held spell again if it is ready. A refusal is NOT reported here: the button is held,
@@ -1159,9 +1415,10 @@ func _in_reach(index: int, reach: float) -> bool:
 	return (monsters[index]["pos"] as Vector2).distance_to(player_pos) <= reach + MON_RADIUS
 
 
-## Seconds per swing of each hand RIGHT NOW. Frenzy is the only thing that changes it: each stack
-## takes `lv + 1` % off both hands, and the duel's 450 ms floor is kept so a buffed hand cannot
-## swing faster than the animation can be read.
+## Seconds per beat. One clock for both hands (they alternate), so this is the PAIR's interval:
+## the main hand's own when he holds one weapon, the average of the two when he holds two.
+## Frenzy is the only thing that changes it — each stack takes `lv + 1` % off the pair, and the
+## 0.45 s floor is kept so a buffed hero cannot swing faster than the animation can be read.
 func _main_interval() -> float:
 	var pct := _frenzy_speed_pct()
 	if pct <= 0.0:
@@ -1169,11 +1426,10 @@ func _main_interval() -> float:
 	return maxf(0.45, main_swing * (1.0 - pct / 100.0))
 
 
+## The OFF hand's own interval, as INFORMATION (the screen and the tests read it). It is not a
+## clock: the beat is `_main_clock` and the hand that takes it alternates.
 func _off_interval() -> float:
-	var pct := _frenzy_speed_pct()
-	if pct <= 0.0:
-		return off_swing
-	return maxf(0.45, off_swing * (1.0 - pct / 100.0))
+	return off_swing
 
 
 func _frenzy_speed_pct() -> float:
@@ -1598,7 +1854,7 @@ func start_whirlwind(dirs: Array, reaction_ms: int) -> void:
 	# The flurry REPLACES the hero's swings rather than adding to them: BOTH hands start over,
 	# which is the deliberate exception to the independent clocks.
 	_main_clock = main_swing
-	_off_clock = off_swing
+	_next_hand_off = false
 
 
 func whirlwind_open() -> bool:
@@ -1621,7 +1877,7 @@ func answer_whirlwind(key: String) -> Dictionary:
 		ww_deadline_ms = 0
 		ww_feedback = "fail"
 		_main_clock = main_swing
-		_off_clock = off_swing
+		_next_hand_off = false
 		return {"ok": false, "result": "fail", "prompt": ""}
 	ww_index += 1
 	_whirlwind_strike()
@@ -1630,7 +1886,7 @@ func answer_whirlwind(key: String) -> Dictionary:
 		ww_deadline_ms = 0
 		ww_feedback = "complete"
 		_main_clock = main_swing
-		_off_clock = off_swing
+		_next_hand_off = false
 		events.append("strong_strike")
 	else:
 		ww_deadline_ms = ww_reaction_ms
@@ -1645,7 +1901,7 @@ func whirlwind_timeout() -> void:
 	ww_deadline_ms = 0
 	ww_feedback = "fail"
 	_main_clock = main_swing
-	_off_clock = off_swing
+	_next_hand_off = false
 
 
 ## The flurry's own word, drained by the screen ("complete" / "fail"), plus the strikes landed.
