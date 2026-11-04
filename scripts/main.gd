@@ -1391,6 +1391,9 @@ func _on_gem_tapped(host_id: String, gem_id: String) -> void:
 	state.save()
 	inventory._armed_socket = -1
 	inventory.refresh()
+	# The insert mutated the host in place, so the panel has to be REBUILT: the socket row
+	# alone would update while the stats and the "(n)" suffix above it kept the old text.
+	inventory.refresh_item_info()
 	_set_status(str(result["message"]))
 
 

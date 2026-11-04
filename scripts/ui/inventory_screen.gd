@@ -763,6 +763,10 @@ func _on_equip_slot_pressed(slot: String) -> void:
 	_socket_host_id = item_id
 	_armed_socket = -1
 	_item_overlay.show_for_equipped(_resolve(item_id), slot)
+	# The socket circles are drawn by `refresh_sockets()`, NOT by the rebuild — without
+	# this call an EQUIPPED item showed an empty socket row (or nothing at all), which is
+	# exactly Jan's "u nasazených itemů se sockety vůbec nezobrazují".
+	_refresh_sockets()
 
 
 func close_item_info() -> void:
@@ -867,24 +871,33 @@ func shown_item_id() -> String:
 	return _item_overlay.current_item_id() if _item_overlay != null else ""
 
 
-## The socket panel lives inside the overlay now: tapping a socket cell arms it, and the
-## gems in the bag are listed under it. Both are re-rendered from the overlay's own
-## `socket_armed`/`gem_tapped` signals.
+## The socket circles live inside the item detail now: tapping one opens the gem picker,
+## and the picker's choice is routed through `gem_tapped` to the insertion rules.
 func _refresh_sockets() -> void:
 	if _item_overlay != null:
-		_item_overlay.refresh_sockets(_socket_host_id, _armed_socket, _state.inventory())
+		_item_overlay.refresh_sockets(_socket_host_id, _armed_socket)
 
 
-## The panel's socket row was tapped: arm it (only an empty one is armable) and let the
-## router validate against the socketing rules.
+## A socket circle was tapped: arm it (only an empty one is armable) and open the PWA's
+## `#gemSelectModal`, which lists the bag's gems and jewels. The item detail does NOT list
+## them itself — that list under the circles is what Jan saw and rejected.
 func _on_socket_cell_tapped(index: int) -> void:
 	_armed_socket = index
 	socket_armed.emit(_socket_host_id, index)
+	if _item_overlay.socket_is_empty(index):
+		_item_overlay.open_gem_select(index, _state.inventory())
 
 
-## A gem cell in the overlay was tapped.
+## A gem was picked in the gem picker. The router validates and inserts, then refreshes.
 func _on_gem_cell_tapped(gem_id: String) -> void:
 	gem_tapped.emit(_socket_host_id, gem_id)
+
+
+## Rebuild the open item detail from the live model — after a socket insert the host's own
+## stats changed, so the row alone is not enough.
+func refresh_item_info() -> void:
+	if _item_overlay != null and _item_overlay.visible:
+		_item_overlay.refresh_content(_armed_socket)
 
 
 func _empty_bag_style() -> StyleBoxFlat:

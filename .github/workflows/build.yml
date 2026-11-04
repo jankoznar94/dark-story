@@ -149,6 +149,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SOCKETING_ALL_PASS=true"
 
+      # The socket ROW is drawn by `refresh_sockets()`, not by the panel rebuild — so an
+      # equipped item showed no circles at all while a bag item showed them, and the bag's
+      # gems were listed UNDER the circles instead of behind the PWA's separate picker.
+      # Jan reported both. Verified by mutation: with the `_refresh_sockets()` call removed
+      # from the equip path this prints 0 circles and fails.
+      - name: Sockets visible on equipped and bag items (probe)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/probe_sockets_visibility.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "SOCKETS_VISIBILITY_PASS=true"
+
       # Jan's report: "the vertical scrollbar is visible, the page can only be scrolled with
       # it, and a normal swipe does nothing." Both halves are invisible to every other test —
       # a `ScrollContainer` only drags with a finger where Godot's own touch drag is live

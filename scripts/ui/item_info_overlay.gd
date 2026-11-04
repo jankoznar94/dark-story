@@ -43,6 +43,7 @@ class_name ItemInfoOverlay
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const ItemDetail := preload("res://scripts/items/item_detail.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
+const GemSelectModal := preload("res://scripts/ui/gem_select_modal.gd")
 
 ## A tap on a button in the overlay. `action` is one of:
 ##   "equip"      — equip the shown BAG item into its natural slot
@@ -52,9 +53,10 @@ const ItemStats := preload("res://scripts/items/item_stats.gd")
 signal action(action: String, slot: String)
 ## The overlay closed (X, or a tap on the dim). The caller clears its selection.
 signal dismissed()
-## A socket circle was tapped: arm it for the next gem tap.
+## A socket circle was tapped. The caller arms it and opens `GemSelectModal` — the PWA
+## does NOT list bag gems under the circles, it opens a separate picker.
 signal socket_tapped(socket_index: int)
-## A gem listed under the sockets was tapped: insert it into the armed socket.
+## A gem was picked in the gem picker: insert it into the armed socket.
 signal gem_tapped(gem_id: String)
 
 ## `.inv-item-overlay-content { max-width:300px; min-width:220px }` and the pane is 390
@@ -120,10 +122,11 @@ var _close_holder: Control
 ## caller having to remember it, and so the socket taps know their host.
 var _item: Dictionary = {}
 var _item_id: String = ""
-## The socket block's rows, rebuilt by `refresh_sockets()`.
+## The socket row, rebuilt by `refresh_sockets()`.
 var _socket_row: HBoxContainer
-var _gem_row: HBoxContainer
-var _socket_hint: Label
+## The gem/jewel picker. A child of this overlay so it paints above the panel, and hidden
+## with it when the item detail closes.
+var _gem_modal: GemSelectModal
 ## "bag" when the item came from the inventory grid, "equipped" when it came off the
 ## doll — this decides the BUTTON, which is the PWA's `_invSelectedIdx` vs
 ## `_invSelectedSlot` distinction.
@@ -188,6 +191,13 @@ func _build() -> void:
 	# the one place that knows where the panel ended up.
 	_build_close()
 
+	# The gem picker is a SEPARATE modal (`#gemSelectModal` in the PWA, z-index 1100),
+	# added after the panel so it paints above it. It is a child of this overlay so one
+	# `close()` hides both and the picker cannot outlive the item it was opened for.
+	_gem_modal = GemSelectModal.new(_data, _find_item)
+	_gem_modal.gem_chosen.connect(func(gem_id): gem_tapped.emit(gem_id))
+	add_child(_gem_modal)
+
 
 ## The panel's size, from its content. `min-width:220px; max-width:300px; max-height:80vh`
 ## with `overflow-y:auto`, and a tap OUTSIDE it closes.
@@ -235,8 +245,8 @@ func _show(item: Dictionary) -> void:
 	_item = item
 	_item_id = str(item.get("id", ""))
 	_socket_row = null
-	_gem_row = null
-	_socket_hint = null
+	if _gem_modal != null:
+		_gem_modal.visible = false
 	_rebuild()
 	visible = true
 	set_process(true)
@@ -261,6 +271,8 @@ func _process(_delta: float) -> void:
 func close() -> void:
 	visible = false
 	set_process(false)
+	if _gem_modal != null:
+		_gem_modal.visible = false
 	_item = {}
 	_item_id = ""
 	_origin = ""
@@ -273,12 +285,26 @@ func current_item_id() -> String:
 	return _item_id
 
 
-## Re-run the socket fill-in for the item currently shown. The caller passes its own bag;
-## kept separate from `_show()` so an insert can refresh the row without reopening.
-func refresh_sockets_now(inventory: Array, armed: int = -1) -> void:
+## Re-run the socket fill-in for the item currently shown. Kept separate from `_show()` so
+## an insert can refresh the row without reopening.
+func refresh_sockets_now(armed: int = -1) -> void:
 	if _socket_row == null:
 		return
-	refresh_sockets(_item_id, armed, inventory)
+	refresh_sockets(_item_id, armed)
+
+
+## Rebuild the whole panel for the item already shown. A socket insert MUTATES the host —
+## its stats, its name's socket suffix and one circle's contents all change — and
+## `refresh_sockets()` alone would redraw the circles while the numbers above them stayed
+## stale. The origin (bag index / equip slot) is preserved, so the buttons keep working.
+func refresh_content(armed: int = -1) -> void:
+	if _item.is_empty():
+		return
+	_rebuild()
+	refresh_sockets(_item_id, armed)
+	_layout()
+	_settle = 0
+	set_process(true)
 
 
 func origin() -> String:
@@ -303,6 +329,7 @@ func _on_dim_input(event: InputEvent) -> void:
 # --- the panel's contents ----------------------------------------------------
 
 func _rebuild() -> void:
+	_socket_row = null
 	for child in _content.get_children():
 		_content.remove_child(child)
 		child.queue_free()
@@ -339,24 +366,15 @@ func _rebuild() -> void:
 	# `.inv-item-overlay-stats` — the type block plus every rolled mod, blue for mods.
 	_content.add_child(_build_stats(_item))
 
-	# The socket circles, when the item has any. The CELLS are built here and the gems
-	# that fit are filled in by `refresh_sockets()`, which the router calls with the live
-	# bag — the overlay does not read the save's inventory itself.
+	# The socket circles, when the item has any. `.inv-item-overlay-sockets` holds ONLY
+	# the circles: the bag's gems are NOT listed here (they were, and Jan: "pod nimi se
+	# hned zobrazují další sockety s gemy, které jsou v batohu. To tam být nemá."). An
+	# empty circle opens `GemSelectModal`, exactly as the PWA does.
 	if int(_item.get("sockets", 0)) > 0:
-		var socket_block := VBoxContainer.new()
-		socket_block.add_theme_constant_override("separation", 6)
-		socket_block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_socket_row = HBoxContainer.new()
 		_socket_row.add_theme_constant_override("separation", 6)
 		_socket_row.alignment = BoxContainer.ALIGNMENT_CENTER
-		socket_block.add_child(_socket_row)
-		_gem_row = HBoxContainer.new()
-		_gem_row.add_theme_constant_override("separation", 6)
-		_gem_row.alignment = BoxContainer.ALIGNMENT_CENTER
-		socket_block.add_child(_gem_row)
-		_socket_hint = UIKit.label("", 11, "#888888", HORIZONTAL_ALIGNMENT_CENTER)
-		socket_block.add_child(_socket_hint)
-		_content.add_child(socket_block)
+		_content.add_child(_socket_row)
 
 	# The compare block, when there is something to compare against.
 	var compare := _build_compare()
@@ -596,24 +614,24 @@ func _row_label(text: String, colour: String, expands: bool) -> Label:
 
 ## `.inv-item-overlay-sockets { display:flex; gap:6px; justify-content:center }` with
 ## `.socket-slot { width:48px; height:48px; border-radius:50%; border:2px solid #555;
-## background:#1a1a1a }`, and under it the gems and jewels in the bag that could go in.
+## background:#1a1a1a }`.
+##
+## The row holds the circles and NOTHING ELSE — the bag's gems used to be listed under it,
+## which is not in the reference and which Jan reported: "pod nimi se hned zobrazují další
+## sockety s gemy, které jsou v batohu. To tam být nemá." The bag is reached through
+## `open_gem_select()`, the PWA's separate `#gemSelectModal`.
 ##
 ## Called by `InventoryScreen` whenever the selection or the bag changes, so the overlay
 ## never reads the save itself — the caller owns the state and this owns the drawing.
-func refresh_sockets(host_id: String, armed: int, inventory: Array) -> void:
-	if _socket_row == null or _gem_row == null:
+func refresh_sockets(host_id: String, armed: int) -> void:
+	if _socket_row == null:
 		return
 	for child in _socket_row.get_children():
 		_socket_row.remove_child(child)
 		child.queue_free()
-	for child in _gem_row.get_children():
-		_gem_row.remove_child(child)
-		child.queue_free()
 
 	var host: Dictionary = _find_item.call(host_id) if host_id != "" else _item
 	if host.is_empty():
-		if _socket_hint != null:
-			_socket_hint.text = "Klepni na predmet pro vlozeni gemu."
 		return
 	var count := int(host.get("sockets", 0))
 	var filled: Array = host.get("socketedGems", [])
@@ -648,43 +666,22 @@ func refresh_sockets(host_id: String, armed: int, inventory: Array) -> void:
 		cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_socket_row.add_child(cell)
 
-	# The gems and jewels in the bag, so the player can see what fits. A 40px cell, as the
-	# socket panel had — the PWA reached these through a separate modal.
-	var shown := 0
-	for entry in inventory:
-		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
-		var item: Dictionary = _find_item.call(item_id)
-		if str(item.get("type", "")) not in ["gem", "jewel"]:
-			continue
-		var gem_cell := Control.new()
-		gem_cell.custom_minimum_size = Vector2(40, 40)
-		gem_cell.add_child(_circle(Color("#1a1a1a"), Color("#3a3a3a")))
-		var gem_icon := TextureRect.new()
-		gem_icon.set_anchors_preset(Control.PRESET_FULL_RECT)
-		gem_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		gem_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		gem_icon.texture = _load_texture(ItemStats.icon_path(item))
-		gem_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		gem_cell.add_child(gem_icon)
-		var gid := item_id
-		var gem_button := Button.new()
-		# Same reason as the socket button above — never `flat = true`.
-		gem_button.focus_mode = Control.FOCUS_NONE
-		_blank_style(gem_button)
-		gem_button.set_anchors_preset(Control.PRESET_FULL_RECT)
-		gem_button.pressed.connect(func(): gem_tapped.emit(gid))
-		gem_cell.add_child(gem_button)
-		_gem_row.add_child(gem_cell)
-		shown += 1
-	if _socket_hint != null:
-		if count <= 0:
-			_socket_hint.text = ""
-		elif shown == 0:
-			_socket_hint.text = "V batohu neni zadny gem."
-		elif armed >= 0:
-			_socket_hint.text = "Socket %d pripraven - klepni na gem." % armed
-		else:
-			_socket_hint.text = "Klepni na prazdny socket, pak na gem."
+
+## Open the gem picker for the shown item's socket. Called by the router after a socket
+## circle was tapped, with the live bag as the source of candidates.
+func open_gem_select(socket_index: int, inventory: Array) -> void:
+	if _gem_modal == null:
+		return
+	_gem_modal.open(inventory, socket_index)
+
+
+## True when the socket circle at `index` holds nothing yet — the only kind the picker can
+## be opened for.
+func socket_is_empty(index: int) -> bool:
+	var filled: Array = _item.get("socketedGems", [])
+	if index < 0 or index >= int(_item.get("sockets", 0)):
+		return false
+	return index >= filled.size() or filled[index] == null
 
 
 ## A transparent, borderless stylebox for every Button state — the invisible equivalent of
