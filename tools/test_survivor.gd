@@ -79,6 +79,7 @@ func _initialize() -> void:
 	_test_screen_action_wheel()
 	_test_cast_while_running()
 	_test_screen_gesture_and_disc()
+	_test_world_draw_transform()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -1579,3 +1580,47 @@ func _test_screen_gesture_and_disc() -> void:
 	_check(deaths[0] == 1, "a death must be reported exactly once, got %d" % deaths[0])
 
 	screen.queue_free()
+
+
+## The world half of `_draw()` runs under ONE zoom transform, and `draw_set_transform()` REPLACES
+## that transform rather than nesting inside it. A "restore" to `Vector2.ONE` inside the world half
+## therefore DROPS the zoom, and every prop then scrolls at a different rate than the ground.
+##
+## Measured on the real frame (tools/probe_zoom_scroll.gd): with the reset, a rock moved 200 px
+## over ground that moved 164 px per 200 world px — Jan's "the rocks float". The zoom is 0.82, so
+## the ratio between the two is exactly the bug.
+##
+## `_draw()` never runs under `--headless`, so no pixel test here can see it; the SOURCE can, and
+## this is the only headless-checkable form of the rule.
+func _test_world_draw_transform() -> void:
+	_log("  section: world_draw_transform")
+	var src := FileAccess.get_file_as_string("res://scripts/ui/survivor_screen.gd")
+	_check(src != "", "the survivor screen's source must be readable")
+	# Comments explain the old bug by quoting it, so only executable lines are scanned.
+	var code := ""
+	for line in src.split("\n"):
+		if not line.strip_edges().begins_with("#"):
+			code += line + "\n"
+	_check(src.contains("func _world_xform()"), "the world transform must be one named matrix")
+	_check(code.contains("draw_set_transform_matrix(_world_xform())"),
+		"the world half must start from _world_xform(), not from a scale literal")
+	_check(not code.contains("draw_set_transform(pos"),
+		"a local draw must use _set_local(): draw_set_transform(pos, ...) drops the zoom")
+	_check(not code.contains("draw_set_transform(Vector2(pos.x"),
+		"a contact shadow must use _set_local(): a raw draw_set_transform drops the zoom")
+	_check(not code.contains("draw_set_transform(Vector2(base_pos.x"),
+		"the hero's shadow must use _set_local(): a raw draw_set_transform drops the zoom")
+	# An identity reset is only legal when the code comes straight BACK to the world (the full-frame
+	# flash) or hands over to the HUD, which must stay 1:1.
+	var needle := "draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)"
+	var identity := 0
+	var at := code.find(needle)
+	while at >= 0:
+		identity += 1
+		var tail := code.substr(at, 260)
+		_check(tail.contains("_draw_hud()") or tail.contains("_set_world()"),
+			"an identity reset must either hand over to the HUD or return via _set_world(): %s"
+				% tail.strip_edges().left(70))
+		at = code.find(needle, at + 1)
+	_check(identity >= 1, "the HUD hand-over reset is missing entirely")
+

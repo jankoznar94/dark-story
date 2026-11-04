@@ -599,6 +599,35 @@ func _whirlwind_feedback() -> void:
 const ZOOM := 0.82
 
 
+## The world transform as a MATRIX, because `draw_set_transform()` REPLACES the canvas transform
+## rather than nesting inside it.
+##
+## ⚠️  This is what made the rocks float. After the zoom pass every contact shadow and grass patch
+## did `draw_set_transform(pos, 0, Vector2(1, 0.34))` and then "restored" the transform with
+## `draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)` — which was a no-op while the world
+## transform WAS identity, but here it throws the 0.82 away. From the first patch onward the whole
+## arena was therefore painted at 1.0 over a ground painted at 0.82: walking moved the rocks 1.0x
+## over grass moving 0.82x, i.e. every prop slid across the ground exactly like it was floating.
+##
+## So: local draws COMPOSE with this matrix (`_world_xform() * local`) and every restore returns to
+## it, never to `Vector2.ONE`.
+func _world_xform() -> Transform2D:
+	return Transform2D(Vector2(ZOOM, 0.0), Vector2(0.0, ZOOM), Vector2.ZERO)
+
+
+## Paint the next shapes in LOCAL world coordinates anchored at `origin`, optionally squashed.
+## `scale` is applied before the translation, so a (1, 0.34) shadow sits exactly on `origin`.
+func _set_local(origin: Vector2, scale: Vector2 = Vector2.ONE) -> void:
+	draw_set_transform_matrix(_world_xform() * Transform2D(
+		Vector2(scale.x, 0.0), Vector2(0.0, scale.y), origin))
+
+
+## Back to plain world coordinates (i.e. `pos - _cam`, scaled by the zoom).
+func _set_world() -> void:
+	draw_set_transform_matrix(_world_xform())
+
+
+
 ## How much WORLD the screen shows: the canvas divided by the zoom.
 func _view_world_size() -> Vector2:
 	return size / ZOOM
@@ -786,7 +815,7 @@ func _draw() -> void:
 	# SCREEN coordinates that were already shifted by `_cam`, so one scale about the canvas origin
 	# is the whole camera zoom. `_place_camera` divides the view by the same `ZOOM`, which is what
 	# keeps the hero (and the point a tap aims at) in the middle.
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(ZOOM, ZOOM))
+	draw_set_transform_matrix(_world_xform())
 	_draw_ground()
 	_draw_patches()
 	_draw_props()
@@ -812,7 +841,9 @@ func _draw() -> void:
 
 func _draw_ground() -> void:
 	if _grass == null:
-		draw_rect(Rect2(Vector2.ZERO, size), Color("#4a4a36"))
+		# The world half is drawn under the zoom, so a canvas-sized rect would cover only
+		# `ZOOM` of the canvas. Cover the VISIBLE world instead.
+		draw_rect(Rect2(_cam, _view_world_size()), Color("#4a4a36"))
 		return
 	# One tiling call for the whole world, shifted by the camera. `tile = true` repeats the
 	# seamless 256px tile; there is no per-tile loop and therefore no tile grid to drift.
@@ -826,10 +857,10 @@ func _draw_patches() -> void:
 			continue
 		var rx := float(p["rx"])
 		var ry := float(p["ry"])
-		draw_set_transform(pos, 0.0, Vector2(1.0, ry / rx))
+		_set_local(pos, Vector2(1.0, ry / rx))
 		draw_circle(Vector2.ZERO, rx, Color(0x5a / 255.0, 0x50 / 255.0, 0x3e / 255.0, 0.34))
 		draw_circle(Vector2.ZERO, rx * 0.66, Color(0x64 / 255.0, 0x59 / 255.0, 0x45 / 255.0, 0.26))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_set_world()
 
 
 func _draw_props() -> void:
@@ -838,10 +869,9 @@ func _draw_props() -> void:
 		if pos.x < -60.0 or pos.y < -80.0 or pos.x > size.x + 60.0 or pos.y > size.y + 60.0:
 			continue
 		var s := float(p["size"])
-		draw_set_transform(pos, 0.0, Vector2.ONE)
-		draw_set_transform(pos + Vector2(0, s * 0.20), 0.0, Vector2(1.0, 0.34))
+		_set_local(pos + Vector2(0, s * 0.20), Vector2(1.0, 0.34))
 		draw_circle(Vector2.ZERO, s * 0.66, Color(0, 0, 0, 0.40))
-		draw_set_transform(pos, 0.0, Vector2.ONE)
+		_set_local(pos)
 		if str(p["kind"]) == "rock":
 			var seed_v := float(p["seed"])
 			var pts := PackedVector2Array([
@@ -861,7 +891,7 @@ func _draw_props() -> void:
 			draw_circle(Vector2(-s * 0.14, -s * 0.44), s * 0.36, Color(0x45 / 255.0, 0x4b / 255.0, 0x2f / 255.0))
 			draw_arc(Vector2(0, -s * 0.30), s * 0.60, PI * 1.15, PI * 1.95, 14,
 				Color(0x5e / 255.0, 0x64 / 255.0, 0x40 / 255.0), 2.0)
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_set_world()
 
 
 func _disc(face: String) -> Texture2D:
@@ -914,9 +944,9 @@ func _draw_monster(m: Dictionary) -> void:
 	var bob := sin(float(m["bob"])) * 2.2
 	# A round shadow under a disc reads as a second sphere. The contact shadow is FLATTENED and
 	# sits at the disc's own bottom edge — that is what puts a portrait ON the ground.
-	draw_set_transform(Vector2(pos.x, pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
+	_set_local(Vector2(pos.x, pos.y + DISC_DIA * 0.52), Vector2(1.0, 0.34))
 	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_set_world()
 	var tex := _disc(str(m["face"]))
 	if tex != null:
 		var r := Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5 + bob, DISC_DIA, DISC_DIA)
@@ -957,9 +987,9 @@ func _draw_hero() -> void:
 	pos += lunge
 	# The hero is a WALKING PORTRAIT like everything else, and the only thing that separates him
 	# from a monster is the GOLD ring — the same distinction the arena's rings already use.
-	draw_set_transform(Vector2(base_pos.x, base_pos.y + DISC_DIA * 0.52), 0.0, Vector2(1.0, 0.34))
+	_set_local(Vector2(base_pos.x, base_pos.y + DISC_DIA * 0.52), Vector2(1.0, 0.34))
 	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_set_world()
 	var tex: Texture2D = _disc("assets/monsters/%s.png" % _hero_face())
 	if tex != null:
 		draw_texture_rect(tex, Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
@@ -1061,9 +1091,9 @@ func _draw_projectiles() -> void:
 			draw_circle(trail, maxf(1.5, radius * (0.56 - 0.13 * t)),
 				Color(col.r, col.g, col.b, 0.42 - 0.11 * t))
 		# The contact shadow is what puts the orb IN the arena instead of on the lens.
-		draw_set_transform(Vector2(pos.x, pos.y + radius * 1.2), 0.0, Vector2(1.0, 0.34))
+		_set_local(Vector2(pos.x, pos.y + radius * 1.2), Vector2(1.0, 0.34))
 		draw_circle(Vector2.ZERO, radius * 1.15, Color(0, 0, 0, 0.55))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_set_world()
 		# A hard dark rim, then the fill. No highlight and no bloom: the edge is the contrast,
 		# which is the only way a green ball stays readable on green grass.
 		draw_circle(pos, radius + 2.0, rim)
@@ -1475,9 +1505,9 @@ func _draw_bolts() -> void:
 			var trail: Vector2 = pos - dir * (radius + 5.0 + t * 8.0)
 			draw_circle(trail, maxf(1.5, radius * (0.55 - 0.13 * t)),
 				Color(col.r, col.g, col.b, 0.45 - 0.12 * t))
-		draw_set_transform(Vector2(pos.x, pos.y + radius * 1.1), 0.0, Vector2(1.0, 0.34))
+		_set_local(Vector2(pos.x, pos.y + radius * 1.1), Vector2(1.0, 0.34))
 		draw_circle(Vector2.ZERO, radius * 1.1, Color(0, 0, 0, 0.5))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_set_world()
 		draw_circle(pos, radius + 2.0, col.darkened(0.6))
 		draw_circle(pos, radius, col)
 		draw_circle(pos, radius * 0.42, Color(1, 1, 1, 0.75))
@@ -1515,8 +1545,12 @@ func _draw_effects() -> void:
 					draw_arc(pos, radius, 0.0, TAU, 48,
 						Color(col.r, col.g, col.b, (1.0 - p) * 0.8), width * (1.0 - 0.4 * p), true)
 			"flash":
+				# A CANVAS-space blast: inside the world transform a `size`-sized rect would leave
+				# the outer 18 % of the frame dark, which reads as a vignette, not as a flash.
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 				draw_rect(Rect2(Vector2.ZERO, size),
 					Color(col.r, col.g, col.b, (1.0 - t) * 0.45))
+				_set_world()
 			"cracks":
 				# ⚠️  AGE and LIFE, not the normalised `t`: this shape's reveal/fade are in
 				# SECONDS of its own (see `_draw_cracks`), and passing the 0..1 progress made the
