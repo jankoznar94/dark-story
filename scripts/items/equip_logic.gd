@@ -109,6 +109,35 @@ static func equip_from_bag(state, inventory_index: int, resolve: Callable) -> Di
 	return {"ok": true, "reason": ""}
 
 
+## A CONSUMABLE FROM THE BAG IS NOT EQUIPPED — it goes into the belt. The PWA's
+## `equipItem()` has this branch after every gear type, and the port was missing it
+## entirely: `consumable` has no `slot_for_type()`, so the item-detail button handed an
+## empty slot to `equip_from_bag_into()` and the tap did nothing at all.
+## Jan: "Potion se po koupení nebo sebrání samy řadí do opasku, ale tlačítkem to nejde."
+##
+##   * a heal/mana potion takes the first LEGAL belt slot — `GameState.add_potion_to_belt`
+##     owns the D2 column rule, so there is one home for it;
+##   * a town-portal scroll only raises `townPortalCount` (the PWA's own branch);
+##   * a full belt is a REFUSAL and the item STAYS in the bag — a rare that vanishes because
+##     there was no room is the worst bug a loot game can have.
+static func equip_consumable(state, item_id: String, resolve: Callable) -> Dictionary:
+	var item: Dictionary = resolve.call(item_id)
+	if item.is_empty():
+		return {"ok": false, "reason": "unknown_item"}
+	if str(item.get("type", "")) != "consumable":
+		return {"ok": false, "reason": "unknown_type"}
+	var subtype := str(item.get("subtype", ""))
+	if subtype == "townPortal":
+		state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) + 1
+		return {"ok": true, "reason": ""}
+	if subtype not in ["heal", "mana"]:
+		return {"ok": false, "reason": "unknown_type"}
+	if not state.add_potion_to_belt(item_id, resolve):
+		return {"ok": false, "reason": "belt_full"}
+	state.remove_item(item_id)
+	return {"ok": true, "reason": ""}
+
+
 ## Which equipment slot an item TYPE naturally occupies. The PWA's `typeToSlot`, in one
 ## place so the overlay's own button routing and `equip_from_bag` cannot disagree.
 ## A ring maps to `ring1` — `equip_from_bag` still fills ring1 then ring2, which is the

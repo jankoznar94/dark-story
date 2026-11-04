@@ -850,12 +850,29 @@ func _draw_ground() -> void:
 	draw_texture_rect(_grass, Rect2(-_cam, SurvivorRun.WORLD), true)
 
 
+## Is a world-space shape — `pos` is already camera-shifted, `extent` its half-size — inside
+## the visible stretch of world? The world half is drawn under `ZOOM`, so the view is
+## `size / ZOOM` in WORLD units; culling against `size` drops the border while it is still on
+## screen (Jan's "objekty ohraničující oblast různě mizí a zase se objevují. Všechny zaráz.").
+## Static so the test calls the REAL predicate instead of recomputing it.
+static func on_screen(pos: Vector2, extent: float, view: Vector2) -> bool:
+	return pos.x + extent >= 0.0 and pos.y + extent >= 0.0 \
+		and pos.x - extent <= view.x and pos.y - extent <= view.y
+
+
 func _draw_patches() -> void:
+	# ⚠️  THE CULL IS IN WORLD UNITS, NOT CANVAS PIXELS. Measured: the port culled at
+	# `size.x + 180` (570 of a 390 canvas) while the screen really showed 475 world px. Every
+	# prop and patch past that line was dropped WHILE STILL ON SCREEN, and because each piece
+	# of the border sits on one line, the whole row vanished at once as the camera clamped.
+	# Jan: "když chodím kolem okrajů oblasti, objekty ohraničující oblast různě mizí a zase se
+	# objevují. Všechny zaráz."
+	var view := _view_world_size()
 	for p in _patches:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
-		if pos.x < -180.0 or pos.y < -180.0 or pos.x > size.x + 180.0 or pos.y > size.y + 180.0:
-			continue
 		var rx := float(p["rx"])
+		if not on_screen(pos, rx, view):
+			continue
 		var ry := float(p["ry"])
 		_set_local(pos, Vector2(1.0, ry / rx))
 		draw_circle(Vector2.ZERO, rx, Color(0x5a / 255.0, 0x50 / 255.0, 0x3e / 255.0, 0.34))
@@ -864,11 +881,17 @@ func _draw_patches() -> void:
 
 
 func _draw_props() -> void:
+	# ⚠️  Cull against the VISIBLE WORLD, not the canvas. See `_draw_patches`: the border is
+	# built as one row per side, so a cull line that is short of `size / ZOOM` drops an entire
+	# side of the wall at the same instant — Jan's "všechny zaráz". The prop's own size is
+	# part of its footprint, so a boulder is not removed while half of it is still on screen.
+	var view := _view_world_size()
 	for p in _props:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
-		if pos.x < -60.0 or pos.y < -80.0 or pos.x > size.x + 60.0 or pos.y > size.y + 60.0:
-			continue
 		var s := float(p["size"])
+		var extent := s * 1.2
+		if not on_screen(pos, extent, view):
+			continue
 		_set_local(pos + Vector2(0, s * 0.20), Vector2(1.0, 0.34))
 		draw_circle(Vector2.ZERO, s * 0.66, Color(0, 0, 0, 0.40))
 		_set_local(pos)
@@ -939,7 +962,9 @@ func _draw_actors() -> void:
 
 func _draw_monster(m: Dictionary) -> void:
 	var pos: Vector2 = (m["pos"] as Vector2) - _cam
-	if pos.x < -60.0 or pos.y < -80.0 or pos.x > size.x + 60.0 or pos.y > size.y + 60.0:
+	# ⚠️  World units, not canvas pixels — see `on_screen`. A monster walking near the right or
+	# bottom edge of the arena used to vanish while still on screen for exactly this reason.
+	if not on_screen(pos, DISC_DIA, _view_world_size()):
 		return
 	var bob := sin(float(m["bob"])) * 2.2
 	# A round shadow under a disc reads as a second sphere. The contact shadow is FLATTENED and
@@ -999,18 +1024,12 @@ func _draw_hero() -> void:
 	var hero_ring := Color(UIKit.MOD_BLUE)
 	draw_arc(pos, DISC_DIA * 0.5 + 3.5, 0.0, TAU, 32, Color(0, 0, 0, 0.45), 2.0, true)
 	draw_arc(pos, DISC_DIA * 0.5, 0.0, TAU, 32, hero_ring, 2.5, true)
-	# WHICH WAY HE FACES, drawn ON his own portrait. The reach ring says it too, but a crowded
-	# frame buries that ring under the bodies that are touching him — measured: with three kinds
-	# in contact the front half of the reach circle is behind their discs, so the only honest
-	# place for the mark is the hero himself. A chevron, dark-underlaid so it reads on the
-	# portrait's own dark plate (no glow — Jan's rule).
-	var f: Vector2 = run.facing
-	var perp := Vector2(-f.y, f.x)
-	var tip := pos + f * 25.0
-	var l := tip - f * 9.0 + perp * 7.0
-	var r := tip - f * 9.0 - perp * 7.0
-	draw_polyline(PackedVector2Array([l, tip, r]), Color(0, 0, 0, 0.65), 5.0, true)
-	draw_polyline(PackedVector2Array([l, tip, r]), Color(UIKit.MOD_BLUE), 2.5, true)
+	# ⚠️  NO FACING CHEVRON ON THE PORTRAIT ANY MORE. Jan: "Šipka u portrétu hrdiny, která
+	# ukazuje směr, je tam zbytečná. Stačí ta kružnice kolem něj. Z té je dobře poznat směr."
+	# The reach ring already draws its BRIGHT HALF in the facing direction plus a nose dot
+	# (`_draw_attack_ring`), and a second arrow on top of the body was noise on the busiest
+	# part of the frame. The direction still has to stay readable — keep the ring's front
+	# half and the nose; do not remove those.
 
 
 ## The hero's REACH, drawn on the ground he stands on. Dashed, because a solid circle reads as a

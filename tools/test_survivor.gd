@@ -80,6 +80,7 @@ func _initialize() -> void:
 	_test_cast_while_running()
 	_test_screen_gesture_and_disc()
 	_test_world_draw_transform()
+	_test_edge_cull_uses_world_units()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -1623,4 +1624,47 @@ func _test_world_draw_transform() -> void:
 				% tail.strip_edges().left(70))
 		at = code.find(needle, at + 1)
 	_check(identity >= 1, "the HUD hand-over reset is missing entirely")
+
+
+## Jan: "když chodím kolem okrajů oblasti, objekty ohraničující oblast různě mizí a zase se
+## objevují. Všechny zaráz." The cull compared the camera-shifted prop position against the
+## CANVAS size, while the world is drawn at `ZOOM` — so the real visible stretch of world is
+## `size / ZOOM` and anything between the two lines was dropped while still on screen. The
+## border is one row per side, so an entire side vanished at once.
+##
+## The predicate is asserted on its own numbers AND in the source: keeping the helper but
+## not calling it would pass a numbers-only test on a build where the bug is back.
+func _test_edge_cull_uses_world_units() -> void:
+	_log("  section: edge_cull_uses_world_units")
+	var view := Vector2(390.0, 844.0) / 0.82
+	# The RIGHT wall sits on one x. 460 world px is at screen x 377 — clearly visible, and the
+	# old canvas-based line (390+60=450) culled it.
+	_check(SurvivorScreen.on_screen(Vector2(460.0, 400.0), 40.0, view),
+		"a border prop 460 world px right of the camera is on screen and must not be culled")
+	# The BOTTOM wall, measured on a clamped camera: y 933 -> screen 765. The old line was 904.
+	_check(SurvivorScreen.on_screen(Vector2(200.0, 933.0), 40.0, view),
+		"a border prop 933 world px below the camera is on screen and must not be culled")
+	# Past the real edge it must still be culled, or the draw cost grows with the world.
+	_check(not SurvivorScreen.on_screen(Vector2(600.0, 500.0), 40.0, view),
+		"a prop wholly past the right edge must be culled")
+	_check(not SurvivorScreen.on_screen(Vector2(-200.0, 500.0), 40.0, view),
+		"a prop wholly behind the left edge must be culled")
+	# ...and the prop's own footprint counts: a boulder whose centre is just past the edge but
+	# whose body is still visible stays.
+	_check(SurvivorScreen.on_screen(Vector2(500.0, 500.0), 40.0, view),
+		"a boulder whose body still reaches the screen must not be culled for its centre")
+
+	var src := FileAccess.get_file_as_string("res://scripts/ui/survivor_screen.gd")
+	var code := ""
+	for line in src.split("\n"):
+		if not line.strip_edges().begins_with("#"):
+			code += line + "\n"
+	_check(code.contains("if not on_screen(pos, rx, view)"),
+		"the patch cull must go through on_screen() with the WORLD view")
+	_check(code.contains("if not on_screen(pos, extent, view)"),
+		"the prop cull must go through on_screen() with the WORLD view")
+	_check(not code.contains("pos.x > size.x + 60.0"),
+		"the prop cull must not compare against the CANVAS size — the world is drawn at ZOOM")
+	_check(not code.contains("pos.x > size.x + 180.0"),
+		"the patch cull must not compare against the CANVAS size — the world is drawn at ZOOM")
 

@@ -77,6 +77,7 @@ func _run() -> void:
 	_test_talents_has_no_invented_tier_labels()
 	_test_talents_reset_is_the_bottom_block()
 	_test_talents_tabs_are_content_sized()
+	_test_tab_badges_follow_a_spent_point()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -679,6 +680,61 @@ func _test_talents_tabs_are_content_sized() -> void:
 	if all_same and widths.size() > 1:
 		_fail("all %d tree tabs are the same width (%.0f) — content-sized tabs differ"
 			% [widths.size(), widths[0]])
+
+
+## Jan: "Neinvestované atribut a skill pointy v záložkách (čísla v kolečku) se aktualizují až po
+## přepnutí záložky nebo okna. Měla by se aktualizovat hned po investování bodů. Po každém
+## investovaném bodu."
+##
+## The spend lives INSIDE each panel and only emits `message`; the modal used to forward that
+## to the status line and nothing else, so the pill kept its old number until `refresh()` ran
+## from a tab switch. The assertion therefore drives the PANEL'S OWN handler — the same call a
+## tap makes — and checks the pill without switching tab or reopening the dialog, so reverting
+## the `message` connection turns it red.
+func _test_tab_badges_follow_a_spent_point() -> void:
+	var modal = _main._screens.get("character")
+	if modal == null:
+		_fail("no character modal")
+		return
+	_main.open_modal("stats")
+	modal.set_tab("stats")
+	var hero: Dictionary = _main.state.hero()
+	hero["attrPoints"] = 3
+	modal.refresh()
+	var badge: Label = modal._tab_badges.get("stats")
+	if badge == null:
+		_fail("the stats tab has no badge label at all")
+		return
+	var pill: Control = badge.get_parent()
+	if badge.text != "3" or not pill.visible:
+		_fail("the stats pill reads '%s' (visible=%s) before any spend, expected '3'"
+			% [badge.text, str(pill.visible)])
+	# The tap, through the panel's own handler.
+	modal._stats._on_attr("str")
+	if int(hero.get("attrPoints", 0)) != 2:
+		_fail("the attribute handler did not spend a point (attrPoints=%d, expected 2)"
+			% int(hero.get("attrPoints", 0)))
+		return
+	if badge.text != "2":
+		_fail("the stats pill still reads '%s' after spending a point — the count must update immediately, not on a tab switch"
+			% badge.text)
+	# Spending the last point hides the pill entirely (zero points = no badge in the PWA).
+	modal._stats._on_attr("str")
+	modal._stats._on_attr("str")
+	if pill.visible:
+		_fail("the stats pill is still visible at 0 points — the PWA hides the badge at zero")
+	# And the skills side, through the same connection.
+	var talent_before := int(_main.state.data.get("talentPoints", 0))
+	_main.state.data["talentPoints"] = 2
+	modal.set_tab("skills")
+	modal.refresh()
+	var skill_badge: Label = modal._tab_badges.get("skills")
+	if skill_badge == null or skill_badge.text != "2":
+		_fail("the skills pill reads '%s', expected '2'"
+			% (skill_badge.text if skill_badge != null else "null"))
+	elif not (skill_badge.get_parent() as Control).visible:
+		_fail("the skills pill is hidden while two talent points are unspent")
+	_main.state.data["talentPoints"] = talent_before
 
 
 ## The `SkillsPanel` inside the pane's padding wrapper, found by its script so a change in

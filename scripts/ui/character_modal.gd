@@ -218,9 +218,21 @@ func _build() -> void:
 	_inventory.gem_tapped.connect(func(h, g): gem_tapped.emit(h, g))
 	_inventory.overlay_action.connect(func(a, s): overlay_action.emit(a, s))
 	_skills = SkillsPanel.new(_data, _state, _find_item)
-	_skills.message.connect(func(t): message.emit(t))
+	# ⚠️  Spending a point must move the TAB'S PILL in the same frame. The pill is refreshed
+	# by `refresh()` / `_refresh_tab_badges()`, and the spend paths inside the panels only
+	# emit `message` — which used to be forwarded to the status line and nothing else. So the
+	# count in the circle stayed at its old value until the player switched tab or reopened
+	# the dialog. Jan: "Neinvestované atribut a skill pointy v záložkách (čísla v kolečku) se
+	# aktualizují až po přepnutí záložky nebo okna. Měla by se aktualizovat hned po
+	# investování bodů. Po každém investovaném bodu." Refresh the pill HERE, before the
+	# message is forwarded, so every invest path is covered without touching either panel.
+	_skills.message.connect(func(t):
+		_refresh_tab_badges()
+		message.emit(t))
 	_stats = StatsPanel.new(_data, _gen, _state, _find_item)
-	_stats.message.connect(func(t): message.emit(t))
+	_stats.message.connect(func(t):
+		_refresh_tab_badges()
+		message.emit(t))
 
 	for entry in TABS:
 		var key := str(entry[0])

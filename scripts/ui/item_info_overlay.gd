@@ -142,7 +142,15 @@ func _init(game_data: Node, gen, state, find_item: Callable,
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# ⚠️  `set_anchors_and_offsets_preset`, NOT `set_anchors_preset`. Measured: the overlay is
+	# added to the modal as a node that is 0x0 at that moment, and `set_anchors_preset` keeps
+	# the OFFSETS — they came out `<0, 0, -390, -844>`, i.e. a full-rect anchor that resolves to
+	# a ZERO-SIZED rect. `_layout()` early-returns on a zero view, so the panel kept its default
+	# offsets and the item detail (with both compare blocks) sat in the TOP-LEFT corner instead
+	# of centred. Jan: "Compare okna v inventáři jsou teď pozicovaná do levého horního rohu.
+	# Měla by být na středu." `tools/probe_overlay_chain.gd` prints the whole chain; the probe
+	# is what named this node rather than the panel.
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build()
 	visible = false

@@ -31,6 +31,7 @@ func _initialize() -> void:
 	_test_rings_fill_ring1_then_ring2()
 	_test_no_duplication()
 	_test_belt_resizes_potion_slots()
+	_test_potion_from_bag_goes_to_the_belt()
 	_test_unequip()
 	_test_bag_full()
 	_test_town_heals_and_recalibrates()
@@ -279,6 +280,58 @@ func _test_belt_resizes_potion_slots() -> void:
 			% [(state.equip()["beltPotionSlots"] as Array).size(), want])
 	else:
 		print("  belt with %d rows resized potion slots to %d" % [int(belt["beltRows"]), want])
+
+
+## Jan: "Potion se po koupení nebo sebrání samy řadí do opasku, ale tlačítkem to nejde."
+## The item-detail button routes a consumable to `EquipLogic.equip_consumable`, which is the
+## PWA's `equipItem` branch: heal/mana -> first legal belt slot, town portal -> counter, full
+## belt -> refusal that leaves the item in the bag.
+func _test_potion_from_bag_goes_to_the_belt() -> void:
+	var potion: Dictionary = _data.item("healingPotion")
+	if potion.is_empty():
+		_fail("no healingPotion in the item table")
+		return
+	var state = _fresh_state("barbarian")
+	_add(state, potion)
+	var bag_before := state.inventory().size()
+	var result: Dictionary = EquipLogic.equip_consumable(state, "healingPotion", _resolve)
+	if not result["ok"]:
+		_fail("a potion from the bag was refused: %s" % str(result["reason"]))
+		return
+	var slots: Array = state.equip().get("beltPotionSlots", [])
+	if not slots.has("healingPotion"):
+		_fail("the potion never reached a belt slot (slots=%s)" % str(slots))
+	if state.inventory().size() != bag_before - 1:
+		_fail("the potion is still in the bag (%d entries, expected %d)"
+			% [state.inventory().size(), bag_before - 1])
+	# A FULL belt refuses and must NOT eat the item.
+	var full = _fresh_state("barbarian")
+	full.sync_potion_slots(_resolve)
+	var total: int = full.total_potion_slots(_resolve)
+	var full_slots: Array = full.equip().get("beltPotionSlots", [])
+	for i in total:
+		full_slots[i] = "manaPotion"
+	full.equip()["beltPotionSlots"] = full_slots
+	ItemGen.add_to_inventory(full.inventory(), "healingPotion", potion)
+	var bag2 := full.inventory().size()
+	var refused: Dictionary = EquipLogic.equip_consumable(full, "healingPotion", _resolve)
+	if bool(refused["ok"]):
+		_fail("a potion went into a belt with no free slot")
+	elif str(refused["reason"]) != "belt_full":
+		_fail("a full belt refused with '%s', expected 'belt_full'" % str(refused["reason"]))
+	if full.inventory().size() != bag2:
+		_fail("a refused potion was destroyed (%d entries, was %d)"
+			% [full.inventory().size(), bag2])
+	# A town portal scroll raises the counter instead of taking a belt slot.
+	var scroll: Dictionary = _data.item("townPortal")
+	if not scroll.is_empty():
+		var portal = _fresh_state("barbarian")
+		ItemGen.add_to_inventory(portal.inventory(), "townPortal", scroll)
+		var before := int(portal.data.get("townPortalCount", 0))
+		var used: Dictionary = EquipLogic.equip_consumable(portal, "townPortal", _resolve)
+		if not used["ok"] or int(portal.data.get("townPortalCount", 0)) != before + 1:
+			_fail("a town portal scroll did not raise townPortalCount (before %d, after %d)"
+				% [before, int(portal.data.get("townPortalCount", 0))])
 
 
 func _test_unequip() -> void:

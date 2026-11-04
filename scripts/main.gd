@@ -1217,6 +1217,16 @@ func _on_overlay_action(action_key: String, slot: String) -> void:
 			return
 		var item: Dictionary = inventory.shown_item()
 		var item_type := str(item.get("type", ""))
+		# ⚠️  A CONSUMABLE IS NOT EQUIPPED — IT GOES INTO THE BELT. `consumable` has no entry
+		# in the overlay's `SLOT_OF_TYPE`, so the button handed over slot "" and `EquipLogic`
+		# refused it as `unknown_type`: the button did nothing at all. Jan: "Potion se po
+		# koupení nebo sebrání samy řadí do opasku, ale tlačítkem to nejde." The PWA's
+		# `equipItem` has exactly this branch: heal/mana potion -> first free belt slot,
+		# town portal scroll -> `townPortalCount + 1`, and when the belt has no room the item
+		# STAYS in the bag with a message (never destroyed).
+		if item_type == "consumable":
+			_equip_consumable(item)
+			return
 		# Rings and off-hand weapons go into a NAMED slot; everything else takes the
 		# natural one, which is the same rule `equip_from_bag` already applies.
 		var target := ""
@@ -1246,6 +1256,28 @@ func _on_overlay_action(action_key: String, slot: String) -> void:
 		_set_status(_reason_text(str(result["reason"])))
 
 
+## A consumable from the bag: the PWA's `equipItem` branch, living in `EquipLogic` so the
+## rule is testable without a UI. Heal/mana potions take the first legal BELT slot, a
+## town-portal scroll raises the counter, and a refusal leaves the item in the bag.
+func _equip_consumable(item: Dictionary) -> void:
+	var item_id := str(item.get("id", ""))
+	if item_id == "":
+		_set_status("Predmet se nenasel")
+		return
+	var result: Dictionary = EquipLogic.equip_consumable(state, item_id, _resolve)
+	if not result["ok"]:
+		_set_status(_reason_text(str(result["reason"])))
+		return
+	state.save()
+	var inventory = _modal().inventory()
+	inventory.close_item_info()
+	_modal().refresh()
+	# The PWA's `equipSfx` — the belt slot is an equip, and it plays the same sound.
+	Sfx.play_global(Sfx.CUE_EQUIP)
+	_set_status("Town Portal pridan" if str(item.get("subtype", "")) == "townPortal"
+		else "Potion do opasku")
+
+
 ## A refusal reason in Czech, in ONE place — the messages used to be built per call site
 ## and two of them drifted. A missing entry falls back to the raw key rather than going
 ## silent, so a new rule is visible the first time it fires.
@@ -1262,6 +1294,7 @@ func _reason_text(reason: String) -> String:
 		"unknown_type": "Neznamy typ predmetu",
 		"unknown_slot": "Neznamy slot",
 		"bag_full": "Batoh je plny",
+		"belt_full": "V opasku neni volne misto",
 	}.get(reason, reason))
 
 

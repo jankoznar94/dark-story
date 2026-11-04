@@ -130,6 +130,28 @@ func _run() -> void:
 		return
 
 	var panel_rect := panel.get_global_rect()
+	var canvas := Rect2(Vector2.ZERO, Vector2(390, 844))
+
+	# --- the panel is CENTRED, not parked in the top-left corner -------------------
+	# Jan: "Compare okna v inventáři jsou teď pozicovaná do levého horního rohu. Měla by být
+	# na středu." The cause was the overlay Control itself: `set_anchors_preset` left its
+	# offsets at -390/-844, so it measured 0x0, `_layout()` bailed out and the panel kept its
+	# default corner. Asserting the PANEL's centre is what catches that; asserting only its
+	# width (below) passed on the broken build.
+	var overlay_rect := (overlay as Control).get_global_rect()
+	print("  overlay=%s panel=%s" % [str(overlay_rect.size), str(panel_rect.position)])
+	if not is_equal_approx(overlay_rect.size.x, canvas.size.x) \
+			or not is_equal_approx(overlay_rect.size.y, canvas.size.y):
+		_fail("the overlay measures %s, expected the full canvas %s"
+			% [str(overlay_rect.size), str(canvas.size)])
+	if absf(panel_rect.get_center().x - canvas.get_center().x) > 1.0:
+		_fail("the panel is %.1f px off centre horizontally (centre %.1f, canvas %.1f)"
+			% [panel_rect.get_center().x - canvas.get_center().x,
+				panel_rect.get_center().x, canvas.get_center().x])
+	if absf(panel_rect.get_center().y - canvas.get_center().y) > 1.0:
+		_fail("the panel is %.1f px off centre vertically (centre %.1f, canvas %.1f)"
+			% [panel_rect.get_center().y - canvas.get_center().y,
+				panel_rect.get_center().y, canvas.get_center().y])
 
 	# --- the panel is the reference's box ----------------------------------------
 	if not is_equal_approx(panel_rect.size.x, PANEL_MAX_W):
@@ -153,7 +175,6 @@ func _run() -> void:
 	if hit_rect.size.x < CLOSE_MIN_TOUCH or hit_rect.size.y < CLOSE_MIN_TOUCH:
 		_fail("the close TOUCH TARGET is %s, below the %dpx minimum" % [str(hit_rect.size), int(CLOSE_MIN_TOUCH)])
 	# It has to be reachable: inside the canvas, and at the panel's top-right corner.
-	var canvas := Rect2(Vector2.ZERO, Vector2(390, 844))
 	if not canvas.encloses(hit_rect):
 		_fail("the close hit area %s is off-canvas" % str(hit_rect))
 	if hit_rect.get_center().distance_to(close_rect.get_center()) > 1.0:
