@@ -37,6 +37,7 @@ extends SceneTree
 
 const Main := preload("res://scripts/main.gd")
 const TransitionScreen := preload("res://scripts/ui/transition_screen.gd")
+const ActRun := preload("res://scripts/combat/act_run.gd")
 
 ## The PWA's own numbers, read off the live build with
 ## `tools/import/probe_transition_pwa.py` at 390x844.
@@ -81,7 +82,7 @@ func _run() -> void:
 	_test_plain_moves_do_not(tr)
 	_test_callback_runs_under_an_opaque_overlay(tr)
 	_test_a_second_move_replaces_the_first(tr)
-	_test_walk_to_town_resets_the_stop(tr)
+	_test_walk_to_town_keeps_the_zone(tr)
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -395,29 +396,19 @@ func _test_callback_runs_under_an_opaque_overlay(tr) -> void:
 			% alpha_at_call)
 
 
-## `walkToTown` zeroes the stop's fight counter and advances the stop if it was cleared.
-func _test_walk_to_town_resets_the_stop(tr) -> void:
+## Walking to town KEEPS the act's place. The old rule zeroed a stop's fight counter and
+## advanced a cleared stop; there are no fight counters now — the act is a chain of zones and
+## the zone the player stood in is the waypoint he comes back to.
+func _test_walk_to_town_keeps_the_zone(tr) -> void:
 	_reset(tr)
-	_main.state.set_progress(0, 2)
-	_main.state.data["areaFightProgress"][0] = 7
+	var total: int = int(_main.data.act_by_id(0).get("zones", 10))
+	ActRun.enter_zone(_main.state, 0, 2, total)
 	_main._on_walk_to_town()
-	var after := int(_main.state.data["areaFightProgress"][0])
-	var progress := int(_main.state.data["locationProgress"][0])
-	print("  walk to town: fight 7 -> %d, stop %d -> %d" % [after, 2, progress])
-	if after != 0:
-		_fail("walking to town left the fight counter at %d — the PWA resets it, so a walk out and back must not resume at 7/10"
-			% after)
-	if progress != 2:
-		_fail("walking to town moved the stop from 2 to %d for an UNCLEARED stop" % progress)
-
-	# A CLEARED stop (10/10) advances.
-	_main.state.set_progress(0, 3)
-	_main.state.data["areaFightProgress"][0] = 10
-	_main._on_walk_to_town()
-	var advanced := int(_main.state.data["locationProgress"][0])
-	print("  walk to town with a cleared stop: stop 3 -> %d" % advanced)
-	if advanced != 4:
-		_fail("walking to town with a cleared stop left it at %d, expected 4" % advanced)
+	var resumed := ActRun.last_waypoint(_main.state, 0, total)
+	print("  walk to town: act resumes at zone %d (wanted 2)" % resumed)
+	if resumed != 2:
+		_fail("walking to town moved the act to zone %d — a waypoint trip must come back to where the player stood"
+			% resumed)
 	_reset(tr)
 
 
