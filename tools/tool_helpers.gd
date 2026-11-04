@@ -29,7 +29,12 @@ class_name ToolHelpers
 ## possible from inside a single call. Running the hold in one step runs the stored callback,
 ## which is exactly what 1.8 s of frames would do.
 static func enter_arena(main, act: int, stop: int):
-	main._on_stop_selected(act, stop)
+	# ⚠️  A map stop no longer leads to the duel arena: stops ARE the act's zones now (Jan
+	# "Každá oblast v mapě v rámci aktu by měla mít svoji reálnou zónu ve hře"), so the map
+	# walks into a survivor zone. The duel arena is a separate draft and is entered DIRECTLY —
+	# a helper that still tapped a stop returned a null battle, which reads as
+	# "is_boss on a base object of type Nil" three sections later.
+	main._enter_arena(act)
 	var tr = main._transition
 	if tr != null and tr.is_transitioning():
 		# One step past the hold: `_process` calls the callback and starts the fade.

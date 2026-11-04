@@ -28,6 +28,7 @@ const MapScreen := preload("res://scripts/ui/map_screen.gd")
 const WorldScreen := preload("res://scripts/ui/world_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
+const ActRun := preload("res://scripts/combat/act_run.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
@@ -281,6 +282,10 @@ func _build_screens() -> void:
 	var survivor := SurvivorScreen.new()
 	survivor.visible = false
 	survivor.leave_requested.connect(func(): _end_survivor(""))
+	# The waypoint is the "go to town without a scroll" path: the act's record already keeps
+	# this zone as the checkpoint, so the run may simply end and the map re-enters HERE.
+	survivor.waypoint_requested.connect(func(): _end_survivor(""))
+	survivor.zone_exited.connect(_on_zone_exited)
 	survivor.run_finished.connect(_end_survivor)
 	_add_screen("survivor", survivor)
 
@@ -923,6 +928,14 @@ func _on_stop_selected(act_id: int, stop: int) -> void:
 	state.set_progress(act_id, stop)
 	state.data["areaFightProgress"][act_id] = 0
 	state.save()
+	# ONE AREA OF THE ACT = ONE REAL ZONE OF THE GAME (Jan). The map's stop cards are the
+	# act's waypoints; tapping one walks straight into that zone instead of the old road stop.
+	var total := int(data.act_by_id(act_id).get("zones", 10))
+	var entry := ActRun.enter_zone(state, act_id, stop, total)
+	state.save()
+	_transition_to(TransitionScreen.stop_art_path(act_id, stop),
+		func(): _enter_survivor(act_id, stop))
+	return
 	# ⚠️  This used to go straight to `_enter_arena`, i.e. tapping a stop on the map dropped the
 	# player into fight 1 without ever showing him the area. Jan's decision: "Po vstupu do
 	# oblasti se přepne obrazovka" — the stop opens the ROAD, and the arena is where a fight is
@@ -988,13 +1001,40 @@ func _enter_arena(act_id: int) -> void:
 
 ## The SURVIVOR RUN — the new fight, alongside the duel. `_currentAct` is written the same way
 ## the arena writes it, so a run pays out against the act whose monsters the player is facing.
-func _enter_survivor(act_id: int) -> void:
+func _enter_survivor(act_id: int, zone: int = -1) -> void:
 	state.data["_currentAct"] = act_id
+	var total := int(data.act_by_id(act_id).get("zones", 10))
+	var entry := ActRun.get_run(state, act_id, total)
+	var z: int = zone
+	if z < 0:
+		z = int(entry.get("zone", 0))
+	entry = ActRun.enter_zone(state, act_id, z, total)
+	state.save()
 	show_screen("survivor")
 	var screen = _screens["survivor"]
-	screen.setup(state, _resolve, loot, act_id)
+	screen.setup(state, _resolve, loot, act_id, ActRun.zone_seed(entry, z), z)
 	if _music != null:
-		_music.switch_mode("battle")
+		# The act's last zone is its boss zone — the PWA switched to `boss_bgm` there.
+		_music.switch_mode("boss" if screen.run.is_boss else "battle")
+
+
+## The hero reached this zone's EXIT: the act continues one zone deeper, through the next
+## area's own artwork (the map's stop cards are exactly these zones). The LAST zone's exit is
+## the end of the act — its room is the boss room.
+func _on_zone_exited() -> void:
+	var screen = _screens.get("survivor", null)
+	if screen == null or screen.run == null:
+		return
+	var act_id := int(state.data.get("_currentAct", 0))
+	var total := int(data.act_by_id(act_id).get("zones", 10))
+	var from_zone := int(screen.run.zone_index)
+	var nxt := ActRun.clear_zone(state, act_id, from_zone, total)
+	state.save()
+	if nxt < 0:
+		_end_survivor("cleared")
+		return
+	_transition_to(TransitionScreen.stop_art_path(act_id, nxt),
+		func(): _enter_survivor(act_id, nxt))
 
 
 ## A run ends by walking out or by dying. Either way the payout is ALREADY in the save (gold and

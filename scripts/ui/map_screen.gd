@@ -29,6 +29,7 @@ class_name MapScreen
 
 const GameData := preload("res://scripts/data/game_data.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
+const ActRun := preload("res://scripts/combat/act_run.gd")
 ## `filter:grayscale(1)` as a shader. Godot has no CSS filter, and a `modulate` is NOT the
 ## same operation — it scales channels and leaves the hue alone (see the locked stop card).
 const GRAYSCALE_SHADER := preload("res://assets/shaders/grayscale.gdshader")
@@ -499,14 +500,17 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var total := int(act.get("zones", 10))
-	var current := int(_state.data["locationProgress"][act_id])
-	var fight := int(_state.data["areaFightProgress"][act_id])
+
 	# The state accessors return Variant, and Godot treats an inferred-Variant as a parse
 	# error here — everything read off the save needs an explicit type.
 	var boss_defeated: bool = _state.is_boss_defeated(act_id)
-	# Unlocking reads the HIGHEST stop ever reached, never `locationProgress` — farming an
-	# earlier stop lowers the latter and must not lock the player out of what they reached.
-	var reached: int = _state.max_progress(act_id)
+	# ONE AREA = ONE REAL ZONE (Jan). The act's areas are its WAYPOINTS, so the lock state comes
+	# from the act's own record (`ActRun`), not from a stop index: an area is unlocked because
+	# the player has STOOD in it, and it is done because he walked out of its exit.
+	var entry: Dictionary = ActRun.get_run(_state, act_id, total)
+	var reached: int = int(entry.get("zone", 0))
+	var unlocked_zones: Array = entry.get("waypoints", [])
+	var cleared_zones: Array = entry.get("cleared", [])
 	var names: Dictionary = _stop_names()
 
 	for stop in total:
@@ -514,9 +518,9 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		# complete and the one AT it is the current one — this is correct as written. (The ROAD's
 		# `_draw_node` had the same shape but indexed the raw fight counter, which is where its
 		# off-by-one lived; do not "fix" this one by analogy.)
-		var done: bool = boss_defeated or stop < reached
-		var is_current: bool = not boss_defeated and stop == current
-		var locked: bool = not boss_defeated and stop > reached
+		var done: bool = boss_defeated or cleared_zones.has(stop)
+		var is_current: bool = not boss_defeated and stop == reached
+		var locked: bool = not boss_defeated and not unlocked_zones.has(stop)
 		var unlocked: bool = not locked and not done
 
 		if stop > 0:
@@ -616,7 +620,7 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(name_label)
 
-		card.add_child(_stop_badge(done, is_current, locked, fight, boss_defeated, reached, stop))
+		card.add_child(_stop_badge(done, is_current, locked, stop))
 
 		if not locked:
 			var id := act_id
@@ -626,14 +630,15 @@ func _stop_path(act_id: int, act: Dictionary, theme: Dictionary) -> Control:
 	return box
 
 
-func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
-		boss_defeated: bool, reached: int, stop: int) -> Control:
+func _stop_badge(done: bool, is_current: bool, locked: bool, stop: int) -> Control:
 	# `.stop-badge { min-width:26px; height:22px; padding:0 5px; border-radius:11px;
 	#                font-size:12px }` — a SMALL pill that hugs its content. The port used
 	# to write the words "Hotovo"/"Zamceno" into a fixed 74px box; the PWA's badge is
 	# 26px wide because its content is a glyph, a counter, or a lock. Keep the PWA's
 	# vocabulary and let the pill size itself: a word would not fit the shape at all.
-	var text := "%d/10" % mini(fight, 10)
+	# An AREA, not a fight counter: the pill shows which zone of the act this is (1-based),
+	# because the map's cards ARE the act's waypoints now.
+	var text := str(stop + 1)
 	var colour := UIKit.GOLD
 	var lock_icon := false
 	if done:
@@ -648,11 +653,9 @@ func _stop_badge(done: bool, is_current: bool, locked: bool, fight: int,
 		colour = "#666666"
 		lock_icon = true
 	elif is_current:
-		text = "%d/10" % mini(fight, 10)
+		text = str(stop + 1)
 	else:
-		# A stop behind the player is complete, so it shows a full counter rather than a
-		# partial one.
-		text = "%d/10" % (10 if stop < reached else mini(fight, 10))
+		text = str(stop + 1)
 
 	var badge := PanelContainer.new()
 	badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)

@@ -23,6 +23,12 @@ class_name SurvivorScreen
 
 signal leave_requested
 signal run_finished(outcome: String)
+## The hero walked into the zone's EXIT: the act continues one zone deeper. The screen does
+## not know what "deeper" means — `Main` owns the act's chain (`ActRun`).
+signal zone_exited
+## The waypoint was tapped: go to town and come back to this zone later. The act's record
+## keeps this zone as the checkpoint, so nothing is lost.
+signal waypoint_requested
 
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
@@ -147,6 +153,8 @@ var _toast := ""
 var _toast_ticks := 0.0
 var _flash := 0.0
 var _death_reported := false
+## One exit report per zone: the gate must not fire every frame the hero stands in it.
+var _zone_exited := false
 
 ## Seeded decorations: they are DATA so a re-layout cannot move the cover the fight uses.
 var _props: Array = []
@@ -178,13 +186,15 @@ func stop() -> void:
 	_accum = 0.0
 
 
-func setup(state, find_item: Callable, loot_system, act_id: int) -> void:
+func setup(state, find_item: Callable, loot_system, act_id: int,
+		seed_value: int = 0, zone: int = 0) -> void:
 	_state = state
 	_find_item = find_item
 	run = SurvivorRun.new()
-	run.setup(state, find_item, loot_system, act_id)
+	run.setup(state, find_item, loot_system, act_id, seed_value, zone)
 	_accum = 0.0
 	_death_reported = false
+	_zone_exited = false
 	set_process(true)
 	_toast = ""
 	_toast_ticks = 0.0
@@ -364,6 +374,12 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 		return
 	if pos.y < TOP_BAR:
 		return
+	# The WAYPOINT owns its own tap: it is the only world object a press may use, and it sits
+	# in the middle of the map where the walk thumb also lands. Checked before the stick arms
+	# so a tap on the stone goes to town instead of starting a walk.
+	if run != null and _world_at(pos).distance_to(run.waypoint_point) <= WAYPOINT_RADIUS:
+		waypoint_requested.emit()
+		return
 	# TWO THUMBS, TWO WHEELS, split down the middle of the screen: the LEFT one is the action
 	# wheel, the RIGHT one walks. The action wheel is FIXED and permanently drawn, so only a thumb
 	# that lands on it (or just outside its ring) owns it — a stray thumb elsewhere in the left half
@@ -385,6 +401,12 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 	_stick_origin = pos
 	_stick_vec = Vector2.ZERO
 	queue_redraw()
+
+
+## Screen -> world. The world half is drawn as `(world - _cam) * ZOOM`, so this is its inverse
+## and the ONLY place that arithmetic lives.
+func _world_at(pos: Vector2) -> Vector2:
+	return pos / ZOOM + _cam
 
 
 func _on_drag(pos: Vector2, index: int = 0) -> void:
@@ -553,6 +575,12 @@ func _process(delta: float) -> void:
 		_death_reported = true
 		stop()
 		run_finished.emit(run.outcome)
+	# The EXIT gate. Reaching the far end of the zone hands the player one zone deeper; the
+	# act's chain is not the screen's business, so this only reports it once.
+	if not _zone_exited and run.player_pos.distance_to(run.exit_point) <= EXIT_RADIUS:
+		_zone_exited = true
+		stop()
+		zone_exited.emit()
 	_place_camera()
 	queue_redraw()
 
@@ -626,6 +654,12 @@ func _whirlwind_feedback() -> void:
 ## bars keep their measured pixel sizes. Everything in the world — tiles, portraits, reach rings,
 ## damage numbers — shrinks together, which is what "vzdálit" means.
 const ZOOM := 0.82
+## How close the hero has to get to the zone's exit for the gate to open, in WORLD px. Wide
+## enough that a thumb does not have to hit a pixel, narrow enough that walking past the far
+## room's edge is not a teleport.
+const EXIT_RADIUS := 66.0
+## The waypoint's tap radius, in WORLD px (converted from the screen by `_world_at`).
+const WAYPOINT_RADIUS := 60.0
 ## The unexplored veil's alpha (`veil := Color(0,0,0,0.45)` in the old per-cell pass).
 const FOG_VEIL_ALPHA := 0.45
 
@@ -850,6 +884,7 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_patches()
 	_draw_props()
+	_draw_zone_links()
 	_draw_attack_ring()
 	_draw_drops()
 	_draw_actors()
@@ -1107,6 +1142,32 @@ func _disc(face: String) -> Texture2D:
 			tex = ImageTexture.create_from_image(img)
 	_disc_cache[face] = tex
 	return tex
+
+
+## The zone's two pieces of structure: the WAYPOINT beside the entrance and the EXIT at the
+## far end. Both are flat, desaturated shapes — no glow (Jan's rule) — and both are pure paint:
+## the rules only read `run.waypoint_point` / `run.exit_point`, which this draws.
+func _draw_zone_links() -> void:
+	if run == null:
+		return
+	var wp: Vector2 = run.waypoint_point - _cam
+	# A round stone slab with a ring: a checkpoint you can recognise from a screen away.
+	draw_circle(wp, 27.0, Color("#2b2620"))
+	draw_circle(wp, 23.0, Color("#3b342b"))
+	draw_arc(wp, 27.0, 0.0, TAU, 28, Color("#6d5f4a"), 2.0)
+	draw_circle(wp, 9.0, Color("#4a6b7a"))
+	# The EXIT: a stone gate — two pillars and a dark opening — so "dál" reads as architecture,
+	# not as a coloured dot on the floor.
+	var ex: Vector2 = run.exit_point - _cam
+	var gate := Rect2(ex + Vector2(-30.0, -46.0), Vector2(60.0, 64.0))
+	draw_rect(gate, Color("#0e0c0a"))
+	draw_rect(Rect2(ex + Vector2(-34.0, -50.0), Vector2(8.0, 68.0)), Color("#3b342b"))
+	draw_rect(Rect2(ex + Vector2(26.0, -50.0), Vector2(8.0, 68.0)), Color("#3b342b"))
+	draw_rect(Rect2(ex + Vector2(-34.0, -56.0), Vector2(68.0, 8.0)), Color("#463d31"))
+	# A single dim arrow above the gate, pointing at it from inside the room.
+	var tip := ex + Vector2(0.0, -78.0)
+	draw_colored_polygon(PackedVector2Array([
+		tip, tip + Vector2(-9.0, 14.0), tip + Vector2(9.0, 14.0)]), Color("#7d6e56"))
 
 
 func _draw_actors() -> void:

@@ -161,20 +161,14 @@ func _test_a_hidden_arena_does_not_tick_or_speak() -> void:
 			+ "heard behind the road")
 
 
-## Enter a fight the way a player does (a stop on the map, then the road's station), so the route
-## under test is the real one. Returns the arena, or null after recording why not.
+## Enter the duel arena directly. A map stop now walks into a SURVIVOR ZONE (Jan: "Každá
+## oblast v mapě v rámci aktu by měla mít svoji reálnou zónu ve hře"), so the arena is a
+## separate draft with its own entry point.
 func _enter_fight():
-	_main._on_stop_selected(0, 0)
-	_drive_transition()
-	if str(_main._current) != "world":
-		_fail("a stop no longer opens the road (current='%s')" % str(_main._current))
-		return null
-	var world = _main._screens["world"]
-	world.next_fight_requested.emit()
-	_drive_transition()
+	_main._enter_arena(0)
 	var arena = _arena()
 	if arena == null or arena.battle == null:
-		_fail("tapping the road did not start a fight")
+		_fail("entering the arena did not start a fight")
 		return null
 	return arena
 

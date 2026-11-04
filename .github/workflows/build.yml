@@ -165,6 +165,36 @@ jobs:
       # Jan: "Rovnou zkontroluj, aby se správně přičítaly všechny staty gemů k itemům."
       # Caught a real one: battle's resist lookup read only the static table, so a fire
       # resist gem in a generated shield was applied to the item and ignored by damage.
+      # The act as a CHAIN of real zones with waypoints (Jan: the map's areas ARE the game's
+      # zones and its checkpoints). A checkpoint that silently resets to zone 0 after a death
+      # looks exactly like a working one until the player loses four zones of work.
+      - name: Act run test (zones, waypoints, save round trip)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_act_run.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ACT_RUN_ALL_PASS=true"
+
+      # Every zone needs a walkable exit reachable from its entrance, far enough away that the
+      # zone is walked THROUGH. Measured over 18 seeds x 3 zones, never one lucky layout.
+      # The chain through the REAL entry points: map area -> its zone, exit -> next zone,
+      # waypoint -> town with the checkpoint kept. Catches a wiring break that the unit tests
+      # cannot see (measured: a JSON round trip turned waypoints into floats and `has(2)` did
+      # not see `2.0`, so the resume point drifted to a stale zone).
+      - name: Zone flow probe (map -> zone -> exit -> waypoint)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/probe_zone_flow.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ZONE_FLOW_PASS=true"
+
+      - name: Zone links test (exit reachable, waypoint by the entrance)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_zone_links.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ZONE_LINKS_ALL_PASS=true"
+
       - name: Gem stats test (all gems x all host families x consumers)
         run: |-
           set -e

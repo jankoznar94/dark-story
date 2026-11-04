@@ -216,6 +216,10 @@ func _run() -> void:
 		print("  victory page asks for mode=%s" % win_mode)
 		if win_mode != "win":
 			_fail("the victory page asks for mode '%s', not 'win'" % win_mode)
+		# Back to a NORMAL zone: the arena now reports "boss" for a boss battle (which is
+		# correct), so the plain-battle check has to reset the act's progress first.
+		_main.state.set_progress(0, 0)
+		_main._enter_arena(0)
 		_main._current = "arena"
 		if _main._music_mode_for_current_screen() != "battle":
 			_fail("the arena asks for a mode that is not 'battle'")

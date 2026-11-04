@@ -292,6 +292,17 @@ var explored_version := 0
 var path_points: Array = []
 ## Where the hero starts: the middle of the start clearing.
 var start_point := Vector2.ZERO
+## Which zone of the act this map IS (`ActRun`). The layout is seeded from the act's seed and
+## this index, so coming back to zone 3 shows the same dungeon.
+var zone_index := 0
+## The act's LAST zone is its boss zone (the PWA's `progress >= zones - 1`). The fight rules do
+## not change; this is what the music and the HUD read.
+var is_boss := false
+## Where the waypoint stands: a few cells off the entrance, always on floor. Tap it to go to
+## town; the act's record keeps this zone as the checkpoint.
+var waypoint_point := Vector2.ZERO
+## The exit to the NEXT zone — the far end of the corridor, guaranteed far from the entrance.
+var exit_point := Vector2.ZERO
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
 var projectiles: Array = []
 ## The HERO's own spells in the air (`thunderBolt`): {pos, vel, dmg, stun_ms, age, colour}.
@@ -385,12 +396,14 @@ var _prev_pos := Vector2.ZERO
 
 ## `seed_value` is what makes a run reproducible: the tests drive one seed, the screen
 ## seeds from the clock. Passing 0 means "use entropy".
-func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 0) -> void:
+func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 0,
+		zone: int = 0) -> void:
 	_state = state
 	_find_item = find_item
 	_loot = loot_system
 	_data = state.data_ref() if state.has_method("data_ref") else null
 	act_id = act
+	zone_index = zone
 	if seed_value == 0:
 		rng.randomize()
 	else:
@@ -447,6 +460,7 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	numbers.clear()
 	events.clear()
 	_build_area()
+	is_boss = zone_index >= _prog.total_zones(act_id) - 1
 	# The hero starts in the middle of the start clearing, and the fog is lifted only around him.
 	player_pos = start_point
 	_reveal_around(player_pos)
@@ -831,6 +845,10 @@ func _build_area() -> void:
 	zones.clear()
 	path_points.clear()
 	_build_corridor()
+	# The act's chain: the entrance is where the hero stands, the exit is the far END of the
+	# centreline (always a cleared room), and the waypoint sits just off the entrance.
+	exit_point = path_points[path_points.size() - 1]
+	waypoint_point = nearest_floor_point(start_point + Vector2(-TILE * 2.5, -TILE * 1.5))
 	# How many packs the corridor holds: one per ~330 px of path, clamped to something a phone
 	# run can finish.
 	var total := 0.0
