@@ -946,6 +946,17 @@ func _touches_floor(cx: int, cy: int) -> bool:
 ##
 ## The first version had Warcraft 2's third state (explored-but-not-visible = veiled again) and it
 ## read as too aggressive: the map went dark behind the hero every time he walked on.
+##
+## The veil is a CELL mask (that is the shape the fog is remembered and revealed in) but it is
+## PAINTED as a smooth field, not as a cut: every cell is one quad whose four corner alphas are
+## the average of the four cells meeting at that corner. Godot interpolates the quad's colour
+## across its surface, so the dark ramps up over two cells and there is no grid line anywhere.
+## Jan: "udělej ji měkčí" — and a first attempt that merely drew a gradient band along the cell
+## border still showed the staircase, because the MASK was blocky even when its edge was soft.
+##
+## Fully unexplored interior: all four corners 1/1 -> the full 0.45 veil.
+## The border between explored and unexplored: corners average 2 of 4 -> half the veil, which is
+## what turns the cut into a two-cell fade.
 func _draw_fog() -> void:
 	if run == null:
 		return
@@ -953,19 +964,40 @@ func _draw_fog() -> void:
 	var c0: Vector2i = run.cell_of(_cam)
 	var c1: Vector2i = run.cell_of(_cam + view)
 	var veil := Color(0.0, 0.0, 0.0, 0.45)
-	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
-		var x := maxi(c0.x, 0)
-		var stop := mini(c1.x + 1, SurvivorRun.COLS)
-		while x < stop:
-			if run.is_explored_cell(x, cy):
-				x += 1
+	var t := SurvivorRun.TILE
+	# One cell of margin on every side: a quad reaching in from just off screen still has its
+	# ramp drawn instead of a visible seam at the edge of the viewport.
+	for cy in range(maxi(c0.y - 1, 0), min(c1.y + 2, SurvivorRun.ROWS)):
+		for cx in range(maxi(c0.x - 1, 0), min(c1.x + 2, SurvivorRun.COLS)):
+			var a_tl := _veil_corner(cx, cy)
+			var a_tr := _veil_corner(cx + 1, cy)
+			var a_br := _veil_corner(cx + 1, cy + 1)
+			var a_bl := _veil_corner(cx, cy + 1)
+			if a_tl <= 0.0 and a_tr <= 0.0 and a_br <= 0.0 and a_bl <= 0.0:
 				continue
-			var start := x
-			while x < stop and not run.is_explored_cell(x, cy):
-				x += 1
-			draw_rect(Rect2(Vector2(float(start) * SurvivorRun.TILE,
-				float(cy) * SurvivorRun.TILE) - _cam,
-				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE)), veil)
+			var origin := Vector2(float(cx) * t, float(cy) * t) - _cam
+			var pts := PackedVector2Array([
+				origin, origin + Vector2(t, 0.0),
+				origin + Vector2(t, t), origin + Vector2(0.0, t)])
+			var cols := PackedColorArray([
+				Color(veil.r, veil.g, veil.b, veil.a * a_tl),
+				Color(veil.r, veil.g, veil.b, veil.a * a_tr),
+				Color(veil.r, veil.g, veil.b, veil.a * a_br),
+				Color(veil.r, veil.g, veil.b, veil.a * a_bl)])
+			draw_polygon(pts, cols)
+
+
+## The veil weight at a cell CORNER, i.e. the share of the four cells meeting there that the hero
+## has not seen. A cell outside the grid counts as veiled: the world ends in fog, not in grass.
+func _veil_corner(vx: int, vy: int) -> float:
+	var unseen := 0
+	for d in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+		var dv: Vector2i = d
+		var cx: int = vx + dv.x
+		var cy: int = vy + dv.y
+		if not run.in_grid(cx, cy) or not run.is_explored_cell(cx, cy):
+			unseen += 1
+	return float(unseen) / 4.0
 
 
 ## Is a world-space shape — `pos` is already camera-shifted, `extent` its half-size — inside
