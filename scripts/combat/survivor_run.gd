@@ -207,6 +207,8 @@ const CLEAR_DELAY := 2.0
 const MAX_ALIVE := 7
 const SPAWN_RADIUS_MIN := 300.0
 const SPAWN_RADIUS_MAX := 430.0
+## How far the hero may walk from a portal he stepped out of before it closes.
+const PORTAL_CLOSE_DIST := 150.0
 
 ## --- loot ------------------------------------------------------------------
 const PICKUP_RADIUS := 30.0
@@ -303,6 +305,11 @@ var is_boss := false
 var waypoint_point := Vector2.ZERO
 ## The exit to the NEXT zone — the far end of the corridor, guaranteed far from the entrance.
 var exit_point := Vector2.ZERO
+## The town PORTAL: where it opened (the spot the hero stood on when he used the scroll) and
+## whether it is still open. Pure world state — the trip itself belongs to `Main`. Drawing it is
+## what makes the return read as "I came out of that thing", and walking away from it closes it.
+var portal_point := Vector2.ZERO
+var portal_open := false
 ## Orbs in flight: {pos, vel, dmg, age, colour}. Simulated here, painted by the screen.
 var projectiles: Array = []
 ## The HERO's own spells in the air (`thunderBolt`): {pos, vel, dmg, stun_ms, age, colour}.
@@ -476,6 +483,8 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	finished = false
 	outcome = ""
 	area_cleared = false
+	portal_open = false
+	portal_point = Vector2.ZERO
 	_clear_clock = 0.0
 	_main_clock = 0.0
 	_off_clock = 0.0
@@ -682,6 +691,11 @@ func step(dt: float, move: Vector2) -> void:
 	_age_numbers(dt)
 	RunSpells.tick(self, dt)
 	_zone_clear_tick(dt)
+	# A portal left behind closes once the hero has walked away from it. It is not a second way
+	# home — the scroll was spent on the trip it already carried him through — and an open mouth
+	# standing in a cleared room for the rest of the run would read as a promise it cannot keep.
+	if portal_open and player_pos.distance_to(portal_point) > PORTAL_CLOSE_DIST:
+		portal_open = false
 
 
 ## One step of the walk. `keep_facing` is the TARGET ASSIST talking: while an attack is held the

@@ -287,6 +287,9 @@ func _build_screens() -> void:
 	# the checkpoint, `_end_survivor` freezes the zone's monsters, and a free return position is
 	# stored so the town's portal card brings the player back to it.
 	survivor.waypoint_requested.connect(_on_zone_waypoint_used)
+	# The scroll used INSIDE the zone: a portal opens under the hero, the zone is frozen, and the
+	# town's portal button returns him onto that same spot.
+	survivor.portal_requested.connect(_on_zone_portal_used)
 	survivor.zone_exited.connect(_on_zone_exited)
 	survivor.run_finished.connect(_end_survivor)
 	_add_screen("survivor", survivor)
@@ -1094,6 +1097,39 @@ func _on_zone_waypoint_used() -> void:
 	state.save()
 
 
+## The TOWN PORTAL SCROLL used from inside the zone. Jan: "na místě, kde hráč stojí, se při použití
+## vytvoří portál, hráč se přesune do města a po návratu z města pomocí portálu ... to hráče musí
+## vrátit na stejnou pozici kde stál a do stejného stavu monster a lokace."
+##
+## So the order matters: the portal's mouth is placed on the hero's CURRENT spot and only then is
+## the zone frozen, or the snapshot would record a world he had already left. The spot goes into
+## the save (it is a coordinate, like the old road portal's), the monsters stay in `ZoneMemory`.
+func _on_zone_portal_used() -> void:
+	var screen = _screens.get("survivor", null)
+	if screen == null or screen.run == null:
+		return
+	if int(state.data.get("townPortalCount", 0)) <= 0:
+		_set_status("Nemate svitek mestského portalu")
+		return
+	var act_id := int(state.data.get("_currentAct", 0))
+	var zone := int(screen.run.zone_index)
+	screen.open_portal()
+	var spot: Vector2 = screen.run.portal_point
+	_end_survivor("")
+	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	state.data["townPortalReturn"] = {
+		"actId": act_id,
+		"zoneId": zone,
+		"areaFight": 0,
+		"zone": true,
+		# JSON-safe on purpose: this dict is written to the save, and a Vector2 would come back
+		# as a string after a reload.
+		"pos": [spot.x, spot.y],
+	}
+	state.save()
+	_transition_to(TransitionScreen.PORTAL_ART, func(): show_screen("town"))
+
+
 ## The RUN's result page — the arena's Victory/Defeat page, for the fight that replaces it.
 ##
 ## Same page (see `scripts/ui/result_screen.gd`): the act's artwork, the outcome, the hero's
@@ -1237,9 +1273,19 @@ func _on_town_portal_return() -> void:
 	# A position stored by a ZONE's waypoint returns into the zone itself (the survivor run),
 	# not into the old arena duel. `_enter_survivor` restores the monsters the player left there.
 	if bool(p.get("zone", false)):
+		var act_id := int(p.get("actId", 0))
+		var zone_id := int(p.get("zoneId", 0))
 		state.data["townPortalReturn"] = null
 		state.save()
-		_enter_survivor(int(p.get("actId", 0)), int(p.get("zoneId", 0)))
+		_enter_survivor(act_id, zone_id)
+		# The PORTAL's own spot, if this position was stored by a portal and not by a waypoint:
+		# the hero steps out exactly where he stepped in, and the mouth is drawn under him.
+		var raw: Variant = p.get("pos")
+		if raw is Array and (raw as Array).size() == 2:
+			var spot := Vector2(float(raw[0]), float(raw[1]))
+			var screen = _screens.get("survivor", null)
+			if screen != null and screen.run != null:
+				screen.arrive_through_portal(screen.run.nearest_floor_point(spot))
 		return
 	state.data["locationProgress"][int(p.get("actId", 0))] = int(p.get("zoneId", 0))
 	state.data["areaFightProgress"][int(p.get("actId", 0))] = int(p.get("areaFight", 0))

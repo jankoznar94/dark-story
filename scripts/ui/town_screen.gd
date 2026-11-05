@@ -463,6 +463,10 @@ func refresh() -> void:
 		var act_id := int(portal.get("actId", 0))
 		var act_name: String = acts[act_id]["name"] if act_id < acts.size() else "Act %d" % (act_id + 1)
 		_portal_label.text = "Navrat do %s, oblast %d" % [act_name, int(portal.get("zoneId", 0)) + 1]
+		# A return stored by a PORTAL (the scroll used inside a zone) is the mouth the player
+		# stepped through, and the label says so: it brings him back onto the exact spot.
+		if portal.has("pos"):
+			_portal_label.text = "Portal do %s, oblast %d" % [act_name, int(portal.get("zoneId", 0)) + 1]
 
 	refresh_update()
 

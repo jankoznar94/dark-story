@@ -29,6 +29,10 @@ signal zone_exited
 ## The waypoint was tapped: go to town and come back to this zone later. The act's record
 ## keeps this zone as the checkpoint, so nothing is lost.
 signal waypoint_requested
+## The town-portal scroll was used FROM THE ZONE: a portal opens where the hero stands and he
+## steps through it into town. `Main` spends the scroll, freezes the zone and stores the exact
+## spot, so the town's portal button brings him back onto it (Diablo's own behaviour).
+signal portal_requested
 
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
@@ -127,6 +131,11 @@ var _pointer_kind := ""
 ## the fight — everything a thumb plays is on the two wheels).
 var _exit_rect := Rect2()
 var _bind_rect := Rect2()
+## The TOWN PORTAL button. It exists only while a scroll is carried, and it sits UNDER the top
+## bar on the same right edge as `Konec` — inside the bar there is no free rectangle left: the
+## second row already carries "Oblasti" and the kill counter, and a button drawn over them was
+## measured hiding the timer once already.
+var _portal_rect := Rect2()
 
 ## THE ACTION WHEEL (left thumb). It is FIXED in the bottom-left and always drawn; the wedge the
 ## thumb is pushed into is the action. `_wheel_slot` is the wedge under the thumb right now (-1 =
@@ -373,6 +382,11 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 		return
 	if _exit_rect.has_point(pos):
 		leave_requested.emit()
+		return
+	# The scroll's own button. Checked BEFORE the world tap, because the portal is a fixed
+	# control and a thumb aimed at it must never start a walk instead.
+	if _has_portal_scroll() and _portal_rect.has_point(pos):
+		portal_requested.emit()
 		return
 	if _bind_rect.has_point(pos):
 		_open_bind()
@@ -712,6 +726,39 @@ func _place_camera() -> void:
 	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - view.y))
 
 
+## Is a town-portal scroll in the belt? The count is the save's own (`townPortalCount`), the same
+## number the map's and the road's portal buttons read, so the three cannot disagree.
+func _has_portal_scroll() -> bool:
+	if _state == null:
+		return false
+	return int(_state.data.get("townPortalCount", 0)) > 0
+
+
+## The scroll was used: a portal opens EXACTLY where the hero stands (Jan: "na místě, kde hráč
+## stojí, se při použití vytvoří portál"). The run stays where it is — `Main` takes the snapshot
+## and the trip — so this only marks the world.
+func open_portal() -> void:
+	if run == null:
+		return
+	run.portal_point = run.player_pos
+	run.portal_open = true
+	queue_redraw()
+
+
+## Coming BACK through the town's portal: the hero steps out of it at the spot he left, not at
+## the zone's entrance. A zone restored from memory is otherwise identical to the one he left.
+func arrive_through_portal(pos: Vector2) -> void:
+	if run == null:
+		return
+	run.player_pos = pos
+	run.portal_point = pos
+	run.portal_open = true
+	run._prev_pos = pos
+	run._reveal_around(pos)
+	_place_camera()
+	queue_redraw()
+
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_buttons()
@@ -731,6 +778,7 @@ func _notification(what: int) -> void:
 func _layout_buttons() -> void:
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
 	_bind_rect = Rect2(size.x - 180.0, 10.0, 76.0, 34.0)
+	_portal_rect = Rect2(size.x - 96.0, TOP_BAR + 6.0, 84.0, 34.0)
 	_layout_whirlwind()
 
 
@@ -890,6 +938,7 @@ func _draw() -> void:
 	_draw_patches()
 	_draw_props()
 	_draw_zone_links()
+	_draw_portal()
 	_draw_attack_ring()
 	_draw_drops()
 	_draw_actors()
@@ -1173,6 +1222,30 @@ func _draw_zone_links() -> void:
 	var tip := ex + Vector2(0.0, -78.0)
 	draw_colored_polygon(PackedVector2Array([
 		tip, tip + Vector2(-9.0, 14.0), tip + Vector2(9.0, 14.0)]), Color("#7d6e56"))
+
+
+## The town portal the scroll opened. FLAT and desaturated (Jan's rule — no glow): a dark oval
+## mouth with one cold arc, the colour the waypoint's stone already uses so the two read as the
+## same family of magic. It sits on the exact spot the hero stood on, which is also where he comes
+## back out, so the picture matches the rule.
+func _draw_portal() -> void:
+	if run == null or not run.portal_open:
+		return
+	var p: Vector2 = run.portal_point - _cam
+	if not on_screen(p, 70.0, _view_world_size()):
+		return
+	draw_circle(p, 30.0, Color("#161b20"))
+	draw_circle(p, 25.0, Color("#233540"))
+	draw_arc(p, 30.0, 0.0, TAU, 30, Color("#5b7d8c"), 2.0)
+	draw_arc(p, 20.0, 0.0, TAU, 24, Color("#3d5a68"), 2.0)
+	# Two still shards of light, not a spinning effect: the run has no animation pass and Jan
+	# rejected glow, so the mouth is told apart by SHAPE and by the cold ring on the warm floor.
+	draw_colored_polygon(PackedVector2Array([
+		p + Vector2(-9.0, -6.0), p + Vector2(-2.0, -14.0), p + Vector2(3.0, -6.0)]),
+		Color("#6f94a3"))
+	draw_colored_polygon(PackedVector2Array([
+		p + Vector2(6.0, 2.0), p + Vector2(12.0, -5.0), p + Vector2(14.0, 4.0)]),
+		Color("#54747f"))
 
 
 func _draw_actors() -> void:
@@ -1483,6 +1556,17 @@ func _draw_hud() -> void:
 	draw_rect(_exit_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
 	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
 		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
+
+	# THE TOWN PORTAL BUTTON — only while a scroll is carried, so the bar does not grow a dead
+	# control. Jan: "po návratu z města pomocí portálu (ve městě na to musí být tlačítko) to hráče
+	# musí vrátit na stejnou pozici" — the button on THIS side is what opens the portal, the one in
+	# town is what brings him back.
+	if _has_portal_scroll():
+		draw_rect(_portal_rect, Color(0x1e / 255.0, 0x27 / 255.0, 0x2b / 255.0, 0.95))
+		draw_rect(_portal_rect, Color(0x5b / 255.0, 0x7d / 255.0, 0x8c / 255.0, 0.8), false, 1.5)
+		draw_string(font_r, Vector2(_portal_rect.position.x + _portal_rect.size.x * 0.5,
+			_portal_rect.position.y + 23), "Portal", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12,
+			Color("#a8c2cc"))
 
 	# HP bar, above the thumb row
 	# ⚠️  Not flush with the bottom: a phone's home-gesture strip sits there and a bar a few

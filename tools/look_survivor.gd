@@ -46,6 +46,10 @@ var _flurry := false
 ## Cast ONE spell a few frames before the shot, so its effect is mid-animation in the frame.
 ## The effects are the whole point of `--cast`: a still of a finished spell proves nothing.
 var _cast_id := ""
+## Put a TOWN PORTAL in the frame: a scroll in the belt (so the HUD's `Portal` button exists and
+## is drawn) and the portal's mouth on the floor beside the hero. Nothing else about the frame
+## changes, so it is the same picture with and without the portal.
+var _portal := false
 ## How many frames before the shot the spell is cast. A shout's wave needs ~20 frames to leave the
 ## portrait (at 8 it is still INSIDE the hero's own disc and reads as a rim); a bolt crosses 105 px
 ## of body in ~10, so it is caught with 5.
@@ -105,6 +109,8 @@ func _initialize() -> void:
 				_cast_id = args[i + 1]
 			"--cast-at":
 				_cast_at = int(args[i + 1])
+			"--portal":
+				_portal = args[i + 1] != "0"
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -128,6 +134,13 @@ func _process(_delta: float) -> bool:
 		_main._enter_survivor(0)
 		_screen = _main._screens["survivor"]
 		_place_hero()
+		if _portal:
+			# The belt entry is what makes the HUD's `Portal` button exist, and the mouth is put
+			# just in front of the hero so one frame shows both halves of Jan's rule.
+			_main.state.data["townPortalCount"] = 1
+			if _screen.run != null:
+				_screen.run.portal_point = _screen.run.player_pos + Vector2(0.0, 58.0)
+				_screen.run.portal_open = true
 		if _spells or _flurry:
 			_grant_spells()
 		if _pack > 0 and _screen.run != null:

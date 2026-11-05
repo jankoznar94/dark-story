@@ -40,6 +40,8 @@ func _fail(msg: String) -> void:
 func _run() -> void:
 	_test_waypoint_freezes_and_reentry_restores()
 	_test_death_rolls_the_act_again()
+	_test_the_portal_button_exists_only_with_a_scroll()
+	_test_portal_opens_where_he_stands_and_returns_him_there()
 	for f in _failures:
 		print("  FAIL: %s" % f)
 	print("ZONE_PERSISTENCE_ALL_PASS=%s" % ("true" if _failures.is_empty() else "false"))
@@ -116,3 +118,113 @@ func _test_death_rolls_the_act_again() -> void:
 		_fail("death left %d monsters from the previous run in the zone" % fresh.monsters.size())
 	if int(fresh.hp) != int(fresh.max_hp):
 		_fail("a fresh zone after death did not start the hero at full life")
+
+
+## The button that USES the scroll lives in the zone's own HUD, and it may only exist while a
+## scroll is carried — a permanently drawn control that does nothing is the "dead road button"
+## this project already shipped once. Its rectangle also must not sit on `Konec` or `Akce`.
+func _test_the_portal_button_exists_only_with_a_scroll() -> void:
+	_main.state.data["townPortalCount"] = 0
+	_main._enter_survivor(0, 1)
+	var screen = _main._screens["survivor"]
+	if screen._has_portal_scroll():
+		_fail("the zone thinks it carries a scroll with a count of 0")
+	var r: Rect2 = screen._portal_rect
+	if r.size.x < 1.0:
+		_fail("the portal button has no rect")
+	if r.intersects(screen._exit_rect) or r.intersects(screen._bind_rect):
+		_fail("the portal button overlaps Konec/Akce")
+	if r.position.y < screen.TOP_BAR:
+		_fail("the portal button sits inside the top bar, where the second row's text already is")
+
+	# With no scroll the press must do NOTHING — neither open a portal nor store a return.
+	var before: String = JSON.stringify(_main.state.data.get("townPortalReturn"))
+	screen.portal_requested.emit()
+	if JSON.stringify(_main.state.data.get("townPortalReturn")) != before:
+		_fail("using a portal with no scroll stored a return position")
+
+	# With a scroll the button must exist and its press must ask for the portal.
+	_main.state.data["townPortalCount"] = 1
+	if not screen._has_portal_scroll():
+		_fail("the zone does not offer the portal button while a scroll is carried")
+	var fired := [0]
+	screen.portal_requested.connect(func(): fired[0] += 1)
+	screen.portal_requested.emit()
+	if fired[0] != 1:
+		_fail("the portal button's signal is not connected to anything")
+
+
+## Jan: "na místě, kde hráč stojí, se při použití vytvoří portál, hráč se přesune do města a po
+## návratu z města pomocí portálu to hráče musí vrátit na stejnou pozici kde stál a do stejného
+## stavu monster a lokace."
+func _test_portal_opens_where_he_stands_and_returns_him_there() -> void:
+	ZoneMemory.reset()
+	_main.state.data["townPortalCount"] = 2
+	_main.state.data["townPortalReturn"] = null
+	_main._enter_survivor(0, 3)
+	var screen = _main._screens["survivor"]
+	var run = screen.run
+	# A pack awake and one monster wounded, so "the same state" is something a check can SEE.
+	var pack: int = 1
+	run.player_pos = run.zones[pack]["centre"] as Vector2
+	run._zone_tick()
+	if run.monsters.is_empty():
+		_fail("no pack woke before the portal trip")
+		return
+	run.monsters[0]["hp"] = 4
+	var wounded := int(run.monsters[0]["id"])
+	var left: int = run.monsters.size()
+	# Where he STANDS when he uses the scroll: not the entrance, and on real floor.
+	var spot: Vector2 = run.nearest_floor_point(run.zones[pack]["centre"] as Vector2
+		+ Vector2(46.0, 18.0))
+	run.player_pos = spot
+
+	_main._on_zone_portal_used()
+	if int(_main.state.data.get("townPortalCount", 0)) != 1:
+		_fail("the trip did not spend one of two scrolls")
+	var portal: Variant = _main.state.data.get("townPortalReturn")
+	if not (portal is Dictionary):
+		_fail("using the scroll stored no return position")
+		return
+	var p: Dictionary = portal
+	var stored: Variant = p.get("pos")
+	if not (stored is Array) or (stored as Array).size() != 2:
+		_fail("the return position was not stored as a JSON-safe pair")
+		return
+	var saved := Vector2(float(stored[0]), float(stored[1]))
+	if saved.distance_to(spot) > 1.0:
+		_fail("the portal opened %.0f px from where the hero stood" % saved.distance_to(spot))
+	if not ZoneMemory.has(0, 3):
+		_fail("the portal trip did not freeze the zone")
+	if not run.portal_open:
+		_fail("no portal was opened in the world")
+
+	# The town's own button. Everything must come back: the spot, the monsters, the wound.
+	_main._on_town_portal_return()
+	var back = _main._screens["survivor"].run
+	print("  portal: back at %.0f px from the spot, %d/%d monsters, pack awake=%s, mouth open=%s"
+		% [back.player_pos.distance_to(spot), back.monsters.size(), left,
+			str(back.zones[pack]["active"] if pack < back.zones.size() else false),
+			str(back.portal_open)])
+	if back.player_pos.distance_to(spot) > 1.0:
+		_fail("the town portal returned the hero %.0f px from where he left"
+			% back.player_pos.distance_to(spot))
+	if back.monsters.size() != left:
+		_fail("the portal restored %d of %d monsters" % [back.monsters.size(), left])
+	var found := false
+	for m in back.monsters:
+		if int(m["id"]) == wounded:
+			found = true
+			if int(m["hp"]) != 4:
+				_fail("the wounded monster came back at %d hp, he left it at 4" % int(m["hp"]))
+	if not found:
+		_fail("the wounded monster was lost across the portal")
+	if not back.portal_open:
+		_fail("the hero did not come back out of a portal — nothing is drawn where he stands")
+	if _main.state.data.get("townPortalReturn") != null:
+		_fail("the return position survived the return — the town card would offer it again")
+	# The old arena path must still own a return that a ZONE did not store.
+	_main.state.data["townPortalReturn"] = {"actId": 0, "zoneId": 1, "areaFight": 2}
+	_main._on_town_portal_return()
+	if not (_main._screens["arena"].battle != null):
+		_fail("a return stored by the old path did not reach the arena")
