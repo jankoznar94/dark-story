@@ -612,13 +612,20 @@ func _play_events() -> void:
 		match str(cue):
 			"hit":
 				Sfx.play_global(Sfx.CUE_MELEE_HIT)
+				# The phone's half of "something happened". A buzz is a bonus, never the
+				# message: on an iPhone or in a desktop browser there is no motor at all.
+				Juice.haptic_hit()
 			"crit":
 				Sfx.play_global(Sfx.CUE_MELEE_CRIT)
+				Juice.haptic_crit()
 			"kill":
 				Sfx.play_global(Sfx.CUE_BLUNT_HIT)
 			"hurt":
 				Sfx.play_global(Sfx.CUE_HURT)
 				_flash = 1.0
+				# Being hit buzzes too, and LONGER than the hero's own blow: the player has to
+				# be able to tell "I hit it" from "it hit me" without looking.
+				Juice.haptic_crit()
 			"gold":
 				Sfx.play_global(Sfx.CUE_TREASURE)
 			"item":
@@ -1272,13 +1279,24 @@ func _draw_actors() -> void:
 
 
 func _draw_monster(m: Dictionary) -> void:
-	var pos: Vector2 = (m["pos"] as Vector2) - _cam
+	var base_pos: Vector2 = (m["pos"] as Vector2) - _cam
+	var pos := base_pos
+	var bob := sin(float(m["bob"])) * 2.2
 	# ⚠️  World units, not canvas pixels — see `on_screen`. A monster walking near the right or
 	# bottom edge of the arena used to vanish while still on screen for exactly this reason.
-	if not on_screen(pos, DISC_DIA, _view_world_size()):
+	if not on_screen(base_pos, DISC_DIA, _view_world_size()):
 		return
-	var bob := sin(float(m["bob"])) * 2.2
+	# ITS OWN STRIKE. A body that lunges at the hero and whips a red arc across him is what
+	# says "this one attacked you" — the damage number alone arrives after the blow and reads
+	# as a receipt rather than as a blow. Driven by `atk_age`, which only ever starts on a hit
+	# it LANDED, so a blocked or out-of-reach monster never lunges.
+	var atk := float(m.get("atk_age", -1.0))
+	var swinging := atk >= 0.0 and atk < MON_ATK_ANIM
+	var atk_dir: Vector2 = m.get("atk_dir", Vector2.RIGHT)
+	if swinging:
+		pos += atk_dir * MON_LUNGE_PX * sin(PI * clampf(atk / MON_ATK_ANIM, 0.0, 1.0))
 	var role := str(m.get("role", "normal"))
+
 	# THE AURA, on the ground under the elite. `Aura Enchanted` is a real rule (its slaves hit
 	# 30 % harder), and a rule the player cannot SEE is a rule he cannot play around. Drawn as
 	# one flat ring, no glow — Jan's rule for the whole game.
@@ -1308,6 +1326,31 @@ func _draw_monster(m: Dictionary) -> void:
 	if float(m["hit_flash"]) > 0.0:
 		ring = Color("#f0d8a0")
 	draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5, 0.0, TAU, 28, ring, width, true)
+	# THE CUT. One hard bar across the disc, along the direction the blade was travelling, for
+	# the ~0.12 s the hit flash lasts. A bright mark ON the body is what makes a landed blow
+	# read as landing on THAT body; an X on every disc (which this started as) read as a row of
+	# identical UI crosshairs instead of as five cuts.
+	if float(m["hit_flash"]) > 0.0:
+		var f := clampf(float(m["hit_flash"]) / 0.12, 0.0, 1.0)
+		var c := pos + Vector2(0, bob)
+		var along: Vector2 = run.swing_dir if run != null else Vector2.RIGHT
+		if along.length() < 0.01:
+			along = Vector2.RIGHT
+		along = along.normalized()
+		var half := DISC_DIA * 0.46 * (1.2 - 0.2 * f)
+		draw_line(c - along * half, c + along * half, Color(1, 1, 1, 0.9 * f), 6.0, true)
+		draw_line(c - along * half, c + along * half, Color(1, 0.96, 0.86, 0.6 * f), 2.0, true)
+	# ITS SWIPE, over the hero's side: a red crescent sweeping across the gap it just struck
+	# through. Drawn after the body so it reads as coming FROM it.
+	if swinging:
+		var t := clampf(atk / MON_ATK_ANIM, 0.0, 1.0)
+		var a := 0.9 * (1.0 - t)
+		var base_a := atk_dir.angle()
+		var lead := base_a - 0.62 + 1.24 * (1.0 - pow(1.0 - clampf(t / 0.6, 0.0, 1.0), 2.0))
+		var col := Color(0.92, 0.30, 0.24, a)
+		draw_arc(pos, DISC_DIA * 0.78, lead - 0.55, lead, 14, col, 7.0 * (1.0 - t) + 2.0, true)
+		draw_arc(pos, DISC_DIA * 0.60, lead - 0.38, lead, 10,
+			Color(1.0, 0.55, 0.45, a * 0.75), 3.0, true)
 	if role == "elite":
 		# A second hairline ring outside the amber one: the elite reads as DOUBLE-ringed from
 		# across the screen, which is what a body worth 5x XP has to be.
@@ -1341,7 +1384,7 @@ func _draw_hero() -> void:
 	# not.
 	var lunge := Vector2.ZERO
 	if run.swing_age >= 0.0 and run.swing_age < SWING_ANIM:
-		lunge = run.swing_dir * 8.0 * sin(PI * clampf(float(run.swing_age) / SWING_ANIM, 0.0, 1.0))
+		lunge = run.swing_dir * 14.0 * sin(PI * clampf(float(run.swing_age) / SWING_ANIM, 0.0, 1.0))
 	pos += lunge
 	# The hero is a WALKING PORTRAIT like everything else, and the only thing that separates him
 	# from a monster is the GOLD ring — the same distinction the arena's rings already use.
@@ -1369,6 +1412,11 @@ func _draw_hero() -> void:
 ## second body outline; it brightens and thickens for a moment on every landed swing, which is
 ## half of "the player can see something happened".
 const SWING_ANIM := 0.22
+## How long a monster's own strike is drawn for. Longer than the hero's swing: a lunge plus a
+## sweep has to be SEEN, and the hero's next blow lands inside 0.3 s anyway.
+const MON_ATK_ANIM := 0.30
+## How far a monster's disc travels at the hero on its strike, in px.
+const MON_LUNGE_PX := 13.0
 const RING_SEGMENTS := 28
 
 
@@ -1493,23 +1541,32 @@ func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
 	# be drawn 0.54-0.92 R, a little inside, and that read as a shorter arm rather than as a
 	# second weapon.
 	var col := Color("#f0e0c0") if not mirrored else Color("#a9c2e0")
-	col.a = 0.95 * (1.0 - t * 0.75)
-	var r0 := reach * 0.62
-	var r1 := reach
-	var width := 4.0 * (1.0 - t) + 1.0
+	col.a = 0.95 * (1.0 - t * 0.55)
+	var r0 := reach * 0.52
+	var r1 := reach * 1.10
+	# ⚠️  BIGGER, and it has to be felt from 390 px away. Measured on the old numbers (4 px at
+	# full, fading to 1) the sweep was a hairline the eye read as part of the reach ring — and
+	# in this fight the monsters stand exactly ON that ring, so a thin arc was hidden behind
+	# the very bodies it was hitting. Jan: "animace seknutí musí být větší, výraznější, ať má
+	# hráč pocit, že se skutečně něco děje."
+	var width := 13.0 * (1.0 - t * 0.62) + 3.0
+	var sweep := 0.58
+	var band := Color(col.r, col.g, col.b, col.a * 0.34)
 	if mirrored:
 		# Right to left, the same band the main hand sweeps, so the two arcs cross rather than
 		# nest.
-		var lead := base + 0.55 - 1.10 * t
-		draw_arc(pos, r1, lead, lead + 0.42, 12, col, width, true)
-		draw_arc(pos, r0, lead, lead + 0.30, 10,
-			Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
+		var lead := base + sweep - 2.0 * sweep * t
+		draw_arc(pos, r1, lead, lead + 0.60, 18, band, width * 1.8, true)
+		draw_arc(pos, r1, lead, lead + 0.60, 18, col, width, true)
+		draw_arc(pos, r1, lead, lead + 0.60, 18, Color(1, 1, 1, col.a * 0.9), 3.0, true)
+		draw_arc(pos, r0, lead, lead + 0.44, 14, band, width * 0.6, true)
 	else:
 		# Left to right.
-		var lead := base - 0.55 + 1.10 * t
-		draw_arc(pos, r1, lead - 0.42, lead, 12, col, width, true)
-		draw_arc(pos, r0, lead - 0.30, lead, 10,
-			Color(col.r, col.g, col.b, col.a * 0.55), 2.0, true)
+		var lead := base - sweep + 2.0 * sweep * t
+		draw_arc(pos, r1, lead - 0.60, lead, 18, band, width * 1.8, true)
+		draw_arc(pos, r1, lead - 0.60, lead, 18, col, width, true)
+		draw_arc(pos, r1, lead - 0.60, lead, 18, Color(1, 1, 1, col.a * 0.9), 3.0, true)
+		draw_arc(pos, r0, lead - 0.44, lead, 14, band, width * 0.6, true)
 
 
 func _draw_drops() -> void:

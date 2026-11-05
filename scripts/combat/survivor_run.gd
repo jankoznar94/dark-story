@@ -1370,6 +1370,13 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		"atk_cd": float(row.get("attackSpeed", 1500)) / 1000.0,
 		"atk_ready": 0.0,
 		"hit_flash": 0.0,
+		# THE MONSTER'S OWN SWING, for the screen to draw. Seconds since it STRUCK (contact
+		# damage or a thrown orb), -1 when it has not struck yet, plus the direction it struck
+		# in. Presentation only: nothing in this file reads either value back, exactly like
+		# `hit_flash`. Without them a monster's attack was a number appearing over the hero and
+		# nothing on screen moved — Jan: "u nepřátel musí mít animaci útoku".
+		"atk_age": -1.0,
+		"atk_dir": Vector2.ZERO,
 		"bob": rng.randf() * TAU,
 		# A thrower's DISTANCE is part of its record, not a global: the fight has to be able
 		# to give two kinds different stand-off ranges without a second table.
@@ -1405,6 +1412,8 @@ func _move_monsters(dt: float) -> void:
 	var alive: Array = []
 	for m in monsters:
 		m["hit_flash"] = maxf(0.0, float(m["hit_flash"]) - dt)
+		if float(m["atk_age"]) >= 0.0:
+			m["atk_age"] = float(m["atk_age"]) + dt
 		m["bob"] = float(m["bob"]) + dt * 7.0
 		# A spell's status window, ticked here so the numbers on the record are the numbers the
 		# fight reads. A stunned body does NOTHING (no walk, no hit) — `_take_damage` would
@@ -1451,6 +1460,9 @@ func _move_monsters(dt: float) -> void:
 				# Contact damage. The cooldown is the KIND's own attack speed, so a Bear hits
 				# like a bear and a Wolf like a wolf with no extra code.
 				m["atk_ready"] = float(m["atk_cd"]) * walk_mult
+				# The lunge the screen draws, aimed where the hero actually stands.
+				m["atk_age"] = 0.0
+				m["atk_dir"] = ((player_pos as Vector2) - (m["pos"] as Vector2)).normalized()
 				_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
 		alive.append(m)
 	monsters = alive
@@ -1469,6 +1481,10 @@ func _clamp_world(pos: Vector2) -> Vector2:
 ## answer, and a hero who only walks straight in eats every ball.
 func _shoot(m: Dictionary, toward: Vector2) -> void:
 	var dir := toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
+	# A caster's attack has a body too: it rears back and throws, and that is what the screen
+	# draws. Without it the only sign of a shot was the orb already in the air.
+	m["atk_age"] = 0.0
+	m["atk_dir"] = dir
 	var dmg := rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"])))
 	projectiles.append({
 		"pos": (m["pos"] as Vector2) + dir * (BODY_RADIUS + 6.0),
