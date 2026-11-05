@@ -58,6 +58,18 @@ signal dismissed()
 signal socket_tapped(socket_index: int)
 ## A gem was picked in the gem picker: insert it into the armed socket.
 signal gem_tapped(gem_id: String)
+## A horizontal SWIPE across the panel: +1 = the next bag item, -1 = the previous one.
+##
+## The PWA's `invItemOverlayContent` owns this gesture ("Swipe v compare overlayi — skákání
+## mezi itemy v batohu"), and its point is that a player comparing gear does not have to close
+## the window, hit the next cell and open it again for every item. The overlay does NOT decide
+## what "next" means: the bag's order and its empty cells belong to the inventory screen, which
+## is why this is a signal and not a lookup here.
+signal navigate(direction: int)
+
+## The PWA's own threshold: `if (Math.abs(dx) < 40 || Math.abs(dx) <= Math.abs(dy)) return`.
+## 40 CSS px on the port's 390-wide canvas, i.e. the same number, not a re-guess.
+const SWIPE_MIN := 40.0
 
 ## `.inv-item-overlay-content { max-width:300px; min-width:220px }` and the pane is 390
 ## wide, so the panel is 300 unless the screen is narrower.
@@ -134,6 +146,15 @@ var _origin := ""
 var _origin_slot := ""
 var _origin_index := -1
 
+## The swipe gesture, tracked on the PANEL (the PWA listens on the content div, not the bg,
+## and a swipe that started on the dim must still close the window instead of switching).
+var _press_pos := Vector2.ZERO
+var _pressing := false
+## A press that arrived as a FINGER. A phone also sends emulated mouse events for the same
+## finger, and treating those as a second gesture is the ScrollSwipe bug (a flick counted
+## twice). The gesture remembers how it STARTED; the emulated half never takes it over.
+var _press_from_touch := false
+
 
 func _init(game_data: Node, gen, state, find_item: Callable,
 		slots: Array) -> void:
@@ -171,6 +192,10 @@ func _build() -> void:
 
 	_panel = PanelContainer.new()
 	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	# The PWA's swipe listener sits on the CONTENT, which is this panel's own box. A swipe
+	# that begins on a button is consumed by that button and is not a gesture — the PWA has
+	# the same blind spot on a `<button>`, so a thumb swipes across the stats or the padding.
+	_panel.gui_input.connect(_on_panel_input)
 	_panel.anchor_left = 0.5
 	_panel.anchor_right = 0.5
 	_panel.anchor_top = 0.5
@@ -324,6 +349,52 @@ func _on_dim_input(event: InputEvent) -> void:
 		close()
 	elif event is InputEventScreenTouch and event.pressed:
 		close()
+
+
+# --- the swipe ---------------------------------------------------------------
+
+## Press/release on the panel, and nothing in between: the PWA compares only the two touch
+## points (`touchstart` / `touchend`), so a curved swipe and a straight one are the same
+## gesture. A vertical-dominant move is not a swipe at all — the panel scrolls, and a page
+## drag must not switch the item under the player's finger.
+func _on_panel_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if touch.pressed:
+			_press_pos = touch.position
+			_pressing = true
+			_press_from_touch = true
+		elif _pressing and _press_from_touch:
+			_pressing = false
+			_finish_swipe(touch.position)
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mb.pressed:
+			# The emulated mouse half of a finger's press: the gesture is already running.
+			if _pressing:
+				return
+			_press_pos = mb.position
+			_pressing = true
+			_press_from_touch = false
+		elif _pressing and not _press_from_touch:
+			_pressing = false
+			_finish_swipe(mb.position)
+
+
+## `dx < 0` (the finger moves LEFT) is the NEXT item, exactly as the PWA computes it
+## (`dir = dx < 0 ? 1 : -1`): the content follows the finger, so what comes in from the right
+## is the next item. Nothing is committed here — the inventory screen owns the bag order and
+## only ITS answer may change what is shown.
+func _finish_swipe(release_pos: Vector2) -> void:
+	_press_from_touch = false
+	var delta := release_pos - _press_pos
+	if absf(delta.x) < SWIPE_MIN or absf(delta.x) <= absf(delta.y):
+		return
+	navigate.emit(1 if delta.x < 0.0 else -1)
+	accept_event()
 
 
 # --- the panel's contents ----------------------------------------------------

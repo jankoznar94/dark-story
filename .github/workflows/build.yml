@@ -388,6 +388,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "SURVIVOR_ALL_PASS=true"
 
+      # The compare window's SWIPE (Jan, Nov 2026): with the item detail open, a horizontal
+      # swipe steps to the next/previous item in the bag instead of closing and reopening the
+      # window for every item. Two halves are asserted, because a gesture that emits its signal
+      # and a screen that shows the SAME item again logs exactly like a working feature: the
+      # overlay's direction arithmetic AND the bag walk (which skips empty cells and wraps).
+      - name: Compare swipe test (gesture, bag walk, equipped guard)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_compare_swipe.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "COMPARE_SWIPE_ALL_PASS=true"
+
       # The AREA: a carved corridor with turns, connected from the spawn to every pack, revealed
       # as the hero walks (Warcraft 2 fog). A screenshot cannot prove connectivity — a pocket
       # behind the rock is a pack the player can see and never reach — so the flood fill is the

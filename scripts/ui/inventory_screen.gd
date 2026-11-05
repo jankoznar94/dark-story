@@ -135,6 +135,8 @@ func _ready() -> void:
 	_item_overlay.dismissed.connect(_on_overlay_dismissed)
 	_item_overlay.socket_tapped.connect(_on_socket_cell_tapped)
 	_item_overlay.gem_tapped.connect(_on_gem_cell_tapped)
+	# The PWA's compare-window swipe: "abys nemusel furt opakovaně okno zapínat, vypínat".
+	_item_overlay.navigate.connect(_on_item_info_navigate)
 	refresh()
 
 
@@ -771,6 +773,44 @@ func _on_equip_slot_pressed(slot: String) -> void:
 
 func close_item_info() -> void:
 	_item_overlay.close()
+
+
+## A swipe across the open item detail: step to the neighbour in the bag.
+##
+## Two rules, and the second is deliberately NOT the PWA's own:
+##
+##   * a swipe only walks the BAG. A worn item has no "next" in the detail window, and the
+##     PWA switches only when `_invSelectedIdx !== null`.
+##   * EMPTY CELLS ARE SKIPPED. The PWA computed `(idx + dir) % inv.length` and then bailed
+##     when that slot was empty, so on a bag holding three items a swipe was dead most of the
+##     time — the exact "it doesn't work" a player would report. Walking to the next slot that
+##     actually HOLDS an item keeps the gesture's intent (a way through the bag) and wraps.
+func _on_item_info_navigate(direction: int) -> void:
+	if _item_overlay == null or _item_overlay.origin() != "bag":
+		return
+	var inventory: Array = _state.inventory()
+	if inventory.size() < 2:
+		return
+	var from := int(_item_overlay.origin_index())
+	if from < 0 or from >= inventory.size():
+		return
+	var step_dir := 1 if direction > 0 else -1
+	for step in range(1, inventory.size()):
+		var idx := (from + step_dir * step + inventory.size() * 2) % inventory.size()
+		var entry: Variant = inventory[idx]
+		var item_id: String = str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		if item_id == "":
+			continue
+		var item: Dictionary = _resolve(item_id)
+		if item.is_empty():
+			continue
+		# A different host invalidates the armed socket, exactly as a fresh tap does.
+		_socket_host_id = item_id
+		_armed_socket = -1
+		_select_bag(idx)
+		_item_overlay.show_for_bag(item, idx)
+		item_tapped.emit(idx)
+		return
 
 
 func _on_overlay_dismissed() -> void:
