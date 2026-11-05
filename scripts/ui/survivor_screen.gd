@@ -89,6 +89,10 @@ const WW_KEY_BORDERS := {
 const DISC_DIA := 62.0
 
 const GRASS_PATH := "res://assets/ground/grass.png"
+const ZoneThemeData := preload("res://scripts/ui/zone_theme.gd")
+## The zone's own look lives in `scripts/ui/zone_theme.gd` (`class_name ZoneTheme`): ground tile,
+## palette, wall material, cover and landmarks. `_ready()` loads the default; `setup()` replaces
+## both once the run knows its act and zone.
 
 const C_TEXT := Color("#e8e0d0")
 const C_DIM := Color("#b0a48e")
@@ -102,6 +106,13 @@ var _find_item: Callable
 
 var _accum := 0.0
 var _grass: Texture2D = null
+## The zone's palette and ground tile. Set by `_apply_theme()` from `setup()`; until then both
+## fall back to the shipped look, so a screen built before a run exists still paints.
+var _theme: Dictionary = {}
+var _ground: Texture2D = null
+## The current prop's own ground point in canvas space, so a landmark can place its parts
+## relative to itself (`_set_prop_offset`).
+var _prop_base := Vector2.ZERO
 var _disc_cache: Dictionary = {}
 ## The fog of war as ONE texture: a (COLS+1)x(ROWS+1) grid of CORNER alphas, resampled
 ## bilinearly over the whole world. The per-cell polygon pass it replaces was one draw call
@@ -176,6 +187,8 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
 	_grass = UIKit.load_texture(GRASS_PATH)
+	_ground = _grass
+	_theme = ZoneThemeData.for_zone(-1, -1)
 
 
 ## Stop the clock. The run object is KEPT (the payout is read from it when the screen hands the
@@ -202,6 +215,9 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	_find_item = find_item
 	run = SurvivorRun.new()
 	run.setup(state, find_item, loot_system, act_id, seed_value, zone)
+	# The zone's look is resolved BEFORE `_build_decoration()` reads it, and before `restore()`:
+	# the ground and the props are the same zone the save was walked in, not the act's default.
+	_apply_theme(act_id, zone)
 	# A zone the player already walked is put back from memory BEFORE the screen builds anything
 	# that depends on it: the fog cache is keyed on `explored_version` and the camera is placed
 	# on `player_pos`, so restoring afterwards would show a map that only catches up a frame
@@ -234,6 +250,14 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	queue_redraw()
 
 
+## Resolve the zone's theme and its ground tile. A missing tile falls back to the shipped grass
+## rather than to a flat colour: a zone whose art failed to load must still look like a place.
+func _apply_theme(act_id: int, zone: int) -> void:
+	_theme = ZoneThemeData.for_zone(act_id, zone)
+	var tex := UIKit.load_texture(str(_theme.get("ground_path", GRASS_PATH)))
+	_ground = tex if tex != null else _grass
+
+
 ## The "procedurally generated environment": a handful of rules over one seed, not a map.
 ## Dirt patches break the grass into places; boulders and dead bushes give the eye something
 ## to run past. Every entry is world-space data and is drawn only when it is on screen.
@@ -262,7 +286,12 @@ func _build_decoration() -> void:
 		})
 	# THE WALL. One prop per floor cell that touches rock, pushed a little toward the rock so the
 	# rock line the rules stop the hero at is the line the boulders stand on.
+	#
+	# The KIND comes from the zone's theme (pines, menhirs, masonry, dead trees…), and the wall
+	# positions are kept as CANDIDATES for the landmarks: a landmark belongs in the rock beyond
+	# the path, which is where the wall cells already look.
 	var along := 0
+	var wall_spots: Array = []
 	for cy in SurvivorRun.ROWS:
 		for cx in SurvivorRun.COLS:
 			if not run.is_floor_cell(cx, cy):
@@ -270,12 +299,13 @@ func _build_decoration() -> void:
 			var to_rock := _rock_direction(cx, cy)
 			if to_rock == Vector2i.ZERO:
 				continue
-			# Every other cell only: a boulder per 120 px reads as a wall, one per 60 as a hedge.
-			if (cx + cy) % 2 == 1 and rng.randf() < 0.6:
-				continue
 			var centre: Vector2 = run.cell_centre(cx, cy)
 			var pos := centre + Vector2(to_rock) * (SurvivorRun.TILE * 0.5 - 14.0) \
 				+ Vector2(rng.randf_range(-7, 7), rng.randf_range(-7, 7))
+			wall_spots.append({"pos": pos, "dir": to_rock})
+			# Every other cell only: a boulder per 120 px reads as a wall, one per 60 as a hedge.
+			if (cx + cy) % 2 == 1 and rng.randf() < 0.6:
+				continue
 			_props.append(_wall_prop(pos, along, rng))
 			along += 1
 	# Interior cover. Sparse on purpose: it is something to run past, and a pack has to be
@@ -286,15 +316,149 @@ func _build_decoration() -> void:
 			continue
 		var pos: Vector2 = run.cell_centre(c.x, c.y) \
 			+ Vector2(rng.randf_range(-20, 20), rng.randf_range(-20, 20))
-		var kind := "rock" if rng.randf() < 0.6 else "bush"
+		var kind: String = ZoneThemeData.pick_cover(_theme, rng)
 		_props.append({
 			"pos": pos,
 			"kind": kind,
-			"size": rng.randf_range(20, 44) if kind == "rock" else rng.randf_range(22, 40),
+			"size": ZoneThemeData.base_size(kind, rng, false),
 			"seed": rng.randf() * 10.0,
 		})
+	_build_landmarks(wall_spots, rng)
 	# Nothing may stand on the hero's first step.
 	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(run.player_pos) > 70.0)
+
+
+## The zone's SIGNATURE, placed in the rock beyond the path. One at the hero's arrival (so the
+## first frame of the zone already tells him where he is) and the rest spaced along the walk —
+## a landmark seen from across the map is what makes two corridors feel like two places.
+##
+## ⚠️  The spot is chosen from the WALL cells, i.e. from floor cells that touch rock, and then
+## pushed a further 46 px INTO the rock: a landmark standing on the path would be a shape the
+## hero walks through, and props carry no collision.
+func _build_landmarks(wall_spots: Array, rng: RandomNumberGenerator) -> void:
+	var marks: Array = _theme.get("marks", [])
+	if marks.is_empty() or wall_spots.is_empty():
+		return
+	# Depths relative to the hero's arrival: just ahead of the clearing, then two thirds of the
+	# way along the map. The third entry covers a long zone without crowding the start.
+	var targets := [
+		run.player_pos + Vector2(0.0, -420.0),
+		run.player_pos + Vector2(0.0, -700.0),
+		run.player_pos + Vector2(0.0, 520.0),
+	]
+	# ⚠️  A landmark on a SIDE wall is invisible at the hero's own spawn: the corridor is 7 cells
+	# (420 px) wide and a 390x844 portrait phone shows 475 world px, so a side wall lands on the
+	# very edge of the frame — measured, the stone circle stood at x = 496 against a hero at 750
+	# and never appeared in a capture at all. Only walls the player looks DOWN THE CORRIDOR at
+	# (a vertical rock face at a turn or the end of a room) put a landmark in the middle of the
+	# screen, so those are the only candidates unless the zone has none.
+	var forward: Array = []
+	for j in wall_spots.size():
+		var d: Vector2i = wall_spots[j]["dir"]
+		if d.y != 0:
+			forward.append(j)
+	if forward.is_empty():
+		forward = range(wall_spots.size())
+	var used: Array = []
+	for i in marks.size():
+		var target: Vector2 = targets[i % targets.size()]
+		var best := -1
+		var best_gap := INF
+		# The FIRST landmark is placed by a RAY from the hero, not from the wall list: the wall
+		# list only contains floor cells, so a corridor that runs straight ahead has no wall
+		# within reach and its landmark ends up 900 px away. A ray finds the rock the corridor
+		# actually ENDS at, which is the line the player looks at on arrival.
+		if i == 0:
+			var spot0 := _landmark_spot(380.0)
+			if not spot0.is_empty():
+				_props.append({
+					"pos": spot0["pos"] as Vector2,
+					"kind": str(marks[0]),
+					"size": 122.0,
+					"seed": rng.randf() * 10.0,
+				})
+				continue
+		for j in forward:
+			if used.has(j):
+				continue
+			var spot: Vector2 = (wall_spots[j]["pos"] as Vector2)
+			var crowded := false
+			for taken in used:
+				if (wall_spots[taken]["pos"] as Vector2).distance_to(spot) < 260.0:
+					crowded = true
+					break
+			if crowded:
+				continue
+			var gap := spot.distance_to(target) + absf(spot.x - target.x) * 2.0
+			if gap < best_gap:
+				best_gap = gap
+				best = j
+		if best < 0:
+			continue
+		used.append(best)
+		var spot: Dictionary = wall_spots[best]
+		var face: Vector2i = spot["dir"]
+		var out := Vector2(face) * 22.0
+		_props.append({
+			"pos": (spot["pos"] as Vector2) + out,
+			"kind": str(marks[i]),
+			"size": 130.0,
+			"seed": rng.randf() * 10.0,
+		})
+
+
+## Where the zone's SIGNATURE stands, so the player sees it on the arrival frame. Three rules,
+## each of them a measured correction of a placement that looked wrong in a capture:
+##
+##  1. A landmark in the rock beyond the corridor is the best reading ("the tower is past the
+##     path"), but only when the rock is BETWEEN 150 and 700 px ahead — further and the shape is
+##     off screen, nearer and it is a prop at his feet;
+##  2. When the corridor simply runs on (measured on zone 0: 900 px of open path, no rock), the
+##     landmark stands ON the floor of the clearing. A stone circle in a glade is exactly what
+##     the painting shows, and props carry no collision, so the hero walks through the ring
+##     instead of being stopped by a monument that is only scenery;
+##  3. DOWN is the last resort: the bottom of a portrait screen is the HUD, and a landmark placed
+##     there is one nobody sees (the circle landed under the joystick).
+func _landmark_spot(want: float) -> Dictionary:
+	var up := Vector2(0, -1)
+	var hit := _ray_hit(up, 900.0)
+	if hit > 0.0 and hit <= 700.0:
+		return {"pos": run.player_pos + up * (hit + 26.0)}
+	var floor_spot := _floor_spot_ahead(up, want)
+	if not floor_spot.is_empty():
+		return floor_spot
+	for dir in [Vector2(1, 0), Vector2(-1, 0)]:
+		var side := _ray_hit(dir, 900.0)
+		if side > 0.0:
+			return {"pos": run.player_pos + dir * (side + 26.0)}
+	return {}
+
+
+## Distance to the first rock cell along `dir`, or -1 when the path is open further than `limit`.
+func _ray_hit(dir: Vector2, limit: float) -> float:
+	var t := 0.0
+	while t < limit:
+		t += 20.0
+		var c: Vector2i = run.cell_of(run.player_pos + dir * t)
+		if not run.is_floor_cell(c.x, c.y):
+			return t
+	return -1.0
+
+
+## A point `want` px ahead along `dir` that is FLOOR with floor all round it, so a landmark there
+## stands in a clearing instead of hanging over the wall line.
+func _floor_spot_ahead(dir: Vector2, want: float) -> Dictionary:
+	for step in [0.0, -40.0, 40.0, -80.0, 80.0, -120.0, 120.0]:
+		var p: Vector2 = run.player_pos + dir * (want + step)
+		var c: Vector2i = run.cell_of(p)
+		var ok := true
+		for dx in [-1, 0, 1]:
+			for dy in [-1, 0, 1]:
+				if not run.is_floor_cell(c.x + dx, c.y + dy):
+					ok = false
+		if ok:
+			return {"pos": p}
+	return {}
 
 
 ## The direction from a floor cell to the rock next to it, or ZERO if the cell is interior.
@@ -306,13 +470,15 @@ func _rock_direction(cx: int, cy: int) -> Vector2i:
 
 
 ## One piece of the wall. Bigger and darker than interior cover: at a glance it has to read as
-## "the area ends here", not as one more rock to walk around.
+## "the area ends here", not as one more rock to walk around. The MATERIAL is the zone's own —
+## a pine wood is edged with pines, the ruined tower with rubble, the bog with dead trees — which
+## is the cheapest way for two zones to stop looking like the same place.
 func _wall_prop(pos: Vector2, index: int, rng: RandomNumberGenerator) -> Dictionary:
-	var rock := index % 3 != 2
+	var kind: String = ZoneThemeData.wall_kind(_theme, index)
 	return {
 		"pos": pos,
-		"kind": "rock" if rock else "bush",
-		"size": rng.randf_range(42, 66) if rock else rng.randf_range(30, 46),
+		"kind": kind,
+		"size": ZoneThemeData.base_size(kind, rng, true),
 		"seed": rng.randf() * 10.0,
 	}
 
@@ -977,7 +1143,7 @@ func _draw() -> void:
 
 
 func _draw_ground() -> void:
-	if _grass == null:
+	if _ground == null:
 		# The world half is drawn under the zoom, so a canvas-sized rect would cover only
 		# `ZOOM` of the canvas. Cover the VISIBLE world instead.
 		draw_rect(Rect2(_cam, _view_world_size()), Color("#4a4a36"))
@@ -989,7 +1155,11 @@ func _draw_ground() -> void:
 	# draw call per floor cell. `TILE` (60) does not divide the 256 px tile, so drawing the
 	# texture cell by cell would break the seamless repeat and the ground would show its grid —
 	# exactly the "jednotvárná a nic neříkající" surface Jan complained about.
-	draw_texture_rect(_grass, Rect2(-_cam, SurvivorRun.WORLD), true)
+	#
+	# The TINT is the zone's: three new tiles and five palettes would still cover only five
+	# places, and a tint costs one multiply where a new 512 px tile costs ~150 KB of first load.
+	draw_texture_rect(_ground, Rect2(-_cam, SurvivorRun.WORLD), true,
+		_theme.get("tint", Color.WHITE))
 	_draw_rock()
 
 
@@ -1001,8 +1171,8 @@ func _draw_rock() -> void:
 	var view := _view_world_size()
 	var c0: Vector2i = run.cell_of(_cam)
 	var c1: Vector2i = run.cell_of(_cam + view)
-	var dark := Color("#191510")
-	var edge := Color("#241d15")
+	var dark: Color = _theme.get("rock", Color("#191510"))
+	var rock_line: Color = _theme.get("rock_line", Color("#2e2619"))
 	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
 		var x := maxi(c0.x, 0)
 		var stop := mini(c1.x + 1, SurvivorRun.COLS)
@@ -1029,8 +1199,8 @@ func _draw_rock() -> void:
 			var poly := _rock_polygon(cx, cy)
 			for i in poly.size():
 				poly[i] -= _cam
-			draw_colored_polygon(poly, Color("#241d15"))
-			draw_polyline(poly, Color("#2e2619"), 1.5)
+			draw_colored_polygon(poly, rock_line)
+			draw_polyline(poly, rock_line.lightened(0.06), 1.5)
 
 
 ## A rock cell's silhouette: a hexagon with every corner pushed out by a stable pseudo-random
@@ -1141,8 +1311,10 @@ func _draw_patches() -> void:
 			continue
 		var ry := float(p["ry"])
 		_set_local(pos, Vector2(1.0, ry / rx))
-		draw_circle(Vector2.ZERO, rx, Color(0x5a / 255.0, 0x50 / 255.0, 0x3e / 255.0, 0.34))
-		draw_circle(Vector2.ZERO, rx * 0.66, Color(0x64 / 255.0, 0x59 / 255.0, 0x45 / 255.0, 0.26))
+		var pa: Color = _theme.get("patch_a", Color("#5a503e"))
+		var pb: Color = _theme.get("patch_b", Color("#645945"))
+		draw_circle(Vector2.ZERO, rx, Color(pa.r, pa.g, pa.b, 0.34))
+		draw_circle(Vector2.ZERO, rx * 0.66, Color(pb.r, pb.g, pb.b, 0.26))
 	_set_world()
 
 
@@ -1155,32 +1327,566 @@ func _draw_props() -> void:
 	for p in _props:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
 		var s := float(p["size"])
-		var extent := s * 1.2
+		var extent := s * 1.6
 		if not on_screen(pos, extent, view):
 			continue
-		_set_local(pos + Vector2(0, s * 0.20), Vector2(1.0, 0.34))
-		draw_circle(Vector2.ZERO, s * 0.66, Color(0, 0, 0, 0.40))
+		# A dark disc on a dark ground reads as a shadow with nothing casting it — Jan's own
+		# report on the first render. Every prop therefore has a BODY and a lit edge.
+		_set_local(pos + Vector2(0, s * 0.16), Vector2(1.0, 0.30))
+		draw_circle(Vector2.ZERO, s * 0.52, Color(0, 0, 0, 0.36))
 		_set_local(pos)
-		if str(p["kind"]) == "rock":
-			var seed_v := float(p["seed"])
-			var pts := PackedVector2Array([
-				Vector2(-s * 0.52, 0.0), Vector2(-s * 0.30, -s * 0.62),
-				Vector2(s * 0.16, -s * 0.78), Vector2(s * 0.50, -s * 0.20),
-				Vector2(s * 0.28, s * 0.10), Vector2(-s * 0.34, s * 0.06),
-			])
-			draw_colored_polygon(pts, Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0))
-			draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3]]),
-				Color(0x85 / 255.0, 0x7a / 255.0, 0x63 / 255.0), 2.0)
-			draw_line(Vector2(-s * 0.1, -s * 0.1), Vector2(s * 0.2, -s * 0.35),
-				Color(0, 0, 0, 0.25 + 0.05 * seed_v), 1.5)
-		else:
-			# A dark disc on a dark ground reads as a shadow with nothing casting it — Jan's
-			# own report on the first render. A bush therefore has a BODY and a lit rim.
-			draw_circle(Vector2(0, -s * 0.30), s * 0.60, Color(0x37 / 255.0, 0x3c / 255.0, 0x26 / 255.0))
-			draw_circle(Vector2(-s * 0.14, -s * 0.44), s * 0.36, Color(0x45 / 255.0, 0x4b / 255.0, 0x2f / 255.0))
-			draw_arc(Vector2(0, -s * 0.30), s * 0.60, PI * 1.15, PI * 1.95, 14,
-				Color(0x5e / 255.0, 0x64 / 255.0, 0x40 / 255.0), 2.0)
+		# A landmark composes several shapes, so it needs to place sub-parts RELATIVE to the
+		# prop's own origin. `_set_local()` takes an absolute canvas point, so the base is kept
+		# here and `_set_prop_offset()` adds to it.
+		_prop_base = pos
+		_draw_prop_kind(str(p["kind"]), s, float(p["seed"]))
 	_set_world()
+
+
+## One palette entry as a Color. The theme is already expanded, but a screen built before a run
+## exists has the DEFAULT theme too — so a missing key must never throw mid-draw.
+func _col(key: String, fallback: String) -> Color:
+	var value: Variant = _theme.get(key, null)
+	if value is Color:
+		return value
+	return Color(fallback)
+
+
+## Place the next shapes at `off` from the CURRENT prop's own ground point, in the prop's flat
+## local space. Needed by the landmarks, which are several shapes standing on one spot.
+func _set_prop_offset(off: Vector2) -> void:
+	_set_local(_prop_base + off)
+
+
+## An ellipse as a polygon. The prop painter works in a FLAT local space (no squash in the node
+## transform, because a squashed transform would also squash the line widths), so every round
+## shape is emitted as points instead.
+func _ellipse_pts(c: Vector2, rx: float, ry: float, n: int = 14) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		out.append(c + Vector2(cos(a) * rx, sin(a) * ry))
+	return out
+
+
+## The half of an ellipse ABOVE its centre — a mushroom cap, a cairn stone's dome, a fountain
+## rim seen from the game's own high angle.
+func _dome_pts(c: Vector2, rx: float, ry: float, n: int = 10) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in n + 1:
+		var a := PI + PI * float(i) / float(n)
+		out.append(c + Vector2(cos(a) * rx, sin(a) * ry))
+	return out
+
+
+## Every prop the game can build, as its own ICON. Deliberately coarse: at the 0.82 zoom the
+## phone plays at, a 60 px pine is 49 px tall, so a pine is a trunk and three triangles and a
+## menhir is four straight edges. Anything finer is four grey pixels nobody reads.
+##
+## The palette comes from the ZONE (`ZoneTheme`), never from this function, so the same shape
+## reads as a pale ruin in zone 2 and as a warm village post in zone 6.
+func _draw_prop_kind(kind: String, s: float, seed_v: float) -> void:
+	match kind:
+		"rock":
+			_prop_rock(s, seed_v)
+		"bush":
+			_prop_bush(s)
+		"menhir":
+			_prop_menhir(s)
+		"pine":
+			_prop_pine(s, seed_v)
+		"dead_tree":
+			_prop_dead_tree(s, seed_v)
+		"reed":
+			_prop_reed(s, seed_v)
+		"stump":
+			_prop_stump(s)
+		"column":
+			_prop_column(s)
+		"rubble":
+			_prop_rubble(s, seed_v)
+		"cairn":
+			_prop_cairn(s)
+		"plank":
+			_prop_plank(s, seed_v)
+		"fern":
+			_prop_fern(s, seed_v)
+		"mushroom":
+			_prop_mushroom(s)
+		"barrel":
+			_prop_barrel(s)
+		"hut":
+			_prop_hut(s)
+		"torch":
+			_prop_torch(s)
+		"fence":
+			_prop_fence(s)
+		"wall_block":
+			_prop_wall_block(s)
+		"root":
+			_prop_root(s, seed_v)
+		_:
+			_draw_landmark(kind, s, seed_v)
+
+
+func _prop_rock(s: float, seed_v: float) -> void:
+	var pts := PackedVector2Array([
+		Vector2(-s * 0.52, 0.0), Vector2(-s * 0.30, -s * 0.62),
+		Vector2(s * 0.16, -s * 0.78), Vector2(s * 0.50, -s * 0.20),
+		Vector2(s * 0.28, s * 0.10), Vector2(-s * 0.34, s * 0.06),
+	])
+	draw_colored_polygon(pts, _col("stone", "#6a614f"))
+	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3]]),
+		_col("stone_light", "#857a63"), 2.0)
+	draw_line(Vector2(-s * 0.1, -s * 0.1), Vector2(s * 0.2, -s * 0.35),
+		Color(0, 0, 0, 0.25 + 0.05 * seed_v), 1.5)
+
+
+func _prop_bush(s: float) -> void:
+	draw_circle(Vector2(0, -s * 0.30), s * 0.60, _col("foliage", "#373c26"))
+	draw_circle(Vector2(-s * 0.14, -s * 0.44), s * 0.36, _col("foliage_light", "#454b2f"))
+	draw_arc(Vector2(0, -s * 0.30), s * 0.60, PI * 1.15, PI * 1.95, 14,
+		_col("foliage_light", "#5e6440").lightened(0.10), 2.0)
+
+
+## An upright slab, wider at the foot, with one carved mark. It is the same silhouette from any
+## angle — the point of a menhir is that the eye reads it as "made by someone".
+func _prop_menhir(s: float) -> void:
+	var pts := PackedVector2Array([
+		Vector2(-s * 0.30, 0.0), Vector2(-s * 0.23, -s * 1.04),
+		Vector2(-s * 0.03, -s * 1.20), Vector2(s * 0.22, -s * 0.94),
+		Vector2(s * 0.28, 0.0),
+	])
+	draw_colored_polygon(pts, _col("stone", "#6b6a5c"))
+	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), _col("stone_light", "#8a8975"), 2.0)
+	var accent := _col("accent", "#5f8f7a").darkened(0.15)
+	draw_line(Vector2(0, -s * 0.72), Vector2(0, -s * 0.44), accent, 2.0)
+	draw_circle(Vector2(0, -s * 0.82), s * 0.055, accent)
+
+
+## A conifer: a trunk and three triangles, the widest at the bottom. Darker at the base and
+## lighter at the crown, which is what gives a stand of them depth without any shading pass.
+func _prop_pine(s: float, seed_v: float) -> void:
+	draw_rect(Rect2(-s * 0.08, -s * 0.46, s * 0.16, s * 0.46), _col("wood", "#3c2e20"))
+	var dark := _col("foliage", "#2b3421")
+	var light := _col("foliage_light", "#39442c")
+	var lean := (fposmod(seed_v, 1.0) - 0.5) * s * 0.10
+	for i in 3:
+		var by := -s * (0.26 + 0.24 * float(i))
+		var hw := s * (0.50 - 0.13 * float(i))
+		var tone := dark if i % 2 == 0 else light
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(-hw + lean, by), Vector2(hw + lean, by),
+			Vector2(lean, by - s * 0.44),
+		]), tone)
+	draw_line(Vector2(lean, -s * 1.14), Vector2(lean, -s * 0.98), light, 2.0)
+
+
+## A bare trunk with two bent limbs. In the bog and in the ruin it is the WALL, so it has to be
+## taller than a bush and thinner than a rock — a silhouette you see the corridor's edge in.
+func _prop_dead_tree(s: float, seed_v: float) -> void:
+	var bend := (fposmod(seed_v * 1.7, 1.0) - 0.5) * s * 0.16
+	var wood := _col("wood", "#3f3427")
+	var wood_light := _col("wood_light", "#524534")
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.10, 0.0), Vector2(-s * 0.05, -s * 0.60),
+		Vector2(bend * 0.4, -s * 1.00), Vector2(s * 0.04, -s * 0.62),
+		Vector2(s * 0.11, 0.0),
+	]), wood)
+	draw_line(Vector2(bend * 0.4, -s * 0.62), Vector2(bend - s * 0.34, -s * 0.90), wood_light, 3.0)
+	draw_line(Vector2(bend * 0.6, -s * 0.80), Vector2(bend + s * 0.30, -s * 1.02), wood_light, 2.5)
+
+
+func _prop_reed(s: float, seed_v: float) -> void:
+	var light := _col("foliage_light", "#3a4a37")
+	var dark := _col("foliage", "#2c3a2c")
+	for k in 6:
+		var t := float(k) / 5.0
+		var x := (t - 0.5) * s * 0.9
+		var h := s * (0.52 + 0.30 * absf(sin(seed_v * 2.3 + float(k))))
+		var col := light if k % 2 == 0 else dark
+		draw_line(Vector2(x * 0.35, 0.0), Vector2(x, -h), col, 2.0)
+		# a seed head, drawn as one flat lozenge — the bog's "cattail" tell at a glance
+		if k % 3 == 0:
+			draw_colored_polygon(_ellipse_pts(Vector2(x, -h - s * 0.06), s * 0.035, s * 0.09, 6), dark)
+
+
+func _prop_stump(s: float) -> void:
+	var wood := _col("wood", "#4a3a28")
+	draw_rect(Rect2(-s * 0.26, -s * 0.30, s * 0.52, s * 0.30), wood)
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.26, s * 0.10), _col("wood_light", "#634c33"))
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.13, s * 0.05), wood.darkened(0.18))
+
+
+## A fallen drum of a column lying across the ground, one end face turned to the camera. Two of
+## these in a row already say "this was a building" without a single wall standing.
+func _prop_column(s: float) -> void:
+	var stone := _col("stone", "#767a80")
+	var light := _col("stone_light", "#93979d")
+	var r := s * 0.20
+	draw_rect(Rect2(-s * 0.55, -2.0 * r, s * 0.88, 2.0 * r), stone)
+	draw_line(Vector2(-s * 0.55, -2.0 * r), Vector2(s * 0.33, -2.0 * r), light, 2.0)
+	draw_colored_polygon(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.55, r), light)
+	draw_colored_polygon(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.30, r * 0.55), stone.darkened(0.12))
+
+
+func _prop_rubble(s: float, seed_v: float) -> void:
+	var stone := _col("stone", "#767a80")
+	var light := _col("stone_light", "#93979d")
+	for k in 3:
+		var t := float(k)
+		var cx := (t - 1.0) * s * 0.30 + fposmod(seed_v + t, 1.0) * s * 0.08
+		var hw := s * (0.20 - 0.04 * t)
+		var h := s * (0.34 - 0.07 * t)
+		var pts := PackedVector2Array([
+			Vector2(cx - hw, 0.0), Vector2(cx - hw * 0.6, -h),
+			Vector2(cx + hw * 0.4, -h * 0.86), Vector2(cx + hw, 0.0),
+		])
+		draw_colored_polygon(pts, stone if k % 2 == 0 else stone.darkened(0.08))
+		draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), light, 1.5)
+
+
+## A trail marker: three stones, each smaller than the one under it.
+func _prop_cairn(s: float) -> void:
+	var stone := _col("stone", "#79705f")
+	var light := _col("stone_light", "#968c78")
+	var y := 0.0
+	var w := s * 0.34
+	for k in 3:
+		var h := w * 0.62
+		draw_colored_polygon(_dome_pts(Vector2(0, y), w, h), stone if k % 2 == 0 else stone.darkened(0.07))
+		draw_arc(Vector2(0, y), w, PI, TAU, 8, light, 1.5)
+		y -= h * 0.92
+		w *= 0.72
+
+
+## A broken board of the old walkway: two boards at different angles, one of them sunken.
+func _prop_plank(s: float, seed_v: float) -> void:
+	var wood := _col("wood", "#3f3427")
+	var light := _col("wood_light", "#524534")
+	for k in 2:
+		var ang := (fposmod(seed_v + float(k) * 3.1, 1.0) - 0.5) * 0.5
+		var cx := (float(k) - 0.5) * s * 0.34
+		var cy := -s * (0.10 + 0.06 * float(k))
+		var dir := Vector2(cos(ang), sin(ang))
+		var across := Vector2(-dir.y, dir.x)
+		var a := Vector2(cx, cy) - dir * s * 0.40
+		var b := Vector2(cx, cy) + dir * s * 0.40
+		var t := s * 0.06
+		draw_colored_polygon(PackedVector2Array([
+			a - across * t, b - across * t, b + across * t, a + across * t,
+		]), wood)
+		draw_line(a + across * t, b + across * t, light, 1.5)
+
+
+func _prop_fern(s: float, seed_v: float) -> void:
+	var col := _col("foliage_light", "#3b4e40")
+	var swing := (fposmod(seed_v, 1.0) - 0.5) * 0.5
+	for k in 5:
+		var ang := -PI * 0.5 + (float(k) - 2.0) * 0.40 + swing * 0.2
+		var p1 := Vector2(cos(ang), sin(ang)) * s * 0.44
+		var p2 := p1 + Vector2(cos(ang + swing), sin(ang + swing)) * s * 0.28
+		draw_line(Vector2.ZERO, p1, col, 2.0)
+		draw_line(p1, p2, col, 1.5)
+
+
+func _prop_mushroom(s: float) -> void:
+	draw_rect(Rect2(-s * 0.05, -s * 0.22, s * 0.10, s * 0.22), _col("stone_light", "#8a8975"))
+	var cap := _col("accent", "#6fb3a0").darkened(0.18)
+	draw_colored_polygon(_dome_pts(Vector2(0, -s * 0.22), s * 0.20, s * 0.17), cap)
+	draw_arc(Vector2(0, -s * 0.22), s * 0.20, PI, TAU, 8, cap.lightened(0.12), 1.5)
+
+
+func _prop_barrel(s: float) -> void:
+	var wood := _col("wood", "#4d3a26")
+	draw_rect(Rect2(-s * 0.22, -s * 0.50, s * 0.44, s * 0.50), wood)
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.50), s * 0.22, s * 0.08), _col("wood_light", "#634c33"))
+	for y in [-s * 0.16, -s * 0.38]:
+		draw_rect(Rect2(-s * 0.24, float(y), s * 0.48, s * 0.05), wood.darkened(0.30))
+
+
+## A hut is a box and a gable. No window light: Jan's rule is no glow, and a village of lit
+## windows at night would be the only glowing thing in the game.
+func _prop_hut(s: float) -> void:
+	var wood := _col("wood", "#4d3a26")
+	draw_rect(Rect2(-s * 0.38, -s * 0.52, s * 0.76, s * 0.52), wood)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.50, -s * 0.52), Vector2(s * 0.50, -s * 0.52), Vector2(0.0, -s * 0.98),
+	]), _col("wood_light", "#634c33").darkened(0.25))
+	draw_line(Vector2(-s * 0.50, -s * 0.52), Vector2(s * 0.50, -s * 0.52),
+		_col("wood_light", "#634c33"), 2.0)
+	draw_rect(Rect2(-s * 0.09, -s * 0.28, s * 0.18, s * 0.28), _col("rock", "#1b1610"))
+
+
+func _prop_torch(s: float) -> void:
+	draw_rect(Rect2(-s * 0.045, -s * 0.66, s * 0.09, s * 0.66), _col("wood_light", "#634c33"))
+	var flame := _col("accent", "#b8763a")
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.09, -s * 0.62), Vector2(0.0, -s * 0.94), Vector2(s * 0.09, -s * 0.62),
+	]), flame)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.04, -s * 0.62), Vector2(0.0, -s * 0.80), Vector2(s * 0.04, -s * 0.62),
+	]), flame.lightened(0.18))
+
+
+func _prop_fence(s: float) -> void:
+	var wood := _col("wood", "#4d3a26")
+	var light := _col("wood_light", "#634c33")
+	for x in [-s * 0.38, s * 0.38]:
+		draw_rect(Rect2(float(x) - s * 0.05, -s * 0.60, s * 0.10, s * 0.60), wood)
+	for y in [-s * 0.44, -s * 0.22]:
+		draw_rect(Rect2(-s * 0.44, float(y), s * 0.88, s * 0.06), light)
+
+
+## A segment of standing masonry — the fortress's edge, not a rock. One course line per brick
+## row and staggered joints, so it reads as BUILT at 49 px.
+func _prop_wall_block(s: float) -> void:
+	var stone := _col("stone", "#6e726b")
+	var line := stone.darkened(0.30)
+	draw_rect(Rect2(-s * 0.50, -s * 0.82, s * 1.00, s * 0.82), stone)
+	draw_line(Vector2(-s * 0.50, -s * 0.82), Vector2(s * 0.50, -s * 0.82), _col("stone_light", "#8b8f86"), 2.0)
+	for row in 3:
+		var y := -s * (0.22 + 0.22 * float(row))
+		draw_line(Vector2(-s * 0.50, y), Vector2(s * 0.50, y), line, 1.5)
+		var off := 0.0 if row % 2 == 0 else s * 0.22
+		for k in 2:
+			var x := -s * 0.25 + off + float(k) * s * 0.45
+			draw_line(Vector2(x, y), Vector2(x, y + s * 0.22), line, 1.5)
+
+
+## A thick root crawling out of the ground and over whatever is in its way. The gate's ruin is
+## strangled by these, so the wall in zone 9 is half masonry and half root.
+func _prop_root(s: float, seed_v: float) -> void:
+	var pts := PackedVector2Array()
+	var lift := s * (0.34 + 0.10 * fposmod(seed_v, 1.0))
+	for i in 6:
+		var t := float(i) / 5.0
+		var x := (t - 0.5) * s * 1.05
+		var y := -sin(t * PI) * lift
+		pts.append(Vector2(x, y))
+	draw_polyline(pts, _col("wood", "#463424"), s * 0.15)
+	draw_polyline(pts, _col("wood_light", "#5a4530"), s * 0.07)
+
+
+## ── landmarks ────────────────────────────────────────────────────────────────────────────────
+## The zone's signature, four to six times the size of cover and drawn in the ROCK beyond the
+## path (see `_build_landmarks`). One shape each, recognisable from across the map, in the flat
+## palette of the zone's own painting.
+func _draw_landmark(kind: String, s: float, seed_v: float) -> void:
+	match kind:
+		"lm_circle":
+			_lm_circle(s)
+		"lm_grove":
+			_lm_grove(s, seed_v)
+		"lm_tower":
+			_lm_tower(s)
+		"lm_fallen_log":
+			_lm_fallen_log(s)
+		"lm_bridge":
+			_lm_bridge(s)
+		"lm_cairn_field":
+			_lm_cairn_field(s)
+		"lm_village":
+			_lm_village(s)
+		"lm_fountain":
+			_lm_fountain(s)
+		"lm_watchtower":
+			_lm_watchtower(s)
+		"lm_gate":
+			_lm_gate(s)
+		_:
+			_prop_rock(s, seed_v)
+
+
+## Zone 0 — the ring of standing stones. Nearer stones are drawn last so the ring reads as a
+## ring and not as a row.
+func _lm_circle(s: float) -> void:
+	var stone := _col("stone", "#6b6a5c")
+	var light := _col("stone_light", "#8a8975")
+	var accent := _col("accent", "#5f8f7a").darkened(0.20)
+	var rx := s * 0.95
+	var ry := s * 0.42
+	var order := [5, 0, 4, 1, 3, 2]
+	for i in order:
+		var a := TAU * float(i) / 6.0 + 0.4
+		var base := Vector2(cos(a) * rx, sin(a) * ry)
+		var h := s * (0.52 + 0.12 * float(i % 2))
+		var hw := s * 0.10
+		draw_colored_polygon(PackedVector2Array([
+			base + Vector2(-hw * 1.3, 0), base + Vector2(-hw, -h),
+			base + Vector2(hw * 0.9, -h * 0.94), base + Vector2(hw * 1.25, 0),
+		]), stone)
+		draw_line(base + Vector2(-hw * 1.3, 0), base + Vector2(-hw, -h), light, 2.0)
+	# the altar in the middle: a flat slab, no flame, no glow
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.06), s * 0.30, s * 0.13), stone.darkened(0.12))
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.10), s * 0.26, s * 0.11), light.darkened(0.10))
+	draw_circle(Vector2(0, -s * 0.10), s * 0.05, accent)
+
+
+## Zone 1 — three pines taller than any wall prop: the wood closes over the road.
+func _lm_grove(s: float, seed_v: float) -> void:
+	# FIVE pines, the middle one the tallest: three read as "some trees", five read as a stand
+	# that closes the road.
+	var spots := [[-0.72, 0.78], [-0.34, 1.02], [0.04, 1.22], [0.42, 0.94], [0.74, 0.70]]
+	for i in 5:
+		var x := float(spots[i][0]) * s
+		var h := float(spots[i][1]) * s
+		_set_prop_offset(Vector2(x, 0.0))
+		_prop_pine(h * 0.98, seed_v + float(i) * 2.3)
+	_set_prop_offset(Vector2.ZERO)
+
+
+## Zone 2 — the tower, broken at the top. Its shadow is the landmark as much as its shape.
+func _lm_tower(s: float) -> void:
+	var stone := _col("stone", "#767a80")
+	var light := _col("stone_light", "#93979d")
+	var dark := stone.darkened(0.22)
+	# tower body, tapering, with a jagged broken silhouette
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.34, 0), Vector2(-s * 0.26, -s * 1.42),
+		Vector2(-s * 0.08, -s * 1.52), Vector2(s * 0.02, -s * 1.34),
+		Vector2(s * 0.14, -s * 1.46), Vector2(s * 0.26, -s * 1.20),
+		Vector2(s * 0.32, 0),
+	]), stone)
+	draw_line(Vector2(-s * 0.34, 0), Vector2(-s * 0.26, -s * 1.42), light, 2.0)
+	# two slit windows and a door arch
+	draw_rect(Rect2(-s * 0.06, -s * 1.16, s * 0.09, s * 0.20), dark)
+	draw_rect(Rect2(-s * 0.06, -s * 0.86, s * 0.09, s * 0.20), dark)
+	draw_colored_polygon(_dome_pts(Vector2(-s * 0.01, -s * 0.06), s * 0.11, s * 0.18), dark)
+	# rubble at the foot
+	for k in 3:
+		var cx := (float(k) - 1.0) * s * 0.26
+		draw_colored_polygon(_dome_pts(Vector2(cx, 0.0), s * 0.11, s * 0.10), stone.darkened(0.10))
+
+
+## Zone 3 — the giant trunk that fell across the bog. The boardwalk is built around it.
+func _lm_fallen_log(s: float) -> void:
+	var wood := _col("wood", "#3f3427")
+	var light := _col("wood_light", "#524534")
+	var body := PackedVector2Array([
+		Vector2(-s * 0.95, -s * 0.02), Vector2(-s * 0.95, -s * 0.30),
+		Vector2(s * 0.85, -s * 0.38), Vector2(s * 0.90, -s * 0.06),
+	])
+	draw_colored_polygon(body, wood)
+	draw_line(Vector2(-s * 0.95, -s * 0.30), Vector2(s * 0.85, -s * 0.38), light, 2.5)
+	# root disc at the near end
+	draw_colored_polygon(_ellipse_pts(Vector2(-s * 0.95, -s * 0.16), s * 0.20, s * 0.28, 10), wood.darkened(0.18))
+	# moss along the top — flat, no sheen
+	draw_line(Vector2(-s * 0.60, -s * 0.32), Vector2(s * 0.50, -s * 0.36),
+		_col("foliage", "#2c3a2c").lightened(0.10), 3.0)
+
+
+## Zone 5 — the stone bridge. Deck, parapets and two pillars standing in the canyon.
+func _lm_bridge(s: float) -> void:
+	var stone := _col("stone", "#6d7375")
+	var light := _col("stone_light", "#8a9092")
+	var dark := stone.darkened(0.24)
+	for x in [-s * 0.62, s * 0.58]:
+		draw_rect(Rect2(float(x) - s * 0.09, -s * 0.40, s * 0.18, s * 0.40), dark)
+	draw_rect(Rect2(-s * 1.05, -s * 0.56, s * 2.10, s * 0.18), stone)
+	draw_line(Vector2(-s * 1.05, -s * 0.56), Vector2(s * 1.05, -s * 0.56), light, 2.5)
+	# parapet: two low walls with a gap in the middle, so the deck reads as a way through
+	draw_rect(Rect2(-s * 1.05, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
+	draw_rect(Rect2(s * 0.27, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
+	# the arch under the deck
+	var arch := PackedVector2Array()
+	for i in 9:
+		var a := PI + PI * float(i) / 8.0
+		arch.append(Vector2(cos(a) * s * 0.55, -s * 0.38 + sin(a) * s * 0.16))
+	draw_polyline(arch, light, 2.0)
+
+
+## Zone 4 — the valley's cairns, three of them, the tall one in the middle.
+func _lm_cairn_field(s: float) -> void:
+	var spots := [[-0.72, 0.60], [0.02, 0.92], [0.66, 0.48]]
+	for i in 3:
+		_set_prop_offset(Vector2(float(spots[i][0]) * s, 0.0))
+		_prop_cairn(float(spots[i][1]) * s)
+	_set_prop_offset(Vector2.ZERO)
+
+
+## Zone 6 — the village up the trunks: two huts on stilts, a ladder between them.
+func _lm_village(s: float) -> void:
+	# stilts under both huts
+	for x in [-0.42, 0.30]:
+		for dx in [-0.16, 0.16]:
+			draw_rect(Rect2(float(x) + float(dx) * s - s * 0.03, -s * 0.30, s * 0.06, s * 0.30),
+				_col("wood", "#4d3a26"))
+	_set_prop_offset(Vector2(-s * 0.42, -s * 0.30))
+	_prop_hut(s * 0.52)
+	_set_prop_offset(Vector2(s * 0.34, -s * 0.24))
+	_prop_hut(s * 0.40)
+	_set_prop_offset(Vector2.ZERO)
+	# the ladder between them
+	var wood := _col("wood_light", "#634c33")
+	draw_line(Vector2(-s * 0.16, -s * 0.34), Vector2(s * 0.10, -s * 0.58), wood, 2.0)
+	draw_line(Vector2(-s * 0.10, -s * 0.30), Vector2(s * 0.16, -s * 0.54), wood, 2.0)
+	for k in 3:
+		var t := 0.25 + 0.25 * float(k)
+		var a := Vector2(-s * 0.16, -s * 0.34).lerp(Vector2(s * 0.10, -s * 0.58), t)
+		draw_line(a, a + Vector2(-s * 0.06, 0.04 * s), wood, 1.5)
+
+
+## Zone 7 — the spring: a stone basin holding flat water. The one "magic" thing in act 1, and it
+## is still a flat colour with no halo.
+func _lm_fountain(s: float) -> void:
+	var stone := _col("stone", "#6a7268")
+	var light := _col("stone_light", "#868e80")
+	var water := _col("accent", "#6fb3a0")
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.16), s * 0.86, s * 0.40, 18), stone.darkened(0.14))
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.76, s * 0.34, 18), stone)
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.62, s * 0.26, 18), water.darkened(0.10))
+	draw_arc(Vector2(0, -s * 0.20), s * 0.86, PI * 1.02, PI * 1.98, 20, light, 2.5)
+	# the spring stone in the middle
+	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.22), s * 0.16, s * 0.09), stone.darkened(0.20))
+	draw_rect(Rect2(-s * 0.07, -s * 0.34, s * 0.14, s * 0.14), stone)
+
+
+## Zone 8 — the fortress on the far bank: a square tower with crenellations.
+func _lm_watchtower(s: float) -> void:
+	var stone := _col("stone", "#6e726b")
+	var light := _col("stone_light", "#8b8f86")
+	var dark := stone.darkened(0.26)
+	draw_rect(Rect2(-s * 0.36, -s * 1.34, s * 0.72, s * 1.34), stone)
+	draw_line(Vector2(-s * 0.36, -s * 1.34), Vector2(-s * 0.36, 0), light, 2.0)
+	# crenellations
+	for k in 3:
+		draw_rect(Rect2(-s * 0.36 + float(k) * s * 0.26, -s * 1.48, s * 0.16, s * 0.16), stone)
+	# slit windows
+	draw_rect(Rect2(-s * 0.05, -s * 1.02, s * 0.10, s * 0.22), dark)
+	draw_rect(Rect2(-s * 0.05, -s * 0.62, s * 0.10, s * 0.22), dark)
+	draw_rect(Rect2(-s * 0.10, -s * 0.26, s * 0.20, s * 0.26), dark)
+
+
+## Zone 9 — the broken gate, strangled by roots: two pillars, the arch fallen between them.
+func _lm_gate(s: float) -> void:
+	var stone := _col("stone", "#736a58")
+	var light := _col("stone_light", "#8f8570")
+	for x in [-0.66, 0.60]:
+		var bx := float(x) * s
+		draw_rect(Rect2(bx - s * 0.13, -s * 1.20, s * 0.26, s * 1.20), stone)
+		draw_line(Vector2(bx - s * 0.13, -s * 1.20), Vector2(bx - s * 0.13, 0), light, 2.0)
+		draw_rect(Rect2(bx - s * 0.17, -s * 1.28, s * 0.34, s * 0.10), stone.darkened(0.08))
+	# the fallen arch: a stump on each pillar and nothing between them
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-s * 0.53, -s * 1.06), Vector2(-s * 0.20, -s * 1.02),
+		Vector2(-s * 0.26, -s * 0.92), Vector2(-s * 0.53, -s * 0.94),
+	]), stone.darkened(0.06))
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(s * 0.14, -s * 0.98), Vector2(s * 0.47, -s * 0.90),
+		Vector2(s * 0.43, -s * 0.80), Vector2(s * 0.16, -s * 0.86),
+	]), stone.darkened(0.06))
+	# roots crawling over both pillars
+	for x in [-0.66, 0.60]:
+		var bx := float(x) * s
+		var pts := PackedVector2Array()
+		for i in 6:
+			var t := float(i) / 5.0
+			pts.append(Vector2(bx - s * 0.22 + t * s * 0.44, -s * 1.10 - sin(t * PI) * s * 0.10))
+		draw_polyline(pts, _col("wood", "#463424"), s * 0.10)
+	_set_prop_offset(Vector2(-s * 0.05, 0.0))
+	_prop_root(s * 0.55, 0.3)
+	_set_prop_offset(Vector2.ZERO)
 
 
 func _disc(face: String) -> Texture2D:
@@ -1539,10 +2245,38 @@ func _draw_drops() -> void:
 			draw_circle(pos + Vector2(0, bob), 5.5, C_GOLD)
 			draw_circle(pos + Vector2(-1.5, -1.5 + bob), 2.0, Color("#f4e4b8"))
 		else:
-			var col := Color(str(d.get("color", "#888888")))
-			draw_circle(pos + Vector2(0, bob), 8.0, Color(0, 0, 0, 0.35))
-			draw_rect(Rect2(pos.x - 6.0, pos.y - 6.0 + bob, 12.0, 12.0), Color(0x1b / 255.0, 0x17 / 255.0, 0x12 / 255.0))
-			draw_rect(Rect2(pos.x - 6.0, pos.y - 6.0 + bob, 12.0, 12.0), col, false, 2.0)
+			# Jan, Nov 2026: "když dropne item, tak se na zemi zobrazí černý čtvereček, dokud ho
+			# nezvednu. Dejme tam místo čtverečku třeba malou truhličku dřevěnou."
+			_draw_ground_chest(pos + Vector2(0, bob), Color(str(d.get("color", "#888888"))))
+
+
+## A small wooden chest lying on the ground — two planks of body, a shallow lid, two iron bands
+## and a LOCK in the item's quality colour. About 24x20 world px, i.e. 20x16 on the phone: big
+## enough to spot across the arena, small enough not to hide a body.
+##
+## The quality is carried by the lock on purpose. The old marker WAS a quality-coloured square,
+## and painting the whole chest in that colour would put the same flat chip back on screen with
+## a lid on it; one metal part in the item's colour reads as "this one is rare" and still looks
+## like a chest first.
+func _draw_ground_chest(at: Vector2, quality: Color) -> void:
+	var body := Color("#4a3626")
+	var lid := Color("#5d4530")
+	var iron := Color("#2b2320")
+	var w := 11.0
+	var h := 8.0
+	_set_local(at + Vector2(0, 1.0), Vector2(1.0, 0.32))
+	draw_circle(Vector2.ZERO, 11.0, Color(0, 0, 0, 0.38))
+	_set_local(at)
+	draw_rect(Rect2(-w, -h, w * 2.0, h), body)
+	draw_colored_polygon(_dome_pts(Vector2(0, -h), w, 5.0, 8), lid)
+	# the lid/body seam and one lit edge — a dark object on dark ground needs an edge
+	draw_line(Vector2(-w, -h), Vector2(w, -h), lid.lightened(0.20), 1.5)
+	draw_line(Vector2(-w, -h), Vector2(-w, 0), body.lightened(0.14), 1.5)
+	for x in [-w * 0.55, w * 0.55]:
+		draw_rect(Rect2(float(x) - 1.2, -h - 2.0, 2.4, h + 2.0), iron)
+	draw_rect(Rect2(-2.2, -h - 1.0, 4.4, 4.0), quality)
+	draw_rect(Rect2(-2.2, -h - 1.0, 4.4, 4.0), Color(0, 0, 0, 0.45), false, 1.0)
+	_set_world()
 
 
 func _draw_numbers() -> void:

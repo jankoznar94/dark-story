@@ -24,7 +24,11 @@ const SLOTS := ["weapon", "armor", "helmet", "shield", "ring1", "ring2",
 const DEFAULT_POTION_SLOTS := 4
 
 const CHEST_SLOTS := 25
-const INVENTORY_CELLS := 20
+## Jan, Nov 2026: "ještě zvětšíme batoh na dvojnásobek slotů" — 20 -> 40, i.e. the same 5-column
+## grid with twice the rows. The bag pane lives inside the character modal's scrolling body, so
+## the extra four rows scroll instead of shrinking the cells (a 8-column grid would drop the
+## cells to ~37 px and make an item icon unreadable on a phone).
+const INVENTORY_CELLS := 40
 
 ## How many difficulties there are. The PWA hardcoded 3 (Normal/Nightmare/Hell) in the
 ## unlock chain as well, so this is not read from the table.

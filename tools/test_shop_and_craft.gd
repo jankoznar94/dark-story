@@ -315,10 +315,10 @@ func _test_bag_full_refunds() -> void:
 		_fail("the data has no blade_shortSword for the full-bag test")
 		return
 	# Fill every bag cell with a non-stackable stand-in, so nothing can merge.
-	for i in 20:
+	for i in GameState.INVENTORY_CELLS:
 		state.add_item("filler_%d" % i, {"id": "filler_%d" % i, "type": "weapon"})
 	if not state.bag_full():
-		_fail("the bag did not report full at 20 cells")
+		_fail("the bag did not report full at %d cells" % GameState.INVENTORY_CELLS)
 		return
 	var before := int(state.hero()["gold"])
 	var result: Dictionary = ShopStock.buy(state, sword, find)

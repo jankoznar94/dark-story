@@ -21,7 +21,7 @@ const ItemInfoOverlay := preload("res://scripts/ui/item_info_overlay.gd")
 
 const CELL := 64
 const GRID_COLUMNS := 5
-const BAG_CELLS := 20
+const BAG_CELLS := 40
 ## `.inv-potion-slots { grid-template-columns: repeat(4, 36px) }` — the belt row is FOUR
 ## columns wide, and a 2-row belt (beltRows 2 -> 8 slots) wraps into 2 rows. See the note
 ## on `_make_potion_panel`.
@@ -510,7 +510,10 @@ func _make_bag_panel() -> Control:
 	# (every individual cell is the right size; the PITCH is wrong). The PWA's grid is
 	# 269.4, so pin the grid's own minimum and let the rows divide it — which is what the
 	# browser does with `grid-template-rows` on a 269.4-tall box.
-	_bag_grid.custom_minimum_size = Vector2(0, 269)
+	# Doubled bag (`BAG_CELLS` 40) = eight rows: 8 * 62.8 + 7 * 6 = 544.4, pinned for the
+	# same reason the four-row grid was pinned at 269 — a `GridContainer` drops the
+	# fractional part once per row.
+	_bag_grid.custom_minimum_size = Vector2(0, 544)
 	wrap.add_child(_bag_grid)
 
 	# 338px of grid, 4 gaps of 6px = 24, leaves 314 / 5 = 62.8 per cell — which is what

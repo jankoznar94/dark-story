@@ -54,6 +54,9 @@ var _portal := false
 ## portrait (at 8 it is still INSIDE the hero's own disc and reads as a rim); a bolt crosses 105 px
 ## of body in ~10, so it is caught with 5.
 var _cast_at := 20
+## Which ZONE of act 1 to photograph. Each zone has its own ground, palette and props
+## (`scripts/ui/zone_theme.gd`), so a look pass has to be able to walk to any of them.
+var _zone := 0
 
 var _screen = null
 var _started := false
@@ -111,6 +114,8 @@ func _initialize() -> void:
 				_cast_at = int(args[i + 1])
 			"--portal":
 				_portal = args[i + 1] != "0"
+			"--zone":
+				_zone = int(args[i + 1])
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -131,7 +136,7 @@ func _process(_delta: float) -> bool:
 			_main._splash._tick(60000.0)
 			return false
 		_started = true
-		_main._enter_survivor(0)
+		_main._enter_survivor(0, _zone)
 		_screen = _main._screens["survivor"]
 		# A look-probe is not a play session: it must not overwrite the local save.
 		_main.state.save_enabled = false
