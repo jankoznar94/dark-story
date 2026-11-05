@@ -16,9 +16,12 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 
-## The exit must be at least this share of the map's diagonal away from the entrance: a zone is
-## walked THROUGH, not circled.
-const MIN_EXIT_SHARE := 0.55
+## ⚠️  THE JOURNEY IS THE PATH, NOT THE STRAIGHT LINE. This used to require the exit to sit at
+## 55 % of the map's diagonal from the entrance, which worked while the map was barely bigger
+## than the corridor. A corridor that WINDS (12800 px of walking, `PATH_TARGET`) doubles back, so
+## the two endpoints can be 3 300 px apart on a 12 800 px walk — the straight line measures the
+## map's aspect ratio, not whether the zone is a journey. The path length is asserted instead.
+const MIN_PATH_SHARE := 0.95
 ## The waypoint is a checkpoint at the START, so it must be close enough to find immediately.
 const MAX_WAYPOINT_DIST := 340.0
 
@@ -39,10 +42,9 @@ func _initialize() -> void:
 	_state.set_class("barbarian")
 
 	var seeds := [1, 7, 42, 101, 777, 1234, 4242, 90210, 31337, 65535, 8, 9, 10, 11, 12, 13, 14, 15]
-	var diagonal: float = SurvivorRun.WORLD.length()
 	for seed_value in seeds:
 		for zone in [0, 3, 9]:
-			_check_zone(int(seed_value), int(zone), diagonal)
+			_check_zone(int(seed_value), int(zone))
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -70,17 +72,21 @@ func _resolve(id) -> Dictionary:
 	return _data.item(item_id)
 
 
-func _check_zone(seed_value: int, zone: int, diagonal: float) -> void:
+func _check_zone(seed_value: int, zone: int) -> void:
 	var tag := "seed %d zone %d" % [seed_value, zone]
 	var run := _fresh(seed_value, zone)
 	if not run.walkable(run.exit_point, 24.0):
 		_fail("%s: the exit point is not on walkable floor" % tag)
 	if not run.is_floor_cell(run.cell_of(run.waypoint_point).x, run.cell_of(run.waypoint_point).y):
 		_fail("%s: the waypoint is not on floor" % tag)
-	var dist: float = run.start_point.distance_to(run.exit_point)
-	if dist < diagonal * MIN_EXIT_SHARE:
-		_fail("%s: the exit is only %.0f px from the entrance (want >= %.0f)"
-			% [tag, dist, diagonal * MIN_EXIT_SHARE])
+	var total := 0.0
+	var pts: Array = run.path_points
+	for k in range(1, pts.size()):
+		total += (pts[k - 1] as Vector2).distance_to(pts[k] as Vector2)
+	var dist := total
+	if dist < SurvivorRun.PATH_TARGET * MIN_PATH_SHARE:
+		_fail("%s: the walked path is only %.0f px from the entrance to the exit (want >= %.0f)"
+			% [tag, dist, SurvivorRun.PATH_TARGET * MIN_PATH_SHARE])
 	var wp_dist: float = run.start_point.distance_to(run.waypoint_point)
 	if wp_dist > MAX_WAYPOINT_DIST:
 		_fail("%s: the waypoint is %.0f px from the entrance (want <= %.0f)"

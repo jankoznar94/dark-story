@@ -23,7 +23,9 @@ const Sfx := preload("res://scripts/audio/sfx.gd")
 ## --- the arena -------------------------------------------------------------
 ## The world is bigger than the phone's viewport (390x844), so the camera FOLLOWS the
 ## hero and the run reads as travel instead of a fixed stage. These are world pixels.
-const WORLD := Vector2(1500.0, 2100.0)
+## The world is the GRID, so it moves with `COLS`/`ROWS`: a hand-written 1500x2100 stayed behind
+## when the area tripled and culled every projectile and body below/above the old bounds.
+const WORLD := Vector2(COLS * TILE, ROWS * TILE)
 ## The BASE walk. Deliberately slower than the 168 the first slice shipped: a boot affix that
 ## adds 20 % has to be FELT, and a bonus measured against an already-fast walk reads as noise.
 ## `moveSpeed` from gear multiplies this — see `hero_speed()`.
@@ -165,17 +167,29 @@ const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
 ## a cell the hero has never been near is drawn black — Warcraft 2's shape, which is what Jan
 ## asked for ("tam, kde hráč ještě fyzicky nebyl, by to mělo být černé, nebo minimálně zašedlé").
 const TILE := 60.0
-const COLS := 25
-const ROWS := 35
+## ⚠️  THE AREA'S SIZE. Jan: "Oblasti jsou stále hrozně krátké a na jedno brdo. Každá oblast by
+## měla být minimálně 3x rozsáhlejší než teď." The old grid was 25x35 cells (1500x2100 px) and
+## the corridor in it measured ~3 600 px from the entrance to the exit; this grid is 33x61
+## (1980x3660 px) and the winding path inside it runs ~3x as long. The generator's legs and
+## turns were widened with it (see `_build_corridor`), because a taller grid alone only makes
+## a longer pipe.
+const COLS := 41
+const ROWS := 99
 ## Half-width of a corridor leg, in cells. 3 = a 7-cell leg (420 px): two hero discs pass a pack
 ## with room to spare. It was 2 (300 px) and Jan: "teď je příliš úzký s přímý" — a 5-cell tube
-## reads as a pipe, not as a dungeon corridor.
+## reads as a pipe, not as a dungeon corridor. Legs VARY between `CORRIDOR_HALF_MIN` and
+## `CORRIDOR_HALF_MAX` so the area does not read as one extruded profile.
 const CORRIDOR_HALF := 3
+const CORRIDOR_HALF_MIN := 2
+const CORRIDOR_HALF_MAX := 4
 ## Half-width of the clearing the hero starts in, in cells (9x9 = 540 px).
 const START_ROOM_HALF := 4
 ## Half-width of the occasional wider room along the corridor. 4 = 9x9 (540 px), enough for a
-## pack to form up and for the player to circle it.
+## pack to form up and for the player to circle it. Rooms vary from `ROOM_HALF_MIN` to
+## `ROOM_HALF_MAX`, and the big end is a real cavern rather than a slightly wider corridor.
 const ROOM_HALF := 4
+const ROOM_HALF_MIN := 3
+const ROOM_HALF_MAX := 7
 ## How far the hero sees, in world px. Also the radius that marks cells as explored.
 const FOG_REVEAL := 300.0
 const AREA_MARGIN := 96.0
@@ -186,10 +200,17 @@ const PACK_MAX := 4
 ## The gap is bigger than one disc (62) on purpose: a pack is a formation, not a pile.
 const ZONE_JITTER := 104.0
 const PACK_SPACING := 70.0
+## How long the corridor should RUN, in world px, entrance to exit. This is the number Jan's
+## "3x rozsáhlejší" turns into: `tools/probe_area_size.gd` measures it, and the old corridor
+## measured 3 240-4 200 px on five seeds. See `_build_corridor` for why it is a target and not
+## a by-product of the grid size.
+const PATH_TARGET := 12800.0
 ## How far apart along the corridor one spawn cell sits. It was 330 when a cell held a pack of
 ## 2-4; the default is a SINGLE body now, so the cells are closer together to keep the same
-## density of enemies per metre walked.
-const CELL_SPACING := 220.0
+## density of enemies per metre walked. 300 (was 220) is the DENSITY dial for the 3x area: the
+## path is three times longer, and holding the old spacing would have tripled the bodies per
+## area together with it — more kills, a longer run and the same "full bag" as before.
+const CELL_SPACING := 380.0
 const ACTIVATE_RADIUS := 330.0
 
 ## --- what a cell holds ------------------------------------------------------
@@ -836,6 +857,23 @@ func _carve_leg(a: Vector2i, b: Vector2i, half: int) -> void:
 ## Build the area. A clearing at the bottom, then legs upward with a horizontal turn between
 ## them; the horizontal direction flips every leg so the map snakes instead of drifting off one
 ## side. The result is reproducible from `rng`, like every other layout in this run.
+##
+## ⚠️  "NA JEDNO BRDO" (all the same) is the second half of Jan's report, and it is a property
+## of the GENERATOR, not of the grid. The first version drew one corridor profile all the way
+## up: legs of 3-5 cells, turns of 5-9, a 9x9 room at 60 % of the corners. That is the same
+## area every time with a different wiggle. Three dials now vary independently per leg:
+##   * LEG LENGTH 4-7 cells (a long gallery or a short step),
+##   * LEG WIDTH 2-4 half-cells (a 5-cell squeeze or a 9-cell hall),
+##   * TURN 10-18 cells, so a switchback can cross most of the map,
+##   * ROOM 3-7 half-cells at 70 % of the corners — from a nook to a cavern.
+## The entrance clearing and the final room stay fixed: they are the two places the rules
+## (`start_point`, `exit_point`) depend on.
+##
+## ⚠️  THE LENGTH IS A TARGET, NOT A CONSEQUENCE OF THE GRID. Leg length and turn length are
+## random, so "walk up until the grid ends" produced areas of 9 480 and 12 720 px from the same
+## code — i.e. one seed was 2.4x the old area and another 3.6x, and Jan's "at least 3x" was a
+## coin flip. The loop now stops on `PATH_TARGET`, and the grid is tall enough that no seed
+## exhausts it first. Measured after the change: 12 800-13 300 px against the old 3 240-4 200.
 func _build_corridor() -> void:
 	floor_cells.resize(COLS * ROWS)
 	floor_cells.fill(0)
@@ -854,29 +892,40 @@ func _build_corridor() -> void:
 
 	var side := 1 if rng.randf() < 0.5 else -1
 	var rooms: Array = []
-	while cy > 3:
+	var built := 0.0
+	var last: Vector2 = start_point
+	while cy > 3 and built < PATH_TARGET:
 		# --- one vertical leg, upward. SHORT legs and more of them: the first corridor ran 4-7
-		# cells straight between turns, which is what read as "přímý". 3-5 cells keeps a turn in
-		# sight almost always, and the width below is what stops it feeling like a pipe.
-		var up := rng.randi_range(3, 5)
+		# cells straight between turns, which is what read as "přímý". The width varies per leg,
+		# and 4-7 rather than 3-5 is what fills the taller grid without straightening it.
+		var up := rng.randi_range(4, 7)
 		var ny := maxi(3, cy - up)
-		_carve_leg(Vector2i(cx, cy), Vector2i(cx, ny), CORRIDOR_HALF)
+		var half := rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX)
+		_carve_leg(Vector2i(cx, cy), Vector2i(cx, ny), half)
 		cy = ny
 		path_points.append(cell_centre(cx, cy))
+		built += last.distance_to(cell_centre(cx, cy))
+		last = cell_centre(cx, cy)
+		if built >= PATH_TARGET:
+			break
 		# A room every other turn gives the corridor places to breathe — and places for a pack to
 		# stand in formation instead of in single file.
-		if rng.randf() < 0.6:
-			_carve_square(cx, cy, ROOM_HALF)
+		if rng.randf() < 0.7:
+			var room := rng.randi_range(ROOM_HALF_MIN, ROOM_HALF_MAX)
+			_carve_square(cx, cy, room)
 			rooms.append(cell_centre(cx, cy))
 		if cy <= 4:
 			break
 		# --- one horizontal turn
-		var run := rng.randi_range(5, 9) * side
-		var nx := clampi(cx + run, 2 + CORRIDOR_HALF, COLS - 3 - CORRIDOR_HALF)
+		var run := rng.randi_range(13, 22) * side
+		var nx := clampi(cx + run, 2 + CORRIDOR_HALF_MAX, COLS - 3 - CORRIDOR_HALF_MAX)
 		if nx != cx:
-			_carve_leg(Vector2i(cx, cy), Vector2i(nx, cy), CORRIDOR_HALF)
+			var half_run := rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX)
+			_carve_leg(Vector2i(cx, cy), Vector2i(nx, cy), half_run)
 			cx = nx
 			path_points.append(cell_centre(cx, cy))
+			built += last.distance_to(cell_centre(cx, cy))
+			last = cell_centre(cx, cy)
 		# Flip the side only now and then, so the snake has long and short switchbacks rather
 		# than a metronome.
 		if rng.randf() < 0.55:
@@ -990,8 +1039,10 @@ func _build_area() -> void:
 	# centreline (always a cleared room), and the waypoint sits just off the entrance.
 	exit_point = path_points[path_points.size() - 1]
 	waypoint_point = nearest_floor_point(start_point + Vector2(-TILE * 2.5, -TILE * 1.5))
-	# How many packs the corridor holds: one per ~330 px of path, clamped to something a phone
-	# run can finish.
+	# How many packs the corridor holds: one per `CELL_SPACING` px of path, clamped to something a
+	# phone run can finish. The ceiling moved from 20 to 34 with the 3x grid — 20 was already
+	# binding on the OLD corridor, so leaving it would have made a bigger map with the same
+	# number of fights spread thinner, i.e. longer walks and nothing to meet.
 	var total := 0.0
 	var prev: Vector2 = path_points[0]
 	var lengths: Array = [0.0]
@@ -1000,7 +1051,7 @@ func _build_area() -> void:
 		total += prev.distance_to(p)
 		lengths.append(total)
 		prev = p
-	var count := clampi(int(round(total / CELL_SPACING)), 8, 20)
+	var count := clampi(int(round(total / CELL_SPACING)), 8, 38)
 	var max_d := maxf(1.0, total)
 	# The first pack must be OUTSIDE the activation radius of the spawn point, or it would be
 	# standing on the hero before he takes a step — so the samples start past the clearing
@@ -1918,24 +1969,30 @@ func _kill(index: int) -> void:
 		int(m.get("lvl", 1)), 1)) * xp_mult))
 	_award_xp(xp)
 	events.append("kill")
-	_roll_drop(m["pos"] as Vector2, int(m.get("loot_grade", 0)))
+	_roll_drop(m["pos"] as Vector2, int(m.get("loot_grade", 0)), int(m.get("lvl", 1)))
 	monsters.remove_at(index)
 
 
 # ============================================================================ loot
 
-## The drop table is the PWA's own, unchanged: `LootSystem.roll()` decides gold vs an item
+## The drop table is the PWA's own: `LootSystem.roll()` decides gold vs an item
 ## vs a special, so the survivor loop and the duel pay out through the same code.
 ##
 ## `grade` is the kill's rank (0 normal, 1 champion, 2 elite) and it is the ONLY difference:
 ## the table itself stays one table, so a better body cannot invent a drop the game never had.
-func _roll_drop(pos: Vector2, grade: int = 0) -> void:
-	var hero: Dictionary = _state.hero()
-	var level := int(hero.get("level", 1))
+##
+## ⚠️  THE DEPTH IS THE AREA, NOT THE PACK COUNT, and the ITEM LEVEL is the MONSTER'S. Both
+## were wrong here and both are what Jan saw as "elitní věci padají v aktu 1":
+##   * `wave` (how many packs have woken, 0-30) was passed as the floor, which the item table
+##     turns into a global depth — so the last packs of act 1 dropped act-4 gear.
+##   * the HERO's level was passed as `monster_level`, so an act-1 skeleton rolled level-20
+##     affixes; `ItemGen.generate` takes `min(monster_level, hero_level)` as ilvl, which is
+##     only meaningful if the first number really is the monster's.
+func _roll_drop(pos: Vector2, grade: int = 0, monster_lvl: int = 1) -> void:
 	var magic_find := int(Progression._equip_attr(_state.equip(), _find_item, "magicFind"))
 	var gold_find := int(Progression._equip_attr(_state.equip(), _find_item, "goldFind"))
-	var result: Dictionary = _loot.roll(_state, act_id, wave, false, level, magic_find, gold_find,
-		rng, grade)
+	var result: Dictionary = _loot.roll(_state, act_id, zone_index, false,
+		maxi(1, monster_lvl), magic_find, gold_find, rng, grade)
 	var kind := str(result.get("type", "gold"))
 	if kind == "gold":
 		drops.append({"pos": pos, "kind": "gold", "amount": int(result.get("gold", 1)), "age": 0.0})

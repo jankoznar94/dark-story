@@ -71,6 +71,20 @@ signal navigate(direction: int)
 ## 40 CSS px on the port's 390-wide canvas, i.e. the same number, not a re-guess.
 const SWIPE_MIN := 40.0
 
+## ⚠️  A GESTURE THAT NEVER GETS ITS REAL RELEASE MUST NOT LIVE FOREVER. The dialog's own
+## `ScrollSwipe` cancels a press by pushing a synthetic release 1000 px off screen when the
+## finger drifts vertically — and that release IS delivered to this panel. Without the guards
+## below it ended the gesture at (-1045,-1336), `|dx| <= |dy|` swallowed it, and the real
+## release then found `_pressing == false` — i.e. the swipe only ever worked for a perfectly
+## HORIZONTAL finger. Measured, not reasoned: `tools/probe_compare_swipe_gui.gd`.
+const GESTURE_MAX_MS := 1500
+## How far from the panel's own box a release may land and still count as the finger that
+## pressed on it. A real swipe ends inside this; the dialog's cancel-release lands 1 000 px out.
+const RELEASE_REACH := 600.0
+
+## Emitted when the detail is opened, so a page behind it can stop scrolling under the finger.
+signal shown()
+
 ## `.inv-item-overlay-content { max-width:300px; min-width:220px }` and the pane is 390
 ## wide, so the panel is 300 unless the screen is narrower.
 const MAX_WIDTH := 300.0
@@ -150,6 +164,9 @@ var _origin_index := -1
 ## and a swipe that started on the dim must still close the window instead of switching).
 var _press_pos := Vector2.ZERO
 var _pressing := false
+## When the press happened, so a gesture whose release never arrived decays instead of
+## holding the panel hostage (see `GESTURE_MAX_MS`).
+var _press_ms := 0
 ## A press that arrived as a FINGER. A phone also sends emulated mouse events for the same
 ## finger, and treating those as a second gesture is the ScrollSwipe bug (a flick counted
 ## twice). The gesture remembers how it STARTED; the emulated half never takes it over.
@@ -274,6 +291,7 @@ func _show(item: Dictionary) -> void:
 		_gem_modal.visible = false
 	_rebuild()
 	visible = true
+	shown.emit()
 	set_process(true)
 	_layout()
 	# `set_process` is switched off again once the height has settled — the panel's height
@@ -362,10 +380,12 @@ func _on_panel_input(event: InputEvent) -> void:
 		var touch := event as InputEventScreenTouch
 		if touch.pressed:
 			_press_pos = touch.position
+			_press_ms = Time.get_ticks_msec()
 			_pressing = true
 			_press_from_touch = true
 		elif _pressing and _press_from_touch:
-			_pressing = false
+			# `_finish_swipe` OWNS `_pressing` now: a release that is not this window's must
+			# leave the gesture live for the finger's own release (see the guards there).
 			_finish_swipe(touch.position)
 		return
 	if event is InputEventMouseButton:
@@ -377,10 +397,10 @@ func _on_panel_input(event: InputEvent) -> void:
 			if _pressing:
 				return
 			_press_pos = mb.position
+			_press_ms = Time.get_ticks_msec()
 			_pressing = true
 			_press_from_touch = false
 		elif _pressing and not _press_from_touch:
-			_pressing = false
 			_finish_swipe(mb.position)
 
 
@@ -388,7 +408,30 @@ func _on_panel_input(event: InputEvent) -> void:
 ## (`dir = dx < 0 ? 1 : -1`): the content follows the finger, so what comes in from the right
 ## is the next item. Nothing is committed here — the inventory screen owns the bag order and
 ## only ITS answer may change what is shown.
+##
+## ⚠️  TWO RELEASES ARE NOT THE FINGER'S, and both used to end the gesture with the wrong
+## answer. `release_pos` is in the PANEL's local space, so a release a full viewport away from
+## it is not a finger on this window at all:
+##   * the dialog's `ScrollSwipe` pushes a synthetic release at (-1000,-1000) to cancel the
+##     button press it started — delivered here, and its `|dx| <= |dy|` swallowed the swipe;
+##   * a gesture older than `GESTURE_MAX_MS` has lost its release (panel opened over the
+##     finger, browser dropped the event) and would otherwise wait forever and eat the next
+##     press.
+## Both now leave `_pressing` standing so the finger's own release still finishes the swipe.
 func _finish_swipe(release_pos: Vector2) -> void:
+	if Time.get_ticks_msec() - _press_ms > GESTURE_MAX_MS:
+		_pressing = false
+		_press_from_touch = false
+		return
+	# A finger that swiped off the panel is legal (a 90 px swipe from the edge leaves the box), so
+	# the test is not the panel's own rect: it is "within reach of it". The synthetic cancel lands
+	# ~1 000 px away on BOTH axes, which no thumb produces from this panel.
+	var reachable := Rect2(Vector2.ZERO, _panel.size).grow(RELEASE_REACH)
+	if not reachable.has_point(release_pos):
+		# Not a finger on this window. Keep `_pressing` (and which device opened the gesture)
+		# so the REAL release still finishes the swipe.
+		return
+	_pressing = false
 	_press_from_touch = false
 	var delta := release_pos - _press_pos
 	if absf(delta.x) < SWIPE_MIN or absf(delta.x) <= absf(delta.y):

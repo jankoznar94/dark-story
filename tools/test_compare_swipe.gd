@@ -156,6 +156,17 @@ func _run() -> void:
 		"a finger + its emulated mouse events must count as ONE swipe, landed on %d"
 			% _overlay.origin_index())
 
+	# --- a FOREIGN release must not eat the gesture ----------------------------
+	# The dialog's own `ScrollSwipe` cancels a press it started by pushing a synthetic release
+	# 1000 px off screen, and that release IS delivered to this panel. Measured in the real
+	# dialog (`tools/probe_compare_swipe_gui.gd`): it ended the gesture at (-1045,-1336), whose
+	# |dx| <= |dy| threw it away, and the finger's own release then found `_pressing == false` —
+	# so a diagonal swipe did nothing at all. The away release must leave the gesture LIVE.
+	var keep: int = int(_overlay.origin_index())
+	_swipe_then_release_at(-SWIPE, Vector2(-1000.0, -1000.0))
+	_check(_overlay.origin_index() != keep,
+		"a synthetic off-screen release swallowed the swipe (still on %d)" % keep)
+
 	# --- a worn item has no neighbour -----------------------------------------
 	_screen._on_equip_slot_pressed("weapon")
 	if _overlay.origin() == "equipped":
@@ -184,6 +195,26 @@ func _swipe(dx: float, dy: float) -> void:
 	release.index = 0
 	release.pressed = false
 	release.position = Vector2(200 + dx, 400 + dy)
+	_overlay._on_panel_input(release)
+
+
+## A swipe whose release lands far outside the window — the dialog's own cancel-release. The
+## finger's real release follows immediately, and THAT is what must switch the item.
+func _swipe_then_release_at(dx: float, away: Vector2) -> void:
+	var press := InputEventScreenTouch.new()
+	press.index = 0
+	press.pressed = true
+	press.position = Vector2(200, 400)
+	_overlay._on_panel_input(press)
+	var cancel := InputEventScreenTouch.new()
+	cancel.index = 0
+	cancel.pressed = false
+	cancel.position = away
+	_overlay._on_panel_input(cancel)
+	var release := InputEventScreenTouch.new()
+	release.index = 0
+	release.pressed = false
+	release.position = Vector2(200 + dx, 400)
 	_overlay._on_panel_input(release)
 
 

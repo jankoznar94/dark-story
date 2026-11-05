@@ -42,6 +42,7 @@ func _initialize() -> void:
 	_loot = LootSystem.new(_data, _gen)
 
 	for seed_value in SEEDS:
+		_test_size(seed_value)
 		_test_shape(seed_value)
 		_test_connectivity(seed_value)
 		_test_packs_stand_on_floor(seed_value)
@@ -58,6 +59,23 @@ func _initialize() -> void:
 
 func _fail(msg: String) -> void:
 	_failures.append(msg)
+
+
+## ⚠️  THE AREA'S EXTENT IS A NUMBER NOW ("Každá oblast by měla být minimálně 3x rozsáhlejší").
+## The OLD corridor measured 3 240-4 200 px entrance-to-exit on five seeds (`PATH_TARGET` in
+## `survivor_run.gd` records it); 3x that is the floor this asserts, and it is a floor for EVERY
+## seed — a generator whose length depends on how many turns happened to fit produced 2.4x on
+## one seed and 3.6x on the next.
+func _test_size(seed_value: int) -> void:
+	var r := _run(seed_value)
+	var total := 0.0
+	var pts: Array = r.path_points
+	for k in range(1, pts.size()):
+		total += (pts[k - 1] as Vector2).distance_to(pts[k] as Vector2)
+	var need := SurvivorRun.PATH_TARGET * 0.95
+	if total < need:
+		_fail("seed %d: the corridor is %.0f px long, expected at least %.0f (3x the old 3240-4200)"
+			% [seed_value, total, need])
 
 
 func _resolve(state) -> Callable:
@@ -224,18 +242,36 @@ func _test_fog_reveals_as_you_walk() -> void:
 
 	# Walk up the corridor and count again. The hero cannot steer around the turns on his own, so
 	# the walk is driven by the run's own slide: hold "up" and let `_step_body` follow the floor.
-	for _i in 900:
-		r.step(STEP, Vector2(0, -1))
+	# WALK THE CORRIDOR, not "hold up". A blind upward hold gets pinned against the first long
+	# horizontal turn — with legs of 4-7 cells and turns of 10-18 it revealed 391 of 1254 cells
+	# and then stopped moving entirely, which measured the walker and not the fog. Steering from
+	# path point to path point is what a player walking the area does.
+	var guard := 0
+	for wp in r.path_points:
+		var target: Vector2 = wp
+		while r.player_pos.distance_to(target) > 12.0 and guard < 8000:
+			var dir: Vector2 = (target - r.player_pos)
+			if dir.length() < 0.001:
+				break
+			r.step(STEP, dir.normalized())
+			# Bodies are SOLID and this test is about the FOG: a monster that walks into the
+			# hero pins him (measured: 8 000 steps and 330 px of travel), which would measure
+			# the fight instead of the reveal.
+			r.monsters.clear()
+			r.projectiles.clear()
+			guard += 1
 	var explored_after := 0
 	for cy in r.ROWS:
 		for cx in r.COLS:
 			if r.is_explored_cell(cx, cy):
 				explored_after += 1
-	print("  fog: %d explored at spawn -> %d after 90 s of walking (%d floor cells)"
+	print("  walk: steps=%d pos=%s exit=%s packs=%d" % [guard, str(r.player_pos),
+		str(r.path_points[r.path_points.size() - 1]), r.zones.size()])
+	print("  fog: %d explored at spawn -> %d after walking the whole corridor (%d floor cells)"
 		% [explored_at_start, explored_after, floor_n])
 	if explored_after <= explored_at_start:
 		_fail("walking up the corridor revealed nothing (%d -> %d cells)"
 			% [explored_at_start, explored_after])
 	if r.is_explored_cell(far_cell.x, far_cell.y) == false and explored_after < floor_n / 2:
-		_fail("after 90 s of walking only %d of %d floor cells are explored — the reveal radius"
+		_fail("after walking the whole corridor only %d of %d floor cells are explored — the reveal radius"
 			% [explored_after, floor_n] + " is too small to follow the corridor")

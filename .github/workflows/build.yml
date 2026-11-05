@@ -411,6 +411,17 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "CORRIDOR_FOG_ALL_PASS=true"
 
+      # The ITEM TABLE's two rules after Jan's report ("plný batoh" and "v aktu 1 padá Ataghan"):
+      # the drop RATE as a measured share over 4 000 kills, and the AREA LEVEL gate — which base
+      # may drop at this depth, on the PWA's 0-149 scale (difficulty*50 + act*10 + area). Reverting
+      # the depth formula to the old `area * 16` makes this fail on both halves.
+      - name: Loot rate and area-level gate
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_loot_rates.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "LOOT_RATES_ALL_PASS=true"
+
       # The nav bar's test button. It is a GATE, and a gate whose failure is "the button says
       # a message" looks exactly like a working button: nothing crashes, nothing is logged.
       # The numbers are asserted one by one against the PWA's `toggleTestMode()`, and the last

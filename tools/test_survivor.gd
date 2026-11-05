@@ -150,10 +150,10 @@ func _test_setup_reads_the_hero() -> void:
 		"damage range must be a real range: %d..%d" % [run.dmg_min, run.dmg_max])
 	_check(run.monsters.is_empty(), "the hero starts in an EMPTY clearing, got %d monsters" % run.monsters.size())
 	_check(run.wave == 0, "no pack has woken yet, wave=%d" % run.wave)
-	# The corridor holds one SPAWN CELL per stop along its centreline (8..20), each a known
+	# The corridor holds one SPAWN CELL per stop along its centreline (8..34), each a known
 	# quantity before it wakes, and every one of them stands on FLOOR.
-	_check(run.zones.size() >= 8 and run.zones.size() <= 20,
-		"the corridor must hold 8..20 cells, got %d" % run.zones.size())
+	_check(run.zones.size() >= 8 and run.zones.size() <= 34,
+		"the corridor must hold 8..34 cells, got %d" % run.zones.size())
 	for z in run.zones:
 		_check(run.walkable(z["centre"] as Vector2, SurvivorRun.MON_RADIUS),
 			"a pack centre must stand on floor: %s" % str(z["centre"]))
@@ -323,7 +323,7 @@ func _test_held_attack() -> void:
 	# Walking AWAY while holding the attack: the body stays behind and is never hit.
 	var hp_back := int(b["hp"])
 	for _i in 60:
-		back.player_pos = SurvivorRun.WORLD * 0.5
+		back.player_pos = back.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 		b["pos"] = back.player_pos + Vector2(-90, 0)
 		back.facing = Vector2.RIGHT
 		back.step(STEP, Vector2(1, 0))
@@ -1153,7 +1153,7 @@ func _test_facing_gate() -> void:
 	var hp0 := int(m["hp"])
 	# WALKING away from a body right behind him: the facing is right, the body is left, no swing.
 	for _i in 120:
-		run.player_pos = SurvivorRun.WORLD * 0.5
+		run.player_pos = run.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 		m["pos"] = run.player_pos + Vector2(-70, 0)
 		run.facing = Vector2.RIGHT
 		run.step(STEP, Vector2(1, 0))
@@ -1161,7 +1161,7 @@ func _test_facing_gate() -> void:
 		"a body BEHIND a walking hero must not be hit: %d -> %d" % [hp0, int(m["hp"])])
 
 	# Standing still with the attack held: the assist turns him, so the same body IS hit.
-	run.player_pos = SurvivorRun.WORLD * 0.5
+	run.player_pos = run.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 	m["pos"] = run.player_pos + Vector2(-70, 0)
 	run.facing = Vector2.RIGHT
 	for _i in 120:
@@ -1214,7 +1214,7 @@ func _test_aim_retargets() -> void:
 
 	# Push the stick UP-RIGHT: the top body is the one on the line the thumb points down.
 	for _i in 12:
-		run.player_pos = SurvivorRun.WORLD * 0.5
+		run.player_pos = run.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 		for i in 3:
 			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
 		run.step(STEP, Vector2(1, -1))
@@ -1224,7 +1224,7 @@ func _test_aim_retargets() -> void:
 
 	# ...and slide the thumb DOWN: the same gesture must move the attack to the bottom body.
 	for _i in 12:
-		run.player_pos = SurvivorRun.WORLD * 0.5
+		run.player_pos = run.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 		for i in 3:
 			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
 		run.step(STEP, Vector2(1, 1))
@@ -1235,7 +1235,7 @@ func _test_aim_retargets() -> void:
 	# Standing still (no stick) must NOT wander: the aim stays where the player left it.
 	run.aim = Vector2.RIGHT
 	for _i in 6:
-		run.player_pos = SurvivorRun.WORLD * 0.5
+		run.player_pos = run.nearest_floor_point(SurvivorRun.WORLD * 0.5)
 		for i in 3:
 			run.monsters[i]["pos"] = run.player_pos + Vector2(110.0, (float(i) - 1.0) * 90.0)
 		run.step(STEP, Vector2.ZERO)

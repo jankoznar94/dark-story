@@ -107,6 +107,16 @@ var flick_hold_ms := 80
 var _scroll: ScrollContainer = null
 ## Which pointer is mid-drag: -1 = the mouse, >= 0 = a finger's index, INACTIVE = nobody.
 const INACTIVE := -2
+## Stand-down switch for a page that is COVERED. A full-screen overlay mounted on the dialog
+## is not part of the scroll container's subtree, so this driver would otherwise keep dragging
+## the page (and cancelling presses) under the player's finger while the overlay is up.
+var enabled := true:
+	set(value):
+		enabled = value
+		if not value:
+			_pointer = INACTIVE
+			_from_touch = false
+			_stop_fling()
 ## Set while this node pushes its OWN synthetic events (see `_cancel_press`), so it does not
 ## read them back as the player's input and end its own drag.
 var _synthetic := false
@@ -148,6 +158,8 @@ func _input(event: InputEvent) -> void:
 	# Our own cancel sequence comes back through this same stage; treating it as the player's
 	# finger would end the drag we are trying to keep.
 	if _synthetic:
+		return
+	if not enabled:
 		return
 	if _scroll == null or not is_instance_valid(_scroll):
 		return

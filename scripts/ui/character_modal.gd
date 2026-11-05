@@ -72,6 +72,10 @@ var _find_item: Callable
 var _panel: PanelContainer
 var _tabs_wrap: Control
 var _scroll: ScrollContainer
+## The dialog body's own finger driver. It stands down while the item detail covers the
+## dialog: that overlay is mounted on THIS node, not inside the scroll, so without this the
+## page underneath kept scrolling and kept pushing cancel-releases at the overlay's gesture.
+var _body_swipe: ScrollSwipe
 var _tab_buttons: Dictionary = {}
 var _tab_labels: Dictionary = {}
 var _tab_badges: Dictionary = {}
@@ -197,6 +201,7 @@ func _build() -> void:
 	var swipe := ScrollSwipe.new()
 	swipe.setup(scroll)
 	box.add_child(swipe)
+	_body_swipe = swipe
 
 	var body := MarginContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -269,6 +274,11 @@ func _build() -> void:
 	# pane, covering the whole dialog. Its own layer is inside `_panel`, so it cannot be
 	# clipped by the pane it belongs to. Mounted after the pane so it paints on top.
 	_inventory.mount_overlay(self)
+	# While the item detail covers the dialog the body must not scroll: the overlay is a child
+	# of THIS node, not of the scroll, so `ScrollSwipe` would otherwise drag the page (and push
+	# its synthetic cancel-release) under the player's finger — the swipe fix's other half.
+	_inventory._item_overlay.shown.connect(func(): _body_swipe.enabled = false)
+	_inventory._item_overlay.dismissed.connect(func(): _body_swipe.enabled = true)
 	(_panes["skills"] as MarginContainer).get_child(0).add_child(_skills)
 	(_panes["stats"] as MarginContainer).get_child(0).add_child(_stats)
 
