@@ -1200,7 +1200,11 @@ func _draw_rock() -> void:
 			for i in poly.size():
 				poly[i] -= _cam
 			draw_colored_polygon(poly, rock_line)
-			draw_polyline(poly, rock_line.lightened(0.06), 1.5)
+			# The wall is the DARKEST thing on screen and it is most of the frame, so a
+			# one-shade outline leaves it reading as a HOLE rather than as rock. One lit
+			# ridge per hexagon is what makes it a surface (measured on zone 4, where the
+			# pale dirt runs straight into it and the top of the frame went black).
+			draw_polyline(poly, rock_line.lightened(0.26), 2.0)
 
 
 ## A rock cell's silhouette: a hexagon with every corner pushed out by a stable pseudo-random
