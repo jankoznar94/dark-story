@@ -697,27 +697,27 @@
   },
   {
    "face": "assets/monsters/lava_dragon.png",
-   "name": "Lava Drake",
+   "name": "Lava Dragon",
    "type": "critmaster",
    "attackType": "caster",
-   "defense": 12,
+   "defense": 18,
    "resists": {
     "fire": 0.5,
     "ice": 1.5,
     "nature": 1,
     "lightning": 1
    },
-   "hp": 360,
-   "dmgMin": 38,
-   "dmgMax": 58,
+   "hp": 430,
+   "dmgMin": 44,
+   "dmgMax": 66,
    "attackSpeed": 1300,
    "blockChance": 0,
    "resource": "mana",
-   "maxResource": 120,
+   "maxResource": 140,
    "spells": [
     "shadow_bolt"
    ],
-   "minArea": 5
+   "minArea": 6
   },
   {
    "face": "assets/monsters/hell_smith.png",

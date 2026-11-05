@@ -185,13 +185,13 @@
   "minLevel": 13,
   "maxLevel": 15,
   "boss": {
-   "name": "Lava Dragon",
-   "face": "assets/monsters/lava_dragon.png",
+   "name": "Kosar, the Reaper",
+   "face": "assets/monsters/kosar.png",
    "hp": 26,
    "types": [
     "critmaster"
    ],
-   "attackType": "caster"
+   "attackType": "melee"
   },
   "reward": {
    "gold": 30
