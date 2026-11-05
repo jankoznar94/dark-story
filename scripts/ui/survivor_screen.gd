@@ -1534,39 +1534,53 @@ func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
 	var pos: Vector2 = run.player_pos - _cam
 	var base: float = dir.angle()
 	# The off hand is a COOLER stroke on purpose: when both hands swing together the eye has to
-	# be able to tell which arc belongs to which weapon. That is a COLOUR difference and
-	# nothing else — Jan, Nov 2026: "aby sekání obou zbraní bylo na stejné vizuální úrovni.
-	# Stejně daleko … tam, kde reálně končí dosah hrdinových zbraní." So both arcs sweep the SAME
-	# band of their own reach and carry the same width and the same opacity. The off hand used to
-	# be drawn 0.54-0.92 R, a little inside, and that read as a shorter arm rather than as a
-	# second weapon.
+	# be able to tell which stroke belongs to which weapon. That is a COLOUR difference and
+	# nothing else — Jan, Nov 2026: "aby sekání obou zbraní bylo na stejné vizuální úrovni."
 	var col := Color("#f0e0c0") if not mirrored else Color("#a9c2e0")
 	col.a = 0.95 * (1.0 - t * 0.55)
-	var r0 := reach * 0.52
-	var r1 := reach * 1.10
-	# ⚠️  BIGGER, and it has to be felt from 390 px away. Measured on the old numbers (4 px at
-	# full, fading to 1) the sweep was a hairline the eye read as part of the reach ring — and
-	# in this fight the monsters stand exactly ON that ring, so a thin arc was hidden behind
-	# the very bodies it was hitting. Jan: "animace seknutí musí být větší, výraznější, ať má
-	# hráč pocit, že se skutečně něco děje."
-	var width := 13.0 * (1.0 - t * 0.62) + 3.0
-	var sweep := 0.58
-	var band := Color(col.r, col.g, col.b, col.a * 0.34)
-	if mirrored:
-		# Right to left, the same band the main hand sweeps, so the two arcs cross rather than
-		# nest.
-		var lead := base + sweep - 2.0 * sweep * t
-		draw_arc(pos, r1, lead, lead + 0.60, 18, band, width * 1.8, true)
-		draw_arc(pos, r1, lead, lead + 0.60, 18, col, width, true)
-		draw_arc(pos, r1, lead, lead + 0.60, 18, Color(1, 1, 1, col.a * 0.9), 3.0, true)
-		draw_arc(pos, r0, lead, lead + 0.44, 14, band, width * 0.6, true)
-	else:
-		# Left to right.
-		var lead := base - sweep + 2.0 * sweep * t
-		draw_arc(pos, r1, lead - 0.60, lead, 18, band, width * 1.8, true)
-		draw_arc(pos, r1, lead - 0.60, lead, 18, col, width, true)
-		draw_arc(pos, r1, lead - 0.60, lead, 18, Color(1, 1, 1, col.a * 0.9), 3.0, true)
-		draw_arc(pos, r0, lead - 0.44, lead, 14, band, width * 0.6, true)
+	# ⚠️  NOT A RING SEGMENT. Jan: "Animace útoku asi nemusí nutně běžet přímo po kružnici."
+	# `draw_arc` at the reach radius is a stroke lying ON the reach circle, so the swing read as
+	# the hero's range indicator flashing rather than as a blade. This is a BLADE SHAPE instead:
+	# a filled crescent that starts at the body, is fattest in the middle of the stroke and
+	# comes to a point at both ends — the shape of a weapon travelling through air, not a piece
+	# of a circle.
+	var sweep := 0.62
+	var r_in := reach * 0.30
+	var r_out := reach * 1.08
+	# The blade is a fixed-length crescent that TRAVELS across the swing — not a fan that fills
+	# in from one end. A shape that grows from a zero-width sliver looks like a wipe transition;
+	# a crescent sliding through its arc looks like a weapon being swung.
+	var sign_dir := -1.0 if mirrored else 1.0
+	var a1: float = base + sign_dir * (-sweep + 2.0 * sweep * t)
+	var a0: float = a1 - sign_dir * 0.95
+	var steps := 16
+	var outer := PackedVector2Array()
+	var inner := PackedVector2Array()
+	for i in steps + 1:
+		var u := float(i) / float(steps)
+		var a := lerpf(a0, a1, u)
+		# Thickness profile: nothing at the two tips, full in the middle. `sin` keeps the tips
+		# sharp, the exponent keeps the belly fat instead of the whole thing pinching.
+		var w := pow(sin(PI * clampf(u, 0.0, 1.0)), 0.55)
+		# The outer edge bulges a little past the reach at the middle of the stroke, so the
+		# blade reads as LEAVING the circle instead of tracing it.
+		var o := r_out * (1.0 + 0.06 * w)
+		var inn := o - (r_out - r_in) * w
+		outer.append(pos + Vector2(cos(a), sin(a)) * o)
+		inner.append(pos + Vector2(cos(a), sin(a)) * inn)
+	if outer.size() >= 3:
+		var poly := outer.duplicate()
+		for i in range(inner.size() - 1, -1, -1):
+			poly.append(inner[i])
+		draw_colored_polygon(poly, col)
+		# A white core along the blade's own centreline: one hard bright line is what turns a
+		# pale shape into a moving weapon at 390 px.
+		var core := PackedVector2Array()
+		for i in steps + 1:
+			core.append((outer[i] + inner[i]) * 0.5)
+		draw_polyline(core, Color(1, 1, 1, col.a * 0.95), 3.0, true)
+		# The live edge — the part of the stroke that is cutting RIGHT NOW.
+		draw_line(inner[steps], outer[steps], Color(1, 1, 1, col.a), 4.0, true)
 
 
 func _draw_drops() -> void:
