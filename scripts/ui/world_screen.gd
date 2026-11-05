@@ -25,6 +25,7 @@ extends Control
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
+const TownPortal := preload("res://scripts/items/town_portal.gd")
 
 signal next_fight_requested()
 signal walk_home_requested()
@@ -251,7 +252,7 @@ func _refresh_actions() -> void:
 	_tap_index = fight if fight < total else -1
 	if _portal_button == null:
 		return
-	_portal_button.visible = int(_state.data.get("townPortalCount", 0)) > 0
+	_portal_button.visible = TownPortal.available(_state)
 
 
 ## ⚠️  There is no `_process()` any more, and that is the point: the ONLY thing that needed a

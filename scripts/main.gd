@@ -30,6 +30,7 @@ const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
 const ActRun := preload("res://scripts/combat/act_run.gd")
 const ZoneMemory := preload("res://scripts/combat/zone_memory.gd")
+const TownPortal := preload("res://scripts/items/town_portal.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
@@ -1108,7 +1109,7 @@ func _on_zone_portal_used() -> void:
 	var screen = _screens.get("survivor", null)
 	if screen == null or screen.run == null:
 		return
-	if int(state.data.get("townPortalCount", 0)) <= 0:
+	if not TownPortal.available(state):
 		_set_status("Nemate svitek mestského portalu")
 		return
 	var act_id := int(state.data.get("_currentAct", 0))
@@ -1116,7 +1117,9 @@ func _on_zone_portal_used() -> void:
 	screen.open_portal()
 	var spot: Vector2 = screen.run.portal_point
 	_end_survivor("")
-	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	# Belt counter first, then a scroll from the bag — the scroll may have dropped instead of
+	# being bought, and a refusal leaves everything untouched.
+	TownPortal.spend(state)
 	state.data["townPortalReturn"] = {
 		"actId": act_id,
 		"zoneId": zone,
@@ -1249,7 +1252,7 @@ func _on_another_fight() -> void:
 ## battle here (there is none on the map), so it is `_current_act_on_map()`, the same value the
 ## PWA reads.
 func _on_map_portal_used() -> void:
-	if int(state.data.get("townPortalCount", 0)) <= 0:
+	if not TownPortal.available(state):
 		return
 	var act_id := _current_act_on_map()
 	state.data["townPortalReturn"] = {
@@ -1257,7 +1260,7 @@ func _on_map_portal_used() -> void:
 		"zoneId": int(state.data["locationProgress"][act_id]),
 		"areaFight": int(state.data["areaFightProgress"][act_id]),
 	}
-	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	TownPortal.spend(state)
 	state.save()
 	_transition_to(TransitionScreen.PORTAL_ART, func(): show_screen("town"))
 
@@ -1301,7 +1304,7 @@ func _on_town_portal_return() -> void:
 ## tile has to exist only while a scroll is carried — which is what the arena checks before
 ## offering it. A scroll spent here is what the stored position is FOR.
 func _on_result_portal_used() -> void:
-	if int(state.data.get("townPortalCount", 0)) <= 0:
+	if not TownPortal.available(state):
 		return
 	var arena = _screens["arena"]
 	if arena.battle == null:
@@ -1312,7 +1315,7 @@ func _on_result_portal_used() -> void:
 		"zoneId": int(state.data["locationProgress"][act_id]),
 		"areaFight": int(state.data["areaFightProgress"][act_id]),
 	}
-	state.data["townPortalCount"] = int(state.data.get("townPortalCount", 0)) - 1
+	TownPortal.spend(state)
 	state.save()
 	# `useTownPortalScrollFromResult()` — the scroll's own transition on the way out.
 	_transition_to(TransitionScreen.PORTAL_ART, func(): show_screen("town"))

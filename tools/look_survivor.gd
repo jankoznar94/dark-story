@@ -133,11 +133,15 @@ func _process(_delta: float) -> bool:
 		_started = true
 		_main._enter_survivor(0)
 		_screen = _main._screens["survivor"]
+		# A look-probe is not a play session: it must not overwrite the local save.
+		_main.state.save_enabled = false
 		_place_hero()
 		if _portal:
-			# The belt entry is what makes the HUD's `Portal` button exist, and the mouth is put
-			# just in front of the hero so one frame shows both halves of Jan's rule.
-			_main.state.data["townPortalCount"] = 1
+			# ⚠️  A scroll IN THE BAG, not the belt counter: that is the case Jan reported ("ani
+			# když mám scrolly") and the one the old check missed. If this frame shows the button,
+			# the fix is in the build he is looking at.
+			_main.state.data["townPortalCount"] = 0
+			_main.state.add_item("townPortalScroll", _main.data.item("townPortalScroll"), 1)
 			if _screen.run != null:
 				_screen.run.portal_point = _screen.run.player_pos + Vector2(0.0, 58.0)
 				_screen.run.portal_open = true

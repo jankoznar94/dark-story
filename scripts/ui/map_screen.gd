@@ -30,6 +30,7 @@ class_name MapScreen
 const GameData := preload("res://scripts/data/game_data.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const ActRun := preload("res://scripts/combat/act_run.gd")
+const TownPortal := preload("res://scripts/items/town_portal.gd")
 ## `filter:grayscale(1)` as a shader. Godot has no CSS filter, and a `modulate` is NOT the
 ## same operation — it scales channels and leaves the hue alone (see the locked stop card).
 const GRAYSCALE_SHADER := preload("res://assets/shaders/grayscale.gdshader")
@@ -263,7 +264,7 @@ func _refresh_difficulty() -> void:
 func _refresh_actions() -> void:
 	if _map_portal_button == null:
 		return
-	var carrying := int(_state.data.get("townPortalCount", 0)) > 0
+	var carrying := TownPortal.available(_state)
 	_map_portal_button.visible = carrying and _state.first_uncompleted_act() >= 0
 
 

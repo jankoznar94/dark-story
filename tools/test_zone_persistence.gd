@@ -37,10 +37,33 @@ func _fail(msg: String) -> void:
 	_failures.append(msg)
 
 
+## A known portal state for every case: no belt scroll, no stored return, no scroll in the bag.
+## The bag entries are stripped by ID, because a leftover stack is exactly what made the button
+## case pass standalone and fail in a batch.
+func _reset_portal_state() -> void:
+	_main.state.data["townPortalCount"] = 0
+	_main.state.data["townPortalReturn"] = null
+	var inv: Array = _main.state.inventory()
+	var kept: Array = []
+	for entry in inv:
+		var eid := str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		if eid != "townPortalScroll":
+			kept.append(entry)
+	inv.clear()
+	for e in kept:
+		inv.append(e)
+	ZoneMemory.reset()
+
+
 func _run() -> void:
+	# Never touch the local save, and start from a known portal state: a scroll or a return left
+	# by an earlier process made one case pass alone and fail in the batch.
+	_main.state.save_enabled = false
+	_reset_portal_state()
 	_test_waypoint_freezes_and_reentry_restores()
 	_test_death_rolls_the_act_again()
 	_test_the_portal_button_exists_only_with_a_scroll()
+	_test_a_scroll_in_the_bag_counts_too()
 	_test_portal_opens_where_he_stands_and_returns_him_there()
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -152,6 +175,41 @@ func _test_the_portal_button_exists_only_with_a_scroll() -> void:
 	screen.portal_requested.emit()
 	if fired[0] != 1:
 		_fail("the portal button's signal is not connected to anything")
+
+
+## Jan reported the button missing "ani když mám scrolly" while the counter was 0: a scroll that
+## DROPPED lives in the bag as an item, and the first version of the button read the belt counter
+## only. Both forms must count, and using one must spend exactly one.
+func _test_a_scroll_in_the_bag_counts_too() -> void:
+	_main.state.data["townPortalCount"] = 0
+	var inv: Array = _main.state.inventory()
+	var kept: Array = []
+	for entry in inv:
+		var eid := str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		if eid != "townPortalScroll":
+			kept.append(entry)
+	inv.clear()
+	for e in kept:
+		inv.append(e)
+	_main.state.add_item("townPortalScroll", _main.data.item("townPortalScroll"), 2)
+
+	_main._enter_survivor(0, 5)
+	var screen = _main._screens["survivor"]
+	if not screen._has_portal_scroll():
+		_fail("a scroll in the BAG did not make the portal button available")
+	screen.run.player_pos = screen.run.nearest_floor_point(screen.run.start_point
+		+ Vector2(40.0, 0.0))
+	_main._on_zone_portal_used()
+	if int(_main.state.data.get("townPortalCount", 0)) != 0:
+		_fail("spending a BAG scroll invented a belt counter")
+	var left := 0
+	for entry in _main.state.inventory():
+		var eid := str(entry.get("id", "")) if entry is Dictionary else str(entry)
+		if eid == "townPortalScroll":
+			left += int(entry.get("count", 1)) if entry is Dictionary else 1
+	print("  bag scrolls left after one trip: %d (started with 2)" % left)
+	if left != 1:
+		_fail("the trip consumed %d of 2 bag scrolls, one was expected" % (2 - left))
 
 
 ## Jan: "na místě, kde hráč stojí, se při použití vytvoří portál, hráč se přesune do města a po

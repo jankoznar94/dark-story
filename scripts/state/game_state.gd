@@ -35,6 +35,9 @@ const DIFF_COUNT := 3
 const ACT_COUNT := 5
 
 var data: Dictionary = {}
+## Set to false by a headless test that drives `main.gd`, so a suite can never overwrite the
+## player's own save file. The game never touches it.
+var save_enabled := true
 
 ## The PWA's `testMode`. NOT saved: the flag is a switch on the session, and the unlocked
 ## data it produced is what the save carries (the PWA behaves the same way).
@@ -515,6 +518,12 @@ func take_from_chest(chest_index: int, item: Dictionary) -> String:
 # --- persistence -------------------------------------------------------------
 
 func save() -> Error:
+	# A test that drives `main.gd` must not overwrite the player's real save. Headless suites
+	# write the same `user://` file the game reads, so one assertion about a town portal was
+	# leaving a scroll and a return position in the LOCAL save and the next run started with
+	# them (measured: a lone run passed, the batch failed on the leftovers).
+	if not save_enabled:
+		return OK
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
 		push_error("GameState: cannot write %s" % SAVE_PATH)

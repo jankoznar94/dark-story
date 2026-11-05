@@ -37,6 +37,7 @@ signal portal_requested
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
 const RunSpells := preload("res://scripts/combat/run_spells.gd")
+const TownPortal := preload("res://scripts/items/town_portal.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
@@ -726,12 +727,11 @@ func _place_camera() -> void:
 	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - view.y))
 
 
-## Is a town-portal scroll in the belt? The count is the save's own (`townPortalCount`), the same
-## number the map's and the road's portal buttons read, so the three cannot disagree.
+## Is a town-portal scroll carried? BOTH forms count — the belt counter AND a scroll lying in the
+## bag (that is how a dropped scroll arrives). Jan reported the button missing "even with scrolls"
+## because the old check read the counter only, and his scrolls were in the bag.
 func _has_portal_scroll() -> bool:
-	if _state == null:
-		return false
-	return int(_state.data.get("townPortalCount", 0)) > 0
+	return TownPortal.available(_state)
 
 
 ## The scroll was used: a portal opens EXACTLY where the hero stands (Jan: "na místě, kde hráč

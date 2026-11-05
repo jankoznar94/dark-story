@@ -61,6 +61,7 @@ class_name ArenaScreen
 const ItemGen := preload("res://scripts/items/item_gen.gd")
 const ItemStats := preload("res://scripts/items/item_stats.gd")
 const Battle := preload("res://scripts/combat/battle.gd")
+const TownPortal := preload("res://scripts/items/town_portal.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
 const GaugeArc := preload("res://scripts/ui/ui_gauge.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
@@ -2961,7 +2962,7 @@ func _show_result_page(stop_complete: bool) -> void:
 	_result_mana_line.text = "Mana %d/%d" % [int(hero.get("mana", 0)), max_mana]
 
 	_rebuild_result_actions(won, stop_complete,
-		int(_state.data.get("townPortalCount", 0)) > 0)
+		TownPortal.available(_state))
 	# The PWA clears the loot list on a defeat (`resultLootList.innerHTML = ''` — a defeat
 	# drops nothing), so a defeat page must not show this fight's dead-enemy drops.
 	_refresh_result_loot(won)
