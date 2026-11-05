@@ -589,8 +589,8 @@ func _process(delta: float) -> void:
 	_flash = maxf(0.0, _flash - delta * 3.0)
 	_play_events()
 	_whirlwind_feedback()
-	# ONE report per run, whatever ended it: contact damage ("dead") or the last pack of the area
-	# ("cleared"). The old code only knew death, so a finished area kept simulating.
+	# ONE report per run, and the only thing that ends a run is DEATH: an emptied area no longer
+	# ends anything (Jan, Nov 2026), so "cleared" is not an outcome the screen can hear.
 	if run.finished and run.outcome != "" and not _death_reported:
 		_death_reported = true
 		stop()
@@ -635,11 +635,20 @@ func _play_events() -> void:
 				# A pack waking is the beat the whole area model exists for: the player has to
 				# HEAR that walking into the next cell started something.
 				Sfx.play_global(Sfx.CUE_SHOUT)
+			"pack_champion":
+				# A champion cell is the same beat DEEPER: a different shout, plus the word, so
+				# the player knows the four bodies he just woke are not four strays.
+				Sfx.play_global(Sfx.CUE_STRONG_STRIKE)
+				_say("Šampionská skupina")
+			"pack_elite":
+				Sfx.play_global(Sfx.CUE_THUNDER_CLAP)
+				_say("Elita se svými otroky")
 			"zone":
 				_say("Oblast vyčištěna")
 			"cleared":
-				Sfx.play_global(Sfx.CUE_VICTORY)
-				_say("Celá oblast je čistá")
+				# NO victory sting: an emptied corridor is not a win any more, it is QUIET, and
+				# the player's next move is the exit — say that instead of congratulating him.
+				_say("Oblast je prázdná — jdi k východu")
 			_:
 				# A spell's own cue (thunder_clap, thunder_bolt, shout, dodge, strong_strike,
 				# melee_hit …). The rules append the MIXER's name for a spell rather than
@@ -1269,6 +1278,12 @@ func _draw_monster(m: Dictionary) -> void:
 	if not on_screen(pos, DISC_DIA, _view_world_size()):
 		return
 	var bob := sin(float(m["bob"])) * 2.2
+	var role := str(m.get("role", "normal"))
+	# THE AURA, on the ground under the elite. `Aura Enchanted` is a real rule (its slaves hit
+	# 30 % harder), and a rule the player cannot SEE is a rule he cannot play around. Drawn as
+	# one flat ring, no glow — Jan's rule for the whole game.
+	if role == "elite":
+		_aura_ring(pos, Color("#c8913f"))
 	# A round shadow under a disc reads as a second sphere. The contact shadow is FLATTENED and
 	# sits at the disc's own bottom edge — that is what puts a portrait ON the ground.
 	_set_local(Vector2(pos.x, pos.y + DISC_DIA * 0.52), Vector2(1.0, 0.34))
@@ -1278,16 +1293,32 @@ func _draw_monster(m: Dictionary) -> void:
 	if tex != null:
 		var r := Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5 + bob, DISC_DIA, DISC_DIA)
 		draw_texture_rect(tex, r, false)
+	# WHICH RANK the body is. Three rings, no badge: bronze = a stray, violet = a champion,
+	# amber (with the aura under it) = the elite. The hero's ring is blue, so none of them can
+	# be mistaken for him, and a minion stays bronze — it is the LEADER that is special.
 	var ring := Color("#b09464")
+	var width := 2.0
+	match role:
+		"champion":
+			ring = Color("#8a6fbf")
+			width = 2.5
+		"elite":
+			ring = Color("#d8a24a")
+			width = 3.0
 	if float(m["hit_flash"]) > 0.0:
 		ring = Color("#f0d8a0")
-	draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5, 0.0, TAU, 28, ring, 2.0, true)
+	draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5, 0.0, TAU, 28, ring, width, true)
+	if role == "elite":
+		# A second hairline ring outside the amber one: the elite reads as DOUBLE-ringed from
+		# across the screen, which is what a body worth 5x XP has to be.
+		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5 + 5.0, 0.0, TAU, 30,
+			Color(0.85, 0.64, 0.29, 0.55), 1.5, true)
 	# WHICH BODY THE ASSIST PICKED. Without this the player cannot tell what he is hitting: the
 	# game chooses the target, so it has to show its choice. A blue ring outside the bronze one
 	# plus a small chevron over the portrait — the hero's own colour, so nobody reads it as a buff.
 	if int(m["id"]) == int(run.target_id):
 		var mark := Color(UIKit.MOD_BLUE)
-		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5 + 7.0, 0.0, TAU, 30,
+		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5 + 12.0, 0.0, TAU, 30,
 			Color(mark.r, mark.g, mark.b, 0.85), 2.0, true)
 		var ty := pos.y - DISC_DIA * 0.5 - 8.0 + bob * 0.5
 		draw_polyline(PackedVector2Array([
@@ -1384,6 +1415,17 @@ func _dashed_ring(pos: Vector2, radius: float, col: Color, width: float,
 		if f1 > 1.0:
 			f1 = 1.0
 		draw_arc(pos, radius, a0 + span * f0, a0 + span * f1, 6, col, width, true)
+
+
+## The ELITE's aura, on the ground: a broken ring wide enough that its MINIONS stand inside it.
+## Broken rather than solid because a solid circle at that radius reads as a second reach ring;
+## the aura is a place, not a boundary. No glow, no animation — flat, like everything else.
+func _aura_ring(pos: Vector2, col: Color) -> void:
+	var radius: float = SurvivorRun.ELITE_RING + DISC_DIA * 0.5
+	var faint := Color(col.r, col.g, col.b, 0.30)
+	_dashed_ring(pos, radius, faint, 2.0)
+	var inner := Color(col.r, col.g, col.b, 0.16)
+	draw_arc(pos, radius - 7.0, 0.0, TAU, 34, inner, 1.0, true)
 
 
 ## The orb is a BODY, not a UI dot: it gets the same flattened contact shadow the portraits have,

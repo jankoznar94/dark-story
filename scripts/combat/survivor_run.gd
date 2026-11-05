@@ -179,21 +179,52 @@ const ROOM_HALF := 4
 ## How far the hero sees, in world px. Also the radius that marks cells as explored.
 const FOG_REVEAL := 300.0
 const AREA_MARGIN := 96.0
-const PACK_MIN := 2
+## The largest group one cell can hold: an elite pack. A normal cell holds ONE body.
+const PACK_MIN := 1
 const PACK_MAX := 4
 ## How far a pack's members scatter from its cell centre, and the least gap between two of them.
 ## The gap is bigger than one disc (62) on purpose: a pack is a formation, not a pile.
 const ZONE_JITTER := 104.0
 const PACK_SPACING := 70.0
+## How far apart along the corridor one spawn cell sits. It was 330 when a cell held a pack of
+## 2-4; the default is a SINGLE body now, so the cells are closer together to keep the same
+## density of enemies per metre walked.
+const CELL_SPACING := 220.0
 const ACTIVATE_RADIUS := 330.0
+
+## --- what a cell holds ------------------------------------------------------
+## Jan, Nov 2026: "Nespawnoval bych je vždy jako skupiny. Spíš jako jednotlivce. Někdy blízko
+## sebe, někdy dál, ale aby to ve výchozím stavu nebyly skupinky namačkané na sebe."
+##
+## So the DEFAULT cell is one wanderer. A second stray in the same cell is the minority, and it
+## stands `STRAY_GAP` away from the first — two separate bodies, not the old 70 px formation.
+##
+## On top of that, two special kinds, the duel's own two:
+##   CHAMPION  2-4 bodies of ONE kind, 1.6x HP / 1.3x damage, 400 % XP, better loot.
+##   ELITE     one leader with a D2 affix (auras included) plus ELITE_MINIONS slaves that
+##             inherit the aura's damage bonus. 500 % XP for the elite AND its minions, and
+##             the best loot table in the game so far.
+const STRAY_PAIR_CHANCE := 0.28
+const STRAY_GAP_MIN := 170.0
+const STRAY_GAP_MAX := 300.0
+const CHAMPION_PACK_CHANCE := 0.22
+const CHAMPION_MIN := 2
+const CHAMPION_MAX := 4
+const CHAMPION_HP_MULT := 1.6
+const CHAMPION_DMG_MULT := 1.3
+const CHAMPION_XP_MULT := 4.0
+const ELITE_PACK_CHANCE := 0.5
+const ELITE_MINIONS := 3
+const ELITE_HP_MULT := 2.5
+const ELITE_DMG_MULT := 1.5
+const ELITE_XP_MULT := 5.0
+## How far a minion stands from its elite: a ring tight enough to read as one pack.
+const ELITE_RING := 86.0
 ## How far from the hero a woken pack is placed. The phone screen is 390x844, so half of it is
 ## 195 px across and 422 px down: a pack that appeared at 330 would POP into view in the middle of
 ## the field, which is exactly the seam Jan would notice. At 470 the bodies arrive from OFF the
 ## screen and walk in, which also gives the player the beat of hearing/seeing them come.
 const WAKE_MIN_DIST := 470.0
-## After the LAST pack dies the run keeps running this long: the final kill's loot has to be
-## walkable-over, or the payout of the winning blow is the one drop the player never gets.
-const CLEAR_DELAY := 2.0
 
 ## --- spawning -------------------------------------------------------------
 ## The density is the design dial. The Dark Story pacing rule banned hordes; the survivor
@@ -333,14 +364,15 @@ var wave := 0
 var elapsed := 0.0
 var gold := 0
 var items_taken := 0
-## Every item that reached the bag during the run, in the order it was picked up. The RESULT
-## page lists these; `items_taken` alone can say how many but not which.
+## Every item that reached the bag during the run, in the order it was picked up. Kept as the
+## run's own record (`items_taken` alone can say how many but not which); the zone loop no
+## longer prints a loot page for it.
 var looted: Array = []
-## XP this run paid into the save, and how many LEVELS that bought — the result page reports
-## both, and the run levels the hero the way the arena's `apply_levels()` does.
+## XP this run paid into the save, and how many LEVELS that bought — the run levels the hero
+## the way the arena's `apply_levels()` does.
 var xp_gained := 0
 var levels_gained := 0
-## Set the moment the last pack dies; `finished` follows after CLEAR_DELAY.
+## Every spawn cell has been emptied. It is a state the HUD may read; it does NOT end the run.
 var area_cleared := false
 ## How long ago the last swing LANDED, in seconds (-1 = no swing yet). The renderer turns this
 ## into the lunge and the slash — the RULES never animate, they only say when and which way.
@@ -352,7 +384,8 @@ var swing_age_off := -1.0
 var swing_dir_off := Vector2.RIGHT
 
 var finished := false
-## "" | "dead" | "cleared"
+## "" | "dead". There is no "cleared": walking out of the exit is what advances the act, and
+## the run does not crown the player for it.
 var outcome := ""
 
 # ============================================================================ spells
@@ -388,7 +421,6 @@ var ww_reaction_ms := 0
 var ww_feedback := ""
 var ww_landed := 0
 
-var _clear_clock := 0.0
 var _main_clock := 0.0
 ## Kept at 0: there is no second clock any more (the hands alternate on `_main_clock`).
 var _off_clock := 0.0
@@ -485,7 +517,6 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	area_cleared = false
 	portal_open = false
 	portal_point = Vector2.ZERO
-	_clear_clock = 0.0
 	_main_clock = 0.0
 	_off_clock = 0.0
 	_next_id = 0
@@ -969,37 +1000,168 @@ func _build_area() -> void:
 		total += prev.distance_to(p)
 		lengths.append(total)
 		prev = p
-	var count := clampi(int(round(total / 330.0)), 6, 12)
+	var count := clampi(int(round(total / CELL_SPACING)), 8, 20)
 	var max_d := maxf(1.0, total)
 	# The first pack must be OUTSIDE the activation radius of the spawn point, or it would be
 	# standing on the hero before he takes a step — so the samples start past the clearing
 	# instead of being dropped after the fact (dropping them left the corridor with five packs
 	# and no far end).
 	var d_min := minf(ACTIVATE_RADIUS + 120.0, max_d * 0.5)
+	# The cells are placed FIRST and the roles are dealt among them afterwards: an elite pack
+	# needs to know how many cells exist before one can be picked for it.
+	var spots: Array = []
 	for k in range(count):
 		# Evenly spaced along the path, from past the clearing to the far end.
 		var want := d_min + (max_d - d_min) * float(k + 1) / float(count + 1)
 		var centre := _point_at_distance(lengths, want)
 		if centre.distance_to(start_point) < ACTIVATE_RADIUS + 60.0:
 			continue
-		var tier := 1 + int(round(3.0 * float(k) / float(maxi(count - 1, 1))))
-		var members: Array = []
-		for _i in rng.randi_range(PACK_MIN, PACK_MAX):
-			var row := _pick_row(tier)
-			if row.is_empty():
-				continue
-			members.append({"row": row, "pos": _pack_slot(centre, members)})
+		spots.append({
+			"centre": centre,
+			"tier": 1 + int(round(3.0 * float(k) / float(maxi(count - 1, 1)))),
+			"progress": clampi(int(round(9.0 * float(k) / float(maxi(count - 1, 1)))), 0, 9),
+		})
+
+	# At most ONE elite pack per zone, and it stands in the DEEPER half: walking further is
+	# what raises the stakes, the same rule the tier of a pack already follows.
+	var elite_at := -1
+	if spots.size() >= 3 and rng.randf() < ELITE_PACK_CHANCE:
+		elite_at = rng.randi_range(int(spots.size() / 2.0), spots.size() - 1)
+
+	for i in range(spots.size()):
+		var spot: Dictionary = spots[i]
+		var kind := "normal"
+		if i == elite_at:
+			kind = "elite"
+		elif rng.randf() < CHAMPION_PACK_CHANCE:
+			kind = "champion"
+		var members: Array = _make_pack(kind, spot["centre"] as Vector2, int(spot["tier"]))
 		if members.is_empty():
 			continue
-		var prog_idx := clampi(int(round(9.0 * float(k) / float(maxi(count - 1, 1)))), 0, 9)
 		zones.append({
-			"centre": centre,
-			"progress": prog_idx,
+			"centre": spot["centre"],
+			"progress": int(spot["progress"]),
+			"kind": kind,
 			"members": members,
 			"active": false,
 			"cleared": false,
 			"ids": [],
 		})
+
+
+## The bodies of ONE cell. The default is a single wanderer (sometimes a pair that stands
+## apart); a champion cell is 2-4 of the SAME kind; an elite cell is one leader with an affix
+## and `ELITE_MINIONS` slaves that inherit its aura.
+##
+## Every member carries the multipliers THE WAKE reads — the row alone cannot say whether the
+## body is a champion, so the pack has to.
+func _make_pack(kind: String, centre: Vector2, tier: int) -> Array:
+	var members: Array = []
+	var row := _pick_row(tier)
+	if row.is_empty():
+		return members
+	match kind:
+		"champion":
+			for _i in rng.randi_range(CHAMPION_MIN, CHAMPION_MAX):
+				members.append({
+					"row": row,
+					"pos": _pack_slot(centre, members),
+					"role": "champion",
+					"hp_mult": CHAMPION_HP_MULT,
+					"dmg_mult": CHAMPION_DMG_MULT,
+					"xp_mult": CHAMPION_XP_MULT,
+					"loot_grade": 1,
+				})
+		"elite":
+			var affix := _roll_elite_affix()
+			# An aura is the one affix that is not just a number on the leader: the slaves are
+			# built with its damage bonus, which is what makes killing the elite FIRST pay.
+			var aura := float(affix.get("auraDmgMult", 1.0)) if bool(affix.get("aura", false)) else 1.0
+			members.append({
+				"row": row,
+				"pos": nearest_floor_point(centre, MON_RADIUS),
+				"role": "elite",
+				"hp_mult": ELITE_HP_MULT,
+				"dmg_mult": ELITE_DMG_MULT,
+				"xp_mult": ELITE_XP_MULT,
+				"loot_grade": 2,
+				"affix": affix,
+				"elite_name": _elite_name(row),
+			})
+			for i in ELITE_MINIONS:
+				var ang := TAU * float(i) / float(ELITE_MINIONS) + rng.randf_range(-0.35, 0.35)
+				members.append({
+					"row": row,
+					"pos": nearest_floor_point(centre + Vector2(cos(ang), sin(ang)) * ELITE_RING,
+						MON_RADIUS),
+					"role": "minion",
+					"hp_mult": 1.0,
+					"dmg_mult": aura,
+					"xp_mult": ELITE_XP_MULT,
+					"loot_grade": 0,
+				})
+		_:
+			members.append({
+				"row": row,
+				"pos": _pack_slot(centre, members),
+				"role": "normal",
+				"hp_mult": 1.0, "dmg_mult": 1.0, "xp_mult": 1.0, "loot_grade": 0,
+			})
+			if rng.randf() < STRAY_PAIR_CHANCE:
+				var other := _pick_row(tier)
+				if not other.is_empty():
+					members.append({
+						"row": other,
+						"pos": _stray_slot(members[0]["pos"] as Vector2, centre),
+						"role": "normal",
+						"hp_mult": 1.0, "dmg_mult": 1.0, "xp_mult": 1.0, "loot_grade": 0,
+					})
+	return members
+
+
+## A second wanderer's spot: `STRAY_GAP` away from the first body, ON floor. Bounded tries and
+## then the nearest floor point in the chosen direction — a "find room" loop that can fail
+## forever is a hang, which is worse than a stray that stands closer than it wanted to.
+func _stray_slot(first: Vector2, centre: Vector2) -> Vector2:
+	for _try in 12:
+		var ang := rng.randf() * TAU
+		var gap := rng.randf_range(STRAY_GAP_MIN, STRAY_GAP_MAX)
+		var p := first + Vector2(cos(ang), sin(ang)) * gap
+		if walkable(p, MON_RADIUS) and p.distance_to(centre) <= ZONE_JITTER * 2.2:
+			return p
+	var ang2 := rng.randf() * TAU
+	return nearest_floor_point(first + Vector2(cos(ang2), sin(ang2)) * STRAY_GAP_MIN, MON_RADIUS)
+
+
+## A D2 elite name: [Prefix] [Suffix] the [Appellation], from the PWA's own three tables. Purely
+## cosmetic — the affix is what the fight reads — but a named body is what makes the pack
+## readable as THE elite and not as another stray.
+func _elite_name(row: Dictionary) -> String:
+	var base := str(row.get("name", "Elita"))
+	if _data == null:
+		return "Elitni %s" % base
+	var prefixes: Array = _data.table("ELITE_PREFIXES", [])
+	var suffixes: Array = _data.table("ELITE_SUFFIXES", [])
+	var appellations: Array = _data.table("ELITE_APPELATIONS", [])
+	if prefixes.is_empty() or suffixes.is_empty() or appellations.is_empty():
+		return "Elitni %s" % base
+	return "%s %s %s" % [
+		str(prefixes[rng.randi_range(0, prefixes.size() - 1)]),
+		str(suffixes[rng.randi_range(0, suffixes.size() - 1)]),
+		str(appellations[rng.randi_range(0, appellations.size() - 1)]),
+	]
+
+
+## The elite's D2 affix, from the table the DUEL already uses. `Aura Enchanted` is the reason
+## the minions are built with a damage multiplier instead of the plain row stats.
+func _roll_elite_affix() -> Dictionary:
+	if _data == null:
+		return {}
+	var pool: Array = _data.table("ELITE_AFFIXES", [])
+	if pool.is_empty():
+		return {}
+	return pool[rng.randi_range(0, pool.size() - 1)]
+
 
 
 ## The world point at `distance` along the corridor's centreline.
@@ -1068,18 +1230,30 @@ func _zone_tick() -> void:
 
 func _wake_zone(z: Dictionary) -> void:
 	var ids: Array = []
+	var lvl: int = _prog.monster_level(act_id, int(z.get("progress", 0)), 0) if _prog != null else 1
 	for m in z["members"]:
 		# A pack is never SEEN popping into being: each member is placed at least WAKE_MIN_DIST
 		# away, on the side of its cell it would have come from, and walks in from the edge of
 		# the screen.
-		var lvl: int = _prog.monster_level(act_id, int(z.get("progress", 0)), 0) if _prog != null else 1
-		var rec := _make_monster(m["row"], _spawn_away((m["pos"] as Vector2) - player_pos), lvl)
+		var opts := {
+			"role": str(m.get("role", "normal")),
+			"hp_mult": float(m.get("hp_mult", 1.0)),
+			"dmg_mult": float(m.get("dmg_mult", 1.0)),
+			"xp_mult": float(m.get("xp_mult", 1.0)),
+			"loot_grade": int(m.get("loot_grade", 0)),
+			"affix": m.get("affix", {}),
+			"name": str(m.get("elite_name", "")),
+		}
+		var rec := _make_monster(m["row"], _spawn_away((m["pos"] as Vector2) - player_pos), lvl, opts)
 		monsters.append(rec)
 		ids.append(int(rec["id"]))
 	z["ids"] = ids
 	z["active"] = true
 	wave += 1
 	events.append("pack")
+	if str(z.get("kind", "normal")) != "normal":
+		# The screen plays a heavier cue for a champion/elite cell; the rules only say which.
+		events.append("pack_%s" % str(z.get("kind")))
 
 
 ## A point `WAKE_MIN_DIST` from the hero in the direction of `prefer`, rotated in 30° steps until
@@ -1133,13 +1307,14 @@ func _zone_clear_tick(dt: float) -> void:
 		return
 	if not area_cleared and cleared_zones() >= zones.size():
 		area_cleared = true
-		_clear_clock = CLEAR_DELAY
 		events.append("cleared")
-	if area_cleared and not finished:
-		_clear_clock -= dt
-		if _clear_clock <= 0.0:
-			finished = true
-			outcome = "cleared"
+	# ⚠️  AN EMPTIED ZONE DOES NOT END THE RUN. Jan, Nov 2026: "Musíme zrušit vítěznou
+	# obrazovku s lootem. Teď už by vlastně nemělo být nic jako vítězství. Vítězství je, že
+	# dojdu na konec lokace, projdu východem do další a tam si vezmu waypoint."
+	#
+	# So the only thing that ends a run is death (`_die`). Clearing every pack just means the
+	# corridor is quiet — the player still has to WALK to the exit, and the loot he left on
+	# the floor stays walkable-over for as long as he is down there.
 
 
 # ============================================================================ spawn
@@ -1159,22 +1334,39 @@ func _spawn_one() -> void:
 
 ## Every monster is a WALKING PORTRAIT: the record is the data row's own `face`, so a new
 ## monster in MONSTER_DB needs no code.
-func _make_monster(row: Dictionary, pos: Vector2, level: int = 1) -> Dictionary:
+##
+## `opts` is what makes a champion/elite pack differ from the same row as a stray: the
+## multipliers, the role the screen dresses the ring by, the XP rate and the loot grade. A
+## plain wake (and every rules test) passes nothing, which is exactly a normal body.
+func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictionary = {}) -> Dictionary:
 	# A kind's strength is the DB's own number, scaled by the act's difficulty so a run in a
 	# later act is dangerous without a second table.
 	var lvl_scale := 1.0 + float(act_id) * 0.35
-	var mon_hp := int(round(float(row.get("hp", 60)) * lvl_scale))
+	var hp_mult := float(opts.get("hp_mult", 1.0))
+	var dmg_mult := float(opts.get("dmg_mult", 1.0))
+	var role := str(opts.get("role", "normal"))
+	var mon_hp := int(round(float(row.get("hp", 60)) * lvl_scale * hp_mult))
 	var ranged := _is_ranged(row)
+	var base_name := str(row.get("name", ""))
+	var name := base_name
+	match role:
+		"champion":
+			name = "%s Champion" % base_name
+		"minion":
+			name = "%s Slave" % base_name
+		"elite":
+			name = str(opts.get("name", "")) if str(opts.get("name", "")) != "" else base_name
 	var rec := {
 		"id": _next_id,
 		"face": str(row.get("face", "")),
-		"name": str(row.get("name", "")),
+		"name": name,
+		"role": role,
 		"pos": pos,
 		"hp": mon_hp,
 		"max_hp": mon_hp,
 		"speed": rng.randf_range(46.0, 68.0) + float(act_id) * 4.0,
-		"dmg_min": int(round(float(row.get("dmgMin", 5)) * lvl_scale)),
-		"dmg_max": int(round(float(row.get("dmgMax", 9)) * lvl_scale)),
+		"dmg_min": int(round(float(row.get("dmgMin", 5)) * lvl_scale * dmg_mult)),
+		"dmg_max": int(round(float(row.get("dmgMax", 9)) * lvl_scale * dmg_mult)),
 		"atk_cd": float(row.get("attackSpeed", 1500)) / 1000.0,
 		"atk_ready": 0.0,
 		"hit_flash": 0.0,
@@ -1187,6 +1379,13 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1) -> Dictionary:
 		# The monster's own LEVEL VALUE, the same number `battle.gd` calls
 		# `monster_level_value`: the XP a kill is worth is derived from it.
 		"lvl": level,
+		# 1x a stray, 4x a champion, 5x an elite AND its minions (Jan's numbers).
+		"xp_mult": float(opts.get("xp_mult", 1.0)),
+		# 0 = the normal table, 1 = champion, 2 = elite (`LootSystem.roll`'s grade).
+		"loot_grade": int(opts.get("loot_grade", 0)),
+		# The elite's D2 affix, as rolled. An `Aura Enchanted` leader has already paid its
+		# bonus into the minions' `dmg_*`; the screen reads this to draw the aura.
+		"affix": (opts.get("affix", {}) as Dictionary).duplicate(),
 	}
 	_next_id += 1
 	return rec
@@ -1696,10 +1895,14 @@ func _kill(index: int) -> void:
 	var m: Dictionary = monsters[index]
 	kills += 1
 	# XP per kill, the arena's own rule (`Progression.kill_xp` with the monster's level value):
-	# the survivor run is going to REPLACE the duel, so it has to pay the same currency.
-	_award_xp(int(_prog.kill_xp(int(_state.hero().get("level", 1)), int(m.get("lvl", 1)), 1)))
+	# the survivor run is going to REPLACE the duel, so it has to pay the same currency. The
+	# pack's OWN rate multiplies it: 4x for a champion, 5x for an elite and its minions.
+	var xp_mult := float(m.get("xp_mult", 1.0))
+	var xp := int(round(float(_prog.kill_xp(int(_state.hero().get("level", 1)),
+		int(m.get("lvl", 1)), 1)) * xp_mult))
+	_award_xp(xp)
 	events.append("kill")
-	_roll_drop(m["pos"] as Vector2)
+	_roll_drop(m["pos"] as Vector2, int(m.get("loot_grade", 0)))
 	monsters.remove_at(index)
 
 
@@ -1707,12 +1910,16 @@ func _kill(index: int) -> void:
 
 ## The drop table is the PWA's own, unchanged: `LootSystem.roll()` decides gold vs an item
 ## vs a special, so the survivor loop and the duel pay out through the same code.
-func _roll_drop(pos: Vector2) -> void:
+##
+## `grade` is the kill's rank (0 normal, 1 champion, 2 elite) and it is the ONLY difference:
+## the table itself stays one table, so a better body cannot invent a drop the game never had.
+func _roll_drop(pos: Vector2, grade: int = 0) -> void:
 	var hero: Dictionary = _state.hero()
 	var level := int(hero.get("level", 1))
 	var magic_find := int(Progression._equip_attr(_state.equip(), _find_item, "magicFind"))
 	var gold_find := int(Progression._equip_attr(_state.equip(), _find_item, "goldFind"))
-	var result: Dictionary = _loot.roll(_state, act_id, wave, false, level, magic_find, gold_find, rng)
+	var result: Dictionary = _loot.roll(_state, act_id, wave, false, level, magic_find, gold_find,
+		rng, grade)
 	var kind := str(result.get("type", "gold"))
 	if kind == "gold":
 		drops.append({"pos": pos, "kind": "gold", "amount": int(result.get("gold", 1)), "age": 0.0})

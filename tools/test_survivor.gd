@@ -69,6 +69,7 @@ func _initialize() -> void:
 	_test_determinism()
 	_test_spawn_cap_and_clearance()
 	_test_pack_discovery()
+	_test_pack_makeup()
 	_test_kills_award_xp()
 	_test_facing_gate()
 	_test_aim_retargets()
@@ -149,10 +150,10 @@ func _test_setup_reads_the_hero() -> void:
 		"damage range must be a real range: %d..%d" % [run.dmg_min, run.dmg_max])
 	_check(run.monsters.is_empty(), "the hero starts in an EMPTY clearing, got %d monsters" % run.monsters.size())
 	_check(run.wave == 0, "no pack has woken yet, wave=%d" % run.wave)
-	# The corridor holds one pack per stop along its centreline (6..12), each a known quantity
-	# before it wakes, and every one of them stands on FLOOR.
-	_check(run.zones.size() >= 6 and run.zones.size() <= 12,
-		"the corridor must hold 6..12 packs, got %d" % run.zones.size())
+	# The corridor holds one SPAWN CELL per stop along its centreline (8..20), each a known
+	# quantity before it wakes, and every one of them stands on FLOOR.
+	_check(run.zones.size() >= 8 and run.zones.size() <= 20,
+		"the corridor must hold 8..20 cells, got %d" % run.zones.size())
 	for z in run.zones:
 		_check(run.walkable(z["centre"] as Vector2, SurvivorRun.MON_RADIUS),
 			"a pack centre must stand on floor: %s" % str(z["centre"]))
@@ -161,8 +162,13 @@ func _test_setup_reads_the_hero() -> void:
 			"a pack is %d..%d bodies, got %d" % [SurvivorRun.PACK_MIN, SurvivorRun.PACK_MAX, n])
 		for m in z["members"]:
 			var d: float = (m["pos"] as Vector2).distance_to(z["centre"] as Vector2)
-			_check(d <= SurvivorRun.ZONE_JITTER + 1.0,
-				"a pack member must stand inside its own cell: %.1f > %.1f" % [d, SurvivorRun.ZONE_JITTER])
+			# A stray pair stands FURTHER out than the old 104 px formation on purpose: two
+			# separate wanderers, not a group pressed together.
+			var reach: float = SurvivorRun.ZONE_JITTER
+			if str(m.get("role", "normal")) == "normal":
+				reach = SurvivorRun.STRAY_GAP_MAX + SurvivorRun.ZONE_JITTER
+			_check(d <= reach + 1.0,
+				"a pack member must stand inside its own cell: %.1f > %.1f" % [d, reach])
 		# A pack must never wake on the hero's first frame.
 		_check((z["centre"] as Vector2).distance_to(run.player_pos) > SurvivorRun.ACTIVATE_RADIUS,
 			"a pack centre is inside the activation radius at spawn")
@@ -943,7 +949,10 @@ func _test_pack_discovery() -> void:
 	_check(run.monsters.size() <= mini(after_wake, SurvivorRun.MAX_ALIVE),
 		"no monster may arrive from off screen: %d > %d" % [run.monsters.size(), after_wake])
 
-	# 3. Every pack dead = the area is cleared, and the run ends by itself.
+	# 3. Every pack dead = the area is CLEARED, and the run does NOT end by itself: Jan, Nov
+	# 2026 — "vítězství je, že dojdu na konec lokace, projdu východem do další a tam si vezmu
+	# waypoint". The old assertion said the opposite; inverting it is the feature, deleting it
+	# would hide the day the ending comes back.
 	for zz in run.zones:
 		if not bool(zz["active"]):
 			continue
@@ -951,13 +960,138 @@ func _test_pack_discovery() -> void:
 			for i in range(run.monsters.size() - 1, -1, -1):
 				if int(run.monsters[i]["id"]) == int(id):
 					run.monsters.remove_at(i)
-	for _i in int((SurvivorRun.CLEAR_DELAY + 0.5) / STEP):
+	# Every ASLEEP cell is emptied too, or `cleared_zones()` never reaches `zones.size()`.
+	for zz in run.zones:
+		zz["active"] = true
+		zz["cleared"] = true
+		zz["ids"] = []
+	for _i in 120:
 		run.step(STEP, Vector2.ZERO)
 	_check(run.cleared_zones() >= 1, "a visited, emptied cell must count as cleared")
-	_check(not run.finished or run.outcome == "cleared",
-		"the area must only end as 'cleared', outcome='%s'" % run.outcome)
+	_check(run.area_cleared, "an emptied area must be REPORTED as cleared")
 	_check(not run.finished,
-		"an UNVISITED pack must keep the area open — the run ended with cells still asleep")
+		"an emptied area must NOT end the run — the exit is the only way on")
+	_check(run.outcome == "", "an emptied area must set no outcome, got '%s'" % run.outcome)
+
+
+## The MAKEUP of a cell: singles by default, champions as a group of one kind, an elite with its
+## minions. Jan, Nov 2026 — this is the variety ask, and the two things that can silently go
+## wrong are (a) the default drifting back into a pile of bodies and (b) a "champion" pack
+## whose members are different kinds, which is a mob, not a champion pack.
+func _test_pack_makeup() -> void:
+	_log("  section: pack_makeup")
+	var seeds := [1, 7, 42, 101, 777, 1234, 4242, 90210, 31337, 65535, 8, 9, 10, 11, 12, 13]
+	var normal := 0
+	var champions := 0
+	var elites := 0
+	var stray_pairs := 0
+	for s in seeds:
+		var run := _fresh(int(s))
+		var elite_cells := 0
+		for z in run.zones:
+			var kind := str(z.get("kind", "normal"))
+			var members: Array = z["members"]
+			match kind:
+				"elite":
+					elite_cells += 1
+					elites += 1
+					_check(members.size() == SurvivorRun.ELITE_MINIONS + 1,
+						"an elite cell is 1 leader + %d minions, got %d"
+							% [SurvivorRun.ELITE_MINIONS, members.size()])
+					var leader: Dictionary = {}
+					var minions := 0
+					for m in members:
+						if str(m.get("role", "")) == "elite":
+							leader = m
+						elif str(m.get("role", "")) == "minion":
+							minions += 1
+					_check(not leader.is_empty(), "an elite cell has no leader")
+					_check(minions == SurvivorRun.ELITE_MINIONS,
+						"an elite cell has %d minions, want %d" % [minions, SurvivorRun.ELITE_MINIONS])
+					if not leader.is_empty():
+						_check(float(leader.get("hp_mult", 0.0)) == SurvivorRun.ELITE_HP_MULT,
+							"the elite must carry its HP multiplier")
+						_check(float(leader.get("xp_mult", 0.0)) == SurvivorRun.ELITE_XP_MULT,
+							"the elite must pay %sx XP" % SurvivorRun.ELITE_XP_MULT)
+						_check(int(leader.get("loot_grade", 0)) == 2,
+							"the elite must drop from the elite table")
+						_check(str(leader.get("elite_name", "")) != "",
+							"the elite must have a name from the D2 tables")
+						var affix: Dictionary = leader.get("affix", {})
+						_check(not affix.is_empty(), "the elite must carry an affix")
+						# The aura is the one affix that changes OTHER bodies. Its minions must
+						# carry the bonus, or the aura is a label with no rule behind it.
+						var aura := float(affix.get("auraDmgMult", 1.0)) \
+							if bool(affix.get("aura", false)) else 1.0
+						for m in members:
+							if str(m.get("role", "")) != "minion":
+								continue
+							_check(float(m.get("dmg_mult", 0.0)) == aura,
+								"a minion must carry the aura bonus %.2f, got %.2f"
+									% [aura, float(m.get("dmg_mult", 0.0))])
+							_check(float(m.get("xp_mult", 0.0)) == SurvivorRun.ELITE_XP_MULT,
+								"a minion pays the elite's %sx XP" % SurvivorRun.ELITE_XP_MULT)
+				"champion":
+					champions += 1
+					_check(members.size() >= SurvivorRun.CHAMPION_MIN
+							and members.size() <= SurvivorRun.CHAMPION_MAX,
+						"a champion pack is %d..%d bodies, got %d"
+							% [SurvivorRun.CHAMPION_MIN, SurvivorRun.CHAMPION_MAX, members.size()])
+					var face := str((members[0]["row"] as Dictionary).get("face", ""))
+					for m in members:
+						_check(str((m["row"] as Dictionary).get("face", "")) == face,
+							"a champion pack is ONE kind — a mixed pack is a mob")
+						_check(str(m.get("role", "")) == "champion", "a champion cell holds champions")
+						_check(float(m.get("xp_mult", 0.0)) == SurvivorRun.CHAMPION_XP_MULT,
+							"a champion pays %sx XP" % SurvivorRun.CHAMPION_XP_MULT)
+				_:
+					normal += 1
+					if members.size() == 2:
+						stray_pairs += 1
+						var gap: float = (members[0]["pos"] as Vector2).distance_to(
+							members[1]["pos"] as Vector2)
+						_check(gap >= SurvivorRun.STRAY_GAP_MIN - 1.0,
+							"two strays must stand APART (%.1f < %.1f) — Jan's whole point"
+								% [gap, SurvivorRun.STRAY_GAP_MIN])
+		_check(elite_cells <= 1, "seed %d has %d elite cells, at most 1 is allowed"
+			% [int(s), elite_cells])
+
+	_log("    cells: normal=%d (pairs=%d) champion=%d elite=%d"
+		% [normal, stray_pairs, champions, elites])
+	_check(normal > champions + elites,
+		"the DEFAULT must be the stray, not the group: normal=%d special=%d"
+			% [normal, champions + elites])
+	_check(champions > 0 and elites > 0,
+		"16 seeds produced no champion/elite cell at all — the roles are not being dealt")
+
+	# A woken champion is really stronger than the same row as a stray: same kind, more HP.
+	var champ_run := SurvivorRun.new()
+	champ_run.setup(_state, _find_item, _loot, 0, 4242)
+	var row: Dictionary = _pick_any_row(champ_run)
+	if not row.is_empty():
+		var plain := champ_run._make_monster(row, Vector2.ZERO, 5, {})
+		var champ := champ_run._make_monster(row, Vector2.ZERO, 5,
+			{"role": "champion", "hp_mult": SurvivorRun.CHAMPION_HP_MULT,
+			"dmg_mult": SurvivorRun.CHAMPION_DMG_MULT, "xp_mult": SurvivorRun.CHAMPION_XP_MULT,
+			"loot_grade": 1})
+		_check(int(champ["hp"]) > int(plain["hp"]),
+			"a champion must have MORE hp than a stray of the same row: %d vs %d"
+				% [int(champ["hp"]), int(plain["hp"])])
+		_check(int(champ["dmg_max"]) > int(plain["dmg_max"]),
+			"a champion must hit HARDER than a stray of the same row")
+		_check(str(champ["name"]).contains("Champion"), "a champion's name must say so")
+		_check(int(champ["loot_grade"]) == 1 and int(plain["loot_grade"]) == 0,
+			"the loot grade must travel on the monster, not be guessed at the drop")
+
+
+## Any monster row of the current act, for the strength comparison above.
+func _pick_any_row(run: SurvivorRun) -> Dictionary:
+	for tier in [1, 2, 3, 4]:
+		var row: Dictionary = run._pick_row(tier)
+		if not row.is_empty():
+			return row
+	return {}
+
 
 
 ## A kill pays XP, and enough XP levels the hero UP — the run is going to REPLACE the duel, so

@@ -283,7 +283,11 @@ func _build_screens() -> void:
 	# on the phone rather than replacing it in the same commit.
 	var survivor := SurvivorScreen.new()
 	survivor.visible = false
-	survivor.leave_requested.connect(func(): _end_survivor(""))
+	# Konec = leave the zone to town; the zone is frozen as it stands (ZoneMemory) and no
+	# result page is shown any more.
+	survivor.leave_requested.connect(func():
+		_end_survivor("")
+		show_screen("town"))
 	# The waypoint is the "go to town without a scroll" path: the act's record keeps this zone as
 	# the checkpoint, `_end_survivor` freezes the zone's monsters, and a free return position is
 	# stored so the town's portal card brings the player back to it.
@@ -292,7 +296,7 @@ func _build_screens() -> void:
 	# town's portal button returns him onto that same spot.
 	survivor.portal_requested.connect(_on_zone_portal_used)
 	survivor.zone_exited.connect(_on_zone_exited)
-	survivor.run_finished.connect(_end_survivor)
+	survivor.run_finished.connect(_on_run_finished)
 	_add_screen("survivor", survivor)
 
 	# The end-of-run page. The survivor run used to dump the player straight back on the road,
@@ -1046,14 +1050,20 @@ func _on_zone_exited() -> void:
 	var nxt := ActRun.clear_zone(state, act_id, from_zone, total)
 	state.save()
 	if nxt < 0:
-		_end_survivor("cleared")
+		# THE ACT'S LAST ZONE HAS NO ZONE AFTER IT. There is no victory page any more (Jan,
+		# Nov 2026: "vítězství je, že dojdu na konec lokace, projdu východem do další a tam si
+		# vezmu waypoint"), so the act closes with a trip to town and a line of status text.
+		_set_status("Akt %d dokončen — zpátky ve městě" % (act_id + 1))
+		show_screen("town")
 		return
 	_transition_to(TransitionScreen.stop_art_path(act_id, nxt),
 		func(): _enter_survivor(act_id, nxt))
 
 
 ## A run ends by walking out or by dying. Either way the payout is ALREADY in the save (gold and
-## items are collected during the run), so this only reports and hands the player back to the road.
+## items are collected during the run), so this only settles the ZONE's fate — it does NOT
+## navigate and it shows NO page. Jan, Nov 2026: the zone loop has no victory screen and no loot
+## summary; "vítězství" is walking out of an exit and taking the next waypoint.
 ##
 ## The ZONE's fate is decided here, and the two branches are the whole point of `ZoneMemory`:
 ##
@@ -1073,7 +1083,18 @@ func _end_survivor(outcome: String) -> void:
 		ZoneMemory.clear_act(act_id)
 	elif str(outcome) == "":
 		ZoneMemory.store(act_id, int(run.zone_index), run.snapshot())
-	_show_run_result(run, str(outcome))
+	state.save()
+
+
+## `run_finished` from the zone: today that is DEATH and nothing else. The player goes back to
+## town where the waypoint card is waiting for him; the act keeps its unlocked waypoints.
+func _on_run_finished(outcome: String) -> void:
+	_end_survivor(outcome)
+	if str(outcome) == "dead":
+		_set_status("Zemřel jsi — zpátky ve městě")
+	else:
+		_set_status("Zpátky ve městě")
+	show_screen("town")
 
 
 ## The zone's WAYPOINT stone. A waypoint in Diablo is a TWO-WAY trip, so this does both halves:
@@ -1096,6 +1117,8 @@ func _on_zone_waypoint_used() -> void:
 		"zone": true,
 	}
 	state.save()
+	_set_status("Waypoint %d — zpátky ve městě" % (zone + 1))
+	show_screen("town")
 
 
 ## The TOWN PORTAL SCROLL used from inside the zone. Jan: "na místě, kde hráč stojí, se při použití

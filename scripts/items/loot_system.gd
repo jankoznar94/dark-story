@@ -23,6 +23,16 @@ const JEWEL_CHANCE := 0.03
 const POTION_CHANCE := 0.10
 const GOLD_VS_ITEM := 0.70
 
+## --- the kill's GRADE -------------------------------------------------------
+## A champion pack pays better and an elite pack better still (Jan: "u elity bude vyrazne
+## lepsi sance na lepsi loot"). Grade 0 = a normal body, 1 = champion, 2 = elite. The grade
+## moves TWO dials, not one: how often a kill drops an ITEM at all (the gold-vs-item gate
+## drops by GRADE_ITEM_SHIFT per step) and how good that item rolls (Magic Find is raised by
+## GRADE_MAGIC_FIND). An elite additionally never leaves an empty hand: a gold-only roll is
+## topped up with an item, the same rule `boss_drop` uses.
+const GRADE_ITEM_SHIFT := 0.25
+const GRADE_MAGIC_FIND := 60
+
 
 var _data: Node
 var _items: ItemGen
@@ -37,8 +47,12 @@ func _init(game_data: Node, item_gen: ItemGen) -> void:
 ##
 ## `state` is passed in for the two things the roll reads from it: the accumulated
 ## floor drops (used for the gem anti-repeat) and the loot-item registry.
+##
+## `grade` is the kill's rank (0 normal, 1 champion, 2 elite) — see the constants above.
+## It defaults to 0 so every older caller keeps the exact old rates.
 func roll(state, loc_id: int, floor_num: int, boss_drop: bool, monster_level: int,
-		magic_find: int, gold_find: int, rng: RandomNumberGenerator) -> Dictionary:
+		magic_find: int, gold_find: int, rng: RandomNumberGenerator, grade: int = 0) -> Dictionary:
+	magic_find += GRADE_MAGIC_FIND * grade
 	var item := _roll_special(state, loc_id, floor_num, boss_drop, monster_level, rng)
 	if not item.is_empty():
 		return {"type": "item", "item": item}
@@ -51,8 +65,14 @@ func roll(state, loc_id: int, floor_num: int, boss_drop: bool, monster_level: in
 		var boss_gold := int(round((5 + floor_num * 3 + rng.randi_range(0, 5)) * (1.0 + gold_find / 100.0)))
 		return {"type": "boss", "item": boss_item, "gold": boss_gold}
 
-	if rng.randf() < GOLD_VS_ITEM:
+	if rng.randf() < GOLD_VS_ITEM - float(grade) * GRADE_ITEM_SHIFT:
 		var gold := int(round((2 + floor_num * 2 + rng.randi_range(0, 3)) * (1.0 + gold_find / 100.0)))
+		# An elite's hand is never empty: the gold is kept AND an item is added, so the best
+		# body in the pack reads as the payoff.
+		if grade >= 2:
+			var bonus := generate_item(state, loc_id, floor_num, false, monster_level, magic_find, rng)
+			if not bonus.is_empty():
+				return {"type": "item", "item": bonus, "gold": gold}
 		return {"type": "gold", "gold": gold}
 
 	var rolled := generate_item(state, loc_id, floor_num, false, monster_level, magic_find, rng)
