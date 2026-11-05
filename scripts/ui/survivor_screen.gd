@@ -960,8 +960,6 @@ func _draw() -> void:
 	_draw_actors()
 	_draw_projectiles()
 	_draw_bolts()
-	_draw_slash()
-	_draw_slash_off()
 	_draw_effects()
 	_draw_numbers()
 	# The fog sits OVER the world — props, bodies, loot and numbers included. That is the point:
@@ -1326,20 +1324,39 @@ func _draw_monster(m: Dictionary) -> void:
 	if float(m["hit_flash"]) > 0.0:
 		ring = Color("#f0d8a0")
 	draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.5, 0.0, TAU, 28, ring, width, true)
-	# THE CUT. One hard bar across the disc, along the direction the blade was travelling, for
-	# the ~0.12 s the hit flash lasts. A bright mark ON the body is what makes a landed blow
-	# read as landing on THAT body; an X on every disc (which this started as) read as a row of
-	# identical UI crosshairs instead of as five cuts.
+	# THE SLASH ACROSS THE BODY. Jan: "Co takhle zkrátka udělat zahnutý tenký oblouk přímo přes
+	# portrét nepřítele, do kterého sekám?" — so the blow is drawn WHERE it landed instead of as
+	# a shape swinging round the hero: one thin curved stroke crossing the whole disc, bowed
+	# against the direction the blow came from. No ring, no crescent, no fan.
 	if float(m["hit_flash"]) > 0.0:
 		var f := clampf(float(m["hit_flash"]) / 0.12, 0.0, 1.0)
 		var c := pos + Vector2(0, bob)
-		var along: Vector2 = run.swing_dir if run != null else Vector2.RIGHT
-		if along.length() < 0.01:
-			along = Vector2.RIGHT
-		along = along.normalized()
-		var half := DISC_DIA * 0.46 * (1.2 - 0.2 * f)
-		draw_line(c - along * half, c + along * half, Color(1, 1, 1, 0.9 * f), 6.0, true)
-		draw_line(c - along * half, c + along * half, Color(1, 0.96, 0.86, 0.6 * f), 2.0, true)
+		var to_mon: Vector2 = c - (run.player_pos - _cam)
+		if to_mon.length() < 0.01:
+			to_mon = Vector2.RIGHT
+		to_mon = to_mon.normalized()
+		var across := Vector2(-to_mon.y, to_mon.x)
+		# A circle far behind the body, so the stroke crossing it is only gently bent.
+		var arc_r := DISC_DIA * 1.55
+		var arc_c: Vector2 = c - across * arc_r
+		var span := 0.58
+		var mid_a: float = across.angle()
+		var pts_o := PackedVector2Array()
+		var pts_i := PackedVector2Array()
+		var step := 12
+		for i in step + 1:
+			var u := float(i) / float(step)
+			var w := pow(sin(PI * clampf(u, 0.0, 1.0)), 0.45)
+			var a := lerpf(mid_a - span, mid_a + span, u)
+			var d := Vector2(cos(a), sin(a))
+			var half := 3.0 * w + 0.6
+			pts_o.append(arc_c + d * (arc_r + half))
+			pts_i.append(arc_c + d * (arc_r - half))
+		var poly := pts_o.duplicate()
+		for i in range(pts_i.size() - 1, -1, -1):
+			poly.append(pts_i[i])
+		draw_colored_polygon(poly, Color(1, 1, 1, 0.92 * f))
+		draw_colored_polygon(poly, Color(1, 0.97, 0.9, 0.35 * f))
 	# ITS SWIPE, over the hero's side: a red crescent sweeping across the gap it just struck
 	# through. Drawn after the body so it reads as coming FROM it.
 	if swinging:
@@ -1509,78 +1526,6 @@ func _draw_projectiles() -> void:
 		# which is the only way a green ball stays readable on green grass.
 		draw_circle(pos, radius + 2.0, rim)
 		draw_circle(pos, radius, col)
-
-
-## The swing itself: an arc sweeping across the reach in the direction the blow was aimed. Drawn
-## OVER the bodies so it reads as the blow landing on them, not as a decal on the grass.
-##
-## TWO ARCS, TWO DIRECTIONS. Jan's rule for a dual-wielder: the MAIN hand sweeps left to right
-## and the OFF hand right to left, each at its own weapon's reach and on its own clock. One arc
-## drawn twice was what made a barbarian with two swords look like a barbarian with one.
-func _draw_slash() -> void:
-	_slash(run.swing_age, run.swing_dir, run.reach_main, false)
-
-
-func _draw_slash_off() -> void:
-	if run.off_swing <= 0.0:
-		return
-	_slash(run.swing_age_off, run.swing_dir_off, run.reach_off, true)
-
-
-func _slash(age: float, dir: Vector2, reach: float, mirrored: bool) -> void:
-	if age < 0.0 or age > SWING_ANIM:
-		return
-	var t := clampf(age / SWING_ANIM, 0.0, 1.0)
-	var pos: Vector2 = run.player_pos - _cam
-	var base: float = dir.angle()
-	# The off hand is a COOLER stroke on purpose: when both hands swing together the eye has to
-	# be able to tell which stroke belongs to which weapon. That is a COLOUR difference and
-	# nothing else — Jan, Nov 2026: "aby sekání obou zbraní bylo na stejné vizuální úrovni."
-	var col := Color("#f0e0c0") if not mirrored else Color("#a9c2e0")
-	col.a = 0.95 * (1.0 - t * 0.55)
-	# ⚠️  NOT A RING SEGMENT. Jan: "Animace útoku asi nemusí nutně běžet přímo po kružnici."
-	# `draw_arc` at the reach radius is a stroke lying ON the reach circle, so the swing read as
-	# the hero's range indicator flashing rather than as a blade. This is a BLADE SHAPE instead:
-	# a filled crescent that starts at the body, is fattest in the middle of the stroke and
-	# comes to a point at both ends — the shape of a weapon travelling through air, not a piece
-	# of a circle.
-	var sweep := 0.62
-	var r_in := reach * 0.30
-	var r_out := reach * 1.08
-	# The blade is a fixed-length crescent that TRAVELS across the swing — not a fan that fills
-	# in from one end. A shape that grows from a zero-width sliver looks like a wipe transition;
-	# a crescent sliding through its arc looks like a weapon being swung.
-	var sign_dir := -1.0 if mirrored else 1.0
-	var a1: float = base + sign_dir * (-sweep + 2.0 * sweep * t)
-	var a0: float = a1 - sign_dir * 0.95
-	var steps := 16
-	var outer := PackedVector2Array()
-	var inner := PackedVector2Array()
-	for i in steps + 1:
-		var u := float(i) / float(steps)
-		var a := lerpf(a0, a1, u)
-		# Thickness profile: nothing at the two tips, full in the middle. `sin` keeps the tips
-		# sharp, the exponent keeps the belly fat instead of the whole thing pinching.
-		var w := pow(sin(PI * clampf(u, 0.0, 1.0)), 0.55)
-		# The outer edge bulges a little past the reach at the middle of the stroke, so the
-		# blade reads as LEAVING the circle instead of tracing it.
-		var o := r_out * (1.0 + 0.06 * w)
-		var inn := o - (r_out - r_in) * w
-		outer.append(pos + Vector2(cos(a), sin(a)) * o)
-		inner.append(pos + Vector2(cos(a), sin(a)) * inn)
-	if outer.size() >= 3:
-		var poly := outer.duplicate()
-		for i in range(inner.size() - 1, -1, -1):
-			poly.append(inner[i])
-		draw_colored_polygon(poly, col)
-		# A white core along the blade's own centreline: one hard bright line is what turns a
-		# pale shape into a moving weapon at 390 px.
-		var core := PackedVector2Array()
-		for i in steps + 1:
-			core.append((outer[i] + inner[i]) * 0.5)
-		draw_polyline(core, Color(1, 1, 1, col.a * 0.95), 3.0, true)
-		# The live edge — the part of the stroke that is cutting RIGHT NOW.
-		draw_line(inner[steps], outer[steps], Color(1, 1, 1, col.a), 4.0, true)
 
 
 func _draw_drops() -> void:
