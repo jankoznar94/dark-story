@@ -185,6 +185,23 @@ const MONSTER_TILT_MAX := 8.0
 const HERO_H_RATIO := 0.19
 const HERO_H_MIN := 72.0
 const HERO_H_MAX := 118.0
+## How far the hero's body travels on his own blow, in px: up toward the monster and forward
+## along the swing. It used to be 14 px straight up, which on a 390 px phone is a twitch you
+## would only notice if you were told about it — Jan asked for the strike to be BIGGER.
+const HERO_LUNGE_PX := 34.0
+const HERO_LUNGE_X := 18.0
+## The recoil when the hero takes a blow: back and down, bigger than the old 10 px so the two
+## motions (his strike, their strike) are the same order of magnitude.
+const HERO_FLINCH_PX := 24.0
+const HERO_FLINCH_X := 12.0
+## The body tips this many radians into the swing and tips back.
+const HERO_SWING_TILT := 0.11
+## The two sweeps' colours. Warm off-white for the hero's blade — flat and hard-edged, never a
+## glow — and the enemy's own red for its strike, so the two directions are told apart at a
+## glance without reading the figures.
+const HERO_SWEEP := Color("#fff2d2")
+const HERO_SWEEP_CRIT := Color("#ffffff")
+const ENEMY_SWEEP := Color("#ff6a52")
 
 const RING_BOX := 260.0
 const PORTRAIT_BOX := 180.0
@@ -432,6 +449,23 @@ var _enemy_hp_max_shown := 1.0
 ## asked for it gone; the hit wash and the ±2px shake are what say the blow landed on it.
 var _hero_lunge := 0.0
 var _hero_flinch := 0.0
+
+## THE BLADE SWEEPS. Two drawn effects (`scripts/ui/slash_fx.gd`) — one for each side of the
+## fight — because a figure that lifts 14 px on its own blow does not read as an attack at
+## this size. They are started by the same log entries that start the lunges, so the drawn
+## strike and the reaction can never describe different moments.
+var _fx_hero: SlashFx
+var _fx_enemy: SlashFx
+## The monster ATTACKS. This is not the hit reaction Jan asked to have removed (the 20 px dip
+## when the hero's blow lands — that read as its picture twitching): this is the monster's own
+## strike, moving TOWARD the hero, and it only ever starts on a blow the hero TOOK.
+var _monster_attack := 0.0
+## How long the enemy's strike takes end to end. Longer than the hero's sweep: the enemy's
+## attack is a lean plus a sweep, and the lean has to be seen to start before the cut lands.
+const ENEMY_ATTACK_SECONDS := 0.34
+## How far the portrait leans toward the hero at full strike, in px, and how much it grows.
+const MONSTER_LUNGE_PX := 22.0
+const MONSTER_LUNGE_SCALE := 0.12
 
 ## Everything the screen consumed out of `battle.log`, with the fight's clock at the moment
 ## each entry arrived. The screen is what DRAINS the log, so anything that wants to know
@@ -926,6 +960,14 @@ func _build_arena() -> void:
 	_hero_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_arena.add_child(_hero_sprite)
 
+	# The two blade sweeps, drawn OVER both figures — a cut that stops at the portrait's edge
+	# is not a cut. The float layer is moved back to the top afterwards so a damage number is
+	# never hidden behind an arc.
+	_fx_enemy = SlashFx.new()
+	_arena.add_child(_fx_enemy)
+	_fx_hero = SlashFx.new()
+	_arena.add_child(_fx_hero)
+
 	# `.pack-roster` — a row of 46px members along the top, only for pack fights.
 	_pack_row = HBoxContainer.new()
 	_pack_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -979,6 +1021,11 @@ func _build_arena() -> void:
 	_arena.add_child(_spell_row)
 
 	_build_reaction_layer()
+
+	# Damage numbers above every arc and every figure: they were built before the sweeps, so
+	# without this the crescent would draw over a fresh number for its 300 ms.
+	if _float_layer != null:
+		_float_layer.move_to_front()
 
 
 ## `.ps-btns-def, .ps-btns-combo` — the reaction row and the class spell bar SHARE the
@@ -1667,6 +1714,18 @@ func start(state, find_item: Callable) -> bool:
 	_hero_flinch = 0.0
 	_hero_flash = 0.0
 	_monster_flash = 0.0
+	# The monster's strike and both sweeps belong to the FIGHT: a lunge left running would
+	# land in the new fight before its first blow, and a crescent would draw over a figure
+	# the player has never hit.
+	_monster_attack = 0.0
+	for fx in [_fx_hero, _fx_enemy]:
+		if fx != null:
+			fx.age = -1.0
+			fx.visible = false
+	if is_instance_valid(_portrait):
+		_portrait.scale = Vector2.ONE
+	if is_instance_valid(_hero_sprite):
+		_hero_sprite.rotation = 0.0
 	# The IMPACT is per-fight like every other reaction here: carried over it would thump the
 	# new fight with the old one's last blow.
 	_impact = 0.0
@@ -1951,6 +2010,7 @@ func _drain_log() -> void:
 		if not on_player and (kind.begins_with("HIT") or kind.begins_with("CRIT")):
 			_hero_lunge = 1.0
 			_monster_flash = 1.0
+			_fire_hero_sweep(kind.begins_with("CRIT"))
 			_felt_blow(kind.begins_with("CRIT"), kind.begins_with("CRIT"))
 		else:
 			# ⚠️  THE HALF REACTION, and it has to be here rather than nested inside the
@@ -1962,10 +2022,14 @@ func _drain_log() -> void:
 			if not on_player:
 				_hero_flinch = 1.0
 			elif is_player_blow(kind, amount, on_player) and amount > 0:
-				# The MONSTER does not lunge. Its own 20px dip-and-return on being hit read as
-				# a twitch of its picture and Jan asked for it gone; the HIT wash is what says
-				# the blow landed on it now. Only the hero lunges (his own attack) and flinches
-				# (being hit).
+
+				# The monster STRIKES BACK, visibly. Its old reaction to BEING hit — a 20 px
+				# dip — was what Jan asked to have removed (the picture twitched); this is
+				# the other direction: its own blow, leaning at the hero, with its own sweep
+				# in the enemy's red. It only ever starts on a blow the hero actually TOOK,
+				# so a miss or a block never makes the monster lunge.
+				_monster_attack = 1.0
+				_fire_enemy_sweep(kind.begins_with("ENEMY CRIT"))
 				#
 				# ⚠️  `amount > 0` is load-bearing. `is_player_blow` is a "did the monster act
 				# against the hero" test, so it is TRUE for `ENEMY SLOW`, `ENEMY FAERIE FIRE`,
@@ -1975,6 +2039,41 @@ func _drain_log() -> void:
 				_hero_flash = 1.0
 				_felt_blow(kind.begins_with("CRIT"), kind.begins_with("ENEMY CRIT"))
 	battle.log.clear()
+
+
+## Where each figure IS, in arena coordinates. The sweeps start and end on these, so a cut
+## always leaves the body that swung it and lands on the body that took it — even while the
+## hero is still walking in.
+func _hero_centre() -> Vector2:
+	if not is_instance_valid(_hero_sprite):
+		return _arena.size * 0.5
+	return _hero_sprite.position + _hero_sprite.size * 0.5
+
+
+func _monster_centre() -> Vector2:
+	if not is_instance_valid(_portrait):
+		return _arena.size * 0.5
+	return _portrait.position + _portrait.size * 0.5
+
+
+## The hero's blade crossing the gap. A crit is brighter, wider and slower — the same
+## distinction the freeze and the buzz make, drawn as well.
+func _fire_hero_sweep(crit: bool) -> void:
+	if _fx_hero == null:
+		return
+	_fx_hero.arc_deg = 92.0 if crit else 76.0
+	_fx_hero.strength = 1.0
+	_fx_hero.fire(_hero_centre(), _monster_centre(),
+		HERO_SWEEP_CRIT if crit else HERO_SWEEP, 0.34 if crit else 0.28)
+
+
+## The monster's own strike, sweeping back down at the hero in its red.
+func _fire_enemy_sweep(crit: bool) -> void:
+	if _fx_enemy == null:
+		return
+	_fx_enemy.arc_deg = 88.0 if crit else 70.0
+	_fx_enemy.strength = 0.7
+	_fx_enemy.fire(_monster_centre(), _hero_centre(), ENEMY_SWEEP, 0.32 if crit else 0.26)
 
 
 ## The frame's reaction to a landed blow: haptics, a screen thump, the HP ring's swell, and
@@ -2137,9 +2236,23 @@ func _animate(delta: float) -> void:
 	_impact = maxf(0.0, _impact - wall_delta / IMPACT_SECONDS)
 	_hp_ring_flash = maxf(0.0, _hp_ring_flash - wall_delta / IMPACT_SECONDS)
 	_apply_impact_shake()
+	# The monster's strike decays on the WALL clock: it starts on the same beat as a hit-stop,
+	# and a lunge whose 0.34 s were stretched 20x by a frozen world would hang there.
+	_monster_attack = maxf(0.0, _monster_attack - wall_delta / ENEMY_ATTACK_SECONDS)
+	# The sweeps follow the FIGURES while they are alive: the hero's origin is re-read every
+	# frame so the crescent leaves from his lunging body rather than from where he stood.
+	if _fx_hero != null and _fx_hero.active():
+		_fx_hero.from = _hero_centre()
+		_fx_hero.to = _monster_centre()
+		_fx_hero.advance(wall_delta)
+	if _fx_enemy != null and _fx_enemy.active():
+		_fx_enemy.from = _monster_centre()
+		_fx_enemy.to = _hero_centre()
+		_fx_enemy.advance(wall_delta)
 	if is_instance_valid(_hero_sprite):
-		var lift := 14.0 * _hero_lunge - 10.0 * _hero_flinch
-		_place_hero(lift)
+		var lift := HERO_LUNGE_PX * _hero_lunge - HERO_FLINCH_PX * _hero_flinch
+		var push := HERO_LUNGE_X * _hero_lunge - HERO_FLINCH_X * _hero_flinch
+		_place_hero(lift, -1.0, push)
 		# The blow lands HERE. A number that appears beside a figure which does not react
 		# reads as a readout; a figure that takes a step back and goes red for a moment
 		# reads as being hit. `modulate` multiplies into the TextureRect's own texture, so
@@ -2157,12 +2270,26 @@ func _animate(delta: float) -> void:
 		var tilt := 0.0
 		if battle != null and not battle.is_boss:
 			tilt = MONSTER_TILT_MAX * (1.0 - clampf(_gap_displayed(), 0.0, 1.0))
-		# The monster SHAKES when the hero lands one: a ±2px wobble that decays with the
-		# wash. Without it the portrait was the one thing on screen that never reacted to
-		# its own damage — the ring and the bar moved and the figure did not.
-		var shake: float = round(2.0 * _monster_flash * sin(_monster_flash * 32.0))
-		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + tilt)
-		_portrait.position.x = round((_arena.size.x - _portrait.size.x) * 0.5 + shake)
+		# Its OWN strike, leaning at the hero: out in the first half of the 0.34 s and settled
+		# by the end. This is the motion that says the monster is attacking — it only ever
+		# runs on a blow the hero TOOK, and it never runs on a blow the monster took.
+		var lunge := Vector2.ZERO
+		if _monster_attack > 0.0:
+			var st := clampf(1.0 - _monster_attack, 0.0, 1.0)
+			var strike := sin(PI * pow(st, 0.75))
+			var at_hero := _hero_centre() - _monster_centre()
+			var dist := maxf(at_hero.length(), 1.0)
+			lunge = (at_hero / dist) * MONSTER_LUNGE_PX * strike
+			_portrait.scale = Vector2.ONE * (1.0 + MONSTER_LUNGE_SCALE * strike)
+			_portrait.pivot_offset = _portrait.size * 0.5
+		elif _portrait.scale != Vector2.ONE:
+			_portrait.scale = Vector2.ONE
+		# The monster SHAKES when the hero lands one: a ±4px wobble that decays with the wash.
+		# Without it the portrait was the one thing on screen that never reacted to its own
+		# damage — the ring and the bar moved and the figure did not.
+		var shake: float = round(4.0 * _monster_flash * sin(_monster_flash * 32.0))
+		_portrait.position.y = round(_arena.size.y * 0.5 - PORTRAIT_BOX * 0.5 + tilt + lunge.y)
+		_portrait.position.x = round((_arena.size.x - _portrait.size.x) * 0.5 + shake + lunge.x)
 		_portrait.modulate = Color.WHITE.lerp(HIT_TINT, _monster_flash * HIT_TINT_STRENGTH)
 	if is_instance_valid(_cast_icon):
 		var pulse := 1.0 + 0.12 * sin(Time.get_ticks_msec() / 90.0)
@@ -2179,7 +2306,7 @@ func _animate(delta: float) -> void:
 ## one. It used to read `_gap_value()` itself, which meant the interpolation could never reach
 ## it — and `test_duel_distance` drives this function directly with an explicit `battle.gap`,
 ## which is the RULES' number and must keep working.
-func _place_hero(lift: float, gap: float = -1.0) -> void:
+func _place_hero(lift: float, gap: float = -1.0, dx: float = 0.0) -> void:
 	var arena_h := maxf(_arena.size.y, 1.0)
 	var distance := _gap_displayed() if gap < 0.0 else gap
 	var closed := 1.0 - clampf(distance, 0.0, 1.0)
@@ -2189,8 +2316,13 @@ func _place_hero(lift: float, gap: float = -1.0) -> void:
 	var fy := HERO_Y_FAR - (HERO_Y_FAR - HERO_Y_NEAR) * closed
 	_hero_sprite.size = Vector2(size, size)
 	_hero_sprite.position = Vector2(
-		round(_arena.size.x * fx - size * 0.5),
+		round(_arena.size.x * fx - size * 0.5 + dx),
 		round(arena_h * fy - size * 0.5 + lift))
+	# The body turns INTO the swing. A sprite that only slides reads as a token being moved;
+	# a few degrees of tip is what turns the slide into a blow. The pivot has to be
+	# re-stated every frame because the figure grows as the hero walks in.
+	_hero_sprite.pivot_offset = _hero_sprite.size * 0.5
+	_hero_sprite.rotation = HERO_SWING_TILT * _hero_lunge
 
 
 ## The whole-frame thump. Two pixels on a sine, decaying with `_impact`, and RESTORED to zero
