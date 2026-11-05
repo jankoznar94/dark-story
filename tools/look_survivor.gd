@@ -57,6 +57,10 @@ var _cast_at := 20
 ## Which ZONE of act 1 to photograph. Each zone has its own ground, palette and props
 ## (`scripts/ui/zone_theme.gd`), so a look pass has to be able to walk to any of them.
 var _zone := 0
+## Stage N ITEM drops beside the hero, so the frame judges what an item on the ground LOOKS
+## like. Without it the only way to photograph the drop marker is to wait for a kill, which
+## makes the capture depend on the fight (and on a save that may already own every item).
+var _drop := 0
 
 var _screen = null
 var _started := false
@@ -116,6 +120,8 @@ func _initialize() -> void:
 				_portal = args[i + 1] != "0"
 			"--zone":
 				_zone = int(args[i + 1])
+			"--drop":
+				_drop = int(args[i + 1])
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -141,6 +147,8 @@ func _process(_delta: float) -> bool:
 		# A look-probe is not a play session: it must not overwrite the local save.
 		_main.state.save_enabled = false
 		_place_hero()
+		if _drop > 0 and _screen.run != null:
+			_stage_drops()
 		if _portal:
 			# ⚠️  A scroll IN THE BAG, not the belt counter: that is the case Jan reported ("ani
 			# když mám scrolly") and the one the old check missed. If this frame shows the button,
@@ -208,6 +216,25 @@ func _process(_delta: float) -> bool:
 						if not _screen.run.monsters.is_empty() else -1.0])
 	_capture()
 	return false
+
+
+## Item drops of three qualities, laid out in an arc in front of the hero. The item DATA is a
+## copy of a real base with only the fields the marker reads (`quality`, `name`), because a
+## marker is drawn from the colour, not from the item: this frame is about the marker.
+func _stage_drops() -> void:
+	var run = _screen.run
+	var quals := ["normal", "magic", "rare", "unique"]
+	var cols := {"normal": "#888888", "magic": "#4a7dff", "rare": "#ffd700", "unique": "#b8860b"}
+	for i in _drop:
+		var q: String = quals[i % quals.size()]
+		var ang := -PI * 0.5 + (float(i) - float(_drop - 1) * 0.5) * 0.42
+		run.drops.append({
+			"pos": run.player_pos + Vector2(cos(ang), sin(ang)) * 96.0,
+			"kind": "item",
+			"item": {"id": "probe_%d" % i, "name": "probe", "quality": q},
+			"age": 0.0,
+			"color": str(cols.get(q, "#888888")),
+		})
 
 
 ## A handful of the barbarian's spells bought, so the column has buttons in it. The SAVE is not

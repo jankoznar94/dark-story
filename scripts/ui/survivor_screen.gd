@@ -2263,23 +2263,33 @@ func _draw_drops() -> void:
 ## a lid on it; one metal part in the item's colour reads as "this one is rare" and still looks
 ## like a chest first.
 func _draw_ground_chest(at: Vector2, quality: Color) -> void:
-	var body := Color("#4a3626")
-	var lid := Color("#5d4530")
+	# Sized in WORLD px and seen at the 0.82 zoom, so 26 x 20 here is ~21 x 16 on the phone —
+	# twice the footprint of the 12 px chip it replaces. The wood is deliberately a shade
+	# LIGHTER than the ground in every zone: a chest the colour of the dirt is a smudge, and
+	# this is the one object the player must spot without looking for it.
+	var body := Color("#6a5238")
+	var lid := Color("#86653f")
 	var iron := Color("#2b2320")
-	var w := 11.0
-	var h := 8.0
+	var w := 13.0
+	var h := 10.0
 	_set_local(at + Vector2(0, 1.0), Vector2(1.0, 0.32))
-	draw_circle(Vector2.ZERO, 11.0, Color(0, 0, 0, 0.38))
+	draw_circle(Vector2.ZERO, 12.5, Color(0, 0, 0, 0.38))
 	_set_local(at)
+	# A DARK RIM first, then the chest inside it. Measured on zone 6: warm wood on warm dirt
+	# left the chest indistinguishable from the ground at native size — the same wood the
+	# ground is made of. Flat art separates by a silhouette, not by glow (Jan's rule), so the
+	# object gets a 2 px near-black edge and the palette is lifted one step above every ground.
+	draw_rect(Rect2(-w - 1.8, -h - 2.0, (w + 1.8) * 2.0, h + 2.0), Color(0, 0, 0, 0.62))
+	draw_colored_polygon(_dome_pts(Vector2(0, -h), w + 1.8, 7.6, 8), Color(0, 0, 0, 0.62))
 	draw_rect(Rect2(-w, -h, w * 2.0, h), body)
-	draw_colored_polygon(_dome_pts(Vector2(0, -h), w, 5.0, 8), lid)
+	draw_colored_polygon(_dome_pts(Vector2(0, -h), w, 6.0, 8), lid)
 	# the lid/body seam and one lit edge — a dark object on dark ground needs an edge
 	draw_line(Vector2(-w, -h), Vector2(w, -h), lid.lightened(0.20), 1.5)
 	draw_line(Vector2(-w, -h), Vector2(-w, 0), body.lightened(0.14), 1.5)
 	for x in [-w * 0.55, w * 0.55]:
-		draw_rect(Rect2(float(x) - 1.2, -h - 2.0, 2.4, h + 2.0), iron)
-	draw_rect(Rect2(-2.2, -h - 1.0, 4.4, 4.0), quality)
-	draw_rect(Rect2(-2.2, -h - 1.0, 4.4, 4.0), Color(0, 0, 0, 0.45), false, 1.0)
+		draw_rect(Rect2(float(x) - 1.4, -h - 2.4, 2.8, h + 2.4), iron)
+	draw_rect(Rect2(-2.6, -h - 1.2, 5.2, 4.6), quality)
+	draw_rect(Rect2(-2.6, -h - 1.2, 5.2, 4.6), Color(0, 0, 0, 0.45), false, 1.0)
 	_set_world()
 
 
