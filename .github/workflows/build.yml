@@ -195,6 +195,24 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "ZONE_LINKS_ALL_PASS=true"
 
+      # Jan: "zóny by se neresetovaly při každém odchodu do města. Při smrti ano, ale při použití
+      # waypointu a town scroll portálu ne." The model (snapshot -> restore) and the ROUTE
+      # (waypoint button -> memory -> re-entry, death -> cleared) are two different failures: a
+      # correct model wired to nothing looks perfect in a screenshot of the corridor.
+      - name: Zone memory test (state survives a waypoint, not a death)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_zone_memory.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ZONE_MEMORY_ALL_PASS=true"
+
+      - name: Zone persistence test (waypoint/portal route through main.gd)
+        run: |-
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_zone_persistence.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "ZONE_PERSISTENCE_ALL_PASS=true"
+
       - name: Gem stats test (all gems x all host families x consumers)
         run: |-
           set -e

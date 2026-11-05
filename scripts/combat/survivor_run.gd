@@ -486,6 +486,102 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	swing_dir_off = Vector2.RIGHT
 
 
+## Snapshots the zone's WALKED state, so leaving it (waypoint to town, the leave button, walking
+## through the exit) does not re-roll it on the way back. Jan: "zóny by se neresetovaly při
+## každém odchodu do města. Při smrti ano, ale při použití waypointu a town scroll portálu ne."
+##
+## The layout is NOT copied: `setup()` rebuilds the identical corridor and pack positions from
+## the act's seed and this zone's index. What is copied is everything the SEED cannot know —
+## the packs that are awake, the ones already emptied, every living monster's position and hp,
+## and the fog the player has lifted.
+##
+## The result goes to `ZoneMemory` (process memory, never the save), which is what makes the
+## "sleep" reset — closing and re-opening the game — refresh every monster for free.
+func snapshot() -> Dictionary:
+	var zone_states: Array = []
+	for z in zones:
+		zone_states.append({
+			"active": bool(z.get("active", false)),
+			"cleared": bool(z.get("cleared", false)),
+			"ids": (z.get("ids", []) as Array).duplicate(),
+		})
+	return {
+		"hp": hp,
+		"mana": mana,
+		"monsters": monsters.duplicate(true),
+		"drops": drops.duplicate(true),
+		"zone_states": zone_states,
+		"next_id": _next_id,
+		"explored": explored_cells.duplicate(),
+		"kills": kills,
+		"wave": wave,
+		"elapsed": elapsed,
+	}
+
+
+## Puts a `snapshot()` back over a freshly `setup()` run of the SAME act and zone. Returns false
+## when there is nothing to restore, which is the normal case for a zone being entered first time.
+##
+## The hero arrives at the zone's ENTRANCE (`start_point`), never at the exact spot he left: a
+## waypoint or a portal is a doorway at the start of the area, and restoring the exit-gate
+## position would drop him at the far end of a corridor he is supposed to walk again.
+##
+## `hp` is clamped to the freshly computed `max_hp`: the hero may have bought or changed gear in
+## town, and a restored 180 hp over a new max of 150 would be a free heal (or worse, a hero who
+## cannot die). Mana is clamped the same way. Spell cooldowns, buffs and orbs in flight are NOT
+## restored — they are a session, and a trip through town is a pause that ends them.
+func restore(snap: Dictionary) -> bool:
+	if snap.is_empty():
+		return false
+	player_pos = start_point
+	hp = clampi(int(snap.get("hp", hp)), 1, maxi(max_hp, 1))
+	mana = clampf(float(snap.get("mana", mana)), 0.0, float(max_mana))
+
+	monsters.clear()
+	var next_free := 1
+	for m in (snap.get("monsters", []) as Array):
+		if not (m is Dictionary):
+			continue
+		var rec: Dictionary = (m as Dictionary).duplicate(true)
+		monsters.append(rec)
+		next_free = maxi(next_free, int(rec.get("id", 0)) + 1)
+	_next_id = maxi(int(snap.get("next_id", 0)), next_free)
+
+	# Loot on the floor comes back too: a waypoint trip must never destroy an item the player
+	# has already seen drop. A COLLECTED drop is gone from this list before the snapshot, so
+	# restoring it cannot pay anything twice.
+	drops.clear()
+	for d in (snap.get("drops", []) as Array):
+		if d is Dictionary:
+			drops.append((d as Dictionary).duplicate(true))
+
+	# Packs: awake, emptied and their ids line up with the monsters just restored, so
+	# `_zone_clear_tick` keeps reporting the truth instead of waking a wiped pack again.
+	var states: Array = snap.get("zone_states", [])
+	for i in range(mini(zones.size(), states.size())):
+		var st: Variant = states[i]
+		if not (st is Dictionary):
+			continue
+		var z: Dictionary = zones[i]
+		z["active"] = bool(st.get("active", false))
+		z["cleared"] = bool(st.get("cleared", false))
+		z["ids"] = (st.get("ids", []) as Array).duplicate()
+
+	# Fog of war. A size mismatch means the grid changed under an old snapshot — keep the fresh
+	# fog rather than index past the end of a PackedByteArray.
+	var fog: Variant = snap.get("explored")
+	if fog is PackedByteArray and (fog as PackedByteArray).size() == explored_cells.size():
+		explored_cells = (fog as PackedByteArray).duplicate()
+		explored_version += 1
+
+	kills = int(snap.get("kills", kills))
+	wave = int(snap.get("wave", wave))
+	elapsed = float(snap.get("elapsed", elapsed))
+	_reveal_around(player_pos)
+	_prev_pos = player_pos
+	return true
+
+
 ## Reads BOTH hands off the save: the weapon's own interval (`swingMs` + DEX + IAS), its own
 ## reach, and its own damage roll. The off hand is the `shield` slot holding something with a
 ## `weaponType` — that is how the PWA's equipment model stores a second weapon, and a real

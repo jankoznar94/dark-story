@@ -187,11 +187,16 @@ func stop() -> void:
 
 
 func setup(state, find_item: Callable, loot_system, act_id: int,
-		seed_value: int = 0, zone: int = 0) -> void:
+		seed_value: int = 0, zone: int = 0, resume: Dictionary = {}) -> void:
 	_state = state
 	_find_item = find_item
 	run = SurvivorRun.new()
 	run.setup(state, find_item, loot_system, act_id, seed_value, zone)
+	# A zone the player already walked is put back from memory BEFORE the screen builds anything
+	# that depends on it: the fog cache is keyed on `explored_version` and the camera is placed
+	# on `player_pos`, so restoring afterwards would show a map that only catches up a frame
+	# later (or not at all, for the fog).
+	run.restore(resume)
 	_accum = 0.0
 	_death_reported = false
 	_zone_exited = false

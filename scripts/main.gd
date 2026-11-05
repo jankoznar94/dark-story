@@ -29,6 +29,7 @@ const WorldScreen := preload("res://scripts/ui/world_screen.gd")
 const ArenaScreen := preload("res://scripts/ui/arena_screen.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
 const ActRun := preload("res://scripts/combat/act_run.gd")
+const ZoneMemory := preload("res://scripts/combat/zone_memory.gd")
 const ChestScreen := preload("res://scripts/ui/chest_screen.gd")
 const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
@@ -282,9 +283,10 @@ func _build_screens() -> void:
 	var survivor := SurvivorScreen.new()
 	survivor.visible = false
 	survivor.leave_requested.connect(func(): _end_survivor(""))
-	# The waypoint is the "go to town without a scroll" path: the act's record already keeps
-	# this zone as the checkpoint, so the run may simply end and the map re-enters HERE.
-	survivor.waypoint_requested.connect(func(): _end_survivor(""))
+	# The waypoint is the "go to town without a scroll" path: the act's record keeps this zone as
+	# the checkpoint, `_end_survivor` freezes the zone's monsters, and a free return position is
+	# stored so the town's portal card brings the player back to it.
+	survivor.waypoint_requested.connect(_on_zone_waypoint_used)
 	survivor.zone_exited.connect(_on_zone_exited)
 	survivor.run_finished.connect(_end_survivor)
 	_add_screen("survivor", survivor)
@@ -1012,7 +1014,12 @@ func _enter_survivor(act_id: int, zone: int = -1) -> void:
 	state.save()
 	show_screen("survivor")
 	var screen = _screens["survivor"]
-	screen.setup(state, _resolve, loot, act_id, ActRun.zone_seed(entry, z), z)
+	# A zone the player already walked is RESTORED, not re-rolled — Diablo's rule for a waypoint
+	# trip or a town portal (Jan: "zóny by se neresetovaly při každém odchodu do města").
+	# `ZoneMemory` is process memory, so closing the game ("sleep") drops every snapshot and the
+	# world comes back fresh, exactly like Diablo's new game.
+	screen.setup(state, _resolve, loot, act_id, ActRun.zone_seed(entry, z), z,
+		ZoneMemory.peek(act_id, z))
 	if _music != null:
 		# The act's last zone is its boss zone — the PWA switched to `boss_bgm` there.
 		_music.switch_mode("boss" if screen.run.is_boss else "battle")
@@ -1021,6 +1028,9 @@ func _enter_survivor(act_id: int, zone: int = -1) -> void:
 ## The hero reached this zone's EXIT: the act continues one zone deeper, through the next
 ## area's own artwork (the map's stop cards are exactly these zones). The LAST zone's exit is
 ## the end of the act — its room is the boss room.
+##
+## The zone being LEFT is frozen first: its monsters stay where they were, so walking back to it
+## later finds the fight he abandoned instead of a freshly rolled one (`ZoneMemory`).
 func _on_zone_exited() -> void:
 	var screen = _screens.get("survivor", null)
 	if screen == null or screen.run == null:
@@ -1028,6 +1038,7 @@ func _on_zone_exited() -> void:
 	var act_id := int(state.data.get("_currentAct", 0))
 	var total := int(data.act_by_id(act_id).get("zones", 10))
 	var from_zone := int(screen.run.zone_index)
+	ZoneMemory.store(act_id, from_zone, screen.run.snapshot())
 	var nxt := ActRun.clear_zone(state, act_id, from_zone, total)
 	state.save()
 	if nxt < 0:
@@ -1039,15 +1050,48 @@ func _on_zone_exited() -> void:
 
 ## A run ends by walking out or by dying. Either way the payout is ALREADY in the save (gold and
 ## items are collected during the run), so this only reports and hands the player back to the road.
+##
+## The ZONE's fate is decided here, and the two branches are the whole point of `ZoneMemory`:
+##
+##   death     the act's world is rolled again (Diablo), so every zone of this act forgets its
+##             monsters — the player walks back into a fresh dungeon, at the same waypoint.
+##   anything  the zone is FROZEN as he left it (a waypoint, a portal or the leave button), and
+##   else      re-entering this same act+zone puts those monsters back.
 func _end_survivor(outcome: String) -> void:
 	var screen = _screens.get("survivor", null)
-	if screen == null:
+	if screen == null or screen.run == null:
 		return
 	var run = screen.run
 	state.save()
+	var act_id := int(state.data.get("_currentAct", 0))
 	if str(outcome) == "dead":
 		state.data["deaths"] = int(state.data.get("deaths", 0)) + 1
+		ZoneMemory.clear_act(act_id)
+	elif str(outcome) == "":
+		ZoneMemory.store(act_id, int(run.zone_index), run.snapshot())
 	_show_run_result(run, str(outcome))
+
+
+## The zone's WAYPOINT stone. A waypoint in Diablo is a TWO-WAY trip, so this does both halves:
+## it freezes the zone as the player left it (through `_end_survivor`) and stores a free RETURN
+## position, which is what the town's portal card offers. Returning spends no scroll: the scroll
+## is what buys the way OUT.
+func _on_zone_waypoint_used() -> void:
+	var screen = _screens.get("survivor", null)
+	var act_id := int(state.data.get("_currentAct", 0))
+	var zone := 0
+	if screen != null and screen.run != null:
+		zone = int(screen.run.zone_index)
+	_end_survivor("")
+	state.data["townPortalReturn"] = {
+		"actId": act_id,
+		"zoneId": zone,
+		"areaFight": 0,
+		# The flag the RETURN reads: a position stored by a ZONE comes back into the zone
+		# (survivor) instead of the old arena duel, which has no zones at all.
+		"zone": true,
+	}
+	state.save()
 
 
 ## The RUN's result page — the arena's Victory/Defeat page, for the fight that replaces it.
@@ -1190,6 +1234,13 @@ func _on_town_portal_return() -> void:
 	if portal == null:
 		return
 	var p: Dictionary = portal
+	# A position stored by a ZONE's waypoint returns into the zone itself (the survivor run),
+	# not into the old arena duel. `_enter_survivor` restores the monsters the player left there.
+	if bool(p.get("zone", false)):
+		state.data["townPortalReturn"] = null
+		state.save()
+		_enter_survivor(int(p.get("actId", 0)), int(p.get("zoneId", 0)))
+		return
 	state.data["locationProgress"][int(p.get("actId", 0))] = int(p.get("zoneId", 0))
 	state.data["areaFightProgress"][int(p.get("actId", 0))] = int(p.get("areaFight", 0))
 	state.data["townPortalReturn"] = null
