@@ -1310,34 +1310,42 @@ func _draw_water() -> void:
 				x += 1
 			draw_rect(Rect2(Vector2(float(start) * t, float(cy) * t) - _cam,
 				Vector2(float(x - start) * t, t)), base)
-	# 2. the bank: a darker line on every side of a water cell that does not touch more water.
-	# Without it the water reads as a flat hole in the ground rather than as water.
+	# 2. the bank and 3. the ripples — BATCHED. ⚠️  This used to be up to six `draw_line` calls
+	# PER WATER CELL (four bank edges + two ripples), and the valley's river put 80-100 water cells
+	# in frame at once: 400-600 draw commands for water alone, which is the frame's whole budget
+	# before a single monster is drawn. `draw_multiline` submits the same pixels as ONE command,
+	# so the two passes below cost three calls in total no matter how much water is on screen.
+	var bank_pts := PackedVector2Array()
+	var rip_pts := PackedVector2Array()
 	for cy in range(y0, y1):
 		for cx in range(x0, x1):
 			if not run.is_water_cell(cx, cy):
 				continue
 			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
 			if not run.is_water_cell(cx, cy - 1):
-				draw_line(p, p + Vector2(t, 0), dark, 3.0)
+				bank_pts.append(p)
+				bank_pts.append(p + Vector2(t, 0))
 			if not run.is_water_cell(cx, cy + 1):
-				draw_line(p + Vector2(0, t), p + Vector2(t, t), dark, 3.0)
+				bank_pts.append(p + Vector2(0, t))
+				bank_pts.append(p + Vector2(t, t))
 			if not run.is_water_cell(cx - 1, cy):
-				draw_line(p, p + Vector2(0, t), dark, 3.0)
+				bank_pts.append(p)
+				bank_pts.append(p + Vector2(0, t))
 			if not run.is_water_cell(cx + 1, cy):
-				draw_line(p + Vector2(t, 0), p + Vector2(t, t), dark, 3.0)
-	# 3. ripples — two short flat strokes per cell, seeded by the cell so they never crawl.
-	for cy in range(y0, y1):
-		for cx in range(x0, x1):
-			if not run.is_water_cell(cx, cy):
-				continue
-			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
-			var s := float((cx * 73856093) ^ (cy * 19349663)) * 0.0001
+				bank_pts.append(p + Vector2(t, 0))
+				bank_pts.append(p + Vector2(t, t))
+			# Two short flat strokes per cell, seeded by the cell so they never crawl.
+			var sd := float((cx * 73856093) ^ (cy * 19349663)) * 0.0001
 			for k in 2:
-				var oy := t * (0.28 + 0.42 * fposmod(sin(s * (float(k) + 2.3)) * 0.5 + 0.5, 1.0))
-				var ox := t * (0.5 + sin(s + float(k) * 2.1) * 0.18)
-				var w := t * (0.14 + 0.09 * fposmod(s * 1.7, 1.0))
-				draw_line(p + Vector2(ox - w, oy), p + Vector2(ox + w, oy), Color(line, 0.55),
-					2.0)
+				var oy := t * (0.28 + 0.42 * fposmod(sin(sd * (float(k) + 2.3)) * 0.5 + 0.5, 1.0))
+				var ox := t * (0.5 + sin(sd + float(k) * 2.1) * 0.18)
+				var w := t * (0.14 + 0.09 * fposmod(sd * 1.7, 1.0))
+				rip_pts.append(p + Vector2(ox - w, oy))
+				rip_pts.append(p + Vector2(ox + w, oy))
+	if not bank_pts.is_empty():
+		draw_multiline(bank_pts, dark, 3.0)
+	if not rip_pts.is_empty():
+		draw_multiline(rip_pts, Color(line, 0.55), 2.0)
 
 
 ## THE VALLEY'S BRIDGE AS A STRUCTURE — stone abutments on both banks and piers standing in the
@@ -1446,14 +1454,49 @@ func _draw_deck() -> void:
 	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
 	var y0 := maxi(c0.y - 1, 0)
 	var y1 := mini(c1.y + 2, SurvivorRun.ROWS)
+
+	# ⚠️  BATCHED. Every deck cell used to cost 2 rects plus up to eight lines of its own, and the
+	# valley's bridge is 4 x 15 cells: measured 525 draw calls with the camera on it against 406 in
+	# the start clearing — the bridge alone was a quarter of the frame. Rects now merge into ROW
+	# RUNS and every line goes into one `draw_multiline`, so the same picture costs a dozen calls.
+	for r in _deck_runs(x0, x1, y0, y1):
+		draw_rect(Rect2(r["pos"] + Vector2(2.0, 3.5), r["size"]), Color(0, 0, 0, 0.28))
+	for r in _deck_runs(x0, x1, y0, y1):
+		draw_rect(Rect2(r["pos"], r["size"]), wood)
+	_deck_lines(x0, x1, y0, y1, t, seam, light, railed, great_bridge, wood)
+
+
+## Deck cells merged into horizontal runs: one rect per run instead of one per cell.
+func _deck_runs(x0: int, x1: int, y0: int, y1: int) -> Array:
+	var t := float(SurvivorRun.TILE)
+	var out: Array = []
 	for cy in range(y0, y1):
-		for cx in range(x0, x1):
-			if not run.is_deck_cell(cx, cy):
+		var x := x0
+		while x < x1:
+			if not run.is_deck_cell(x, cy):
+				x += 1
 				continue
-			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
-			# The deck is RAISED: a soft dark band under it, offset down-right, is what makes it
-			# read as lying ON the water instead of being painted into it.
-			draw_rect(Rect2(p + Vector2(2.0, 3.5), Vector2(t, t)), Color(0, 0, 0, 0.28))
+			var start := x
+			while x < x1 and run.is_deck_cell(x, cy):
+				x += 1
+			out.append({
+				"pos": Vector2(float(start) * t, float(cy) * t) - _cam,
+				"size": Vector2(float(x - start) * t, t),
+			})
+	return out
+
+
+## Seams, the lit plank edge and (on a bridge) the rails — each a SINGLE batched multiline call
+## instead of a line per cell.
+func _deck_lines(x0: int, x1: int, y0: int, y1: int, t: float, seam: Color, light: Color,
+		railed: bool, great_bridge: bool, wood: Color) -> void:
+	var seam_pts := PackedVector2Array()
+	var edge_pts := PackedVector2Array()
+	var rail_pts := PackedVector2Array()
+	var rail_shadow_pts := PackedVector2Array()
+	var rail: Color = light.lightened(0.55 if great_bridge else 0.30)
+	var rail_shadow := wood.darkened(0.55)
+	var rail_w: float = 6.0 if great_bridge else 4.0
 	for cy in range(y0, y1):
 		for cx in range(x0, x1):
 			if not run.is_deck_cell(cx, cy):
@@ -1466,39 +1509,57 @@ func _draw_deck() -> void:
 			var north_south := bool(run.is_deck_cell(cx, cy - 1)) or bool(run.is_deck_cell(cx, cy + 1))
 			if east_west and not north_south:
 				east_west = false
-			draw_rect(Rect2(p, Vector2(t, t)), wood)
 			for k in [1, 2]:
 				var off := t * float(k) / 3.0
 				if east_west:
-					draw_line(p + Vector2(0, off), p + Vector2(t, off), seam, 1.5)
+					seam_pts.append(p + Vector2(0, off))
+					seam_pts.append(p + Vector2(t, off))
 				else:
-					draw_line(p + Vector2(off, 0), p + Vector2(off, t), seam, 1.5)
+					seam_pts.append(p + Vector2(off, 0))
+					seam_pts.append(p + Vector2(off, t))
 			# A lit edge on the north side: the one bright line that gives the plank its thickness.
-			draw_line(p, p + Vector2(t, 0), Color(light, 0.75), 1.5)
-			if railed:
-				# ⚠️  A RAIL IS ONLY A RAIL IF IT READS AGAINST THE PLANKS. A 3 px line in
-				# `wood_light` disappeared into the deck in the first capture ("there is no
-				# railing, it is a deck lying beside water"), so the rail is drawn as an OUTER
-				# light edge with a dark line just inside it — flat, no glow, but unmistakable.
-				var rail: Color = light.lightened(0.55 if great_bridge else 0.30)
-				var rail_shadow := wood.darkened(0.55)
-				var rail_w: float = 6.0 if great_bridge else 4.0
-				if run.is_water_cell(cx, cy - 1):
-					draw_line(p + Vector2(0, 2.0), p + Vector2(t, 2.0), rail, rail_w)
-					draw_line(p + Vector2(0, 6.0), p + Vector2(t, 6.0), rail_shadow, 1.5)
-					draw_line(p + Vector2(10.0, 0), p + Vector2(10.0, 9.0), rail, rail_w - 1.0)
-					draw_line(p + Vector2(40.0, 0), p + Vector2(40.0, 9.0), rail, rail_w - 1.0)
-				if run.is_water_cell(cx, cy + 1):
-					draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), rail, rail_w)
-					draw_line(p + Vector2(0, t - 6.0), p + Vector2(t, t - 6.0), rail_shadow, 1.5)
-					draw_line(p + Vector2(10.0, t - 9.0), p + Vector2(10.0, t), rail, rail_w - 1.0)
-					draw_line(p + Vector2(40.0, t - 9.0), p + Vector2(40.0, t), rail, rail_w - 1.0)
-				if run.is_water_cell(cx - 1, cy):
-					draw_line(p + Vector2(2.0, 0), p + Vector2(2.0, t), rail, rail_w)
-					draw_line(p + Vector2(6.0, 0), p + Vector2(6.0, t), rail_shadow, 1.5)
-				if run.is_water_cell(cx + 1, cy):
-					draw_line(p + Vector2(t - 2.0, 0), p + Vector2(t - 2.0, t), rail, rail_w)
-					draw_line(p + Vector2(t - 6.0, 0), p + Vector2(t - 6.0, t), rail_shadow, 1.5)
+			edge_pts.append(p)
+			edge_pts.append(p + Vector2(t, 0))
+			if not railed:
+				continue
+			# ⚠️  A RAIL IS ONLY A RAIL IF IT READS AGAINST THE PLANKS. A 3 px line in
+			# `wood_light` disappeared into the deck in the first capture ("there is no
+			# railing, it is a deck lying beside water"), so the rail is an OUTER light edge with
+			# a dark line just inside it, plus posts — flat, no glow, but unmistakable.
+			if run.is_water_cell(cx, cy - 1):
+				rail_pts.append(p + Vector2(0, 2.0))
+				rail_pts.append(p + Vector2(t, 2.0))
+				rail_shadow_pts.append(p + Vector2(0, 6.0))
+				rail_shadow_pts.append(p + Vector2(t, 6.0))
+				for px in [10.0, 40.0]:
+					rail_pts.append(p + Vector2(px, 0))
+					rail_pts.append(p + Vector2(px, 9.0))
+			if run.is_water_cell(cx, cy + 1):
+				rail_pts.append(p + Vector2(0, t - 2.0))
+				rail_pts.append(p + Vector2(t, t - 2.0))
+				rail_shadow_pts.append(p + Vector2(0, t - 6.0))
+				rail_shadow_pts.append(p + Vector2(t, t - 6.0))
+				for px in [10.0, 40.0]:
+					rail_pts.append(p + Vector2(px, t - 9.0))
+					rail_pts.append(p + Vector2(px, t))
+			if run.is_water_cell(cx - 1, cy):
+				rail_pts.append(p + Vector2(2.0, 0))
+				rail_pts.append(p + Vector2(2.0, t))
+				rail_shadow_pts.append(p + Vector2(6.0, 0))
+				rail_shadow_pts.append(p + Vector2(6.0, t))
+			if run.is_water_cell(cx + 1, cy):
+				rail_pts.append(p + Vector2(t - 2.0, 0))
+				rail_pts.append(p + Vector2(t - 2.0, t))
+				rail_shadow_pts.append(p + Vector2(t - 6.0, 0))
+				rail_shadow_pts.append(p + Vector2(t - 6.0, t))
+	if not seam_pts.is_empty():
+		draw_multiline(seam_pts, seam, 1.5)
+	if not edge_pts.is_empty():
+		draw_multiline(edge_pts, Color(light, 0.75), 1.5)
+	if not rail_shadow_pts.is_empty():
+		draw_multiline(rail_shadow_pts, rail_shadow, 1.5)
+	if not rail_pts.is_empty():
+		draw_multiline(rail_pts, rail, rail_w)
 
 
 ## FOG OF WAR — and after Jan's second pass it has exactly TWO states, not three:

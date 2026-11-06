@@ -17,6 +17,13 @@ var _frames := 0
 var _battle_frame := -1
 var _limit := 900
 var _mode := "arena"
+## Which ZONE of act 1 to measure. The valley (4) carries the bridge, its masonry and its two
+## guard packs, so the cost of a zone is not one number — measure the zone you are asking about.
+var _zone := -1
+## Stand on the terrain FEATURE (the valley's bridge) instead of in the start clearing. The cost of
+## a zone is not one number: the river puts a hundred water cells in frame, and that is exactly the
+## frame this probe has to be able to photograph.
+var _spot_feature := false
 var _last_usec := 0
 var _deltas: Array = []
 var _long: Array = []
@@ -38,6 +45,10 @@ func _initialize() -> void:
 			_isolate = true
 		if a.begins_with("--mode="):
 			_mode = a.split("=")[1]
+		if a.begins_with("--zone="):
+			_zone = int(a.split("=")[1])
+		if a == "--spot=feature":
+			_spot_feature = true
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
 
@@ -47,12 +58,16 @@ func _process(_delta: float) -> bool:
 	if not _started:
 		if _main._nav_bar == null:
 			return false
-		print("PROBE entering %s at frame %d" % [_mode, _frames])
+		print("PROBE entering %s (zone %d) at frame %d" % [_mode, _zone, _frames])
 		if _mode == "survivor":
-			_main._enter_survivor(0)
+			_main._enter_survivor(0, _zone)
 		else:
 			_main._enter_arena(0)
 		_started = true
+		if _spot_feature and _mode == "survivor":
+			var sc = _main._screens.get("survivor")
+			if sc != null and sc.run != null and sc.run.has_bridge:
+				sc.run.player_pos = sc.run.bridge_mid
 		_last_usec = Time.get_ticks_usec()
 		return false
 
@@ -105,6 +120,14 @@ func _process(_delta: float) -> bool:
 	return false
 
 
+func _count_floor(run) -> int:
+	var out := 0
+	for v in run.floor_cells:
+		if int(v) == 1:
+			out += 1
+	return out
+
+
 func _report(arena) -> void:
 	var n := _deltas.size()
 	var sorted := _deltas.duplicate()
@@ -126,8 +149,13 @@ func _report(arena) -> void:
 		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f enemy_hp_end=%.0f ended=%s" % [
 			_proc_ms / n, _phys_ms / n, arena.battle.enemy_hp, str(arena.battle.ended)])
 	else:
-		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f run_over=%s" % [
-			_proc_ms / n, _phys_ms / n, str(arena.run.finished)])
+		var packs: int = arena.run.zones.size()
+		var bodies := 0
+		for z in arena.run.zones:
+			bodies += (z["members"] as Array).size()
+		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f run_over=%s packs=%d bodies=%d floor=%d" % [
+			_proc_ms / n, _phys_ms / n, str(arena.run.finished), packs, bodies,
+			_count_floor(arena.run)])
 	if _isolate:
 		print("SCRIPT_COST avg=%.3fms max=%.3fms over4ms=%d of %d" % [
 			_script_ms / n, _script_max, _script_over4, n])
