@@ -1193,18 +1193,30 @@ func _chunk_route(a: Vector2i, b: Vector2i) -> Array:
 	for attempt in 8:
 		var path: Array = [a]
 		var seen := {a: true}
-		# PHASE A — wander away from the exit.
+		# PHASE A — wander away from the exit, WITH BACKTRACKING. A greedy walk that stopped at the
+		# first dead end produced 16-chunk routes on some seeds (`test_zone_links`: 7 680 px against
+		# the required 12 160), because the "farthest from the exit" bias drives itself into a corner
+		# in the 5-wide grid. Backtracking is what makes the drawn length reachable.
 		var guard := 0
-		while path.size() < want and guard < 800:
+		while path.size() < want and guard < 3000:
 			guard += 1
 			var cur: Vector2i = path[path.size() - 1]
 			var opts := _chunk_options(cur, seen, axis, way)
 			if opts.is_empty():
-				break
-			# Farthest from the exit first, so the route fills the zone instead of hugging the
-			# straight line between the gates.
+				# Retreat one chunk and keep looking. The popped chunk is released so the search
+				# elsewhere may use it — the path stays simple, which is all the contract needs.
+				seen.erase(cur)
+				path.pop_back()
+				if path.is_empty():
+					break
+				continue
+			# ⚠️  WARNSDORFF, NOT "FARTHEST FROM THE EXIT". Ordering by distance from the exit drives
+			# the wander into the corner furthest from the gate and then it has nowhere to go: measured
+			# on seed 1234 the built route was 17 chunks (7 680 px) while the drawn length was 27+.
+			# Picking the neighbour with the FEWEST onward options first (the same rule that solves a
+			# knight's tour) fills the grid and cannot corner itself.
 			opts.sort_custom(func(p: Vector2i, q: Vector2i) -> bool:
-				return _chunk_span(p, b) > _chunk_span(q, b))
+				return _chunk_options(p, seen, axis, way).size() < _chunk_options(q, seen, axis, way).size())
 			var idx := 0
 			if opts.size() > 1:
 				idx = rng.randi_range(0, mini(2, opts.size() - 1))
