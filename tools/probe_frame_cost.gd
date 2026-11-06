@@ -153,9 +153,9 @@ func _report(arena) -> void:
 		var bodies := 0
 		for z in arena.run.zones:
 			bodies += (z["members"] as Array).size()
-		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f run_over=%s packs=%d bodies=%d floor=%d canvas=%s" % [
+		print("FRAME_COST avg_process=%.2fms avg_drawcalls=%.1f run_over=%s packs=%d bodies=%d floor=%d" % [
 			_proc_ms / n, _phys_ms / n, str(arena.run.finished), packs, bodies,
-			_count_floor(arena.run), str(arena.size)])
+			_count_floor(arena.run)])
 	if _isolate:
 		print("SCRIPT_COST avg=%.3fms max=%.3fms over4ms=%d of %d" % [
 			_script_ms / n, _script_max, _script_over4, n])
