@@ -33,6 +33,11 @@ signal waypoint_requested
 ## steps through it into town. `Main` spends the scroll, freezes the zone and stores the exact
 ## spot, so the town's portal button brings him back onto it (Diablo's own behaviour).
 signal portal_requested
+## The character modal (Inventory / Skills / Stats) asked for FROM the fight. Jan, Nov 2026:
+## "Inventář a staty hrdiny by měly být dostupné i při souboji. Aby hráč mohl hned obléct to co
+## našel nebo si vybrat skilly." The screen only says "the player wants his hero"; MAIN pauses the
+## run and opens the dialog — the run rules have no business knowing a modal exists.
+signal hero_requested
 
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
@@ -148,6 +153,14 @@ var _bind_rect := Rect2()
 ## second row already carries "Oblasti" and the kill counter, and a button drawn over them was
 ## measured hiding the timer once already.
 var _portal_rect := Rect2()
+## The HERO button — the door to the character modal from inside the fight. It shares the second
+## row with the portal (the portal is only there while a scroll is carried), so the bar never has
+## two controls in one rectangle.
+var _hero_rect := Rect2()
+## Set while the character modal is open over the fight. `stop()` already halts the clock, but a
+## VISIBILITY change must not silently resume a paused run — that would let the monsters walk
+## while the player reads his inventory.
+var _paused := false
 
 ## THE ACTION WHEEL (left thumb). It is FIXED in the bottom-left and always drawn; the wedge the
 ## thumb is pushed into is the action. `_wheel_slot` is the wedge under the thumb right now (-1 =
@@ -182,6 +195,17 @@ var _props: Array = []
 var _patches: Array = []
 
 
+## ⚠️  THE STATIC WORLD RENDERS AT `WORLD_RENDER_SCALE`, THE REST AT NATIVE RESOLUTION.
+## Jan, Nov 2026: "Takhle graficky primitivní hra se nesmí sekat ani ve snu." The ground, rock,
+## river, deck and baked props cover every pixel of the screen and never change; the monsters, the
+## fog and the HUD are a small fraction of the pixels and must stay sharp (measured: at 2.8x
+## upscale the small HUD text goes visibly soft, which is why the whole frame is NOT scaled).
+## 0.5 = a quarter of the fill for the world half.
+const WORLD_RENDER_SCALE := 0.5
+var _world_vp: SubViewport = null
+var _world_layer: Node2D = null
+
+
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -189,6 +213,53 @@ func _ready() -> void:
 	_grass = UIKit.load_texture(GRASS_PATH)
 	_ground = _grass
 	_theme = ZoneThemeData.for_zone(-1, -1)
+	_make_world_viewport()
+
+
+## Build the world's own framebuffer: a SubViewport at `WORLD_RENDER_SCALE` holding the static
+## painters (`static_world.gd`). It is sized to the WHOLE ZONE and painted once per zone, so the
+## frame only blits a window of it (see `_draw`).
+func _make_world_viewport() -> void:
+	if _world_vp != null:
+		return
+	_world_vp = SubViewport.new()
+	_world_vp.disable_3d = true
+	_world_vp.transparent_bg = false
+	# ⚠️  NOT `UPDATE_ALWAYS`. The texture is world-fixed (no camera inside it), so it is repainted
+	# only when the zone's meshes change — `_rebake_world()` sets this after `_bake_props()`.
+	# `UPDATE_ALWAYS` re-emitted the whole static pass every frame and measured exactly nothing:
+	# 390x844 went from 7.2 ms to 16.3 ms, 1080x2340 from 20.8 to 20.6 ms.
+	_world_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_world_vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR
+	add_child(_world_vp)
+	var layer := Node2D.new()
+	layer.name = "StaticWorld"
+	layer.set_script(load("res://scripts/ui/static_world.gd"))
+	layer.screen = self
+	layer.render_scale = WORLD_RENDER_SCALE
+	layer.bake_world = true
+	_world_vp.add_child(layer)
+	_world_layer = layer
+	_size_world_viewport()
+
+
+## The zone's static texture size: the WHOLE world at the zoom, downscaled by the render scale.
+## 2460 x 5940 world px -> 1009 x 2436 px, ~9.8 MB — one texture instead of ~70 draw calls a frame.
+func _size_world_viewport() -> void:
+	if _world_vp == null:
+		return
+	var px := SurvivorRun.WORLD * ZOOM * WORLD_RENDER_SCALE
+	_world_vp.size = Vector2i(maxi(int(ceil(px.x)), 1), maxi(int(ceil(px.y)), 1))
+
+
+## Repaint the static texture after the zone changed: ground tint, rock mesh and prop mesh are all
+## read at paint time, so one update is enough. Called from `setup()` after `_bake_props()`.
+func _rebake_world() -> void:
+	if _world_vp == null:
+		return
+	if _world_layer != null:
+		_world_layer.queue_redraw()
+	_world_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 ## Stop the clock. The run object is KEPT (the payout is read from it when the screen hands the
@@ -227,6 +298,7 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	_accum = 0.0
 	_death_reported = false
 	_zone_exited = false
+	_paused = false
 	set_process(true)
 	_toast = ""
 	_toast_ticks = 0.0
@@ -596,6 +668,11 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 	if _bind_rect.has_point(pos):
 		_open_bind()
 		return
+	# The HERO button, on the second row beside the portal. Checked here (below the `TOP_BAR`
+	# guard's y) because it hangs UNDER the bar, over the world.
+	if _hero_rect.has_point(pos):
+		hero_requested.emit()
+		return
 	if pos.y < TOP_BAR:
 		return
 	# The WAYPOINT owns its own tap: it is the only world object a press may use, and it sits
@@ -953,6 +1030,11 @@ func _place_camera() -> void:
 	_cam = run.player_pos - view * 0.5
 	_cam.x = clampf(_cam.x, 0.0, maxf(0.0, SurvivorRun.WORLD.x - view.x))
 	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - view.y))
+	# The static world lives in its own viewport and is offset by the camera inside its `_draw()`,
+	# so it has to re-emit when the camera moves. The geometry it emits is a baked mesh plus a
+	# handful of rects, so this costs a fraction of the old per-cell world pass.
+	if _world_layer != null:
+		_world_layer.queue_redraw()
 
 
 ## Is a town-portal scroll carried? BOTH forms count — the belt counter AND a scroll lying in the
@@ -990,6 +1072,7 @@ func arrive_through_portal(pos: Vector2) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_buttons()
+		_size_world_viewport()
 	elif what == NOTIFICATION_VISIBILITY_CHANGED:
 		# ⚠️  A hidden Control STILL RUNS `_process`. Leaving the run therefore kept simulating it
 		# behind whatever screen was opened next: monsters kept spawning, the hero kept losing
@@ -997,8 +1080,31 @@ func _notification(what: int) -> void:
 		# from a screen he was already using. A screen that draws a live fight must own its clock.
 		if not is_visible_in_tree():
 			stop()
-		else:
+		elif not _paused:
+			# ⚠️  NOT unconditional. The character modal keeps this screen VISIBLE underneath it
+			# (the PWA dims the screen rather than hiding it), so a visibility change while the
+			# player reads his inventory must not restart the clock.
 			set_process(true)
+
+
+## Freeze the fight for the character modal. The run object is kept exactly as it stands — the
+## packs, the loot on the floor and the hero's position all survive — and only the clock stops.
+func pause_run() -> void:
+	_paused = true
+	stop()
+
+
+## Unfreeze it, and re-read everything the SAVE now owns: the player may have equipped a weapon he
+## picked up two steps ago or spent a skill point. The wheel is re-resolved too, because a newly
+## learned skill belongs in the default bar.
+func resume_run() -> void:
+	if run == null:
+		return
+	_paused = false
+	run.refresh_from_save()
+	_wheel_slots = _resolve_wheel()
+	_accum = 0.0
+	set_process(true)
 
 
 ## The two fixed controls left in the fight: the way out and the wheel's editor. Both sit in the
@@ -1007,6 +1113,7 @@ func _layout_buttons() -> void:
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
 	_bind_rect = Rect2(size.x - 180.0, 10.0, 76.0, 34.0)
 	_portal_rect = Rect2(size.x - 96.0, TOP_BAR + 6.0, 84.0, 34.0)
+	_hero_rect = Rect2(size.x - 186.0, TOP_BAR + 6.0, 84.0, 34.0)
 	_layout_whirlwind()
 
 
@@ -1157,15 +1264,16 @@ func _draw() -> void:
 		return
 	# The backdrop is NOT zoomed: it has to cover the whole canvas whatever the camera does.
 	draw_rect(Rect2(Vector2.ZERO, size), Color("#1b1712"))
-	# Everything the arena IS — the ground, the bodies, the reach rings, the numbers — is drawn in
+	# THE STATIC HALF: ground, rock, river, deck and the baked props arrive as ONE texture, rendered
+	# at `WORLD_RENDER_SCALE` and stretched back up. Everything below is dynamic and stays at the
+	# screen's own resolution.
+	if _world_vp != null:
+		draw_texture_rect(_world_vp.get_texture(), Rect2(Vector2.ZERO, size), false)
+	# Everything the arena IS — the bodies, the reach rings, the numbers — is drawn in
 	# SCREEN coordinates that were already shifted by `_cam`, so one scale about the canvas origin
 	# is the whole camera zoom. `_place_camera` divides the view by the same `ZOOM`, which is what
 	# keeps the hero (and the point a tap aims at) in the middle.
 	draw_set_transform_matrix(_world_xform())
-	_draw_ground()
-	_draw_patches()
-	# The props are a BAKED mesh, not a re-run of the painter (see `_bake_props`).
-	_draw_baked(_prop_mesh)
 	_draw_zone_links()
 	_draw_portal()
 	_draw_attack_ring()
@@ -1189,37 +1297,6 @@ func _draw() -> void:
 		_draw_bind_panel()
 
 
-func _draw_ground() -> void:
-	if _ground == null:
-		# The world half is drawn under the zoom, so a canvas-sized rect would cover only
-		# `ZOOM` of the canvas. Cover the VISIBLE world instead.
-		draw_rect(Rect2(_cam, _view_world_size()), Color("#4a4a36"))
-		return
-	# One tiling call for the whole world, shifted by the camera. `tile = true` repeats the
-	# seamless 256px tile; there is no per-tile loop and therefore no tile grid to drift.
-	#
-	# ⚠️  The grass is painted EVERYWHERE and then the rock is painted OVER it, rather than one
-	# draw call per floor cell. `TILE` (60) does not divide the 256 px tile, so drawing the
-	# texture cell by cell would break the seamless repeat and the ground would show its grid —
-	# exactly the "jednotvárná a nic neříkající" surface Jan complained about.
-	#
-	# The TINT is the zone's: three new tiles and five palettes would still cover only five
-	# places, and a tint costs one multiply where a new 512 px tile costs ~150 KB of first load.
-	draw_texture_rect(_ground, Rect2(-_cam, SurvivorRun.WORLD), true,
-		_theme.get("tint", Color.WHITE))
-	_draw_baked(_rock_mesh)
-	# Water and the wooden deck go OVER the rock: the swamp's water is cut through the rock at the
-	# area's edge, and a walkway is a thing you see lying on top of the bog.
-	_draw_water()
-	# The valley's bridge is a STRUCTURE: masonry under the planks. Drawn after the water (its
-	# piers stand in it) and BEFORE the deck (the planks cover the middle of a pier, and the few
-	# pixels that stick out past them are the whole read).
-	_draw_bridge_structure()
-	_draw_deck()
-
-
-## Everything that is NOT the corridor's floor, painted as rock. Cells are merged into runs per
-## row, so a wall is one rectangle instead of a row of 60 px squares with seams between them.
 func _draw_rock() -> void:
 	if run == null:
 		return
@@ -1246,7 +1323,10 @@ func _draw_rock() -> void:
 			var rect := Rect2(Vector2(float(start) * SurvivorRun.TILE,
 				float(cy) * SurvivorRun.TILE) - _cam,
 				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE))
-			draw_rect(rect, dark)
+			# Routed through `_P_*`: `_draw_rock()` is the one painter the BAKE still calls (the rock
+			# mesh is built from it in `_bake_props`), and raw `draw_*` outside `_draw()` is an
+			# engine error (measured: 3447 of them per test run before this).
+			_P_rect(rect, dark)
 	# Pass 2: an ORGANIC edge. Filling whole cells makes the corridor a staircase of 60 px
 	# squares — the first capture read as "vyříznuté z papíru" — so every rock cell that touches
 	# floor is redrawn as a jittered polygon that may overhang the path by a few pixels. The
@@ -1259,12 +1339,12 @@ func _draw_rock() -> void:
 			var poly := _rock_polygon(cx, cy)
 			for i in poly.size():
 				poly[i] -= _cam
-			draw_colored_polygon(poly, rock_line)
+			_P_poly(poly, rock_line)
 			# The wall is the DARKEST thing on screen and it is most of the frame, so a
 			# one-shade outline leaves it reading as a HOLE rather than as rock. One lit
 			# ridge per hexagon is what makes it a surface (measured on zone 4, where the
 			# pale dirt runs straight into it and the top of the frame went black).
-			draw_polyline(poly, rock_line.lightened(0.26), 2.0)
+			_P_polyline(poly, rock_line.lightened(0.26), 2.0)
 
 
 ## A rock cell's silhouette: a hexagon with every corner pushed out by a stable pseudo-random
@@ -1299,305 +1379,6 @@ func _touches_floor(cx: int, cy: int) -> bool:
 # no gradients, no bloom, no textures to download. The water is a colour plus a handful of ripple
 # strokes and a darker line where it meets a bank; the deck is planks with seams and a lit edge.
 
-## The bog / the river. Painted in three passes: the sheet of water (merged into runs per row, so
-## a 400 px river is four rects and not sixty), the ripples, and the bank line.
-func _draw_water() -> void:
-	if run == null:
-		return
-	var view := _view_world_size()
-	var c0: Vector2i = run.cell_of(_cam)
-	var c1: Vector2i = run.cell_of(_cam + view)
-	var t := float(SurvivorRun.TILE)
-	var base: Color = _col("water", "#2b3a37")
-	var line: Color = _col("water_line", "#435a54")
-	var dark := base.darkened(0.35)
-	var x0 := maxi(c0.x - 1, 0)
-	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
-	var y0 := maxi(c0.y - 1, 0)
-	var y1 := mini(c1.y + 2, SurvivorRun.ROWS)
-	# 1. one rect per run of water in a row.
-	for cy in range(y0, y1):
-		var x := x0
-		while x < x1:
-			if not run.is_water_cell(x, cy):
-				x += 1
-				continue
-			var start := x
-			while x < x1 and run.is_water_cell(x, cy):
-				x += 1
-			draw_rect(Rect2(Vector2(float(start) * t, float(cy) * t) - _cam,
-				Vector2(float(x - start) * t, t)), base)
-	# 2. the bank and 3. the ripples — BATCHED. ⚠️  This used to be up to six `draw_line` calls
-	# PER WATER CELL (four bank edges + two ripples), and the valley's river put 80-100 water cells
-	# in frame at once: 400-600 draw commands for water alone, which is the frame's whole budget
-	# before a single monster is drawn. `draw_multiline` submits the same pixels as ONE command,
-	# so the two passes below cost three calls in total no matter how much water is on screen.
-	var bank_pts := PackedVector2Array()
-	var rip_pts := PackedVector2Array()
-	for cy in range(y0, y1):
-		for cx in range(x0, x1):
-			if not run.is_water_cell(cx, cy):
-				continue
-			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
-			if not run.is_water_cell(cx, cy - 1):
-				bank_pts.append(p)
-				bank_pts.append(p + Vector2(t, 0))
-			if not run.is_water_cell(cx, cy + 1):
-				bank_pts.append(p + Vector2(0, t))
-				bank_pts.append(p + Vector2(t, t))
-			if not run.is_water_cell(cx - 1, cy):
-				bank_pts.append(p)
-				bank_pts.append(p + Vector2(0, t))
-			if not run.is_water_cell(cx + 1, cy):
-				bank_pts.append(p + Vector2(t, 0))
-				bank_pts.append(p + Vector2(t, t))
-			# Two short flat strokes per cell, seeded by the cell so they never crawl.
-			var sd := float((cx * 73856093) ^ (cy * 19349663)) * 0.0001
-			for k in 2:
-				var oy := t * (0.28 + 0.42 * fposmod(sin(sd * (float(k) + 2.3)) * 0.5 + 0.5, 1.0))
-				var ox := t * (0.5 + sin(sd + float(k) * 2.1) * 0.18)
-				var w := t * (0.14 + 0.09 * fposmod(sd * 1.7, 1.0))
-				rip_pts.append(p + Vector2(ox - w, oy))
-				rip_pts.append(p + Vector2(ox + w, oy))
-	if not bank_pts.is_empty():
-		draw_multiline(bank_pts, dark, 3.0)
-	if not rip_pts.is_empty():
-		draw_multiline(rip_pts, Color(line, 0.55), 2.0)
-
-
-## THE VALLEY'S BRIDGE AS A STRUCTURE — stone abutments on both banks and piers standing in the
-## water. Without it the deck is a strip of planks lying on a river, which is how the first capture
-## read ("skôr mólo než most"). Flat colours only: a stone face, one lit top edge, one dark base
-## line — the same three tones every other prop in this game uses.
-func _draw_bridge_structure() -> void:
-	if run == null or not run.has_bridge:
-		return
-	var dir: Vector2i = run.bridge_dir
-	if dir == Vector2i.ZERO:
-		return
-	var t := float(SurvivorRun.TILE)
-	var perp := Vector2i(-dir.y, dir.x)
-	var stone: Color = _col("stone", "#6a614f")
-	var stone_edge: Color = stone.darkened(0.52)
-	var stone_top: Color = _col("stone_light", "#857a63")
-	var near_c: Vector2i = run.cell_of(run.bridge_near)
-	var far_c: Vector2i = run.cell_of(run.bridge_far)
-	var steps := maxi(absi(far_c.x - near_c.x), absi(far_c.y - near_c.y))
-	if steps < 3:
-		return
-	var view := _view_world_size()
-	var lo := _cam - Vector2(t, t)
-	var hi := _cam + view + Vector2(t, t)
-	var c0: Vector2i = run.cell_of(_cam)
-	var c1: Vector2i = run.cell_of(_cam + view)
-
-	# 1. ABUTMENTS — a stone landing one cell deep on each bank, wider than the deck, so the
-	# planks END ON MASONRY instead of stopping in the grass.
-	for end in [near_c, far_c]:
-		for b in range(-3, 3):
-			var cell := Vector2i(end.x + perp.x * b, end.y + perp.y * b)
-			var p := Vector2(float(cell.x) * t, float(cell.y) * t) - _cam
-			if p.x < lo.x or p.y < lo.y or p.x > hi.x or p.y > hi.y:
-				continue
-			draw_rect(Rect2(p, Vector2(t, t)), stone)
-			draw_line(p, p + Vector2(t, 0), stone_top, 2.0)
-			draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), stone_edge, 2.0)
-
-	# 2. A STONE KERB under the parapet, along every edge of the deck that faces water — and a
-	# BUTTRESS where it is thicker, every third cell. This is the whole "it is a built bridge"
-	# read: wood over masonry over water, in flat tones. A kerb that is drawn per deck cell is
-	# also continuous by construction, so no run of the span is left looking like bare planks.
-	for cy in range(maxi(c0.y - 1, 0), mini(c1.y + 2, SurvivorRun.ROWS)):
-		for cx in range(maxi(c0.x - 1, 0), mini(c1.x + 2, SurvivorRun.COLS)):
-			if not run.is_deck_cell(cx, cy):
-				continue
-			# How far along the span this cell is, to place the buttresses.
-			var along := absi(cx - near_c.x) + absi(cy - near_c.y)
-			var thick := 22.0 if along % 3 == 0 else 9.0
-			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				var n := Vector2i(cx + d.x, cy + d.y)
-				if not run.is_water_cell(n.x, n.y):
-					continue
-				var p := Vector2(float(cx) * t, float(cy) * t) - _cam
-				var w := Vector2(t, thick) if d.y != 0 else Vector2(thick, t)
-				var pos := p
-				if d.x > 0:
-					pos = p + Vector2(t, 0)
-				elif d.y > 0:
-					pos = p + Vector2(0, t)
-				elif d.x < 0:
-					pos = p - Vector2(thick, 0)
-				else:
-					pos = p - Vector2(0, thick)
-				draw_rect(Rect2(pos, w), stone)
-				# The lit edge is always on the DECK side: that is the edge you look down at
-				# from inside the bridge, and it is what gives the masonry a thickness.
-				if d.x > 0:
-					draw_line(pos + Vector2(thick - 2.0, 0), pos + Vector2(thick - 2.0, t),
-						stone_top, 2.0)
-				elif d.x < 0:
-					draw_line(pos + Vector2(2.0, 0), pos + Vector2(2.0, t), stone_top, 2.0)
-				elif d.y > 0:
-					draw_line(pos + Vector2(0, thick - 2.0), pos + Vector2(t, thick - 2.0),
-						stone_top, 2.0)
-				else:
-					draw_line(pos + Vector2(0, 2.0), pos + Vector2(t, 2.0), stone_top, 2.0)
-
-	# 3. The far edge of the masonry, so the kerb does not dissolve into the water: one dark line
-	# on the outside of every stone band would double the draw calls for the same read, so the
-	# shadow comes from the plank deck's own drop shadow drawn just after this.
-
-
-## The plank walkway (swamp) and the bridge (river, chasm). `run.feature` decides whether the
-## edges facing water get a railing: a walkway through a bog is planks laid on mud, a bridge over
-## a river has a rail.
-func _draw_deck() -> void:
-	if run == null:
-		return
-	var view := _view_world_size()
-	var c0: Vector2i = run.cell_of(_cam)
-	var c1: Vector2i = run.cell_of(_cam + view)
-	var t := float(SurvivorRun.TILE)
-	var wood: Color = _col("wood", "#4a3a28")
-	var light: Color = _col("wood_light", "#5f4b34")
-	var seam := wood.darkened(0.42)
-	var railed: bool = run.feature == "river" or run.feature == "chasm"
-	# The valley's bridge is a LANDMARK, not a crossing: it is 11-15 cells long, and the same 4 px
-	# rail that reads fine on a 3-cell swamp walkway disappears into a deck that size. A great
-	# bridge gets a taller, lighter parapet with a post on every cell edge — flat, no glow, just
-	# more contrast (Jan: "obří most", and the first capture read as a pier with loose stones).
-	var great_bridge: bool = railed and run.bridge_span >= 10
-	var x0 := maxi(c0.x - 1, 0)
-	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
-	var y0 := maxi(c0.y - 1, 0)
-	var y1 := mini(c1.y + 2, SurvivorRun.ROWS)
-
-	# ⚠️  BATCHED. Every deck cell used to cost 2 rects plus up to eight lines of its own, and the
-	# valley's bridge is 4 x 15 cells: measured 525 draw calls with the camera on it against 406 in
-	# the start clearing — the bridge alone was a quarter of the frame. Rects now merge into ROW
-	# RUNS and every line goes into one `draw_multiline`, so the same picture costs a dozen calls.
-	for r in _deck_runs(x0, x1, y0, y1):
-		draw_rect(Rect2(r["pos"] + Vector2(2.0, 3.5), r["size"]), Color(0, 0, 0, 0.28))
-	for r in _deck_runs(x0, x1, y0, y1):
-		draw_rect(Rect2(r["pos"], r["size"]), wood)
-	_deck_lines(x0, x1, y0, y1, t, seam, light, railed, great_bridge, wood)
-
-
-## Deck cells merged into horizontal runs: one rect per run instead of one per cell.
-func _deck_runs(x0: int, x1: int, y0: int, y1: int) -> Array:
-	var t := float(SurvivorRun.TILE)
-	var out: Array = []
-	for cy in range(y0, y1):
-		var x := x0
-		while x < x1:
-			if not run.is_deck_cell(x, cy):
-				x += 1
-				continue
-			var start := x
-			while x < x1 and run.is_deck_cell(x, cy):
-				x += 1
-			out.append({
-				"pos": Vector2(float(start) * t, float(cy) * t) - _cam,
-				"size": Vector2(float(x - start) * t, t),
-			})
-	return out
-
-
-## Seams, the lit plank edge and (on a bridge) the rails — each a SINGLE batched multiline call
-## instead of a line per cell.
-func _deck_lines(x0: int, x1: int, y0: int, y1: int, t: float, seam: Color, light: Color,
-		railed: bool, great_bridge: bool, wood: Color) -> void:
-	var seam_pts := PackedVector2Array()
-	var edge_pts := PackedVector2Array()
-	var rail_pts := PackedVector2Array()
-	var rail_shadow_pts := PackedVector2Array()
-	var rail: Color = light.lightened(0.55 if great_bridge else 0.30)
-	var rail_shadow := wood.darkened(0.55)
-	var rail_w: float = 6.0 if great_bridge else 4.0
-	for cy in range(y0, y1):
-		for cx in range(x0, x1):
-			if not run.is_deck_cell(cx, cy):
-				continue
-			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
-			# Planks run ACROSS the walk: east-west walk -> vertical seams, and the other way
-			# round. Deciding per CELL (from its own deck neighbours) keeps the seams continuous
-			# along a run, which is what makes it read as planks instead of a tile.
-			var east_west := bool(run.is_deck_cell(cx - 1, cy)) or bool(run.is_deck_cell(cx + 1, cy))
-			var north_south := bool(run.is_deck_cell(cx, cy - 1)) or bool(run.is_deck_cell(cx, cy + 1))
-			if east_west and not north_south:
-				east_west = false
-			for k in [1, 2]:
-				var off := t * float(k) / 3.0
-				if east_west:
-					seam_pts.append(p + Vector2(0, off))
-					seam_pts.append(p + Vector2(t, off))
-				else:
-					seam_pts.append(p + Vector2(off, 0))
-					seam_pts.append(p + Vector2(off, t))
-			# A lit edge on the north side: the one bright line that gives the plank its thickness.
-			edge_pts.append(p)
-			edge_pts.append(p + Vector2(t, 0))
-			if not railed:
-				continue
-			# ⚠️  A RAIL IS ONLY A RAIL IF IT READS AGAINST THE PLANKS. A 3 px line in
-			# `wood_light` disappeared into the deck in the first capture ("there is no
-			# railing, it is a deck lying beside water"), so the rail is an OUTER light edge with
-			# a dark line just inside it, plus posts — flat, no glow, but unmistakable.
-			if run.is_water_cell(cx, cy - 1):
-				rail_pts.append(p + Vector2(0, 2.0))
-				rail_pts.append(p + Vector2(t, 2.0))
-				rail_shadow_pts.append(p + Vector2(0, 6.0))
-				rail_shadow_pts.append(p + Vector2(t, 6.0))
-				for px in [10.0, 40.0]:
-					rail_pts.append(p + Vector2(px, 0))
-					rail_pts.append(p + Vector2(px, 9.0))
-			if run.is_water_cell(cx, cy + 1):
-				rail_pts.append(p + Vector2(0, t - 2.0))
-				rail_pts.append(p + Vector2(t, t - 2.0))
-				rail_shadow_pts.append(p + Vector2(0, t - 6.0))
-				rail_shadow_pts.append(p + Vector2(t, t - 6.0))
-				for px in [10.0, 40.0]:
-					rail_pts.append(p + Vector2(px, t - 9.0))
-					rail_pts.append(p + Vector2(px, t))
-			if run.is_water_cell(cx - 1, cy):
-				rail_pts.append(p + Vector2(2.0, 0))
-				rail_pts.append(p + Vector2(2.0, t))
-				rail_shadow_pts.append(p + Vector2(6.0, 0))
-				rail_shadow_pts.append(p + Vector2(6.0, t))
-			if run.is_water_cell(cx + 1, cy):
-				rail_pts.append(p + Vector2(t - 2.0, 0))
-				rail_pts.append(p + Vector2(t - 2.0, t))
-				rail_shadow_pts.append(p + Vector2(t - 6.0, 0))
-				rail_shadow_pts.append(p + Vector2(t - 6.0, t))
-	if not seam_pts.is_empty():
-		draw_multiline(seam_pts, seam, 1.5)
-	if not edge_pts.is_empty():
-		draw_multiline(edge_pts, Color(light, 0.75), 1.5)
-	if not rail_shadow_pts.is_empty():
-		draw_multiline(rail_shadow_pts, rail_shadow, 1.5)
-	if not rail_pts.is_empty():
-		draw_multiline(rail_pts, rail, rail_w)
-
-
-## FOG OF WAR — and after Jan's second pass it has exactly TWO states, not three:
-##   * a cell the hero has never been near -> the world under a dark veil (0.45), readable as
-##     "there is something there, you have not been there yet", NOT black;
-##   * a cell he has been near -> fully lit and it STAYS fully lit. "Již objevená oblast by mohla
-##     zůstat normálně barevná. Jen ta neobjevená bude tmavá, ale ne úplně černá."
-##
-## The first version had Warcraft 2's third state (explored-but-not-visible = veiled again) and it
-## read as too aggressive: the map went dark behind the hero every time he walked on.
-##
-## The veil is a CELL mask (that is the shape the fog is remembered and revealed in) but it is
-## PAINTED as a smooth field, not as a cut: every cell is one quad whose four corner alphas are
-## the average of the four cells meeting at that corner. Godot interpolates the quad's colour
-## across its surface, so the dark ramps up over two cells and there is no grid line anywhere.
-## Jan: "udělej ji měkčí" — and a first attempt that merely drew a gradient band along the cell
-## border still showed the staircase, because the MASK was blocky even when its edge was soft.
-##
-## Fully unexplored interior: all four corners 1/1 -> the full 0.45 veil.
-## The border between explored and unexplored: corners average 2 of 4 -> half the veil, which is
-## what turns the cut into a two-cell fade.
 func _draw_fog() -> void:
 	if run == null:
 		return
@@ -1832,20 +1613,9 @@ func _bake_props() -> void:
 	_bake_cols = PackedColorArray()
 	_baking = true
 	_bake_xf = Transform2D()
-	_draw_baked(_rock_mesh)
+	_draw_rock()
 	_baking = false
 	_rock_mesh = _mesh_from_bake()
-
-
-## The baked layer: ONE draw call, with the camera applied as a matrix so the vertices are never
-## touched again. The points are stored in world units, so the matrix is exactly what `_world_xform`
-## does per point — scale by ZOOM, offset by the camera.
-func _draw_baked(mesh: ArrayMesh) -> void:
-	if mesh == null:
-		return
-	draw_set_transform_matrix(Transform2D(Vector2(ZOOM, 0.0), Vector2(0.0, ZOOM), -_cam * ZOOM))
-	draw_mesh(mesh, null)
-	_set_world()
 
 
 func _draw_props() -> void:
@@ -2891,7 +2661,15 @@ func _draw_hud() -> void:
 	draw_rect(_exit_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
 	draw_rect(_exit_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
 	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
-		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
+		"Hrdina", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
+
+	# THE HERO BUTTON — Inventory / Skills / Stats are reachable DURING a fight (Jan, Nov 2026):
+	# loot picked up mid-run has to be wearable without walking out of the zone first. It sits on
+	# the second row, left of the portal, because the top row has no free rectangle left.
+	draw_rect(_hero_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
+	draw_rect(_hero_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.45), false, 1.5)
+	draw_string(font_r, Vector2(_hero_rect.position.x + _hero_rect.size.x * 0.5,
+		_hero_rect.position.y + 23), "Inventar", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_DIM)
 
 	# THE TOWN PORTAL BUTTON — only while a scroll is carried, so the bar does not grow a dead
 	# control. Jan: "po návratu z města pomocí portálu (ve městě na to musí být tlačítko) to hráče

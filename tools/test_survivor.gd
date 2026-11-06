@@ -82,6 +82,10 @@ func _initialize() -> void:
 	_test_screen_gesture_and_disc()
 	_test_world_draw_transform()
 	_test_edge_cull_uses_world_units()
+	_test_monster_roster_by_zone()
+	_test_strength_ladder()
+	_test_refresh_from_save()
+	_test_screen_hero_button()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -1828,3 +1832,208 @@ func _test_edge_cull_uses_world_units() -> void:
 	_check(not code.contains("pos.x > size.x + 180.0"),
 		"the patch cull must not compare against the CANVAS size — the world is drawn at ZOOM")
 
+
+# ============================================================================ new roster + ladder + refresh
+
+
+## Jan, Nov 2026: "Teď se všude spawnují jen tři druhy monster z prvního aktu. V bestiáři jich máme
+## pro 1. Akt 8. Postupně by se měli objevovat v jednotlivých lokacích."
+##
+## The pool follows the ZONE, not a fixed tier: zone 1 holds one kind, zone 8 all eight. Sampled
+## through `_pick_row` itself, so a change to the pooling rule that only looks right fails here.
+func _test_monster_roster_by_zone() -> void:
+	_log("  section: monster_roster_by_zone")
+	for act in _data.acts():
+		var act_id := int(act.get("id", 0))
+		var want_theme := int(act.get("theme", 0))
+		var theme_run := _run_at(act_id, 0)
+		_check(theme_run.act_theme() == want_theme,
+			"act %d must spawn theme %d, got %d — the act INDEX is not the theme index"
+				% [act_id + 1, want_theme, theme_run.act_theme()])
+		_check(theme_run.monster_rows().size() == 8,
+			"act %d must have the theme's 8 kinds, got %d" % [act_id + 1,
+				theme_run.monster_rows().size()])
+		for zone in [0, 3, 7, 9]:
+			var want := mini(zone + 1, 8)
+			var seen := _kinds_at(act_id, zone)
+			_check(seen.size() == want,
+				"act %d zone %d must spawn %d kinds, saw %d: %s"
+					% [act_id + 1, zone + 1, want, seen.size(), ", ".join(seen)])
+	# The first kind of the first zone is the act's own weakest one, and the LAST kind only shows
+	# up in the deep half of the act's last zone — the old rule had all of act 1's eight kinds
+	# available from the first cell.
+	var first := _kinds_at(0, 0)
+	_check(first.size() == 1 and first[0] == "Forest Imp",
+		"act 1 zone 1 must hold only the Forest Imp, got %s" % ", ".join(first))
+	var deep := _kinds_at(0, 9)
+	_check(deep.has("Ent") and deep.has("Satyr"),
+		"the deep zones must hold the act's heavy kinds, got %s" % ", ".join(deep))
+
+
+## Which kinds a zone really rolls, over 300 packs. A pack standing in the far half of the zone
+## may look one zone ahead (`_depth_for`), which is the peek the design wants — so the sample is
+## taken at progress 0, the zone's own pool.
+func _kinds_at(act_id: int, zone: int) -> Array:
+	var run := _run_at(act_id, zone)
+	var seen: Array = []
+	for _i in 300:
+		var row: Dictionary = run._pick_row(run._depth_for(0))
+		var nm := str(row.get("name", ""))
+		if not seen.has(nm):
+			seen.append(nm)
+	return seen
+
+
+## The strength ladder is ONE curve over act * 10 + zone, and that is the whole point of it: the
+## old model scaled by the act index alone, so walking from zone 1 to zone 10 of the same act
+## changed nothing. Asserted on the SCALES, so a theme's mean HP cannot smuggle in a second curve.
+func _test_strength_ladder() -> void:
+	_log("  section: strength_ladder")
+	var prev := -1.0
+	for act in _data.acts():
+		var act_id := int(act.get("id", 0))
+		for zone in 10:
+			var run := _run_at(act_id, zone)
+			# A body of a theme's MEAN kind has exactly BASE * step^depth, whatever the theme is.
+			var sc: Dictionary = run._strength_scales({"hp": 100.0, "dmg": 100.0})
+			var absolute: float = float(sc["hp"]) * 100.0
+			var want: float = SurvivorRun.STRENGTH_BASE_HP \
+				* pow(1.0 + SurvivorRun.STRENGTH_HP_STEP, float(act_id * 10 + zone))
+			_check(absf(absolute - want) < 0.01,
+				"the ladder must read act*10+zone only: act %d zone %d gave %.2f, want %.2f"
+					% [act_id + 1, zone + 1, absolute, want])
+			_check(absolute > prev, "the ladder must climb at every step: %.2f <= %.2f"
+				% [absolute, prev])
+			prev = absolute
+	# And the bodies themselves: the same act's last zone really is tougher than its first.
+	for act in _data.acts():
+		var act_id := int(act.get("id", 0))
+		var shallow := _mean_hp(act_id, 0)
+		var deep := _mean_hp(act_id, 9)
+		_check(deep > shallow * 1.3,
+			"act %d: the last zone must be visibly tougher than the first (%.0f vs %.0f)"
+				% [act_id + 1, deep, shallow])
+	# The first zone is the one Jan called too hard. It has to be BELOW the old flat number, which
+	# for the imp was 60 HP of the table's own row (the run multiplied by 1 + act*0.35).
+	var imp := _run_at(0, 0)._make_monster({"hp": 60, "dmgMin": 5, "dmgMax": 9}, Vector2.ZERO, 1, {})
+	_check(int(imp["hp"]) < 60,
+		"the first zone must open EASIER than the old 60 HP imp, got %d" % int(imp["hp"]))
+
+
+func _mean_hp(act_id: int, zone: int) -> float:
+	var run := _run_at(act_id, zone)
+	var total := 0.0
+	for _i in 300:
+		var row: Dictionary = run._pick_row(run._depth_for(0))
+		if row.is_empty():
+			continue
+		total += float(run._make_monster(row, Vector2.ZERO, 1, {})["hp"])
+	return total / 300.0
+
+
+## The character modal is reachable from the fight (Jan, Nov 2026). Equipping mid-run must reach
+## the RUN: a weapon swapped in the pause really is the weapon the next swing uses, and a bigger
+## armour really is a bigger pool — without a free full heal and without rebuilding the zone.
+func _test_refresh_from_save() -> void:
+	_log("  section: refresh_from_save")
+	var run := _fresh(777)
+	run.hp = 7
+	var before_max: int = run.max_hp
+	var before_dmg: int = run.dmg_max
+	var equip: Dictionary = _state.equip()
+	var old_weapon: Variant = equip.get("weapon")
+	equip["weapon"] = "blade2h_greatSword"
+	run.refresh_from_save()
+	_check(run.dmg_max > before_dmg,
+		"a bigger weapon must raise the swing damage: %d -> %d" % [before_dmg, run.dmg_max])
+	_check(str(run.main_weapon.get("id", "")) == "blade2h_greatSword",
+		"the hands must be re-read from the save, got '%s'" % str(run.main_weapon.get("id", "")))
+	_check(run.hp == 7 and run.max_hp == before_max,
+		"a weapon must not change the pool or heal: hp %d max %d -> hp %d max %d"
+			% [7, before_max, run.hp, run.max_hp])
+
+	# Armour with a VIT bonus: the pool grows and the hero gains exactly the difference, once.
+	var armor := ""
+	for row in _data.table("ITEMS", []):
+		if str(row.get("slot", "")) == "armor":
+			armor = str(row.get("id", ""))
+			break
+	if armor != "":
+		equip["armor"] = armor
+		var hp_before: int = run.hp
+		var max_before: int = run.max_hp
+		run.refresh_from_save()
+		var gained: int = maxi(0, run.max_hp - max_before)
+		var expected: int = mini(hp_before + gained, run.max_hp)
+		_check(run.hp == expected,
+			"equipping armour must add its pool as health once: hp %d -> %d, want %d"
+				% [hp_before, run.hp, expected])
+		equip.erase("armor")
+	equip["weapon"] = old_weapon
+	run.refresh_from_save()
+	_check(run.dmg_max == before_dmg,
+		"putting the old weapon back must restore the old damage, got %d" % run.dmg_max)
+
+
+## A run of one act and one zone, with the world itself out of the way — the roster and the ladder
+## are read off the RULES, not off a walked map.
+func _run_at(act_id: int, zone: int) -> SurvivorRun:
+	var run := SurvivorRun.new()
+	run.setup(_state, _find_item, _loot, act_id, 4242 + act_id * 10 + zone, zone)
+	return run
+
+
+## Jan, Nov 2026: "Inventář a staty hrdiny by měly být dostupné i při souboji. Aby hráč mohl hned
+## obléct to co našel nebo si vybrat skilly." The door exists, it is reachable with a thumb, it
+## does not swallow the walk, and the clock really stops while the dialog is up.
+func _test_screen_hero_button() -> void:
+	_log("  section: screen_hero_button")
+	var screen = SurvivorScreen.new()
+	root.add_child(screen)
+	screen.size = Vector2(390, 844)
+	screen.setup(_state, _find_item, _loot, 0)
+	screen._layout_buttons()
+	var asked := [false]
+	screen.hero_requested.connect(func(): asked[0] = true)
+
+	# No two top-bar controls in one rectangle: a button drawn over another is a button nobody
+	# can hit (measured before: the timer sat under "Akce").
+	var rects := {"hero": screen._hero_rect, "portal": screen._portal_rect,
+		"exit": screen._exit_rect, "bind": screen._bind_rect}
+	for a in rects:
+		for b in rects:
+			if str(a) >= str(b):
+				continue
+			_check(not (rects[a] as Rect2).intersects(rects[b] as Rect2),
+				"the %s and %s buttons overlap: %s vs %s"
+					% [a, b, str(rects[a]), str(rects[b])])
+	_check(screen._hero_rect.position.y >= SurvivorScreen.TOP_BAR,
+		"the hero button must sit on the second row, below the top bar")
+	_check(screen._hero_rect.end.x <= 390.0 and screen._hero_rect.end.y <= 844.0,
+		"the hero button must be on screen: %s" % str(screen._hero_rect))
+
+	# A tap on it asks for the modal and arms NOTHING else — not a walk, not an action.
+	var centre: Vector2 = screen._hero_rect.get_center()
+	var before_pos: Vector2 = screen.run.player_pos
+	screen._on_press(centre, 0)
+	_check(asked[0], "a tap on the hero button must ask for the character modal")
+	_check(screen._stick_index == -1 and not screen._pointer_down,
+		"the hero button must not start a walk")
+	screen._on_release(0)
+	_check(screen.run.player_pos == before_pos, "the hero button must not move the hero")
+
+	# The pause is real: the clock stops and the VISIBILITY of the screen (the modal leaves it
+	# visible on purpose) must not restart it.
+	screen.pause_run()
+	_check(screen._paused and not screen.is_processing(),
+		"pause_run must stop the clock")
+	screen.show()
+	screen.hide()
+	screen.show()
+	_check(not screen.is_processing(),
+		"a visibility change must not resume a paused run")
+	screen.resume_run()
+	_check(not screen._paused and screen.is_processing(),
+		"resume_run must restart the clock")
+	screen.stop()
+	screen.queue_free()

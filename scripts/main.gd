@@ -302,6 +302,10 @@ func _build_screens() -> void:
 	survivor.portal_requested.connect(_on_zone_portal_used)
 	survivor.zone_exited.connect(_on_zone_exited)
 	survivor.run_finished.connect(_on_run_finished)
+	# The character modal FROM the fight: inventory, skills and stats while the run stands still.
+	# Loot picked up mid-zone has to be wearable without walking out of the zone first (Jan,
+	# Nov 2026), so the door exists and the run is paused behind the dialog.
+	survivor.hero_requested.connect(_on_survivor_hero)
 	_add_screen("survivor", survivor)
 
 	# The end-of-run page. The survivor run used to dump the player straight back on the road,
@@ -765,7 +769,22 @@ func _wire_one_click_sfx(node: Node) -> void:
 func _close_modal() -> void:
 	# Back to whatever was showing under the dialog — the PWA leaves that screen up the
 	# whole time, so closing simply uncovers it. `_modal_under` is set by `open_modal`.
-	show_screen(_modal_under if _modal_under != "" else "town")
+	var under := _modal_under if _modal_under != "" else "town"
+	# A dialog opened FROM the fight left the run frozen. Closing it is the moment the player's
+	# newly equipped gear and newly learned skills have to reach the run — `resume_run()` re-reads
+	# the save and then restarts the clock in one step, so the two can never drift apart.
+	if under == "survivor" and _screens.has("survivor"):
+		(_screens["survivor"] as Control).resume_run()
+	show_screen(under)
+
+
+## The fight's own door to the character modal. Pausing BEFORE the dialog opens is what makes it a
+## door and not a defeat: the monsters must not walk while the player reads his inventory.
+func _on_survivor_hero() -> void:
+	if not _screens.has("survivor"):
+		return
+	(_screens["survivor"] as Control).pause_run()
+	open_modal("inventory")
 
 
 ## A HARD LIMITER on the Master bus — the crackle fix.

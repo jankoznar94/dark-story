@@ -237,9 +237,38 @@ const ACTIVATE_RADIUS := 330.0
 ## into one pack does not wake the next. `PACK_MIN_GAP > 2 * ACTIVATE_RADIUS` leaves a margin for
 ## the pack's own members walking outward.
 const PACK_MIN_GAP := 460.0
-## The deepest tier a cell can be — the top band of the monster pool (`_pick_row`). The bridge
-## guards use it, because the gate has to be the hardest thing on its bank, not an average one.
+## The deepest tier a cell can be. The bridge guards use it, because the gate has to be the
+## hardest thing on its bank, not an average one.
 const TIER_DEEPEST := 4
+## The act's last zone index. A pack in the far half of a zone may already show the NEXT zone's
+## kind (see `_depth_for`), but never past the act's own last zone.
+const ZONE_LAST := 9
+
+## --- the strength ladder ----------------------------------------------------
+## ONE curve for the whole game: 5 acts x 10 zones = 50 depth steps. A kind's row in
+## `MONSTER_DB.json` is its RELATIVE toughness inside its own theme (the forest imp is weak for a
+## forest, the ent is strong), and the ABSOLUTE numbers come from here. That split is what makes
+## the acts chain: the first zone of the next act is one step further up the same ladder, so it
+## can never be weaker than the last zone of the act before it — the old model multiplied by the
+## act index alone and the depth inside an act did nothing at all, which is exactly Jan's
+## "monsters do not get stronger with each area".
+##
+## Jan, Nov 2026: "Monstra jsou při prvním průchodu dost těžká, ale hned po prvním lootu … je
+## druhý průchod jak procházka růžovou zahradou." So the FIRST zone of an act is deliberately
+## below the old numbers and the ladder climbs through the act instead of standing still:
+##   act 1 zone 1  -> 26 HP, 3-6 damage        (the old imp: 60 HP, 5-9)
+##   act 1 zone 10 -> 44-145 HP, 5-26 damage   (the old ent: 200 HP, 18-25)
+##   act 5 zone 10 -> 568-935 HP, 65-128 damage (the old hell knight: 816 HP, 96-144)
+## 5 % per step over 50 steps is 11x across the whole game, times the 3x spread between the
+## weakest and the toughest kind of a theme; the player's own growth (weapon base, levels, STR,
+## affixes) is what has to keep up, and `probe_monster_balance.gd` prints the two side by side.
+const STRENGTH_BASE_HP := 50.0
+const STRENGTH_BASE_DMG := 8.0
+const STRENGTH_HP_STEP := 0.05
+const STRENGTH_DMG_STEP := 0.05
+## Per-theme means, cached: `{theme: {"hp": float, "dmg": float}}`. A row's factor is
+## `row.hp / mean.hp`, which is what turns the table into multipliers.
+var _theme_means: Dictionary = {}
 ## How much road either side of a bridge end is cleared of ordinary cells, in px. Wide enough
 ## that the guard pack is the only body the ACTIVATE_RADIUS can reach: 600 px > 330 px radius plus
 ## a pack's own 104 px scatter, so approaching the bridge cannot pull in a second, weaker pack
@@ -2449,7 +2478,8 @@ func _build_area() -> void:
 			kind = "elite"
 		elif rng.randf() < CHAMPION_PACK_CHANCE:
 			kind = "champion"
-		var members: Array = _make_pack(kind, spot["centre"] as Vector2, int(spot["tier"]))
+		var members: Array = _make_pack(kind, spot["centre"] as Vector2, int(spot["tier"]),
+			int(spot.get("progress", 0)))
 		if members.is_empty():
 			continue
 		zones.append({
@@ -2469,9 +2499,12 @@ func _build_area() -> void:
 ##
 ## Every member carries the multipliers THE WAKE reads — the row alone cannot say whether the
 ## body is a champion, so the pack has to.
-func _make_pack(kind: String, centre: Vector2, tier: int) -> Array:
+##
+## `progress` is where the cell stands along the zone (0-9), and it is what decides the DEPTH of
+## the kind pool: a cell in the far half may already show the next zone's kind.
+func _make_pack(kind: String, centre: Vector2, tier: int, progress: int = 0) -> Array:
 	var members: Array = []
-	var row := _pick_row(tier)
+	var row := _pick_row(_depth_for(progress))
 	if row.is_empty():
 		return members
 	match kind:
@@ -2522,7 +2555,7 @@ func _make_pack(kind: String, centre: Vector2, tier: int) -> Array:
 				"hp_mult": 1.0, "dmg_mult": 1.0, "xp_mult": 1.0, "loot_grade": 0,
 			})
 			if rng.randf() < STRAY_PAIR_CHANCE:
-				var other := _pick_row(tier)
+				var other := _pick_row(_depth_for(progress))
 				if not other.is_empty():
 					members.append({
 						"row": other,
@@ -2619,21 +2652,64 @@ func _pack_slot(centre: Vector2, taken: Array) -> Vector2:
 	return nearest_floor_point(centre + Vector2(cos(slot), sin(slot)) * ZONE_JITTER)
 
 
-## The kind pool for one tier of the area. Same `minArea` rule the temporal waves used, now fed
-## by where the cell is instead of by how long the run has lasted.
-func _pick_row(tier: int) -> Dictionary:
-	var db: Array = []
-	if _data != null:
-		db = _data.monsters_for_theme(act_id)
+## The act's own theme bucket. ⚠️  NOT the act index: `ACTS` order and `MONSTER_DB` order are
+## different (frost is act 3's theme, undead act 4's, hell act 5's), so using `act_id` as the
+## bucket index spawned the undead in the Frost Peaks and the frost in the Undead Lands. The act's
+## `theme` field is the only correct route — `bestiary_screen.gd` resolves it the same way.
+func act_theme() -> int:
+	if _data == null:
+		return 0
+	return int((_data.act_by_id(act_id) as Dictionary).get("theme", 0))
+
+
+## The act's monster rows, in the data's own order.
+func monster_rows() -> Array:
+	if _data == null:
+		return []
+	return _data.monsters_for_theme(act_theme())
+
+
+## The kind pool for one DEPTH of the act. `minArea` is the zone index at which a kind first
+## appears, and this is what makes the bestiary's eight kinds arrive one per ZONE instead of all
+## of them from the first cell (Jan: "postupně by se měli objevovat v jednotlivých lokacích").
+##
+## The newly unlocked kind is a zone's own flavour and therefore the likeliest; earlier kinds stay
+## in the pool for good with a declining weight, so the first half of the act never stops
+## appearing the moment the next kind unlocks. One `randi` draw either way, which keeps a seeded
+## run reproducible.
+func _pick_row(depth: int) -> Dictionary:
+	var db: Array = monster_rows()
 	if db.is_empty():
 		return {}
 	var pool: Array = []
+	var weights: Array = []
+	var total := 0
 	for row in db:
-		if int(row.get("minArea", 0)) <= tier:
-			pool.append(row)
+		var at := int(row.get("minArea", 0))
+		if at > depth:
+			continue
+		var w := maxi(1, 10 - (depth - at) * 2)
+		pool.append(row)
+		weights.append(w)
+		total += w
 	if pool.is_empty():
-		pool = db
-	return pool[rng.randi_range(0, pool.size() - 1)]
+		return db[rng.randi_range(0, db.size() - 1)]
+	var roll := rng.randi_range(1, total)
+	var idx := 0
+	for i in pool.size():
+		roll -= int(weights[i])
+		if roll <= 0:
+			idx = i
+			break
+	return pool[idx]
+
+
+## How deep a body of this cell stands in the ACT: the zone's own index, plus one when the cell
+## is in the far half of the zone. The bump is a taste of what is coming — it never means the last
+## zone's army standing in the first cell.
+func _depth_for(progress: int) -> int:
+	var bump := 1 if int(progress) >= 6 else 0
+	return clampi(zone_index + bump, 0, ZONE_LAST)
 
 
 ## The discovery tick: a pack wakes when the hero is inside its cell's ACTIVATE_RADIUS, and it
@@ -2744,7 +2820,7 @@ func _zone_clear_tick(dt: float) -> void:
 ## A STRAY spawn next to the hero — kept because every rules test seeds its actor with it. A real
 ## run does not trickle enemies any more: they arrive as packs, through `_zone_tick()`.
 func _spawn_one() -> void:
-	var row := _pick_row(1 + int(elapsed / 45.0))
+	var row := _pick_row(zone_index)
 	if row.is_empty():
 		return
 	var ang := rng.randf() * TAU
@@ -2798,13 +2874,15 @@ func _spawn_point(want: float, ang: float) -> Vector2:
 ## multipliers, the role the screen dresses the ring by, the XP rate and the loot grade. A
 ## plain wake (and every rules test) passes nothing, which is exactly a normal body.
 func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictionary = {}) -> Dictionary:
-	# A kind's strength is the DB's own number, scaled by the act's difficulty so a run in a
-	# later act is dangerous without a second table.
-	var lvl_scale := 1.0 + float(act_id) * 0.35
+	# A kind's row carries its RELATIVE toughness inside its theme; the absolute HP and damage
+	# come from the one depth ladder (`_strength_scales`), so a run in a later zone of the same
+	# act is genuinely harder and the next act starts where this one ended.
+	var base := _theme_mean(act_theme())
+	var scales := _strength_scales(base)
 	var hp_mult := float(opts.get("hp_mult", 1.0))
 	var dmg_mult := float(opts.get("dmg_mult", 1.0))
 	var role := str(opts.get("role", "normal"))
-	var mon_hp := int(round(float(row.get("hp", 60)) * lvl_scale * hp_mult))
+	var mon_hp := maxi(1, int(round(float(row.get("hp", 60)) * float(scales["hp"]) * hp_mult)))
 	var ranged := _is_ranged(row)
 	var base_name := str(row.get("name", ""))
 	var name := base_name
@@ -2823,9 +2901,9 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		"pos": pos,
 		"hp": mon_hp,
 		"max_hp": mon_hp,
-		"speed": rng.randf_range(46.0, 68.0) + float(act_id) * 4.0,
-		"dmg_min": int(round(float(row.get("dmgMin", 5)) * lvl_scale * dmg_mult)),
-		"dmg_max": int(round(float(row.get("dmgMax", 9)) * lvl_scale * dmg_mult)),
+		"speed": rng.randf_range(46.0, 68.0) + float(act_id) * 4.0 + float(zone_index) * 1.2,
+		"dmg_min": maxi(1, int(round(float(row.get("dmgMin", 5)) * float(scales["dmg"]) * dmg_mult))),
+		"dmg_max": maxi(1, int(round(float(row.get("dmgMax", 9)) * float(scales["dmg"]) * dmg_mult))),
 		"atk_cd": float(row.get("attackSpeed", 1500)) / 1000.0,
 		"atk_ready": 0.0,
 		"hit_flash": 0.0,
@@ -2863,6 +2941,63 @@ func _is_ranged(row: Dictionary) -> bool:
 	if str(row.get("attackType", "")) == "caster":
 		return true
 	return RANGED_FACES.has(str(row.get("face", "")))
+
+
+## The theme's own mean HP and mean damage. A row's factor is `row / mean`, which is what makes
+## the table a set of multipliers instead of a second, competing difficulty curve.
+func _theme_mean(theme: int) -> Dictionary:
+	if _theme_means.has(theme):
+		return _theme_means[theme]
+	var hp := 0.0
+	var dmg := 0.0
+	var n := 0
+	if _data != null:
+		for row in _data.monsters_for_theme(theme):
+			hp += float(row.get("hp", 60))
+			dmg += (float(row.get("dmgMin", 5)) + float(row.get("dmgMax", 9))) * 0.5
+			n += 1
+	# A run built without game data (some rules tests) still has to produce a sane body: the
+	# fallback is the table's own first-row numbers, not a zero that would divide by nothing.
+	var out := {"hp": hp / float(n) if n > 0 else 60.0, "dmg": dmg / float(n) if n > 0 else 7.0}
+	_theme_means[theme] = out
+	return out
+
+
+## The ONE strength ladder: `depth = act * 10 + zone`, so all 50 zones of the game sit on a single
+## monotone curve and an act boundary can never dip. Returns the two factors a row is multiplied
+## by — HP and damage.
+func _strength_scales(base: Dictionary) -> Dictionary:
+	var depth := float(act_id * 10 + zone_index)
+	return {
+		"hp": STRENGTH_BASE_HP * pow(1.0 + STRENGTH_HP_STEP, depth) / maxf(float(base["hp"]), 1.0),
+		"dmg": STRENGTH_BASE_DMG * pow(1.0 + STRENGTH_DMG_STEP, depth) / maxf(float(base["dmg"]), 0.001),
+	}
+
+
+## Re-read everything the SAVE owns, after the player equipped something or learned a skill while
+## the run was paused (the character modal is reachable from the fight — see `hero_requested`).
+##
+## The run is NOT rebuilt: the packs, the loot on the floor and the hero's position must survive.
+## Only the numbers move. Gaining max HP heals by the DIFFERENCE (a bigger armour really does give
+## you the pool it promises); losing it clamps, and never a free full heal.
+func refresh_from_save() -> void:
+	if _state == null or _gen == null:
+		return
+	var hero: Dictionary = _state.hero()
+	var new_max := int(_gen.hero_max_hp(hero, _state.equip(), _find_item))
+	if new_max > max_hp:
+		hp += new_max - max_hp
+	max_hp = new_max
+	hp = clampi(hp, 0, max_hp)
+	defense = int(_prog.total_defense(_state.equip(), _find_item))
+	var roll: Dictionary = Progression.hero_dmg(hero, _state.equip(), _find_item)
+	dmg_min = int(roll["min"])
+	dmg_max = int(roll["max"])
+	_read_hands()
+	var new_mana := int(_gen.hero_max_mana(hero, _state.equip(),
+		str(_state.data.get("heroClass", "")), _find_item))
+	max_mana = new_mana
+	mana = clampf(mana, 0.0, float(max_mana))
 
 
 # ============================================================================ monsters
