@@ -1199,6 +1199,10 @@ func _draw_ground() -> void:
 	# Water and the wooden deck go OVER the rock: the swamp's water is cut through the rock at the
 	# area's edge, and a walkway is a thing you see lying on top of the bog.
 	_draw_water()
+	# The valley's bridge is a STRUCTURE: masonry under the planks. Drawn after the water (its
+	# piers stand in it) and BEFORE the deck (the planks cover the middle of a pier, and the few
+	# pixels that stick out past them are the whole read).
+	_draw_bridge_structure()
 	_draw_deck()
 
 
@@ -1334,6 +1338,89 @@ func _draw_water() -> void:
 				var w := t * (0.14 + 0.09 * fposmod(s * 1.7, 1.0))
 				draw_line(p + Vector2(ox - w, oy), p + Vector2(ox + w, oy), Color(line, 0.55),
 					2.0)
+
+
+## THE VALLEY'S BRIDGE AS A STRUCTURE — stone abutments on both banks and piers standing in the
+## water. Without it the deck is a strip of planks lying on a river, which is how the first capture
+## read ("skôr mólo než most"). Flat colours only: a stone face, one lit top edge, one dark base
+## line — the same three tones every other prop in this game uses.
+func _draw_bridge_structure() -> void:
+	if run == null or not run.has_bridge:
+		return
+	var dir: Vector2i = run.bridge_dir
+	if dir == Vector2i.ZERO:
+		return
+	var t := float(SurvivorRun.TILE)
+	var perp := Vector2i(-dir.y, dir.x)
+	var stone: Color = _col("stone", "#6a614f")
+	var stone_edge: Color = stone.darkened(0.52)
+	var stone_top: Color = _col("stone_light", "#857a63")
+	var near_c: Vector2i = run.cell_of(run.bridge_near)
+	var far_c: Vector2i = run.cell_of(run.bridge_far)
+	var steps := maxi(absi(far_c.x - near_c.x), absi(far_c.y - near_c.y))
+	if steps < 3:
+		return
+	var view := _view_world_size()
+	var lo := _cam - Vector2(t, t)
+	var hi := _cam + view + Vector2(t, t)
+	var c0: Vector2i = run.cell_of(_cam)
+	var c1: Vector2i = run.cell_of(_cam + view)
+
+	# 1. ABUTMENTS — a stone landing one cell deep on each bank, wider than the deck, so the
+	# planks END ON MASONRY instead of stopping in the grass.
+	for end in [near_c, far_c]:
+		for b in range(-3, 3):
+			var cell := Vector2i(end.x + perp.x * b, end.y + perp.y * b)
+			var p := Vector2(float(cell.x) * t, float(cell.y) * t) - _cam
+			if p.x < lo.x or p.y < lo.y or p.x > hi.x or p.y > hi.y:
+				continue
+			draw_rect(Rect2(p, Vector2(t, t)), stone)
+			draw_line(p, p + Vector2(t, 0), stone_top, 2.0)
+			draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), stone_edge, 2.0)
+
+	# 2. A STONE KERB under the parapet, along every edge of the deck that faces water — and a
+	# BUTTRESS where it is thicker, every third cell. This is the whole "it is a built bridge"
+	# read: wood over masonry over water, in flat tones. A kerb that is drawn per deck cell is
+	# also continuous by construction, so no run of the span is left looking like bare planks.
+	for cy in range(maxi(c0.y - 1, 0), mini(c1.y + 2, SurvivorRun.ROWS)):
+		for cx in range(maxi(c0.x - 1, 0), mini(c1.x + 2, SurvivorRun.COLS)):
+			if not run.is_deck_cell(cx, cy):
+				continue
+			# How far along the span this cell is, to place the buttresses.
+			var along := absi(cx - near_c.x) + absi(cy - near_c.y)
+			var thick := 22.0 if along % 3 == 0 else 9.0
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var n := Vector2i(cx + d.x, cy + d.y)
+				if not run.is_water_cell(n.x, n.y):
+					continue
+				var p := Vector2(float(cx) * t, float(cy) * t) - _cam
+				var w := Vector2(t, thick) if d.y != 0 else Vector2(thick, t)
+				var pos := p
+				if d.x > 0:
+					pos = p + Vector2(t, 0)
+				elif d.y > 0:
+					pos = p + Vector2(0, t)
+				elif d.x < 0:
+					pos = p - Vector2(thick, 0)
+				else:
+					pos = p - Vector2(0, thick)
+				draw_rect(Rect2(pos, w), stone)
+				# The lit edge is always on the DECK side: that is the edge you look down at
+				# from inside the bridge, and it is what gives the masonry a thickness.
+				if d.x > 0:
+					draw_line(pos + Vector2(thick - 2.0, 0), pos + Vector2(thick - 2.0, t),
+						stone_top, 2.0)
+				elif d.x < 0:
+					draw_line(pos + Vector2(2.0, 0), pos + Vector2(2.0, t), stone_top, 2.0)
+				elif d.y > 0:
+					draw_line(pos + Vector2(0, thick - 2.0), pos + Vector2(t, thick - 2.0),
+						stone_top, 2.0)
+				else:
+					draw_line(pos + Vector2(0, 2.0), pos + Vector2(t, 2.0), stone_top, 2.0)
+
+	# 3. The far edge of the masonry, so the kerb does not dissolve into the water: one dark line
+	# on the outside of every stone band would double the draw calls for the same read, so the
+	# shadow comes from the plank deck's own drop shadow drawn just after this.
 
 
 ## The plank walkway (swamp) and the bridge (river, chasm). `run.feature` decides whether the
