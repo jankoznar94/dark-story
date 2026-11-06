@@ -78,6 +78,20 @@ func _initialize() -> void:
 	_check(VillageLayout.EXIT_POINT.x > VillageLayout.WORLD.x - 60.0,
 		"the exit must be at the map border, got x=%.0f" % VillageLayout.EXIT_POINT.x)
 
+	# The hut in the middle of a tile is an OBSTACLE and the ring around it is the walkway: the hero
+	# must be able to pass the hut on all four sides (Jan: "aby se kolem něj dali projít").
+	for cell in [Vector2i(0, 0), Vector2i(2, 2), VillageLayout.EXIT]:
+		var centre := Vector2(cell.x * 512.0 + 256.0, cell.y * 512.0 + 256.0)
+		if not VillageLayout.is_walkway(cell.x, cell.y):
+			continue
+		_check(not VillageLayout.walkable_point(centre),
+			"the hut's centre %s must NOT be walkable — it is the building" % str(centre))
+		var ring_mid: float = (VillageLayout.HUT_R + VillageLayout.RING_R) * 0.5
+		for dir in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+			var p: Vector2 = centre + (dir as Vector2) * ring_mid
+			_check(VillageLayout.walkable_point(p),
+				"the ring must be walkable all the way around: %s is not" % str(p))
+
 	# The atlas really holds all fifteen orientations, and the jungle tile loads.
 	var path: String = VillageLayout.ATLAS
 	_check(FileAccess.file_exists(path), "the atlas must exist at %s" % path)

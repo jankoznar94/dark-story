@@ -60,6 +60,11 @@ const E := 4
 const W := 8
 
 
+## The radius of the hut in the middle of every tile, and of the ring around it (art: 46 and 104).
+const HUT_R := 46.0
+const RING_R := 104.0
+
+
 static func mask_at(ix: int, iy: int) -> int:
 	for c in CELLS:
 		if int(c[0]) == ix and int(c[1]) == iy:
@@ -135,12 +140,14 @@ static func walkable_in(layout: Dictionary, p: Vector2, radius: float = 0.0) -> 
 		return false
 	var c := Vector2(ix * TILE + TILE * 0.5, iy * TILE + TILE * 0.5)
 	var rel := p - c
-	# The deck: a 208 px square with the corners taken off, which is what the art shows
-	# (measured: x 152..360 of the 512 px tile). Half of it, minus the body, is 104.
-	var deck := 104.0 - radius
-	if absf(rel.x) <= deck and absf(rel.y) <= deck:
-		return true
-	if absf(rel.x) + absf(rel.y) <= deck * 1.72:
+	var dist := rel.length()
+	# THE HUT IS THE OBSTACLE IN THE MIDDLE of every tile: a round straw-roofed building of
+	# 46 px radius. Jan: "kolem něj se dali projít" — so the centre is NOT walkable.
+	if dist <= HUT_R + radius:
+		return false
+	# THE RING: a circular wooden walkway around the hut, 46..104 px from the centre (a 58 px
+	# walkway, wide enough for the hero to pass the hut on any side).
+	if dist <= RING_R - radius:
 		return true
 	# The walkway: an 80 px band through the tile centre, towards each open edge (art: x 216..296).
 	var half := 40.0 + radius
