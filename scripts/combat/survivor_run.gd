@@ -186,9 +186,12 @@ const ROWS := 99
 ## with room to spare. It was 2 (300 px) and Jan: "teď je příliš úzký s přímý" — a 5-cell tube
 ## reads as a pipe, not as a dungeon corridor. Legs VARY between `CORRIDOR_HALF_MIN` and
 ## `CORRIDOR_HALF_MAX` so the area does not read as one extruded profile.
-const CORRIDOR_HALF := 3
+const CORRIDOR_HALF := 2
 const CORRIDOR_HALF_MIN := 2
-const CORRIDOR_HALF_MAX := 4
+## ⚠️  3, NOT 4. A 9-cell leg is 540 px — wider than the 475 px the phone shows — so every frame
+## of the area was open ground with no wall in it ("it reads as a field, not a corridor"). 5-7
+## cells keeps two bodies able to pass and puts a rock face in every view.
+const CORRIDOR_HALF_MAX := 3
 ## Half-width of the clearing the hero starts in, in cells (9x9 = 540 px).
 const START_ROOM_HALF := 4
 ## Half-width of the occasional wider room along the corridor. 4 = 9x9 (540 px), enough for a
@@ -196,7 +199,12 @@ const START_ROOM_HALF := 4
 ## `ROOM_HALF_MAX`, and the big end is a real cavern rather than a slightly wider corridor.
 const ROOM_HALF := 4
 const ROOM_HALF_MIN := 3
-const ROOM_HALF_MAX := 7
+## ⚠️  5, NOT 7. A 15-cell room is 900 px — bigger than the phone view — and at 45 % of the leg
+## ends the area became a web of halls with no wall in frame. 7-11 cells is still a cavern.
+const ROOM_HALF_MAX := 5
+## How often a leg ends in a room. 45 % of them made the corridor mostly rooms; 30 % keeps the
+## halls as events you arrive at.
+const ROOM_CHANCE := 0.30
 ## How far the hero sees, in world px. Also the radius that marks cells as explored.
 const FOG_REVEAL := 300.0
 const AREA_MARGIN := 96.0
@@ -946,7 +954,7 @@ func _build_corridor() -> void:
 		last = centre
 		# A room every other leg gives the corridor places to breathe — and places for a pack to
 		# stand in formation instead of in single file.
-		if rng.randf() < 0.45:
+		if rng.randf() < ROOM_CHANCE:
 			_carve_square(pos.x, pos.y, rng.randi_range(ROOM_HALF_MIN, ROOM_HALF_MAX))
 
 	# The far end: the walk ended somewhere, so the exit is the NEAREST edge to that end (never the
