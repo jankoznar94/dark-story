@@ -218,6 +218,7 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	# The zone's look is resolved BEFORE `_build_decoration()` reads it, and before `restore()`:
 	# the ground and the props are the same zone the save was walked in, not the act's default.
 	_apply_theme(act_id, zone)
+	_prop_mesh = null
 	# A zone the player already walked is put back from memory BEFORE the screen builds anything
 	# that depends on it: the fog cache is keyed on `explored_version` and the camera is placed
 	# on `player_pos`, so restoring afterwards would show a map that only catches up a frame
@@ -245,6 +246,8 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	_fog_version = -1
 	_wheel_slots = _resolve_wheel()
 	_build_decoration()
+	# The props are static, so they are baked into ONE mesh here — once per zone, never per frame.
+	_bake_props()
 	_place_camera()
 	_layout_buttons()
 	queue_redraw()
@@ -920,12 +923,20 @@ func _world_xform() -> Transform2D:
 ## Paint the next shapes in LOCAL world coordinates anchored at `origin`, optionally squashed.
 ## `scale` is applied before the translation, so a (1, 0.34) shadow sits exactly on `origin`.
 func _set_local(origin: Vector2, scale: Vector2 = Vector2.ONE) -> void:
+	if _baking:
+		# The bake stores WORLD-space points, so the local transform is the prop's own origin and
+		# squash — without the ZOOM/camera matrix the live path multiplies in.
+		_bake_xf = Transform2D(Vector2(scale.x, 0.0), Vector2(0.0, scale.y), origin)
+		return
 	draw_set_transform_matrix(_world_xform() * Transform2D(
 		Vector2(scale.x, 0.0), Vector2(0.0, scale.y), origin))
 
 
 ## Back to plain world coordinates (i.e. `pos - _cam`, scaled by the zoom).
 func _set_world() -> void:
+	if _baking:
+		_bake_xf = Transform2D()
+		return
 	draw_set_transform_matrix(_world_xform())
 
 
@@ -1153,7 +1164,8 @@ func _draw() -> void:
 	draw_set_transform_matrix(_world_xform())
 	_draw_ground()
 	_draw_patches()
-	_draw_props()
+	# The props are a BAKED mesh, not a re-run of the painter (see `_bake_props`).
+	_draw_baked(_prop_mesh)
 	_draw_zone_links()
 	_draw_portal()
 	_draw_attack_ring()
@@ -1195,7 +1207,7 @@ func _draw_ground() -> void:
 	# places, and a tint costs one multiply where a new 512 px tile costs ~150 KB of first load.
 	draw_texture_rect(_ground, Rect2(-_cam, SurvivorRun.WORLD), true,
 		_theme.get("tint", Color.WHITE))
-	_draw_rock()
+	_draw_baked(_rock_mesh)
 	# Water and the wooden deck go OVER the rock: the swamp's water is cut through the rock at the
 	# area's edge, and a walkway is a thing you see lying on top of the bog.
 	_draw_water()
@@ -1214,6 +1226,11 @@ func _draw_rock() -> void:
 	var view := _view_world_size()
 	var c0: Vector2i = run.cell_of(_cam)
 	var c1: Vector2i = run.cell_of(_cam + view)
+	if _baking:
+		# The bake stores the WHOLE grid, not the frame: a camera-culled bake would paint the
+		# start room's corner of rock and leave the rest of the zone bare.
+		c0 = Vector2i.ZERO
+		c1 = Vector2i(SurvivorRun.COLS - 1, SurvivorRun.ROWS - 1)
 	var dark: Color = _theme.get("rock", Color("#191510"))
 	var rock_line: Color = _theme.get("rock_line", Color("#2e2619"))
 	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
@@ -1643,6 +1660,11 @@ func _draw_patches() -> void:
 	# Jan: "když chodím kolem okrajů oblasti, objekty ohraničující oblast různě mizí a zase se
 	# objevují. Všechny zaráz."
 	var view := _view_world_size()
+	if _baking:
+		# Baking stores the WHOLE zone: an "infinite" view disables the cull without touching the
+		# predicate itself (the cull is asserted by `test_survivor`, and the units it uses are the
+		# bug it guards against — do not rewrite the line).
+		view = Vector2(1.0e9, 1.0e9)
 	for p in _patches:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
 		var rx := float(p["rx"])
@@ -1657,8 +1679,172 @@ func _draw_patches() -> void:
 		_set_local(pos, Vector2(1.0, ry / rx))
 		var pa: Color = _theme.get("patch_a", Color("#5a503e"))
 		var pb: Color = _theme.get("patch_b", Color("#645945"))
-		draw_circle(Vector2.ZERO, rx, Color(pa.r, pa.g, pa.b, 0.34))
-		draw_circle(Vector2.ZERO, rx * 0.66, Color(pb.r, pb.g, pb.b, 0.26))
+		_P_circle(Vector2.ZERO, rx, Color(pa.r, pa.g, pa.b, 0.34))
+		_P_circle(Vector2.ZERO, rx * 0.66, Color(pb.r, pb.g, pb.b, 0.26))
+	_set_world()
+
+
+## --- BAKED STATIC LAYER: props and landmarks as ONE mesh -------------------------------
+## Jan, Nov 2026: "Takhle graficky primitivní hra se nesmí sekat ani ve snu."
+##
+## The props are static — they are placed once when the zone is built and never move — yet the
+## painter emitted ~120 draw commands for them EVERY FRAME (one per shadow, one per shape, one per
+## outline). That is a quarter of a 425-command frame, rebuilt in GDScript 60 times a second for a
+## picture that does not change.
+##
+## So the painter is RUN ONCE per zone into world-space triangles, and the frame draws a single
+## ArrayMesh instead. The trick that makes it a small, safe change: the six primitives the prop
+## painter uses are routed through `_P_*` wrappers. With `_baking` off they call the engine exactly
+## as before (so the picture cannot change if this is ever turned off); with it on they append
+## triangles in the SAME order, which is what keeps the painter's layering (a shadow before its
+## prop, a cap before its rim) intact.
+var _baking := false
+var _bake_xf := Transform2D()
+var _bake_tris := PackedVector2Array()
+var _bake_cols := PackedColorArray()
+var _prop_mesh: ArrayMesh = null
+var _rock_mesh: ArrayMesh = null
+
+
+func _tri(a: Vector2, b: Vector2, c: Vector2, col: Color) -> void:
+	_bake_tris.append(a)
+	_bake_tris.append(b)
+	_bake_tris.append(c)
+	_bake_cols.append(col)
+	_bake_cols.append(col)
+	_bake_cols.append(col)
+
+
+func _quad(a: Vector2, b: Vector2, c: Vector2, d: Vector2, col: Color) -> void:
+	_tri(a, b, c, col)
+	_tri(a, c, d, col)
+
+
+func _P_rect(r: Rect2, col: Color) -> void:
+	if not _baking:
+		draw_rect(r, col)
+		return
+	var p0 := _bake_xf * r.position
+	var p1 := _bake_xf * Vector2(r.position.x + r.size.x, r.position.y)
+	var p2 := _bake_xf * (r.position + r.size)
+	var p3 := _bake_xf * Vector2(r.position.x, r.position.y + r.size.y)
+	_quad(p0, p1, p2, p3, col)
+
+
+func _P_poly(pts: PackedVector2Array, col: Color) -> void:
+	if not _baking:
+		draw_colored_polygon(pts, col)
+		return
+	var world := PackedVector2Array()
+	for pt in pts:
+		world.append(_bake_xf * pt)
+	var idx := Geometry2D.triangulate_polygon(world)
+	if idx.is_empty():
+		return
+	for i in range(0, idx.size(), 3):
+		_tri(world[idx[i]], world[idx[i + 1]], world[idx[i + 2]], col)
+
+
+func _P_line(a: Vector2, b: Vector2, col: Color, w: float = -1.0) -> void:
+	if not _baking:
+		draw_line(a, b, col, w)
+		return
+	var pa := _bake_xf * a
+	var pb := _bake_xf * b
+	var d := pb - pa
+	if d.length() < 0.01:
+		return
+	var n := Vector2(-d.y, d.x).normalized() * ((w if w > 0.0 else 1.0) * 0.5)
+	_quad(pa - n, pb - n, pb + n, pa + n, col)
+
+
+func _P_circle(c: Vector2, radius: float, col: Color) -> void:
+	if not _baking:
+		draw_circle(c, radius, col)
+		return
+	# 18 sides: a prop is 30-80 px across at the phone's zoom, so the facets are under a pixel.
+	var prev := _bake_xf * (c + Vector2(radius, 0.0))
+	for i in range(1, 19):
+		var a := TAU * float(i) / 18.0
+		var cur := _bake_xf * (c + Vector2(cos(a), sin(a)) * radius)
+		_tri(_bake_xf * c, prev, cur, col)
+		prev = cur
+
+
+func _P_polyline(pts: PackedVector2Array, col: Color, w: float = -1.0) -> void:
+	if not _baking:
+		draw_polyline(pts, col, w)
+		return
+	for i in range(1, pts.size()):
+		_P_line(pts[i - 1], pts[i], col, w)
+
+
+func _P_arc(c: Vector2, radius: float, start: float, end: float, count: int, col: Color,
+		w: float = -1.0) -> void:
+	if not _baking:
+		draw_arc(c, radius, start, end, count, col, w)
+		return
+	var pts := PackedVector2Array()
+	for i in count + 1:
+		var a := lerpf(start, end, float(i) / float(maxi(count, 1)))
+		pts.append(c + Vector2(cos(a), sin(a)) * radius)
+	_P_polyline(pts, col, w)
+
+
+## The current bake buffer as one mesh, or null when nothing was emitted.
+func _mesh_from_bake() -> ArrayMesh:
+	if _bake_tris.is_empty():
+		return null
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = _bake_tris
+	arrays[Mesh.ARRAY_COLOR] = _bake_cols
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Bake the zone's props into one mesh. Called from `setup()`, i.e. once per zone, never per frame.
+func _bake_props() -> void:
+	_bake_tris.clear()
+	_bake_cols.clear()
+	_prop_mesh = null
+	if _props.is_empty():
+		return
+	var saved_cam := _cam
+	# World space: the painter subtracts `_cam` from every prop, so a zero camera stores world
+	# coordinates and the frame can put the camera back with ONE transform.
+	_cam = Vector2.ZERO
+	_baking = true
+	_bake_xf = Transform2D()
+	# Patches and props share one mesh: they are adjacent in the draw order, so keeping them in
+	# one buffer preserves the layering exactly and costs no extra call.
+	_draw_patches()
+	_draw_props()
+	_baking = false
+	_cam = saved_cam
+	_prop_mesh = _mesh_from_bake()
+
+	# THE ROCK is static too, and it was 69 of a 360-command frame on its own (measured by
+	# skip-subtraction). It bakes into its own mesh because it has to be drawn BEFORE the water
+	# and the deck, which are painted over it.
+	_bake_tris = PackedVector2Array()
+	_bake_cols = PackedColorArray()
+	_baking = true
+	_bake_xf = Transform2D()
+	_draw_baked(_rock_mesh)
+	_baking = false
+	_rock_mesh = _mesh_from_bake()
+
+
+## The baked layer: ONE draw call, with the camera applied as a matrix so the vertices are never
+## touched again. The points are stored in world units, so the matrix is exactly what `_world_xform`
+## does per point — scale by ZOOM, offset by the camera.
+func _draw_baked(mesh: ArrayMesh) -> void:
+	if mesh == null:
+		return
+	draw_set_transform_matrix(Transform2D(Vector2(ZOOM, 0.0), Vector2(0.0, ZOOM), -_cam * ZOOM))
+	draw_mesh(mesh, null)
 	_set_world()
 
 
@@ -1668,6 +1854,10 @@ func _draw_props() -> void:
 	# side of the wall at the same instant — Jan's "všechny zaráz". The prop's own size is
 	# part of its footprint, so a boulder is not removed while half of it is still on screen.
 	var view := _view_world_size()
+	if _baking:
+		# See `_draw_patches`: the bake keeps every prop, and the cull line stays as the test
+		# asserts it.
+		view = Vector2(1.0e9, 1.0e9)
 	for p in _props:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
 		var s := float(p["size"])
@@ -1677,7 +1867,7 @@ func _draw_props() -> void:
 		# A dark disc on a dark ground reads as a shadow with nothing casting it — Jan's own
 		# report on the first render. Every prop therefore has a BODY and a lit edge.
 		_set_local(pos + Vector2(0, s * 0.16), Vector2(1.0, 0.30))
-		draw_circle(Vector2.ZERO, s * 0.52, Color(0, 0, 0, 0.36))
+		_P_circle(Vector2.ZERO, s * 0.52, Color(0, 0, 0, 0.36))
 		_set_local(pos)
 		# A landmark composes several shapes, so it needs to place sub-parts RELATIVE to the
 		# prop's own origin. `_set_local()` takes an absolute canvas point, so the base is kept
@@ -1779,17 +1969,17 @@ func _prop_rock(s: float, seed_v: float) -> void:
 		Vector2(s * 0.16, -s * 0.78), Vector2(s * 0.50, -s * 0.20),
 		Vector2(s * 0.28, s * 0.10), Vector2(-s * 0.34, s * 0.06),
 	])
-	draw_colored_polygon(pts, _col("stone", "#6a614f"))
-	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3]]),
+	_P_poly(pts, _col("stone", "#6a614f"))
+	_P_polyline(PackedVector2Array([pts[0], pts[1], pts[2], pts[3]]),
 		_col("stone_light", "#857a63"), 2.0)
-	draw_line(Vector2(-s * 0.1, -s * 0.1), Vector2(s * 0.2, -s * 0.35),
+	_P_line(Vector2(-s * 0.1, -s * 0.1), Vector2(s * 0.2, -s * 0.35),
 		Color(0, 0, 0, 0.25 + 0.05 * seed_v), 1.5)
 
 
 func _prop_bush(s: float) -> void:
-	draw_circle(Vector2(0, -s * 0.30), s * 0.60, _col("foliage", "#373c26"))
-	draw_circle(Vector2(-s * 0.14, -s * 0.44), s * 0.36, _col("foliage_light", "#454b2f"))
-	draw_arc(Vector2(0, -s * 0.30), s * 0.60, PI * 1.15, PI * 1.95, 14,
+	_P_circle(Vector2(0, -s * 0.30), s * 0.60, _col("foliage", "#373c26"))
+	_P_circle(Vector2(-s * 0.14, -s * 0.44), s * 0.36, _col("foliage_light", "#454b2f"))
+	_P_arc(Vector2(0, -s * 0.30), s * 0.60, PI * 1.15, PI * 1.95, 14,
 		_col("foliage_light", "#5e6440").lightened(0.10), 2.0)
 
 
@@ -1801,17 +1991,17 @@ func _prop_menhir(s: float) -> void:
 		Vector2(-s * 0.03, -s * 1.20), Vector2(s * 0.22, -s * 0.94),
 		Vector2(s * 0.28, 0.0),
 	])
-	draw_colored_polygon(pts, _col("stone", "#6b6a5c"))
-	draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), _col("stone_light", "#8a8975"), 2.0)
+	_P_poly(pts, _col("stone", "#6b6a5c"))
+	_P_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), _col("stone_light", "#8a8975"), 2.0)
 	var accent := _col("accent", "#5f8f7a").darkened(0.15)
-	draw_line(Vector2(0, -s * 0.72), Vector2(0, -s * 0.44), accent, 2.0)
-	draw_circle(Vector2(0, -s * 0.82), s * 0.055, accent)
+	_P_line(Vector2(0, -s * 0.72), Vector2(0, -s * 0.44), accent, 2.0)
+	_P_circle(Vector2(0, -s * 0.82), s * 0.055, accent)
 
 
 ## A conifer: a trunk and three triangles, the widest at the bottom. Darker at the base and
 ## lighter at the crown, which is what gives a stand of them depth without any shading pass.
 func _prop_pine(s: float, seed_v: float) -> void:
-	draw_rect(Rect2(-s * 0.08, -s * 0.46, s * 0.16, s * 0.46), _col("wood", "#3c2e20"))
+	_P_rect(Rect2(-s * 0.08, -s * 0.46, s * 0.16, s * 0.46), _col("wood", "#3c2e20"))
 	var dark := _col("foliage", "#2b3421")
 	var light := _col("foliage_light", "#39442c")
 	var lean := (fposmod(seed_v, 1.0) - 0.5) * s * 0.10
@@ -1819,11 +2009,11 @@ func _prop_pine(s: float, seed_v: float) -> void:
 		var by := -s * (0.26 + 0.24 * float(i))
 		var hw := s * (0.50 - 0.13 * float(i))
 		var tone := dark if i % 2 == 0 else light
-		draw_colored_polygon(PackedVector2Array([
+		_P_poly(PackedVector2Array([
 			Vector2(-hw + lean, by), Vector2(hw + lean, by),
 			Vector2(lean, by - s * 0.44),
 		]), tone)
-	draw_line(Vector2(lean, -s * 1.14), Vector2(lean, -s * 0.98), light, 2.0)
+	_P_line(Vector2(lean, -s * 1.14), Vector2(lean, -s * 0.98), light, 2.0)
 
 
 ## A bare trunk with two bent limbs. In the bog and in the ruin it is the WALL, so it has to be
@@ -1832,13 +2022,13 @@ func _prop_dead_tree(s: float, seed_v: float) -> void:
 	var bend := (fposmod(seed_v * 1.7, 1.0) - 0.5) * s * 0.16
 	var wood := _col("wood", "#3f3427")
 	var wood_light := _col("wood_light", "#524534")
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.10, 0.0), Vector2(-s * 0.05, -s * 0.60),
 		Vector2(bend * 0.4, -s * 1.00), Vector2(s * 0.04, -s * 0.62),
 		Vector2(s * 0.11, 0.0),
 	]), wood)
-	draw_line(Vector2(bend * 0.4, -s * 0.62), Vector2(bend - s * 0.34, -s * 0.90), wood_light, 3.0)
-	draw_line(Vector2(bend * 0.6, -s * 0.80), Vector2(bend + s * 0.30, -s * 1.02), wood_light, 2.5)
+	_P_line(Vector2(bend * 0.4, -s * 0.62), Vector2(bend - s * 0.34, -s * 0.90), wood_light, 3.0)
+	_P_line(Vector2(bend * 0.6, -s * 0.80), Vector2(bend + s * 0.30, -s * 1.02), wood_light, 2.5)
 
 
 func _prop_reed(s: float, seed_v: float) -> void:
@@ -1849,17 +2039,17 @@ func _prop_reed(s: float, seed_v: float) -> void:
 		var x := (t - 0.5) * s * 0.9
 		var h := s * (0.52 + 0.30 * absf(sin(seed_v * 2.3 + float(k))))
 		var col := light if k % 2 == 0 else dark
-		draw_line(Vector2(x * 0.35, 0.0), Vector2(x, -h), col, 2.0)
+		_P_line(Vector2(x * 0.35, 0.0), Vector2(x, -h), col, 2.0)
 		# a seed head, drawn as one flat lozenge — the bog's "cattail" tell at a glance
 		if k % 3 == 0:
-			draw_colored_polygon(_ellipse_pts(Vector2(x, -h - s * 0.06), s * 0.035, s * 0.09, 6), dark)
+			_P_poly(_ellipse_pts(Vector2(x, -h - s * 0.06), s * 0.035, s * 0.09, 6), dark)
 
 
 func _prop_stump(s: float) -> void:
 	var wood := _col("wood", "#4a3a28")
-	draw_rect(Rect2(-s * 0.26, -s * 0.30, s * 0.52, s * 0.30), wood)
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.26, s * 0.10), _col("wood_light", "#634c33"))
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.13, s * 0.05), wood.darkened(0.18))
+	_P_rect(Rect2(-s * 0.26, -s * 0.30, s * 0.52, s * 0.30), wood)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.26, s * 0.10), _col("wood_light", "#634c33"))
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.30), s * 0.13, s * 0.05), wood.darkened(0.18))
 
 
 ## A fallen drum of a column lying across the ground, one end face turned to the camera. Two of
@@ -1868,10 +2058,10 @@ func _prop_column(s: float) -> void:
 	var stone := _col("stone", "#767a80")
 	var light := _col("stone_light", "#93979d")
 	var r := s * 0.20
-	draw_rect(Rect2(-s * 0.55, -2.0 * r, s * 0.88, 2.0 * r), stone)
-	draw_line(Vector2(-s * 0.55, -2.0 * r), Vector2(s * 0.33, -2.0 * r), light, 2.0)
-	draw_colored_polygon(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.55, r), light)
-	draw_colored_polygon(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.30, r * 0.55), stone.darkened(0.12))
+	_P_rect(Rect2(-s * 0.55, -2.0 * r, s * 0.88, 2.0 * r), stone)
+	_P_line(Vector2(-s * 0.55, -2.0 * r), Vector2(s * 0.33, -2.0 * r), light, 2.0)
+	_P_poly(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.55, r), light)
+	_P_poly(_ellipse_pts(Vector2(s * 0.33, -r), r * 0.30, r * 0.55), stone.darkened(0.12))
 
 
 func _prop_rubble(s: float, seed_v: float) -> void:
@@ -1886,8 +2076,8 @@ func _prop_rubble(s: float, seed_v: float) -> void:
 			Vector2(cx - hw, 0.0), Vector2(cx - hw * 0.6, -h),
 			Vector2(cx + hw * 0.4, -h * 0.86), Vector2(cx + hw, 0.0),
 		])
-		draw_colored_polygon(pts, stone if k % 2 == 0 else stone.darkened(0.08))
-		draw_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), light, 1.5)
+		_P_poly(pts, stone if k % 2 == 0 else stone.darkened(0.08))
+		_P_polyline(PackedVector2Array([pts[0], pts[1], pts[2]]), light, 1.5)
 
 
 ## A trail marker: three stones, each smaller than the one under it.
@@ -1898,8 +2088,8 @@ func _prop_cairn(s: float) -> void:
 	var w := s * 0.34
 	for k in 3:
 		var h := w * 0.62
-		draw_colored_polygon(_dome_pts(Vector2(0, y), w, h), stone if k % 2 == 0 else stone.darkened(0.07))
-		draw_arc(Vector2(0, y), w, PI, TAU, 8, light, 1.5)
+		_P_poly(_dome_pts(Vector2(0, y), w, h), stone if k % 2 == 0 else stone.darkened(0.07))
+		_P_arc(Vector2(0, y), w, PI, TAU, 8, light, 1.5)
 		y -= h * 0.92
 		w *= 0.72
 
@@ -1917,10 +2107,10 @@ func _prop_plank(s: float, seed_v: float) -> void:
 		var a := Vector2(cx, cy) - dir * s * 0.40
 		var b := Vector2(cx, cy) + dir * s * 0.40
 		var t := s * 0.06
-		draw_colored_polygon(PackedVector2Array([
+		_P_poly(PackedVector2Array([
 			a - across * t, b - across * t, b + across * t, a + across * t,
 		]), wood)
-		draw_line(a + across * t, b + across * t, light, 1.5)
+		_P_line(a + across * t, b + across * t, light, 1.5)
 
 
 func _prop_fern(s: float, seed_v: float) -> void:
@@ -1930,45 +2120,45 @@ func _prop_fern(s: float, seed_v: float) -> void:
 		var ang := -PI * 0.5 + (float(k) - 2.0) * 0.40 + swing * 0.2
 		var p1 := Vector2(cos(ang), sin(ang)) * s * 0.44
 		var p2 := p1 + Vector2(cos(ang + swing), sin(ang + swing)) * s * 0.28
-		draw_line(Vector2.ZERO, p1, col, 2.0)
-		draw_line(p1, p2, col, 1.5)
+		_P_line(Vector2.ZERO, p1, col, 2.0)
+		_P_line(p1, p2, col, 1.5)
 
 
 func _prop_mushroom(s: float) -> void:
-	draw_rect(Rect2(-s * 0.05, -s * 0.22, s * 0.10, s * 0.22), _col("stone_light", "#8a8975"))
+	_P_rect(Rect2(-s * 0.05, -s * 0.22, s * 0.10, s * 0.22), _col("stone_light", "#8a8975"))
 	var cap := _col("accent", "#6fb3a0").darkened(0.18)
-	draw_colored_polygon(_dome_pts(Vector2(0, -s * 0.22), s * 0.20, s * 0.17), cap)
-	draw_arc(Vector2(0, -s * 0.22), s * 0.20, PI, TAU, 8, cap.lightened(0.12), 1.5)
+	_P_poly(_dome_pts(Vector2(0, -s * 0.22), s * 0.20, s * 0.17), cap)
+	_P_arc(Vector2(0, -s * 0.22), s * 0.20, PI, TAU, 8, cap.lightened(0.12), 1.5)
 
 
 func _prop_barrel(s: float) -> void:
 	var wood := _col("wood", "#4d3a26")
-	draw_rect(Rect2(-s * 0.22, -s * 0.50, s * 0.44, s * 0.50), wood)
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.50), s * 0.22, s * 0.08), _col("wood_light", "#634c33"))
+	_P_rect(Rect2(-s * 0.22, -s * 0.50, s * 0.44, s * 0.50), wood)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.50), s * 0.22, s * 0.08), _col("wood_light", "#634c33"))
 	for y in [-s * 0.16, -s * 0.38]:
-		draw_rect(Rect2(-s * 0.24, float(y), s * 0.48, s * 0.05), wood.darkened(0.30))
+		_P_rect(Rect2(-s * 0.24, float(y), s * 0.48, s * 0.05), wood.darkened(0.30))
 
 
 ## A hut is a box and a gable. No window light: Jan's rule is no glow, and a village of lit
 ## windows at night would be the only glowing thing in the game.
 func _prop_hut(s: float) -> void:
 	var wood := _col("wood", "#4d3a26")
-	draw_rect(Rect2(-s * 0.38, -s * 0.52, s * 0.76, s * 0.52), wood)
-	draw_colored_polygon(PackedVector2Array([
+	_P_rect(Rect2(-s * 0.38, -s * 0.52, s * 0.76, s * 0.52), wood)
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.50, -s * 0.52), Vector2(s * 0.50, -s * 0.52), Vector2(0.0, -s * 0.98),
 	]), _col("wood_light", "#634c33").darkened(0.25))
-	draw_line(Vector2(-s * 0.50, -s * 0.52), Vector2(s * 0.50, -s * 0.52),
+	_P_line(Vector2(-s * 0.50, -s * 0.52), Vector2(s * 0.50, -s * 0.52),
 		_col("wood_light", "#634c33"), 2.0)
-	draw_rect(Rect2(-s * 0.09, -s * 0.28, s * 0.18, s * 0.28), _col("rock", "#1b1610"))
+	_P_rect(Rect2(-s * 0.09, -s * 0.28, s * 0.18, s * 0.28), _col("rock", "#1b1610"))
 
 
 func _prop_torch(s: float) -> void:
-	draw_rect(Rect2(-s * 0.045, -s * 0.66, s * 0.09, s * 0.66), _col("wood_light", "#634c33"))
+	_P_rect(Rect2(-s * 0.045, -s * 0.66, s * 0.09, s * 0.66), _col("wood_light", "#634c33"))
 	var flame := _col("accent", "#b8763a")
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.09, -s * 0.62), Vector2(0.0, -s * 0.94), Vector2(s * 0.09, -s * 0.62),
 	]), flame)
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.04, -s * 0.62), Vector2(0.0, -s * 0.80), Vector2(s * 0.04, -s * 0.62),
 	]), flame.lightened(0.18))
 
@@ -1977,9 +2167,9 @@ func _prop_fence(s: float) -> void:
 	var wood := _col("wood", "#4d3a26")
 	var light := _col("wood_light", "#634c33")
 	for x in [-s * 0.38, s * 0.38]:
-		draw_rect(Rect2(float(x) - s * 0.05, -s * 0.60, s * 0.10, s * 0.60), wood)
+		_P_rect(Rect2(float(x) - s * 0.05, -s * 0.60, s * 0.10, s * 0.60), wood)
 	for y in [-s * 0.44, -s * 0.22]:
-		draw_rect(Rect2(-s * 0.44, float(y), s * 0.88, s * 0.06), light)
+		_P_rect(Rect2(-s * 0.44, float(y), s * 0.88, s * 0.06), light)
 
 
 ## A segment of standing masonry — the fortress's edge, not a rock. One course line per brick
@@ -1987,15 +2177,15 @@ func _prop_fence(s: float) -> void:
 func _prop_wall_block(s: float) -> void:
 	var stone := _col("stone", "#6e726b")
 	var line := stone.darkened(0.30)
-	draw_rect(Rect2(-s * 0.50, -s * 0.82, s * 1.00, s * 0.82), stone)
-	draw_line(Vector2(-s * 0.50, -s * 0.82), Vector2(s * 0.50, -s * 0.82), _col("stone_light", "#8b8f86"), 2.0)
+	_P_rect(Rect2(-s * 0.50, -s * 0.82, s * 1.00, s * 0.82), stone)
+	_P_line(Vector2(-s * 0.50, -s * 0.82), Vector2(s * 0.50, -s * 0.82), _col("stone_light", "#8b8f86"), 2.0)
 	for row in 3:
 		var y := -s * (0.22 + 0.22 * float(row))
-		draw_line(Vector2(-s * 0.50, y), Vector2(s * 0.50, y), line, 1.5)
+		_P_line(Vector2(-s * 0.50, y), Vector2(s * 0.50, y), line, 1.5)
 		var off := 0.0 if row % 2 == 0 else s * 0.22
 		for k in 2:
 			var x := -s * 0.25 + off + float(k) * s * 0.45
-			draw_line(Vector2(x, y), Vector2(x, y + s * 0.22), line, 1.5)
+			_P_line(Vector2(x, y), Vector2(x, y + s * 0.22), line, 1.5)
 
 
 ## A thick root crawling out of the ground and over whatever is in its way. The gate's ruin is
@@ -2008,8 +2198,8 @@ func _prop_root(s: float, seed_v: float) -> void:
 		var x := (t - 0.5) * s * 1.05
 		var y := -sin(t * PI) * lift
 		pts.append(Vector2(x, y))
-	draw_polyline(pts, _col("wood", "#463424"), s * 0.15)
-	draw_polyline(pts, _col("wood_light", "#5a4530"), s * 0.07)
+	_P_polyline(pts, _col("wood", "#463424"), s * 0.15)
+	_P_polyline(pts, _col("wood_light", "#5a4530"), s * 0.07)
 
 
 ## ── landmarks ────────────────────────────────────────────────────────────────────────────────
@@ -2056,15 +2246,15 @@ func _lm_circle(s: float) -> void:
 		var base := Vector2(cos(a) * rx, sin(a) * ry)
 		var h := s * (0.52 + 0.12 * float(i % 2))
 		var hw := s * 0.10
-		draw_colored_polygon(PackedVector2Array([
+		_P_poly(PackedVector2Array([
 			base + Vector2(-hw * 1.3, 0), base + Vector2(-hw, -h),
 			base + Vector2(hw * 0.9, -h * 0.94), base + Vector2(hw * 1.25, 0),
 		]), stone)
-		draw_line(base + Vector2(-hw * 1.3, 0), base + Vector2(-hw, -h), light, 2.0)
+		_P_line(base + Vector2(-hw * 1.3, 0), base + Vector2(-hw, -h), light, 2.0)
 	# the altar in the middle: a flat slab, no flame, no glow
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.06), s * 0.30, s * 0.13), stone.darkened(0.12))
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.10), s * 0.26, s * 0.11), light.darkened(0.10))
-	draw_circle(Vector2(0, -s * 0.10), s * 0.05, accent)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.06), s * 0.30, s * 0.13), stone.darkened(0.12))
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.10), s * 0.26, s * 0.11), light.darkened(0.10))
+	_P_circle(Vector2(0, -s * 0.10), s * 0.05, accent)
 
 
 ## Zone 1 — three pines taller than any wall prop: the wood closes over the road.
@@ -2086,21 +2276,21 @@ func _lm_tower(s: float) -> void:
 	var light := _col("stone_light", "#93979d")
 	var dark := stone.darkened(0.22)
 	# tower body, tapering, with a jagged broken silhouette
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.34, 0), Vector2(-s * 0.26, -s * 1.42),
 		Vector2(-s * 0.08, -s * 1.52), Vector2(s * 0.02, -s * 1.34),
 		Vector2(s * 0.14, -s * 1.46), Vector2(s * 0.26, -s * 1.20),
 		Vector2(s * 0.32, 0),
 	]), stone)
-	draw_line(Vector2(-s * 0.34, 0), Vector2(-s * 0.26, -s * 1.42), light, 2.0)
+	_P_line(Vector2(-s * 0.34, 0), Vector2(-s * 0.26, -s * 1.42), light, 2.0)
 	# two slit windows and a door arch
-	draw_rect(Rect2(-s * 0.06, -s * 1.16, s * 0.09, s * 0.20), dark)
-	draw_rect(Rect2(-s * 0.06, -s * 0.86, s * 0.09, s * 0.20), dark)
-	draw_colored_polygon(_dome_pts(Vector2(-s * 0.01, -s * 0.06), s * 0.11, s * 0.18), dark)
+	_P_rect(Rect2(-s * 0.06, -s * 1.16, s * 0.09, s * 0.20), dark)
+	_P_rect(Rect2(-s * 0.06, -s * 0.86, s * 0.09, s * 0.20), dark)
+	_P_poly(_dome_pts(Vector2(-s * 0.01, -s * 0.06), s * 0.11, s * 0.18), dark)
 	# rubble at the foot
 	for k in 3:
 		var cx := (float(k) - 1.0) * s * 0.26
-		draw_colored_polygon(_dome_pts(Vector2(cx, 0.0), s * 0.11, s * 0.10), stone.darkened(0.10))
+		_P_poly(_dome_pts(Vector2(cx, 0.0), s * 0.11, s * 0.10), stone.darkened(0.10))
 
 
 ## Zone 3 — the giant trunk that fell across the bog. The boardwalk is built around it.
@@ -2111,12 +2301,12 @@ func _lm_fallen_log(s: float) -> void:
 		Vector2(-s * 0.95, -s * 0.02), Vector2(-s * 0.95, -s * 0.30),
 		Vector2(s * 0.85, -s * 0.38), Vector2(s * 0.90, -s * 0.06),
 	])
-	draw_colored_polygon(body, wood)
-	draw_line(Vector2(-s * 0.95, -s * 0.30), Vector2(s * 0.85, -s * 0.38), light, 2.5)
+	_P_poly(body, wood)
+	_P_line(Vector2(-s * 0.95, -s * 0.30), Vector2(s * 0.85, -s * 0.38), light, 2.5)
 	# root disc at the near end
-	draw_colored_polygon(_ellipse_pts(Vector2(-s * 0.95, -s * 0.16), s * 0.20, s * 0.28, 10), wood.darkened(0.18))
+	_P_poly(_ellipse_pts(Vector2(-s * 0.95, -s * 0.16), s * 0.20, s * 0.28, 10), wood.darkened(0.18))
 	# moss along the top — flat, no sheen
-	draw_line(Vector2(-s * 0.60, -s * 0.32), Vector2(s * 0.50, -s * 0.36),
+	_P_line(Vector2(-s * 0.60, -s * 0.32), Vector2(s * 0.50, -s * 0.36),
 		_col("foliage", "#2c3a2c").lightened(0.10), 3.0)
 
 
@@ -2126,18 +2316,18 @@ func _lm_bridge(s: float) -> void:
 	var light := _col("stone_light", "#8a9092")
 	var dark := stone.darkened(0.24)
 	for x in [-s * 0.62, s * 0.58]:
-		draw_rect(Rect2(float(x) - s * 0.09, -s * 0.40, s * 0.18, s * 0.40), dark)
-	draw_rect(Rect2(-s * 1.05, -s * 0.56, s * 2.10, s * 0.18), stone)
-	draw_line(Vector2(-s * 1.05, -s * 0.56), Vector2(s * 1.05, -s * 0.56), light, 2.5)
+		_P_rect(Rect2(float(x) - s * 0.09, -s * 0.40, s * 0.18, s * 0.40), dark)
+	_P_rect(Rect2(-s * 1.05, -s * 0.56, s * 2.10, s * 0.18), stone)
+	_P_line(Vector2(-s * 1.05, -s * 0.56), Vector2(s * 1.05, -s * 0.56), light, 2.5)
 	# parapet: two low walls with a gap in the middle, so the deck reads as a way through
-	draw_rect(Rect2(-s * 1.05, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
-	draw_rect(Rect2(s * 0.27, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
+	_P_rect(Rect2(-s * 1.05, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
+	_P_rect(Rect2(s * 0.27, -s * 0.74, s * 0.78, s * 0.18), stone.darkened(0.10))
 	# the arch under the deck
 	var arch := PackedVector2Array()
 	for i in 9:
 		var a := PI + PI * float(i) / 8.0
 		arch.append(Vector2(cos(a) * s * 0.55, -s * 0.38 + sin(a) * s * 0.16))
-	draw_polyline(arch, light, 2.0)
+	_P_polyline(arch, light, 2.0)
 
 
 ## Zone 4 — the valley's cairns, three of them, the tall one in the middle.
@@ -2154,7 +2344,7 @@ func _lm_village(s: float) -> void:
 	# stilts under both huts
 	for x in [-0.42, 0.30]:
 		for dx in [-0.16, 0.16]:
-			draw_rect(Rect2(float(x) + float(dx) * s - s * 0.03, -s * 0.30, s * 0.06, s * 0.30),
+			_P_rect(Rect2(float(x) + float(dx) * s - s * 0.03, -s * 0.30, s * 0.06, s * 0.30),
 				_col("wood", "#4d3a26"))
 	_set_prop_offset(Vector2(-s * 0.42, -s * 0.30))
 	_prop_hut(s * 0.52)
@@ -2163,12 +2353,12 @@ func _lm_village(s: float) -> void:
 	_set_prop_offset(Vector2.ZERO)
 	# the ladder between them
 	var wood := _col("wood_light", "#634c33")
-	draw_line(Vector2(-s * 0.16, -s * 0.34), Vector2(s * 0.10, -s * 0.58), wood, 2.0)
-	draw_line(Vector2(-s * 0.10, -s * 0.30), Vector2(s * 0.16, -s * 0.54), wood, 2.0)
+	_P_line(Vector2(-s * 0.16, -s * 0.34), Vector2(s * 0.10, -s * 0.58), wood, 2.0)
+	_P_line(Vector2(-s * 0.10, -s * 0.30), Vector2(s * 0.16, -s * 0.54), wood, 2.0)
 	for k in 3:
 		var t := 0.25 + 0.25 * float(k)
 		var a := Vector2(-s * 0.16, -s * 0.34).lerp(Vector2(s * 0.10, -s * 0.58), t)
-		draw_line(a, a + Vector2(-s * 0.06, 0.04 * s), wood, 1.5)
+		_P_line(a, a + Vector2(-s * 0.06, 0.04 * s), wood, 1.5)
 
 
 ## Zone 7 — the spring: a stone basin holding flat water. The one "magic" thing in act 1, and it
@@ -2177,13 +2367,13 @@ func _lm_fountain(s: float) -> void:
 	var stone := _col("stone", "#6a7268")
 	var light := _col("stone_light", "#868e80")
 	var water := _col("accent", "#6fb3a0")
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.16), s * 0.86, s * 0.40, 18), stone.darkened(0.14))
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.76, s * 0.34, 18), stone)
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.62, s * 0.26, 18), water.darkened(0.10))
-	draw_arc(Vector2(0, -s * 0.20), s * 0.86, PI * 1.02, PI * 1.98, 20, light, 2.5)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.16), s * 0.86, s * 0.40, 18), stone.darkened(0.14))
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.76, s * 0.34, 18), stone)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.20), s * 0.62, s * 0.26, 18), water.darkened(0.10))
+	_P_arc(Vector2(0, -s * 0.20), s * 0.86, PI * 1.02, PI * 1.98, 20, light, 2.5)
 	# the spring stone in the middle
-	draw_colored_polygon(_ellipse_pts(Vector2(0, -s * 0.22), s * 0.16, s * 0.09), stone.darkened(0.20))
-	draw_rect(Rect2(-s * 0.07, -s * 0.34, s * 0.14, s * 0.14), stone)
+	_P_poly(_ellipse_pts(Vector2(0, -s * 0.22), s * 0.16, s * 0.09), stone.darkened(0.20))
+	_P_rect(Rect2(-s * 0.07, -s * 0.34, s * 0.14, s * 0.14), stone)
 
 
 ## Zone 8 — the fortress on the far bank: a square tower with crenellations.
@@ -2191,15 +2381,15 @@ func _lm_watchtower(s: float) -> void:
 	var stone := _col("stone", "#6e726b")
 	var light := _col("stone_light", "#8b8f86")
 	var dark := stone.darkened(0.26)
-	draw_rect(Rect2(-s * 0.36, -s * 1.34, s * 0.72, s * 1.34), stone)
-	draw_line(Vector2(-s * 0.36, -s * 1.34), Vector2(-s * 0.36, 0), light, 2.0)
+	_P_rect(Rect2(-s * 0.36, -s * 1.34, s * 0.72, s * 1.34), stone)
+	_P_line(Vector2(-s * 0.36, -s * 1.34), Vector2(-s * 0.36, 0), light, 2.0)
 	# crenellations
 	for k in 3:
-		draw_rect(Rect2(-s * 0.36 + float(k) * s * 0.26, -s * 1.48, s * 0.16, s * 0.16), stone)
+		_P_rect(Rect2(-s * 0.36 + float(k) * s * 0.26, -s * 1.48, s * 0.16, s * 0.16), stone)
 	# slit windows
-	draw_rect(Rect2(-s * 0.05, -s * 1.02, s * 0.10, s * 0.22), dark)
-	draw_rect(Rect2(-s * 0.05, -s * 0.62, s * 0.10, s * 0.22), dark)
-	draw_rect(Rect2(-s * 0.10, -s * 0.26, s * 0.20, s * 0.26), dark)
+	_P_rect(Rect2(-s * 0.05, -s * 1.02, s * 0.10, s * 0.22), dark)
+	_P_rect(Rect2(-s * 0.05, -s * 0.62, s * 0.10, s * 0.22), dark)
+	_P_rect(Rect2(-s * 0.10, -s * 0.26, s * 0.20, s * 0.26), dark)
 
 
 ## Zone 9 — the broken gate, strangled by roots: two pillars, the arch fallen between them.
@@ -2208,15 +2398,15 @@ func _lm_gate(s: float) -> void:
 	var light := _col("stone_light", "#8f8570")
 	for x in [-0.66, 0.60]:
 		var bx := float(x) * s
-		draw_rect(Rect2(bx - s * 0.13, -s * 1.20, s * 0.26, s * 1.20), stone)
-		draw_line(Vector2(bx - s * 0.13, -s * 1.20), Vector2(bx - s * 0.13, 0), light, 2.0)
-		draw_rect(Rect2(bx - s * 0.17, -s * 1.28, s * 0.34, s * 0.10), stone.darkened(0.08))
+		_P_rect(Rect2(bx - s * 0.13, -s * 1.20, s * 0.26, s * 1.20), stone)
+		_P_line(Vector2(bx - s * 0.13, -s * 1.20), Vector2(bx - s * 0.13, 0), light, 2.0)
+		_P_rect(Rect2(bx - s * 0.17, -s * 1.28, s * 0.34, s * 0.10), stone.darkened(0.08))
 	# the fallen arch: a stump on each pillar and nothing between them
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(-s * 0.53, -s * 1.06), Vector2(-s * 0.20, -s * 1.02),
 		Vector2(-s * 0.26, -s * 0.92), Vector2(-s * 0.53, -s * 0.94),
 	]), stone.darkened(0.06))
-	draw_colored_polygon(PackedVector2Array([
+	_P_poly(PackedVector2Array([
 		Vector2(s * 0.14, -s * 0.98), Vector2(s * 0.47, -s * 0.90),
 		Vector2(s * 0.43, -s * 0.80), Vector2(s * 0.16, -s * 0.86),
 	]), stone.darkened(0.06))
@@ -2227,7 +2417,7 @@ func _lm_gate(s: float) -> void:
 		for i in 6:
 			var t := float(i) / 5.0
 			pts.append(Vector2(bx - s * 0.22 + t * s * 0.44, -s * 1.10 - sin(t * PI) * s * 0.10))
-		draw_polyline(pts, _col("wood", "#463424"), s * 0.10)
+		_P_polyline(pts, _col("wood", "#463424"), s * 0.10)
 	_set_prop_offset(Vector2(-s * 0.05, 0.0))
 	_prop_root(s * 0.55, 0.3)
 	_set_prop_offset(Vector2.ZERO)
