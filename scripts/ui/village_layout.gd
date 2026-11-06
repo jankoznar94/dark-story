@@ -116,11 +116,21 @@ static func cell_rect(ix: int, iy: int) -> Rect2:
 ## Used by the collision once the engine assembles this zone; a plain point query keeps the rule in
 ## ONE place instead of a per-cell special case.
 static func walkable_point(p: Vector2, radius: float = 0.0) -> bool:
+	return walkable_in({}, p, radius)
+
+
+## The same rule for ANY layout (`{"cells": [[x, y, mask], ...]}`), so a generated village and the
+## authored one cannot disagree about where a body may stand. An empty layout means `CELLS`.
+static func walkable_in(layout: Dictionary, p: Vector2, radius: float = 0.0) -> bool:
 	var ix := int(floor(p.x / float(TILE)))
 	var iy := int(floor(p.y / float(TILE)))
 	if ix < 0 or iy < 0 or ix >= COLS or iy >= ROWS:
 		return false
-	var m := mask_at(ix, iy)
+	var m := 0
+	for c in (layout.get("cells", CELLS) as Array):
+		if int(c[0]) == ix and int(c[1]) == iy:
+			m = int(c[2])
+			break
 	if m == 0:
 		return false
 	var c := Vector2(ix * TILE + TILE * 0.5, iy * TILE + TILE * 0.5)
@@ -143,3 +153,234 @@ static func walkable_point(p: Vector2, radius: float = 0.0) -> bool:
 	if (m & W) and rel.x <= 0.0 and absf(rel.y) <= half:
 		return true
 	return false
+
+# ============================================================================ generator
+## A FRESH village for every entry, from the same five tiles. Jan: "Tenhle grid (pokud tedy bude
+## pokaždé jiný, minimálně třeba 10 variant) můžeš použít." The generator is seeded from the zone,
+## so coming back to the same zone shows the same village, and a different zone (or act) shows a
+## different one — while every layout obeys the same four rules the probe asserts.
+##
+## The shape is grown by always extending from the cell that has the MOST occupied neighbours: that
+## gives a compact blob instead of the thin snake a random walk produces (measured: random growth
+## left 1-cell chains where the player walks a 25-tile corridor). The loop count is randomised per
+## layout, so some villages are a ring with two branches and others are a dense web.
+##
+## Returns `{"cells": [[x, y, mask], ...], "entry": Vector2i, "exit": Vector2i, "spawn": Vector2,
+## "exit_point": Vector2}` or an EMPTY dictionary when no valid layout was found — the caller then
+## falls back to `CELLS`.
+static func generate(seed_value: int) -> Dictionary:
+	# 64 attempts: about one seed in 300 has a stream that keeps producing a shape without a
+	# usable door on both sides, and 24 was not always enough for those (measured: 1 of 300).
+	for attempt in 64:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value + attempt * 7919
+		var out := _try_generate(rng)
+		if not out.is_empty():
+			return out
+	return {}
+
+
+static func _try_generate(rng: RandomNumberGenerator) -> Dictionary:
+	var start := Vector2i(rng.randi_range(1, 2), rng.randi_range(1, 4))
+	var target := 24 + rng.randi_range(0, 3)
+	var loops := 4 + 2 * rng.randi_range(0, 3)
+	var cells := {start: true}
+	while cells.size() < target:
+		var best := -1.0
+		var best_cell := Vector2i(-1, -1)
+		for c in cells:
+			for n in _open_neighbours(c):
+				if cells.has(n):
+					continue
+				var near := 0
+				for m in _open_neighbours(n):
+					if cells.has(m):
+						near += 1
+				var score := float(near) + rng.randf() * 1.4
+				if score > best:
+					best = score
+					best_cell = n
+		if best_cell.x < 0:
+			return {}
+		cells[best_cell] = true
+
+	# Spanning tree over the blob, then a random handful of extra edges = loops.
+	var edges := {}
+	var seen := {start: true}
+	var stack := [start]
+	while not stack.is_empty():
+		var c: Vector2i = stack[stack.size() - 1]
+		var options: Array = []
+		for n in _open_neighbours(c):
+			if cells.has(n) and not seen.has(n):
+				options.append(n)
+		if options.is_empty():
+			stack.pop_back()
+			continue
+		var n: Vector2i = options[rng.randi_range(0, options.size() - 1)]
+		edges[_edge_key(c, n)] = true
+		seen[n] = true
+		stack.append(n)
+	if seen.size() != cells.size():
+		return {}
+	var extra: Array = []
+	for c in cells:
+		for n in _open_neighbours(c):
+			if cells.has(n) and c.x <= n.x and c.y <= n.y and not edges.has(_edge_key(c, n)):
+				extra.append(Vector2i(c.x * 8 + n.x, c.y * 8 + n.y))
+	for i in extra.size():
+		var j := rng.randi_range(i, extra.size() - 1)
+		var tmp: Variant = extra[i]
+		extra[i] = extra[j]
+		extra[j] = tmp
+	for i in mini(loops, extra.size()):
+		var code: Vector2i = extra[i]
+		edges[_edge_key(Vector2i(code.x / 8, code.y / 8), Vector2i(code.x % 8, code.y % 8))] = true
+
+	var masks := {}
+	for c in cells:
+		var m := 0
+		for n in _open_neighbours(c):
+			if cells.has(n) and edges.has(_edge_key(c, n)):
+				m |= _bit_to(c, n)
+		masks[c] = m
+
+	var entry := Vector2i(-1, -1)
+	var exits: Array = []
+	for c in cells:
+		var degree := 0
+		for n in _open_neighbours(c):
+			if cells.has(n) and edges.has(_edge_key(c, n)):
+				degree += 1
+		if degree < 2:
+			continue
+		if c.x == 0:
+			entry = c
+			break
+		if c.x == COLS - 1 or c.y == ROWS - 1:
+			exits.append(c)
+	if entry.x < 0 or exits.is_empty():
+		return {}
+	var exit_cell: Vector2i = exits[rng.randi_range(0, exits.size() - 1)]
+	masks[entry] = int(masks[entry]) | W
+	masks[exit_cell] = int(masks[exit_cell]) | (E if exit_cell.x == COLS - 1 else S)
+
+	var list: Array = []
+	for c in cells:
+		list.append([c.x, c.y, int(masks[c])])
+	list.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	var out := {
+		"cells": list,
+		"entry": entry,
+		"exit": exit_cell,
+		"spawn": Vector2(70.0, float(entry.y) * TILE + TILE * 0.5),
+		# ⚠️  The exit point follows the DOOR, not the right edge: a village whose exit is on the
+		# bottom border has its walkway running DOWN, and a point at the right edge lands off it.
+		"exit_point": (Vector2(float(exit_cell.x) * TILE + TILE - 40.0,
+			float(exit_cell.y) * TILE + TILE * 0.5) if exit_cell.x == COLS - 1
+			else Vector2(float(exit_cell.x) * TILE + TILE * 0.5,
+				float(exit_cell.y) * TILE + TILE - 40.0)),
+	}
+	if not validate(out):
+		return {}
+	return out
+
+
+## The four rules the area must never break. Public so the probe can hammer it: a generated layout
+## that fails here is a village the player can get stuck in or walk out of backwards.
+static func validate(layout: Dictionary) -> bool:
+	var list: Array = layout.get("cells", [])
+	if list.size() < 20:
+		return false
+	var has := {}
+	for entry in list:
+		has[Vector2i(int(entry[0]), int(entry[1]))] = int(entry[2])
+	# 1. every opening is matched by the neighbour's, 2. only the two doors point outside
+	var outside := 0
+	for c in has:
+		var m: int = has[c]
+		for pair in [[N, Vector2i(0, -1)], [S, Vector2i(0, 1)], [E, Vector2i(1, 0)], [W, Vector2i(-1, 0)]]:
+			if (m & int(pair[0])) == 0:
+				continue
+			var n: Vector2i = c + (pair[1] as Vector2i)
+			if n.x < 0 or n.y < 0 or n.x >= COLS or n.y >= ROWS:
+				outside += 1
+				continue
+			if not has.has(n):
+				return false
+			if (int(has[n]) & _opposite(int(pair[0]))) == 0:
+				return false
+	if outside != 2:
+		return false
+	# 3. the whole village is reachable from the entry, 4. the doors are on the border
+	var entry_cell: Vector2i = layout["entry"]
+	var exit_cell: Vector2i = layout["exit"]
+	if not has.has(entry_cell) or not has.has(exit_cell):
+		return false
+	var seen := {entry_cell: true}
+	var queue := [entry_cell]
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_back()
+		var m: int = has[c]
+		for pair in [[N, Vector2i(0, -1)], [S, Vector2i(0, 1)], [E, Vector2i(1, 0)], [W, Vector2i(-1, 0)]]:
+			if (m & int(pair[0])) == 0:
+				continue
+			var n: Vector2i = c + (pair[1] as Vector2i)
+			if has.has(n) and not seen.has(n):
+				seen[n] = true
+				queue.append(n)
+	if seen.size() != has.size():
+		return false
+	# A compact blob: a thin chain is a corridor, not a village (measured on the first generator).
+	var xs := []
+	var ys := []
+	for c in has:
+		xs.append(c.x)
+		ys.append(c.y)
+	xs.sort()
+	ys.sort()
+	var box := (int(xs[xs.size() - 1]) - int(xs[0]) + 1) * (int(ys[ys.size() - 1]) - int(ys[0]) + 1)
+	# A 6 x 6 box is 36 cells and a village has 24-27 of them, so 0.72 was unreachable once the blob
+	# spanned the full grid (the entry is always on x = 0 and the exit on the far side). 0.62 still
+	# rejects a snake and accepts every compact blob.
+	return float(has.size()) / float(box) >= 0.62
+
+
+static func _open_neighbours(c: Vector2i) -> Array:
+	var out: Array = []
+	if c.y > 0:
+		out.append(Vector2i(c.x, c.y - 1))
+	if c.y < ROWS - 1:
+		out.append(Vector2i(c.x, c.y + 1))
+	if c.x < COLS - 1:
+		out.append(Vector2i(c.x + 1, c.y))
+	if c.x > 0:
+		out.append(Vector2i(c.x - 1, c.y))
+	return out
+
+
+static func _edge_key(a: Vector2i, b: Vector2i) -> String:
+	if a.x < b.x or (a.x == b.x and a.y < b.y):
+		return "%d,%d|%d,%d" % [a.x, a.y, b.x, b.y]
+	return "%d,%d|%d,%d" % [b.x, b.y, a.x, a.y]
+
+
+static func _bit_to(from: Vector2i, to: Vector2i) -> int:
+	if to.y < from.y:
+		return N
+	if to.y > from.y:
+		return S
+	if to.x > from.x:
+		return E
+	return W
+
+
+static func _opposite(bit: int) -> int:
+	match bit:
+		N:
+			return S
+		S:
+			return N
+		E:
+			return W
+	return E

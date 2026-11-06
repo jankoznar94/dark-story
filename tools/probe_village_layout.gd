@@ -108,6 +108,36 @@ func _initialize() -> void:
 				"mask %d's atlas region %s falls outside the atlas" % [m, str(r)])
 	_check(load(VillageLayout.FOREST) != null, "the jungle tile must load")
 
+	# THE GENERATOR — Jan wants a different village each time ("minimálně třeba 10 variant"), so
+	# every seeded layout has to obey the SAME rules as the authored one, and the spawn has to be on
+	# the generated walkway, not on the authored one.
+	var bad: Array = []
+	for s in 300:
+		var g: Dictionary = VillageLayout.generate(1000 + s * 37)
+		if g.is_empty() or not VillageLayout.validate(g):
+			bad.append(1000 + s * 37)
+			continue
+		var g_spawn: Vector2 = g["spawn"]
+		if not VillageLayout.walkable_in(g, g_spawn):
+			bad.append(1000 + s * 37)
+			continue
+		var g_exit: Vector2 = g["exit_point"]
+		if not VillageLayout.walkable_in(g, g_exit):
+			bad.append(1000 + s * 37)
+	_check(bad.is_empty(), "the generator produced %d invalid villages, first seeds: %s"
+		% [bad.size(), str(bad.slice(0, 5))])
+	# ... and it must really VARY: ten villages may not be ten copies.
+	var shapes := {}
+	for s in 12:
+		var g: Dictionary = VillageLayout.generate(777 + s)
+		if g.is_empty():
+			continue
+		var key := ""
+		for c in (g["cells"] as Array):
+			key += "%d,%d;" % [int(c[0]), int(c[1])]
+		shapes[key] = true
+	_check(shapes.size() >= 10, "12 seeds produced only %d distinct villages" % shapes.size())
+
 	for f in _failures:
 		print("  FAIL: %s" % f)
 	print("VILLAGE_LAYOUT_OK=%s" % ("true" if _failures.is_empty() else "false"))
