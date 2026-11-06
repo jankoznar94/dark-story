@@ -310,9 +310,14 @@ func _build_decoration() -> void:
 			along += 1
 	# Interior cover. Sparse on purpose: it is something to run past, and a pack has to be
 	# readable from a distance instead of hiding behind a bush.
+	#
+	# ⚠️  DRY GROUND ONLY. In a bog the walkable cells are PLANKS — a bush growing out of a walkway
+	# is a bush standing on a road, and a rock on a bridge is a lie about the collision.
 	for _i in 26:
 		var c := Vector2i(rng.randi_range(0, SurvivorRun.COLS - 1), rng.randi_range(0, SurvivorRun.ROWS - 1))
-		if not run.is_floor_cell(c.x, c.y) or _rock_direction(c.x, c.y) != Vector2i.ZERO:
+		if run.cell_kind_at(c.x, c.y) != SurvivorRun.KIND_GROUND:
+			continue
+		if _rock_direction(c.x, c.y) != Vector2i.ZERO:
 			continue
 		var pos: Vector2 = run.cell_centre(c.x, c.y) \
 			+ Vector2(rng.randf_range(-20, 20), rng.randf_range(-20, 20))
@@ -323,6 +328,26 @@ func _build_decoration() -> void:
 			"size": ZoneThemeData.base_size(kind, rng, false),
 			"seed": rng.randf() * 10.0,
 		})
+	# THE SHORE. Everything that stands in the water along the walkway: reeds in the bog, boulders
+	# and rubble on a river bank. Without this the water is an empty colour and the walkway floats
+	# in nothing — Jan's "vypadá to pořád stejně" applied to a new surface.
+	var shore_kinds: Array = _theme.get("shore", [])
+	if not shore_kinds.is_empty():
+		for cy in SurvivorRun.ROWS:
+			for cx in SurvivorRun.COLS:
+				if not run.is_deck_cell(cx, cy):
+					continue
+				var to_water := _water_direction(cx, cy)
+				if to_water == Vector2i.ZERO or rng.randf() > 0.55:
+					continue
+				var centre: Vector2 = run.cell_centre(cx, cy)
+				var kind: String = ZoneThemeData.pick_shore(_theme, rng)
+				_props.append({
+					"pos": centre + Vector2(to_water) * (SurvivorRun.TILE * 0.62),
+					"kind": kind,
+					"size": ZoneThemeData.base_size(kind, rng, false),
+					"seed": rng.randf() * 10.0,
+				})
 	_build_landmarks(wall_spots, rng)
 	# Nothing may stand on the hero's first step.
 	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(run.player_pos) > 70.0)
@@ -461,10 +486,20 @@ func _floor_spot_ahead(dir: Vector2, want: float) -> Dictionary:
 	return {}
 
 
-## The direction from a floor cell to the rock next to it, or ZERO if the cell is interior.
+## The direction from a floor cell to the ROCK next to it, or ZERO if the cell is interior.
+## ⚠️  ROCK ONLY, not "anything that is not floor": water is not a place a pine grows out of, and
+## a wall prop on the edge of a river would stand in mid-air over the water.
 func _rock_direction(cx: int, cy: int) -> Vector2i:
 	for d in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
-		if not run.is_floor_cell(cx + d.x, cy + d.y):
+		if run.cell_kind_at(cx + d.x, cy + d.y) == SurvivorRun.KIND_ROCK:
+			return d
+	return Vector2i.ZERO
+
+
+## The direction from a WALKABLE cell to the water next to it, or ZERO. The shore pass reads this.
+func _water_direction(cx: int, cy: int) -> Vector2i:
+	for d in [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]:
+		if run.is_water_cell(cx + d.x, cy + d.y):
 			return d
 	return Vector2i.ZERO
 
@@ -1161,6 +1196,10 @@ func _draw_ground() -> void:
 	draw_texture_rect(_ground, Rect2(-_cam, SurvivorRun.WORLD), true,
 		_theme.get("tint", Color.WHITE))
 	_draw_rock()
+	# Water and the wooden deck go OVER the rock: the swamp's water is cut through the rock at the
+	# area's edge, and a walkway is a thing you see lying on top of the bog.
+	_draw_water()
+	_draw_deck()
 
 
 ## Everything that is NOT the corridor's floor, painted as rock. Cells are merged into runs per
@@ -1177,11 +1216,11 @@ func _draw_rock() -> void:
 		var x := maxi(c0.x, 0)
 		var stop := mini(c1.x + 1, SurvivorRun.COLS)
 		while x < stop:
-			if run.is_floor_cell(x, cy):
+			if run.is_floor_cell(x, cy) or run.is_water_cell(x, cy):
 				x += 1
 				continue
 			var start := x
-			while x < stop and not run.is_floor_cell(x, cy):
+			while x < stop and not run.is_floor_cell(x, cy) and not run.is_water_cell(x, cy):
 				x += 1
 			var rect := Rect2(Vector2(float(start) * SurvivorRun.TILE,
 				float(cy) * SurvivorRun.TILE) - _cam,
@@ -1194,7 +1233,7 @@ func _draw_rock() -> void:
 	# through as a crevice, so no bright grass ever leaks between two rocks.
 	for cy in range(maxi(c0.y - 1, 0), mini(c1.y + 2, SurvivorRun.ROWS)):
 		for cx in range(maxi(c0.x - 1, 0), mini(c1.x + 2, SurvivorRun.COLS)):
-			if run.is_floor_cell(cx, cy) or not _touches_floor(cx, cy):
+			if run.is_floor_cell(cx, cy) or run.is_water_cell(cx, cy) or not _touches_floor(cx, cy):
 				continue
 			var poly := _rock_polygon(cx, cy)
 			for i in poly.size():
@@ -1224,7 +1263,145 @@ func _rock_polygon(cx: int, cy: int) -> PackedVector2Array:
 
 func _touches_floor(cx: int, cy: int) -> bool:
 	return run.is_floor_cell(cx - 1, cy) or run.is_floor_cell(cx + 1, cy) \
-		or run.is_floor_cell(cx, cy - 1) or run.is_floor_cell(cx, cy + 1)
+		or run.is_floor_cell(cx, cy - 1) or run.is_floor_cell(cx, cy + 1) \
+		or run.is_water_cell(cx - 1, cy) or run.is_water_cell(cx + 1, cy) \
+		or run.is_water_cell(cx, cy - 1) or run.is_water_cell(cx, cy + 1)
+
+
+# ============================================================================ water and deck
+#
+# Jan, Nov 2026: "Močály nebudou mít jen jinou texturu na zemi, ale můžeme doslova napodobit
+# dřevěné lávky uprostřed močálů… do močálů se vstoupit nedá a chodit se dá jen po lávkách. Ty
+# mohou směřovat různě, ne jen rovně nahoru. Samozřejmě lávky musí mít texturu dřeva."
+#
+# Both surfaces are drawn FLAT, from the zone's palette, in the same icon language as the props:
+# no gradients, no bloom, no textures to download. The water is a colour plus a handful of ripple
+# strokes and a darker line where it meets a bank; the deck is planks with seams and a lit edge.
+
+## The bog / the river. Painted in three passes: the sheet of water (merged into runs per row, so
+## a 400 px river is four rects and not sixty), the ripples, and the bank line.
+func _draw_water() -> void:
+	if run == null:
+		return
+	var view := _view_world_size()
+	var c0: Vector2i = run.cell_of(_cam)
+	var c1: Vector2i = run.cell_of(_cam + view)
+	var t := float(SurvivorRun.TILE)
+	var base: Color = _col("water", "#2b3a37")
+	var line: Color = _col("water_line", "#435a54")
+	var dark := base.darkened(0.35)
+	var x0 := maxi(c0.x - 1, 0)
+	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
+	var y0 := maxi(c0.y - 1, 0)
+	var y1 := mini(c1.y + 2, SurvivorRun.ROWS)
+	# 1. one rect per run of water in a row.
+	for cy in range(y0, y1):
+		var x := x0
+		while x < x1:
+			if not run.is_water_cell(x, cy):
+				x += 1
+				continue
+			var start := x
+			while x < x1 and run.is_water_cell(x, cy):
+				x += 1
+			draw_rect(Rect2(Vector2(float(start) * t, float(cy) * t) - _cam,
+				Vector2(float(x - start) * t, t)), base)
+	# 2. the bank: a darker line on every side of a water cell that does not touch more water.
+	# Without it the water reads as a flat hole in the ground rather than as water.
+	for cy in range(y0, y1):
+		for cx in range(x0, x1):
+			if not run.is_water_cell(cx, cy):
+				continue
+			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
+			if not run.is_water_cell(cx, cy - 1):
+				draw_line(p, p + Vector2(t, 0), dark, 3.0)
+			if not run.is_water_cell(cx, cy + 1):
+				draw_line(p + Vector2(0, t), p + Vector2(t, t), dark, 3.0)
+			if not run.is_water_cell(cx - 1, cy):
+				draw_line(p, p + Vector2(0, t), dark, 3.0)
+			if not run.is_water_cell(cx + 1, cy):
+				draw_line(p + Vector2(t, 0), p + Vector2(t, t), dark, 3.0)
+	# 3. ripples — two short flat strokes per cell, seeded by the cell so they never crawl.
+	for cy in range(y0, y1):
+		for cx in range(x0, x1):
+			if not run.is_water_cell(cx, cy):
+				continue
+			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
+			var s := float((cx * 73856093) ^ (cy * 19349663)) * 0.0001
+			for k in 2:
+				var oy := t * (0.28 + 0.42 * fposmod(sin(s * (float(k) + 2.3)) * 0.5 + 0.5, 1.0))
+				var ox := t * (0.5 + sin(s + float(k) * 2.1) * 0.18)
+				var w := t * (0.14 + 0.09 * fposmod(s * 1.7, 1.0))
+				draw_line(p + Vector2(ox - w, oy), p + Vector2(ox + w, oy), Color(line, 0.55),
+					2.0)
+
+
+## The plank walkway (swamp) and the bridge (river, chasm). `run.feature` decides whether the
+## edges facing water get a railing: a walkway through a bog is planks laid on mud, a bridge over
+## a river has a rail.
+func _draw_deck() -> void:
+	if run == null:
+		return
+	var view := _view_world_size()
+	var c0: Vector2i = run.cell_of(_cam)
+	var c1: Vector2i = run.cell_of(_cam + view)
+	var t := float(SurvivorRun.TILE)
+	var wood: Color = _col("wood", "#4a3a28")
+	var light: Color = _col("wood_light", "#5f4b34")
+	var seam := wood.darkened(0.42)
+	var railed: bool = run.feature == "river" or run.feature == "chasm"
+	var x0 := maxi(c0.x - 1, 0)
+	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
+	var y0 := maxi(c0.y - 1, 0)
+	var y1 := mini(c1.y + 2, SurvivorRun.ROWS)
+	for cy in range(y0, y1):
+		for cx in range(x0, x1):
+			if not run.is_deck_cell(cx, cy):
+				continue
+			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
+			# The deck is RAISED: a soft dark band under it, offset down-right, is what makes it
+			# read as lying ON the water instead of being painted into it.
+			draw_rect(Rect2(p + Vector2(2.0, 3.5), Vector2(t, t)), Color(0, 0, 0, 0.28))
+	for cy in range(y0, y1):
+		for cx in range(x0, x1):
+			if not run.is_deck_cell(cx, cy):
+				continue
+			var p := Vector2(float(cx) * t, float(cy) * t) - _cam
+			# Planks run ACROSS the walk: east-west walk -> vertical seams, and the other way
+			# round. Deciding per CELL (from its own deck neighbours) keeps the seams continuous
+			# along a run, which is what makes it read as planks instead of a tile.
+			var east_west := bool(run.is_deck_cell(cx - 1, cy)) or bool(run.is_deck_cell(cx + 1, cy))
+			var north_south := bool(run.is_deck_cell(cx, cy - 1)) or bool(run.is_deck_cell(cx, cy + 1))
+			if east_west and not north_south:
+				east_west = false
+			draw_rect(Rect2(p, Vector2(t, t)), wood)
+			for k in [1, 2]:
+				var off := t * float(k) / 3.0
+				if east_west:
+					draw_line(p + Vector2(0, off), p + Vector2(t, off), seam, 1.5)
+				else:
+					draw_line(p + Vector2(off, 0), p + Vector2(off, t), seam, 1.5)
+			# A lit edge on the north side: the one bright line that gives the plank its thickness.
+			draw_line(p, p + Vector2(t, 0), Color(light, 0.75), 1.5)
+			if railed:
+				# ⚠️  A RAIL IS ONLY A RAIL IF IT READS AGAINST THE PLANKS. A 3 px line in
+				# `wood_light` disappeared into the deck in the first capture ("there is no
+				# railing, it is a deck lying beside water"), so the rail is drawn as an OUTER
+				# light edge with a dark line just inside it — flat, no glow, but unmistakable.
+				var rail: Color = light.lightened(0.30)
+				var rail_shadow := wood.darkened(0.55)
+				if run.is_water_cell(cx, cy - 1):
+					draw_line(p + Vector2(0, 2.0), p + Vector2(t, 2.0), rail, 4.0)
+					draw_line(p + Vector2(0, 6.0), p + Vector2(t, 6.0), rail_shadow, 1.5)
+				if run.is_water_cell(cx, cy + 1):
+					draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), rail, 4.0)
+					draw_line(p + Vector2(0, t - 6.0), p + Vector2(t, t - 6.0), rail_shadow, 1.5)
+				if run.is_water_cell(cx - 1, cy):
+					draw_line(p + Vector2(2.0, 0), p + Vector2(2.0, t), rail, 4.0)
+					draw_line(p + Vector2(6.0, 0), p + Vector2(6.0, t), rail_shadow, 1.5)
+				if run.is_water_cell(cx + 1, cy):
+					draw_line(p + Vector2(t - 2.0, 0), p + Vector2(t - 2.0, t), rail, 4.0)
+					draw_line(p + Vector2(t - 6.0, 0), p + Vector2(t - 6.0, t), rail_shadow, 1.5)
 
 
 ## FOG OF WAR — and after Jan's second pass it has exactly TWO states, not three:
@@ -1312,6 +1489,11 @@ func _draw_patches() -> void:
 		var pos: Vector2 = (p["pos"] as Vector2) - _cam
 		var rx := float(p["rx"])
 		if not on_screen(pos, rx, view):
+			continue
+		# A patch of bare mud is not a thing you find on open water: the patches are laid on
+		# FLOOR at build time and a zone's terrain can turn that floor into a bog.
+		var pc: Vector2i = run.cell_of(pos + _cam)
+		if run.is_water_cell(pc.x, pc.y) or run.is_deck_cell(pc.x, pc.y):
 			continue
 		var ry := float(p["ry"])
 		_set_local(pos, Vector2(1.0, ry / rx))

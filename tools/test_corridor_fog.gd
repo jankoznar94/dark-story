@@ -28,6 +28,8 @@ const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const STEP := 0.1
 ## The seeds the generator is judged on. One seed can be lucky; five cannot all be lucky.
 const SEEDS := [1, 7, 4242, 90210, 31337]
+## The four edges a walk can enter or leave by, in `SurvivorRun.entry_side` order.
+const SIDE_NAMES := ["bottom", "top", "left", "right"]
 
 var _data: Node
 var _gen: ItemGen
@@ -134,19 +136,26 @@ func _test_shape(seed_value: int) -> void:
 		_fail("seed %d: only %.0f %% of the map is floor — nothing to walk on"
 			% [seed_value, share * 100.0])
 
-	var ys: Array = []
+	# ⚠️  THE SPAN IS ASSERTED ON THE EDGES THE WALK ACTUALLY CONNECTS. Jan, Nov 2026: "Východ nemusí
+	# být vždy vpravo nahoře. A vchod nemusí být vždy vpravo dole. Může to být libovolně." A fixed
+	# "the floor must climb 70 % of the rows" check measured the old bottom-to-top generator and
+	# would fail every area that enters from the left. What has to hold instead is that the walk
+	# REACHES both the edge it arrives through and the edge it leaves by.
 	var xs: Array = []
+	var ys: Array = []
 	for c in _floor_cells(r):
 		xs.append(c.x)
 		ys.append(c.y)
 	var span_x: int = int(xs.max()) - int(xs.min()) + 1
 	var span_y: int = int(ys.max()) - int(ys.min()) + 1
-	if span_y < r.ROWS * 0.7:
-		_fail("seed %d: the corridor only spans %d of %d rows — it does not wind up the map"
-			% [seed_value, span_y, r.ROWS])
-	if span_x < r.COLS * 0.4:
-		_fail("seed %d: the corridor only spans %d of %d columns — there are no turns to make"
-			% [seed_value, span_x, r.COLS])
+	if not _reaches_edge(r, r.entry_side, xs, ys):
+		_fail("seed %d: the floor does not reach the %s edge the hero arrives through"
+			% [seed_value, SIDE_NAMES[r.entry_side]])
+	if not _reaches_edge(r, r.exit_side, xs, ys):
+		_fail("seed %d: the floor does not reach the %s edge the walk leaves by"
+			% [seed_value, SIDE_NAMES[r.exit_side]])
+	print("  seed %d: entry=%s exit=%s, floor spans %d x %d cells" % [seed_value,
+		SIDE_NAMES[r.entry_side], SIDE_NAMES[r.exit_side], span_x, span_y])
 
 	# The start clearing is a ROOM, not a single cell: room to fight the first pack.
 	var c := r.cell_of(r.start_point)
@@ -162,8 +171,23 @@ func _test_shape(seed_value: int) -> void:
 		_fail("seed %d: the hero spawns inside the rock at %s" % [seed_value, str(r.player_pos)])
 
 
-# --- 2. connectivity ------------------------------------------------------------
+# --- 1b. the two edges ----------------------------------------------------------
 
+## Does the floor reach the edge of the map on `side`? The entrance room is carved 5-6 cells in
+## from its own edge, so a floor cell within 14 cells of that edge is proof the walk got there.
+func _reaches_edge(r: SurvivorRun, side: int, xs: Array, ys: Array) -> bool:
+	match side:
+		0:
+			return int(ys.max()) >= r.ROWS - 14
+		1:
+			return int(ys.min()) <= 13
+		2:
+			return int(xs.min()) <= 13
+		_:
+			return int(xs.max()) >= r.COLS - 14
+
+
+# --- 2. connectivity ------------------------------------------------------------
 ## One flood fill over the floor, four neighbours, starting at the spawn. Every floor cell and
 ## every pack centre must be reachable — a pocket behind the rock would be a pack the player can
 ## see and never fight, and the area would never clear.

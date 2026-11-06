@@ -18,6 +18,13 @@ const Progression := preload("res://scripts/combat/progression.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const RunSpells := preload("res://scripts/combat/run_spells.gd")
 const PlayerSpells := preload("res://scripts/combat/player_spells.gd")
+## The zone's look is a DATA table (`scripts/ui/zone_theme.gd`): which ground tile, which palette
+## and — since Nov 2026 — which TERRAIN FEATURE (swamp boardwalk, river with a bridge) the area
+## is built with. Reading the same table the screen paints from is what keeps "a bog" one idea.
+const ZoneThemeData := preload("res://scripts/ui/zone_theme.gd")
+## Print the terrain build's own numbers while it runs. Off in the game; `tools/probe_terrain.gd`
+## is the proper instrument.
+const DEBUG_TERRAIN := false
 const Sfx := preload("res://scripts/audio/sfx.gd")
 
 ## --- the arena -------------------------------------------------------------
@@ -212,6 +219,10 @@ const PATH_TARGET := 12800.0
 ## area together with it — more kills, a longer run and the same "full bag" as before.
 const CELL_SPACING := 380.0
 const ACTIVATE_RADIUS := 330.0
+## Two spawn cells must be at least this far apart in SPACE (not along the path), so that walking
+## into one pack does not wake the next. `PACK_MIN_GAP > 2 * ACTIVATE_RADIUS` leaves a margin for
+## the pack's own members walking outward.
+const PACK_MIN_GAP := 460.0
 
 ## --- what a cell holds ------------------------------------------------------
 ## Jan, Nov 2026: "Nespawnoval bych je vždy jako skupiny. Spíš jako jednotlivce. Někdy blízko
@@ -332,6 +343,23 @@ var monsters: Array = []
 ## standing positions, decided at setup from the seed, so the layout is reproducible and a pack
 ## that has not woken yet is still a known quantity for a test.
 var zones: Array = []
+
+## --- cell terrain ------------------------------------------------------------
+## `floor_cells` (below) is the WALKABLE mask every rule reads. `cell_kind` adds what the cell
+## LOOKS like, which is what a swamp or a river needs: impassable water you cannot walk on, and
+## a plank deck you can. KIND_GROUND and KIND_DECK are walkable; KIND_ROCK and KIND_WATER are not.
+const KIND_ROCK := 0
+const KIND_GROUND := 1
+const KIND_WATER := 2
+const KIND_DECK := 3
+var cell_kind := PackedByteArray()
+## Which edge the hero arrives through and which one he leaves by (0 bottom, 1 top, 2 left,
+## 3 right). Random per zone, and never the same edge twice — Jan: "Východ nemusí být vždy
+## vpravo nahoře. A vchod nemusí být vždy vpravo dole."
+var entry_side := 0
+var exit_side := 1
+## The zone's terrain feature ("", "boardwalk", "river", "chasm"), resolved from `ZoneTheme`.
+var feature := ""
 ## The walkable grid, one byte per cell (1 = floor). `COLS` x `ROWS`, index `cy * COLS + cx`.
 ## Built by `_build_corridor()`, read by the walk (`walkable`), the spawns and the screen.
 var floor_cells := PackedByteArray()
@@ -854,26 +882,25 @@ func _carve_leg(a: Vector2i, b: Vector2i, half: int) -> void:
 			int(round(lerpf(float(a.y), float(b.y), t))), half)
 
 
-## Build the area. A clearing at the bottom, then legs upward with a horizontal turn between
-## them; the horizontal direction flips every leg so the map snakes instead of drifting off one
-## side. The result is reproducible from `rng`, like every other layout in this run.
+## The four cell directions, in the order `_pick_walk_dir` scores them.
+const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+
+## Build the area.
 ##
-## ⚠️  "NA JEDNO BRDO" (all the same) is the second half of Jan's report, and it is a property
-## of the GENERATOR, not of the grid. The first version drew one corridor profile all the way
-## up: legs of 3-5 cells, turns of 5-9, a 9x9 room at 60 % of the corners. That is the same
-## area every time with a different wiggle. Three dials now vary independently per leg:
-##   * LEG LENGTH 4-7 cells (a long gallery or a short step),
-##   * LEG WIDTH 2-4 half-cells (a 5-cell squeeze or a 9-cell hall),
-##   * TURN 10-18 cells, so a switchback can cross most of the map,
-##   * ROOM 3-7 half-cells at 70 % of the corners — from a nook to a cavern.
-## The entrance clearing and the final room stay fixed: they are the two places the rules
-## (`start_point`, `exit_point`) depend on.
+## ⚠️  THE ENTRANCE IS A SIDE, NOT ALWAYS THE BOTTOM, AND THE EXIT IS NOT ALWAYS THE TOP
+## (Jan, Nov 2026: "Východ nemusí být vždy vpravo nahoře. A vchod nemusí být vždy vpravo dole.
+## Může to být libovolně"). So the journey is a 4-directional random walk with a bias toward the
+## far edge, not a snake that always climbs: `entry_side` is drawn, the exit edge is a DIFFERENT
+## edge, the walk turns in any direction and prefers straight legs only by a small penalty.
 ##
-## ⚠️  THE LENGTH IS A TARGET, NOT A CONSEQUENCE OF THE GRID. Leg length and turn length are
-## random, so "walk up until the grid ends" produced areas of 9 480 and 12 720 px from the same
-## code — i.e. one seed was 2.4x the old area and another 3.6x, and Jan's "at least 3x" was a
-## coin flip. The loop now stops on `PATH_TARGET`, and the grid is tall enough that no seed
-## exhausts it first. Measured after the change: 12 800-13 300 px against the old 3 240-4 200.
+## ⚠️  "NA JEDNO BRDO" (all the same) was a property of the GENERATOR, not of the grid: one
+## corridor profile drawn all the way up is the same area every time with a different wiggle.
+## Four dials now vary independently per leg: LENGTH 3-8 cells, WIDTH 5-9 cells, a ROOM at 45 %
+## of the leg ends (7-15 cells across), plus LOOPS and PILLARS below, which is what makes the
+## player choose a lane instead of holding one direction.
+##
+## ⚠️  THE LENGTH IS A TARGET, NOT A CONSEQUENCE OF THE GRID (`PATH_TARGET`), and the walk is
+## bounded by `guard` so a seed that keeps turning into its own trail cannot hang the build.
 func _build_corridor() -> void:
 	floor_cells.resize(COLS * ROWS)
 	floor_cells.fill(0)
@@ -882,57 +909,553 @@ func _build_corridor() -> void:
 	explored_version = 0
 	path_points.clear()
 
-	# The start clearing sits low and central: the hero spawns in its middle, with room to fight
-	# the first pack without a wall at his back.
-	var cx := COLS / 2
-	var cy := ROWS - 4
-	_carve_square(cx, cy, START_ROOM_HALF)
-	start_point = cell_centre(cx, cy)
+	entry_side = rng.randi_range(0, 3)
+	exit_side = (entry_side + rng.randi_range(1, 3)) % 4
+	var start := _side_anchor(entry_side)
+	# The gate drifts along its own edge — an entrance in the exact middle of every map is the
+	# second half of "every area looks the same".
+	var drift := rng.randi_range(-6, 6)
+	if absi(DIRS[_side_dir_index(entry_side)].x) == 0:
+		start.x = clampi(start.x + drift, 6, COLS - 7)
+	else:
+		start.y = clampi(start.y + drift, 6, ROWS - 7)
+	_carve_square(start.x, start.y, START_ROOM_HALF)
+	start_point = cell_centre(start.x, start.y)
 	path_points.append(start_point)
 
-	var side := 1 if rng.randf() < 0.5 else -1
-	var rooms: Array = []
+	var target := _side_anchor(exit_side)
+	var pos := start
+	var dir_i := _side_dir_index(entry_side)
 	var built := 0.0
 	var last: Vector2 = start_point
-	while cy > 3 and built < PATH_TARGET:
-		# --- one vertical leg, upward. SHORT legs and more of them: the first corridor ran 4-7
-		# cells straight between turns, which is what read as "přímý". The width varies per leg,
-		# and 4-7 rather than 3-5 is what fills the taller grid without straightening it.
-		var up := rng.randi_range(4, 7)
-		var ny := maxi(3, cy - up)
-		var half := rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX)
-		_carve_leg(Vector2i(cx, cy), Vector2i(cx, ny), half)
-		cy = ny
-		path_points.append(cell_centre(cx, cy))
-		built += last.distance_to(cell_centre(cx, cy))
-		last = cell_centre(cx, cy)
-		if built >= PATH_TARGET:
-			break
-		# A room every other turn gives the corridor places to breathe — and places for a pack to
+	var guard := 0
+	while built < PATH_TARGET and guard < 200:
+		guard += 1
+		dir_i = _pick_walk_dir(pos, dir_i)
+		var dir: Vector2i = DIRS[dir_i]
+		var nxt := pos + dir * rng.randi_range(3, 8)
+		nxt.x = clampi(nxt.x, 2, COLS - 3)
+		nxt.y = clampi(nxt.y, 2, ROWS - 3)
+		if nxt == pos:
+			continue
+		_carve_leg(pos, nxt, rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX))
+		pos = nxt
+		var centre: Vector2 = cell_centre(pos.x, pos.y)
+		path_points.append(centre)
+		built += last.distance_to(centre)
+		last = centre
+		# A room every other leg gives the corridor places to breathe — and places for a pack to
 		# stand in formation instead of in single file.
-		if rng.randf() < 0.7:
-			var room := rng.randi_range(ROOM_HALF_MIN, ROOM_HALF_MAX)
-			_carve_square(cx, cy, room)
-			rooms.append(cell_centre(cx, cy))
-		if cy <= 4:
-			break
-		# --- one horizontal turn
-		var run := rng.randi_range(13, 22) * side
-		var nx := clampi(cx + run, 2 + CORRIDOR_HALF_MAX, COLS - 3 - CORRIDOR_HALF_MAX)
-		if nx != cx:
-			var half_run := rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX)
-			_carve_leg(Vector2i(cx, cy), Vector2i(nx, cy), half_run)
-			cx = nx
-			path_points.append(cell_centre(cx, cy))
-			built += last.distance_to(cell_centre(cx, cy))
-			last = cell_centre(cx, cy)
-		# Flip the side only now and then, so the snake has long and short switchbacks rather
-		# than a metronome.
-		if rng.randf() < 0.55:
-			side = -side
-	# The far end: a last room, so the deepest pack has somewhere to be fought.
-	_carve_square(cx, cy, ROOM_HALF)
-	path_points.append(cell_centre(cx, cy))
+		if rng.randf() < 0.45:
+			_carve_square(pos.x, pos.y, rng.randi_range(ROOM_HALF_MIN, ROOM_HALF_MAX))
+
+	# The far end: the walk ended somewhere, so the exit is the NEAREST edge to that end (never the
+	# entrance's own edge), reached by a short approach and closed with a room to fight the deepest
+	# pack in. Aiming the whole walk at a pre-chosen exit anchor instead made it circle the anchor
+	# for the last half of its length, which folded the corridor onto itself.
+	exit_side = _closest_side(pos, entry_side)
+	target = _side_anchor(exit_side)
+	var mid := Vector2i(target.x, pos.y)
+	if rng.randf() < 0.5:
+		mid = Vector2i(pos.x, target.y)
+	_carve_leg(pos, mid, rng.randi_range(2, 3))
+	_carve_leg(mid, target, rng.randi_range(2, 3))
+	_carve_square(target.x, target.y, ROOM_HALF)
+	path_points.append(cell_centre(mid.x, mid.y))
+	path_points.append(cell_centre(target.x, target.y))
+
+	# The corridor as carved IS connected; the extra structure and the zone's terrain then get a
+	# chance to break it, and the fallback puts the walk back. A map whose exit cannot be reached
+	# is a zone the act stops dead at, so this is checked, not hoped for.
+	var walk_snapshot: PackedByteArray = floor_cells.duplicate()
+	_carve_loops()
+	_carve_pillars()
+	_sync_kind_from_floor()
+	_apply_zone_feature()
+	_sync_floor_from_kind()
+	if not _all_floor_connected():
+		floor_cells = walk_snapshot.duplicate()
+		_sync_kind_from_floor()
+		_apply_zone_feature(true)
+		_sync_floor_from_kind()
+	_repair_isolated_floor()
+
+
+## The inward direction of a walk that ENTERS through `side` (0 bottom, 1 top, 2 left, 3 right).
+func _side_forward(side: int) -> Vector2i:
+	return DIRS[_side_dir_index(side)]
+
+
+func _side_dir_index(side: int) -> int:
+	match side:
+		0:
+			return 0   # bottom -> up
+		1:
+			return 2   # top -> down
+		2:
+			return 1   # left -> right
+		_:
+			return 3   # right -> left
+
+
+## The mouth of a gate on `side`, inset far enough for the start room's half-width.
+func _side_anchor(side: int) -> Vector2i:
+	match side:
+		0:
+			return Vector2i(COLS / 2, ROWS - 6)
+		1:
+			return Vector2i(COLS / 2, 5)
+		2:
+			return Vector2i(5, ROWS / 2)
+		_:
+			return Vector2i(COLS - 6, ROWS / 2)
+
+
+## The edge the walk ended nearest to, ignoring the one it came in through. The exit gate is
+## therefore a property of where the journey ARRIVED, not a target the walk was aimed at.
+func _closest_side(pos: Vector2i, avoid: int) -> int:
+	var best := 0
+	var best_d := 99999
+	for side in 4:
+		if side == avoid:
+			continue
+		var a := _side_anchor(side)
+		var d := absi(pos.x - a.x) + absi(pos.y - a.y)
+		if d < best_d:
+			best_d = d
+			best = side
+	return best
+
+
+## Which of the four directions the walk takes next: straight first, away from the rock border
+## second, and OFF CELLS THE WALK ALREADY CARVED third. Never straight back. There is no bias
+## toward a pre-chosen exit any more — the walk picks the edge it ends nearest to, and the retread
+## penalty is what makes it spread across the map instead of circling one target.
+func _pick_walk_dir(pos: Vector2i, dir_i: int) -> int:
+	var best := dir_i
+	var best_score := -INF
+	for i in 4:
+		if i == (dir_i + 2) % 4:
+			continue
+		var d: Vector2i = DIRS[i]
+		var score := 0.0
+		if i != dir_i:
+			score -= 0.35
+		var ahead := pos + d * 4
+		if ahead.x < 2 or ahead.x > COLS - 3 or ahead.y < 2 or ahead.y > ROWS - 3:
+			score -= 1.6
+		# DON'T RETREAD. A leg that lands on cells the walk already carved turns a journey into a
+		# blob: measured, a 224-cell walk lay on itself three times over (880 floor cells for what
+		# should have been ~1 500) and only five packs could then be spaced far enough apart to be
+		# met one at a time. This is what makes the corridor SPREAD across the map.
+		var crowded := 0
+		for step in [2, 5, 8]:
+			var q: Vector2i = pos + d * step
+			if is_floor_cell(q.x, q.y):
+				crowded += 1
+		score -= 0.55 * float(crowded)
+		score += rng.randf() * 0.6
+		if score > best_score:
+			best_score = score
+			best = i
+	return best
+
+
+## LOOPS: two stretches of the walk that ended up close in SPACE but far apart along the path get
+## a short connecting corridor. That is what turns a tube into a place with two ways round, and
+## it costs two `_carve_leg` calls.
+func _carve_loops() -> void:
+	var made := 0
+	for i in range(1, path_points.size() - 4):
+		if made >= 2:
+			return
+		var a: Vector2i = cell_of(path_points[i])
+		var best := -1
+		var best_d := 999
+		for j in range(i + 5, mini(path_points.size(), i + 12)):
+			var b: Vector2i = cell_of(path_points[j])
+			var d := absi(a.x - b.x) + absi(a.y - b.y)
+			if d < 4 or d > 13:
+				continue
+			if d < best_d:
+				best_d = d
+				best = j
+		if best < 0:
+			continue
+		var target: Vector2i = cell_of(path_points[best])
+		var half := rng.randi_range(1, 2)
+		var corner := Vector2i(target.x, a.y)
+		_carve_leg(a, corner, half)
+		_carve_leg(corner, target, half)
+		made += 1
+
+
+## PILLARS: rock outcrops INSIDE a room, so a fight in the open has a shape to use. They are the
+## one obstacle a player can circle, which is why they are worth the cells — but only where
+## `_has_clearance` proves they cannot plug the corridor: a pillar that touches a wall divides
+## the area and the exit becomes unreachable.
+func _carve_pillars() -> void:
+	for i in range(2, path_points.size() - 2, 2):
+		if rng.randf() > 0.5:
+			continue
+		var ang := rng.randf() * TAU
+		var p: Vector2 = (path_points[i] as Vector2) \
+			+ Vector2(cos(ang), sin(ang)) * rng.randf_range(2.5, 5.0) * TILE
+		var c: Vector2i = cell_of(p)
+		if not _distance_to_path(p) > TILE * 2.2:
+			continue
+		var half := rng.randi_range(0, 1)
+		if not _has_clearance(c.x, c.y, half + 2):
+			continue
+		for y in range(c.y - half, c.y + half + 1):
+			for x in range(c.x - half, c.x + half + 1):
+				if in_grid(x, y):
+					floor_cells[cell_index(x, y)] = 0
+
+
+## Are all cells within `margin` of (cx, cy) floor? A pillar needs that ring, or it stands against
+## a wall and the walk has to go round the long way (or not at all).
+func _has_clearance(cx: int, cy: int, margin: int) -> bool:
+	for y in range(cy - margin, cy + margin + 1):
+		for x in range(cx - margin, cx + margin + 1):
+			if not is_floor_cell(x, y):
+				return false
+	return true
+
+
+## Distance from a world point to the walked centreline. Used to keep obstacles OFF the path.
+func _distance_to_path(p: Vector2) -> float:
+	var best := INF
+	var pts: Array = path_points
+	for i in range(1, pts.size()):
+		var a: Vector2 = pts[i - 1]
+		var b: Vector2 = pts[i]
+		var ab := b - a
+		var len2 := ab.length_squared()
+		var t := 0.0
+		if len2 > 0.001:
+			t = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+		best = minf(best, p.distance_to(a + ab * t))
+	return best
+
+
+## Is every floor cell reachable from the spawn? One flood fill, four neighbours — the same check
+## `tools/test_corridor_fog.gd` runs, available here so a layout that failed can be discarded
+## before the player ever sees it.
+func _all_floor_connected() -> bool:
+	if floor_cells.size() != COLS * ROWS:
+		return false
+	var start: Vector2i = cell_of(start_point)
+	var seen := PackedByteArray()
+	seen.resize(COLS * ROWS)
+	seen.fill(0)
+	var stack: Array[Vector2i] = [start]
+	seen[cell_index(start.x, start.y)] = 1
+	var reached := 1
+	while not stack.is_empty():
+		var c: Vector2i = stack.pop_back()
+		for d in DIRS:
+			var n: Vector2i = c + d
+			if not in_grid(n.x, n.y) or floor_cells[cell_index(n.x, n.y)] != 1:
+				continue
+			if seen[cell_index(n.x, n.y)] == 1:
+				continue
+			seen[cell_index(n.x, n.y)] = 1
+			reached += 1
+			stack.append(n)
+	for i in floor_cells.size():
+		if floor_cells[i] == 1 and seen[i] == 0:
+			return false
+	return true
+
+
+## Anything the walk cannot reach is not floor any more: a visible pocket behind the rock reads
+## as a bug, and a pack in it is a body the player can never fight.
+func _repair_isolated_floor() -> void:
+	if not _all_floor_connected():
+		for i in cell_kind.size():
+			if cell_kind[i] == KIND_GROUND or cell_kind[i] == KIND_DECK:
+				floor_cells[i] = 1
+			else:
+				floor_cells[i] = 0
+		var start: Vector2i = cell_of(start_point)
+		var seen := PackedByteArray()
+		seen.resize(COLS * ROWS)
+		seen.fill(0)
+		var stack: Array[Vector2i] = [start]
+		seen[cell_index(start.x, start.y)] = 1
+		while not stack.is_empty():
+			var c: Vector2i = stack.pop_back()
+			for d in DIRS:
+				var n: Vector2i = c + d
+				if not in_grid(n.x, n.y) or floor_cells[cell_index(n.x, n.y)] != 1:
+					continue
+				if seen[cell_index(n.x, n.y)] == 1:
+					continue
+				seen[cell_index(n.x, n.y)] = 1
+				stack.append(n)
+		for i in cell_kind.size():
+			if floor_cells[i] == 1 and seen[i] == 0:
+				cell_kind[i] = KIND_ROCK
+				floor_cells[i] = 0
+
+
+# ============================================================================ terrain features
+#
+# Jan, Nov 2026: "Každá ta lokalita má sice nějak ztvárněné dominantní prvky, ale takhle
+# jednoduše mi to nestačí. Močály nebudou mít jen jinou texturu na zemi, ale můžeme doslova
+# napodobit dřevěné lávky uprostřed močálů… Valley se rozdělí řekou, přes kterou vede velký most."
+#
+# So a zone's GROUND now has a shape as well as a texture: `cell_kind` marks every cell as rock,
+# ground, WATER (impassable) or DECK (a plank walkway or a bridge — walkable). `floor_cells` stays
+# the walkable mask every rule in the run reads, so nothing downstream had to learn a new concept.
+
+func cell_kind_at(cx: int, cy: int) -> int:
+	if not in_grid(cx, cy) or cell_kind.size() != COLS * ROWS:
+		return KIND_ROCK
+	return cell_kind[cell_index(cx, cy)]
+
+
+func is_water_cell(cx: int, cy: int) -> bool:
+	return cell_kind_at(cx, cy) == KIND_WATER
+
+
+func is_deck_cell(cx: int, cy: int) -> bool:
+	return cell_kind_at(cx, cy) == KIND_DECK
+
+
+func _set_kind(cx: int, cy: int, kind: int) -> void:
+	if in_grid(cx, cy) and cell_kind.size() == COLS * ROWS:
+		cell_kind[cell_index(cx, cy)] = kind
+
+
+func _sync_kind_from_floor() -> void:
+	cell_kind.resize(COLS * ROWS)
+	for i in floor_cells.size():
+		cell_kind[i] = KIND_GROUND if floor_cells[i] == 1 else KIND_ROCK
+
+
+func _sync_floor_from_kind() -> void:
+	floor_cells.resize(COLS * ROWS)
+	for i in cell_kind.size():
+		var k := cell_kind[i]
+		floor_cells[i] = 1 if (k == KIND_GROUND or k == KIND_DECK) else 0
+
+
+## The zone's own terrain. `safe` is the fallback pass, used when the first attempt left a walkable
+## cell cut off: the same feature is applied again with an extra guarantee (`_bridge_over_path`)
+## that the walked centreline is deck from end to end.
+func _apply_zone_feature(safe: bool = false) -> void:
+	var theme: Dictionary = ZoneThemeData.for_zone(act_id, zone_index)
+	feature = str(theme.get("feature", ""))
+	match feature:
+		"boardwalk":
+			_feature_boardwalk(safe)
+		"river", "chasm":
+			_feature_river(feature == "chasm")
+
+
+## THE SWAMP. Every carved cell becomes impassable water and a plank walkway is laid along the
+## walk — width 3 cells, wobbling 0-2 cells off the centreline with a turn every 2-5 cells, which
+## is what makes the walkway run left, right and back again instead of straight up. A wobble is
+## eased by ONE cell per step and snapped to the centreline on the leg's own endpoints, so no
+## step can jump two cells and leave a gap: a hole in the walkway is a zone the player cannot
+## cross.
+func _feature_boardwalk(safe: bool = false) -> void:
+	for i in cell_kind.size():
+		if cell_kind[i] == KIND_GROUND:
+			cell_kind[i] = KIND_WATER
+	# A wooden landing at the gate, so the hero does not arrive on one plank.
+	var gate: Vector2i = cell_of(start_point)
+	_stamp_deck(gate.x, gate.y, 2)
+	var prev: Vector2 = start_point
+	for i in range(1, path_points.size()):
+		var p: Vector2 = path_points[i]
+		_deck_leg(cell_of(prev), cell_of(p))
+		prev = p
+	if safe:
+		_bridge_over_path(1)
+
+
+func _deck_leg(a: Vector2i, b: Vector2i) -> void:
+	var vertical := a.x == b.x
+	var length := maxi(absi(b.x - a.x), absi(b.y - a.y))
+	if length <= 0:
+		_stamp_deck(a.x, a.y, 1)
+		return
+	var wobble := 0
+	var target := 0
+	var hold := 0
+	for s in length + 1:
+		var t := float(s) / float(length)
+		var cx := int(round(lerpf(float(a.x), float(b.x), t)))
+		var cy := int(round(lerpf(float(a.y), float(b.y), t)))
+		if s == 0 or s == length:
+			wobble = 0
+			target = 0
+			hold = 0
+		elif hold <= 0:
+			target = rng.randi_range(-2, 2)
+			hold = rng.randi_range(2, 5)
+		else:
+			hold -= 1
+		if wobble < target:
+			wobble += 1
+		elif wobble > target:
+			wobble -= 1
+		var ox := wobble if vertical else 0
+		var oy := 0 if vertical else wobble
+		if not is_water_cell(cx + ox, cy + oy):
+			ox = 0
+			oy = 0
+		_stamp_deck(cx + ox, cy + oy, 1)
+
+
+func _stamp_deck(cx: int, cy: int, half: int) -> void:
+	for y in range(cy - half, cy + half + 1):
+		for x in range(cx - half, cx + half + 1):
+			if is_water_cell(x, y):
+				_set_kind(x, y, KIND_DECK)
+
+
+## THE RIVER (and the canyon's chasm): a straight band cut ACROSS the corridor at a point along
+## the walk, then a bridge over every place the path crosses it.
+##
+## ⚠️  THE BAND IS CUT THROUGH THE ROCK AS WELL — a river that stops dead at the same wall the
+## corridor ends at reads as a puddle, and Jan asked for a location DIVIDED by a river. It is cut
+## only `REACH` cells to each side of the crossing, so it runs off into the fog on both sides
+## instead of sawing the whole map in half.
+##
+## ⚠️  AND IT IS VERIFIED, NOT HOPED FOR. The flood is undone and retried narrower if it broke the
+## walk (a loop carved by `_carve_loops` can cross the same band away from the bridge, which is a
+## pocket the player could see and never reach). A zone that still fails falls back to the plain
+## corridor in `_build_corridor`.
+func _feature_river(wide: bool) -> void:
+	var n := path_points.size()
+	if n < 8:
+		return
+	var backup: PackedByteArray = cell_kind.duplicate()
+	for attempt in 3:
+		cell_kind = backup.duplicate()
+		var idx := rng.randi_range(int(float(n) * 0.4), int(float(n) * 0.72))
+		var dir := _path_dir_at(idx)
+		if dir == Vector2i.ZERO:
+			continue
+		var cross: Vector2 = path_points[idx]
+		var scale := 1.0 - 0.26 * float(attempt)
+		var half := (4.6 if wide else 4.2) * scale
+		# ⚠️  THE REACH IS LONG ON PURPOSE (24 cells = 1 440 px each side). The band is cut through
+		# the ROCK as well, and a band that only reaches the corridor's own edge reads as a pool in
+		# a room instead of a river dividing the valley — measured at reach 10: 80 cells of water
+		# and not one cell of rock, because the crossing usually lands in a room.
+		_cut_band(cross, dir, half, 24.0 * scale)
+		if DEBUG_TERRAIN:
+			var w := 0
+			for v in cell_kind:
+				if int(v) == KIND_WATER:
+					w += 1
+			print("    [river] attempt %d idx=%d dir=%s half=%.1f water=%d"
+				% [attempt, idx, str(dir), half, w])
+		_stamp_bridge(cross, dir, half)
+		# A second, narrower ford further along the walk on some seeds: two crossings read as a
+		# river valley, one reads as a puddle.
+		if rng.randf() < 0.45:
+			var i2 := mini(int(float(n) * 0.8), n - 3)
+			var d2 := _path_dir_at(i2)
+			if d2 != Vector2i.ZERO:
+				_cut_band(path_points[i2], d2, half * 0.6, 7.0 * scale)
+				_stamp_bridge(path_points[i2], d2, half * 0.6)
+		_sync_floor_from_kind()
+		if _all_floor_connected():
+			return
+	cell_kind = backup.duplicate()
+	_sync_floor_from_kind()
+
+
+## The AXIS-ALIGNED direction of the walk at `idx`, taken from the segment itself. Averaging the
+## two neighbouring points gives a 45 deg direction at every corner, and a diagonal band is both
+## ugly (a river at 45 deg to a square-tiled world) and hard to bridge cleanly.
+func _path_dir_at(idx: int) -> Vector2i:
+	var pts: Array = path_points
+	var a: Vector2i = cell_of(pts[clampi(idx - 1, 0, pts.size() - 1)] as Vector2)
+	var b: Vector2i = cell_of(pts[clampi(idx + 1, 0, pts.size() - 1)] as Vector2)
+	if a.x == b.x and a.y == b.y:
+		return Vector2i.ZERO
+	if absi(b.x - a.x) >= absi(b.y - a.y):
+		return Vector2i(1 if b.x > a.x else -1, 0)
+	return Vector2i(0, 1 if b.y > a.y else -1)
+
+
+## A BRIDGE over the river at `cross`: `half + 2` cells along the path's own direction (it has to
+## span the water and stand on both banks) and 5 cells across. Stamped only on WATER, so the
+## bridge lands ON the banks instead of painting deck over the road.
+func _stamp_bridge(cross: Vector2, dir: Vector2i, half: float) -> void:
+	var perp := Vector2i(-dir.y, dir.x)
+	var c: Vector2i = cell_of(cross)
+	var length := int(ceil(half)) + 2
+	for a in range(-length, length + 1):
+		for b in range(-2, 3):
+			var x: int = c.x + dir.x * a + perp.x * b
+			var y: int = c.y + dir.y * a + perp.y * b
+			if is_water_cell(x, y):
+				_set_kind(x, y, KIND_DECK)
+
+
+## One cut: every GROUND or ROCK cell inside the band `half` cells either side of the line
+## through `cross` becomes water, but only within `reach` cells ALONG the band — the river's two
+## ends fade into the rock instead of crossing the whole map.
+func _cut_band(cross: Vector2, dir: Vector2i, half: float, reach: float) -> void:
+	var normal := Vector2i(-dir.y, dir.x)
+	var axis := Vector2(dir)
+	var side := Vector2(normal)
+	var r := reach * TILE
+	for cy in ROWS:
+		for cx in COLS:
+			var k := cell_kind[cell_index(cx, cy)]
+			if k != KIND_GROUND and k != KIND_ROCK:
+				continue
+			var v: Vector2 = cell_centre(cx, cy) - cross
+			# THICKNESS is measured ALONG the path's direction (the path crosses the river), and
+			# the river's LENGTH runs along the normal (across the corridor and into the rock).
+			# Getting these two the wrong way round cut a 20-cell stretch of corridor and then
+			# bridged all of it: 113 cells of deck over 13 cells of visible water.
+			if absf(v.dot(axis)) > half * TILE:
+				continue
+			if absf(v.dot(side)) > r:
+				continue
+			cell_kind[cell_index(cx, cy)] = KIND_WATER
+
+
+## Lay a deck over every water cell the walked centreline passes through, `half` cells to each
+## side. This is the guarantee that a ford is crossable: the bridge follows the path, so it can
+## never miss a crossing, and it is stamped in the path's own direction.
+func _bridge_over_path(half: int) -> void:
+	var prev: Vector2 = path_points[0]
+	for i in range(1, path_points.size()):
+		var p: Vector2 = path_points[i]
+		var a: Vector2i = cell_of(prev)
+		var b: Vector2i = cell_of(p)
+		var steps := maxi(absi(b.x - a.x), absi(b.y - a.y))
+		for s in steps + 1:
+			var t := float(s) / float(maxi(steps, 1))
+			var cx := int(round(lerpf(float(a.x), float(b.x), t)))
+			var cy := int(round(lerpf(float(a.y), float(b.y), t)))
+			if not is_water_cell(cx, cy):
+				continue
+			if a.x == b.x:
+				_stamp_deck(cx, cy, 0)
+				for k in range(-half, half + 1):
+					if is_water_cell(cx + k, cy):
+						_set_kind(cx + k, cy, KIND_DECK)
+			else:
+				for k in range(-half, half + 1):
+					if is_water_cell(cx, cy + k):
+						_set_kind(cx, cy + k, KIND_DECK)
+			# A deck cell on the centreline always exists, even if the sideways stamp found no
+			# water to replace (a 1-cell ford): the crossing has to be walkable.
+			if cell_kind[cell_index(cx, cy)] == KIND_WATER:
+				cell_kind[cell_index(cx, cy)] = KIND_DECK
+		prev = p
 
 
 ## Can a body of radius `r` stand at `p`? The WHOLE disc has to be on floor, not just its centre:
@@ -1036,9 +1559,12 @@ func _build_area() -> void:
 	path_points.clear()
 	_build_corridor()
 	# The act's chain: the entrance is where the hero stands, the exit is the far END of the
-	# centreline (always a cleared room), and the waypoint sits just off the entrance.
+	# centreline (always a cleared room), and the waypoint sits just off the entrance — INSIDE the
+	# start room, i.e. opposite the edge the hero walked in through, now that the entrance can be
+	# any of the four edges.
 	exit_point = path_points[path_points.size() - 1]
-	waypoint_point = nearest_floor_point(start_point + Vector2(-TILE * 2.5, -TILE * 1.5))
+	var inward: Vector2 = Vector2(_side_forward(entry_side))
+	waypoint_point = nearest_floor_point(start_point + inward * TILE * 2.0)
 	# How many packs the corridor holds: one per `CELL_SPACING` px of path, clamped to something a
 	# phone run can finish. The ceiling moved from 20 to 34 with the 3x grid — 20 was already
 	# binding on the OLD corridor, so leaving it would have made a bigger map with the same
@@ -1051,7 +1577,7 @@ func _build_area() -> void:
 		total += prev.distance_to(p)
 		lengths.append(total)
 		prev = p
-	var count := clampi(int(round(total / CELL_SPACING)), 8, 38)
+	var count := clampi(int(round(total / CELL_SPACING)), 8, 34)
 	var max_d := maxf(1.0, total)
 	# The first pack must be OUTSIDE the activation radius of the spawn point, or it would be
 	# standing on the hero before he takes a step — so the samples start past the clearing
@@ -1066,6 +1592,18 @@ func _build_area() -> void:
 		var want := d_min + (max_d - d_min) * float(k + 1) / float(count + 1)
 		var centre := _point_at_distance(lengths, want)
 		if centre.distance_to(start_point) < ACTIVATE_RADIUS + 60.0:
+			continue
+		# ⚠️  TWO PACKS MUST NOT BE FIGHTABLE AT ONCE. Cells are spaced along the PATH, and since
+		# the walk can double back (it has loops now) two cells three turns apart can stand 200 px
+		# from each other — which is the banned horde arrived at by accident: the hero wakes both
+		# and the choice of which lane to fight in is gone. A cell closer than `PACK_MIN_GAP` to one
+		# already accepted is dropped, which thins the packs exactly where the corridor doubles back.
+		var too_close := false
+		for taken in spots:
+			if (taken["centre"] as Vector2).distance_to(centre) < PACK_MIN_GAP:
+				too_close = true
+				break
+		if too_close:
 			continue
 		spots.append({
 			"centre": centre,

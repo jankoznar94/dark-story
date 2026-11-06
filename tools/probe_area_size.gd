@@ -42,7 +42,6 @@ func _process(_delta: float) -> bool:
 	var seed_value: int = int(_seeds[_i])
 	_i += 1
 	_cur = SurvivorRun.new()
-	root.add_child(_cur)
 	_cur.setup(_state, func(id): return _data.item(str(id)), _loot, 0, seed_value, 0)
 	var total := 0.0
 	var pts: Array = _cur.path_points

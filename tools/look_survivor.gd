@@ -87,6 +87,57 @@ func _place_hero() -> void:
 			# Inside the next cell, ~250 px off its centre: the pack wakes OFF SCREEN and walks in.
 			var z: Dictionary = run.zones[0]
 			run.player_pos = (z["centre"] as Vector2) + Vector2(0, 250.0)
+		"feature":
+			# Stand on the DECK at the middle of a crossing — the place with water on BOTH sides,
+			# which is the bridge over the river / the walkway over the bog. A look pass at the
+			# hero's own spawn photographs the entrance, and the terrain feature is a hundred steps
+			# away from it.
+			#
+			# ⚠️  "most water in the neighbourhood" picks an EDGE cell (water wraps three sides),
+			# and the first capture was taken from the very lip of the bridge: water on the left,
+			# planks on the right, and the bridge itself out of frame. The middle is the cell with
+			# water on two OPPOSITE sides and the SMALLEST distance to both.
+			var best := Vector2i(-1, -1)
+			var best_score := INF
+			for cy in SurvivorRun.ROWS:
+				for cx in SurvivorRun.COLS:
+					if not run.is_deck_cell(cx, cy):
+						continue
+					var span := _water_span(run, cx, cy)
+					if span < 0.0 or span >= best_score:
+						continue
+					best_score = span
+					best = Vector2i(cx, cy)
+			if best.x >= 0:
+				run.player_pos = run.cell_centre(best.x, best.y)
+
+
+## How BALANCED the water is on both sides of a deck cell: 0 is dead centre, larger is lopsided,
+## -1 is a cell with water on one side only. Used to stand the camera in the middle of a bridge
+## (the first version returned the raw gap and ties went to whichever cell the scan met first,
+## which put the hero on the bridge's lip).
+func _water_span(run, cx: int, cy: int) -> float:
+	var left := -1
+	var right := -1
+	var up := -1
+	var down := -1
+	for i in range(1, 6):
+		if left < 0 and run.is_water_cell(cx - i, cy):
+			left = i
+		if right < 0 and run.is_water_cell(cx + i, cy):
+			right = i
+		if up < 0 and run.is_water_cell(cx, cy - i):
+			up = i
+		if down < 0 and run.is_water_cell(cx, cy + i):
+			down = i
+	var best := -1.0
+	if left > 0 and right > 0:
+		best = float(absi(left - right)) + float(6 - mini(left + right, 6)) * 0.1
+	if up > 0 and down > 0:
+		var v := float(absi(up - down)) + float(6 - mini(up + down, 6)) * 0.1
+		if best < 0.0 or v < best:
+			best = v
+	return best
 
 
 func _initialize() -> void:
