@@ -1075,7 +1075,14 @@ class NavBar:
 		bar.add_theme_stylebox_override("panel", style)
 
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
+		# ⚠️  THE EIGHT ENTRIES HAVE TO FIT INSIDE 390. `padding:8px 10px` leaves 370 px for
+		# eight 44 px items; the 6 px separation the port had added needed 394 px, so the row
+		# ran 24 px past the bar and the LAST entry (Předměty) was painted cut off at the right
+		# edge, with the whole row pushed left of centre. The PWA spaced its 44 px links apart
+		# with `justify-content:space-around`, which is what centring the row with a hair of
+		# separation reproduces: 8*44 + 7*2 = 366 ≤ 370.
+		row.add_theme_constant_override("separation", 2)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
 		bar.add_child(row)
 
 		for entry in ENTRIES:

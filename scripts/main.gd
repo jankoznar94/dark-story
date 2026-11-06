@@ -65,6 +65,11 @@ var _socket_rng_source: RandomNumberGenerator = null
 ## toast; a plain label above the nav bar is enough and cannot cover the buttons.
 var _status: Label
 var _status_ticks := 0
+## The clear-save entry is ARMED by its first tap and only commits on the second, within
+## `CLEAR_ARM_MS`. `Time.get_ticks_msec()` rather than a frame count, so pausing (or a slow
+## frame) cannot stretch the window; 0 = disarmed.
+var _clear_armed_at := 0
+const CLEAR_ARM_MS := 6000
 var _nav_bar      # UIKit.NavBar
 ## The PWA's `#splashScreen`. Built once per launch, hides itself after ~3.1 s.
 var _splash: SplashScreen = null
@@ -623,6 +628,9 @@ func _on_nav_selected(key: String) -> void:
 
 	# The three PWA nav entries that are toggles rather than screens. They exist in the bar
 	# because the PWA's bar has them; a tap has to do something real or the entry is a lie.
+	# Any other entry drops a pending clear-save arming: a tap somewhere else means "not this".
+	if key != "clearsave":
+		_clear_armed_at = 0
 	match key:
 		"music":
 			_toggle_music()
@@ -631,7 +639,7 @@ func _on_nav_selected(key: String) -> void:
 			_toggle_test_mode()
 			return
 		"clearsave":
-			_clear_save()
+			_on_clear_save_tapped()
 			return
 		"items":
 			open_modal("inventory")
@@ -833,10 +841,41 @@ func _music_mode_for_current_screen() -> String:
 
 
 func _clear_save() -> void:
+	# ⚠️  THIS IS JAN'S "cache" BUTTON, AND IT HAS TO LEAVE THE GAME AS IF IT HAD JUST BEEN
+	# INSTALLED. The old version called `state.reset()` + `state.save()` and nothing else, which
+	# left three things alive and made the button read as "it does not work":
+	#   * `ZoneMemory` (process memory, deliberately not in the save) kept every walked zone as
+	#     the player left it — fog lifted, packs dead — so the world he wanted to start over was
+	#     still standing there;
+	#   * the hero was left with NO CLASS (`reset()` empties `heroClass`) and the derived pools
+	#     were never recomputed, so a wiped game had no skills, no weapon rules and no mana;
+	#   * the shop and gamble stock caches survived the wipe.
+	_clear_armed_at = 0
+	ZoneMemory.clear_all()
+	_reset_shop_cache()
+	if _screens.has("gamble"):
+		_screens["gamble"].reset_stock()
+	state.delete_save()
 	state.reset()
+	# A fresh save needs a class before anything works, exactly as on a first launch (`_ready`).
+	_seed_first_class()
+	_recompute_hero_pools()
 	state.save()
-	_set_status("Ulozena hra smazana.")
+	_set_status("Cache smazana - nova hra.")
 	show_screen("town")
+
+
+## The nav bar's `clearsave` entry. Wiping the save is the one tap in the game that destroys a
+## whole run, and the bar is eight 44px icons in a row — so it is ARMED by the first tap and
+## commits on the second, with the pending state drawn on the status strip immediately above
+## the bar the finger is on. A tap anywhere else (any other nav entry) disarms it.
+func _on_clear_save_tapped() -> void:
+	var now := Time.get_ticks_msec()
+	if _clear_armed_at != 0 and now - _clear_armed_at <= CLEAR_ARM_MS:
+		_clear_save()
+		return
+	_clear_armed_at = now
+	_set_status("Smazani cache: tapni ZNOVU pro potvrzeni.")
 
 
 ## The shop's stock is rebuilt on every town visit. The stock itself lives in the shop
@@ -861,6 +900,15 @@ func _process(_delta: float) -> void:
 	# numbers per frame is cheaper than any resize signal that might not fire.
 	if _portrait_root != null and get_viewport_rect().size != _stage_canvas:
 		_layout_portrait_stage()
+	# The armed clear-save message owns the strip for its whole window: the normal 30-frame
+	# timeout would wipe the "tap again" instruction in half a second, which reads as a dead
+	# button — the exact report this gate must not create.
+	if _clear_armed_at != 0:
+		if Time.get_ticks_msec() - _clear_armed_at > CLEAR_ARM_MS:
+			_clear_armed_at = 0
+			_status_ticks = 1
+		else:
+			_status_ticks = 2
 	if _status_ticks > 0:
 		_status_ticks -= 1
 		if _status_ticks == 0:

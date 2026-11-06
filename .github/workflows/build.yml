@@ -444,6 +444,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "TEST_MODE_ALL_PASS=true"
 
+      # Jan's cache button: the nav bar's clear-save entry. The old handler reset the SAVE only,
+      # so the tapped wipe left `ZoneMemory` (fog lifted, packs dead), a classless hero with an
+      # empty mana pool and the shop stock alive — a wiped game that still walked into the same
+      # half-cleared world. Driven through REAL input at the button's centre, twice, because the
+      # destructive tap is gated: the first tap arms, the second commits.
+      - name: Clear-save test (full wipe, caches, two-tap gate)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_clear_save.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "CLEAR_SAVE_ALL_PASS=true"
+
       # The arena's CLOCK and its END, driven through `_process(delta)` — the seam no other
       # test touches. `test_combat` supplies the clock itself (it ticks the battle 100 ms at
       # a time), so a screen that pumped one tick per FRAME looked perfect to it while the
