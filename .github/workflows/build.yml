@@ -411,6 +411,16 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "CORRIDOR_FOG_ALL_PASS=true"
 
+      # The VALLEY'S RIVER — the zone's structure, not its decoration: water edge to edge, exactly
+      # ONE bridge, the exit on the far bank, a champion group on each bridge end. Six seeds,
+      # because a generator that is right on one seed is wrong on the tester's seed.
+      - name: Valley river test (divided zone, one guarded bridge)
+        run: |
+          set -e
+          OUT=$(./godot --headless --path . --script res://tools/test_valley_river.gd 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "VALLEY_RIVER_ALL_PASS=true"
+
       # The ITEM TABLE's two rules after Jan's report ("plný batoh" and "v aktu 1 padá Ataghan"):
       # the drop RATE as a measured share over 4 000 kills, and the AREA LEVEL gate — which base
       # may drop at this depth, on the PWA's 0-149 scale (difficulty*50 + act*10 + area). Reverting

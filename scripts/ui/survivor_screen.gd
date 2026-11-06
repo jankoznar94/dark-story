@@ -1350,6 +1350,11 @@ func _draw_deck() -> void:
 	var light: Color = _col("wood_light", "#5f4b34")
 	var seam := wood.darkened(0.42)
 	var railed: bool = run.feature == "river" or run.feature == "chasm"
+	# The valley's bridge is a LANDMARK, not a crossing: it is 11-15 cells long, and the same 4 px
+	# rail that reads fine on a 3-cell swamp walkway disappears into a deck that size. A great
+	# bridge gets a taller, lighter parapet with a post on every cell edge — flat, no glow, just
+	# more contrast (Jan: "obří most", and the first capture read as a pier with loose stones).
+	var great_bridge: bool = railed and run.bridge_span >= 10
 	var x0 := maxi(c0.x - 1, 0)
 	var x1 := mini(c1.x + 2, SurvivorRun.COLS)
 	var y0 := maxi(c0.y - 1, 0)
@@ -1388,23 +1393,24 @@ func _draw_deck() -> void:
 				# `wood_light` disappeared into the deck in the first capture ("there is no
 				# railing, it is a deck lying beside water"), so the rail is drawn as an OUTER
 				# light edge with a dark line just inside it — flat, no glow, but unmistakable.
-				var rail: Color = light.lightened(0.30)
+				var rail: Color = light.lightened(0.55 if great_bridge else 0.30)
 				var rail_shadow := wood.darkened(0.55)
+				var rail_w: float = 6.0 if great_bridge else 4.0
 				if run.is_water_cell(cx, cy - 1):
-					draw_line(p + Vector2(0, 2.0), p + Vector2(t, 2.0), rail, 4.0)
+					draw_line(p + Vector2(0, 2.0), p + Vector2(t, 2.0), rail, rail_w)
 					draw_line(p + Vector2(0, 6.0), p + Vector2(t, 6.0), rail_shadow, 1.5)
-					draw_line(p + Vector2(10.0, 0), p + Vector2(10.0, 9.0), rail, 3.0)
-					draw_line(p + Vector2(40.0, 0), p + Vector2(40.0, 9.0), rail, 3.0)
+					draw_line(p + Vector2(10.0, 0), p + Vector2(10.0, 9.0), rail, rail_w - 1.0)
+					draw_line(p + Vector2(40.0, 0), p + Vector2(40.0, 9.0), rail, rail_w - 1.0)
 				if run.is_water_cell(cx, cy + 1):
-					draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), rail, 4.0)
+					draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), rail, rail_w)
 					draw_line(p + Vector2(0, t - 6.0), p + Vector2(t, t - 6.0), rail_shadow, 1.5)
-					draw_line(p + Vector2(10.0, t - 9.0), p + Vector2(10.0, t), rail, 3.0)
-					draw_line(p + Vector2(40.0, t - 9.0), p + Vector2(40.0, t), rail, 3.0)
+					draw_line(p + Vector2(10.0, t - 9.0), p + Vector2(10.0, t), rail, rail_w - 1.0)
+					draw_line(p + Vector2(40.0, t - 9.0), p + Vector2(40.0, t), rail, rail_w - 1.0)
 				if run.is_water_cell(cx - 1, cy):
-					draw_line(p + Vector2(2.0, 0), p + Vector2(2.0, t), rail, 4.0)
+					draw_line(p + Vector2(2.0, 0), p + Vector2(2.0, t), rail, rail_w)
 					draw_line(p + Vector2(6.0, 0), p + Vector2(6.0, t), rail_shadow, 1.5)
 				if run.is_water_cell(cx + 1, cy):
-					draw_line(p + Vector2(t - 2.0, 0), p + Vector2(t - 2.0, t), rail, 4.0)
+					draw_line(p + Vector2(t - 2.0, 0), p + Vector2(t - 2.0, t), rail, rail_w)
 					draw_line(p + Vector2(t - 6.0, 0), p + Vector2(t - 6.0, t), rail_shadow, 1.5)
 
 

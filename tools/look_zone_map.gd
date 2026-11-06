@@ -144,43 +144,57 @@ func _dump(run, out: String, scale: int, act: int, zone: int, seed_value: int) -
 		print("  " + line)
 
 
-## How many TIMES the walk crosses water, how thick the water is at the widest crossing, and
-## which packs stand at a bridge end.
+## The valley's river, judged by the numbers Jan's brief turns into: is there a bridge, how long
+## is it, does each HALF of the journey hold packs, and do the two bridge ends carry a guard.
 func _crossing_report(run) -> Array:
 	var lines: Array = []
-	var pts: Array = run.path_points
-	var crossings := 0
-	var widest := 0
-	var in_water := false
-	var thickness := 0
-	var bridge_ends: Array = []
-	var prev_wet := false
-	for i in pts.size():
-		var c: Vector2i = run.cell_of(pts[i])
-		var wet: bool = run.is_water_cell(c.x, c.y)
-		var on_deck: bool = run.is_deck_cell(c.x, c.y)
-		if wet and not prev_wet:
-			crossings += 1
-			thickness = 0
-			bridge_ends.append(pts[i])
-		if wet:
-			thickness += 1
-			widest = maxi(widest, thickness)
-		if on_deck and prev_wet:
-			bridge_ends.append(pts[i])
-		prev_wet = wet or (prev_wet and on_deck)
-		if not wet and not on_deck:
-			prev_wet = false
-	lines.append("path crossings of WATER = %d (path points, not cells)" % crossings)
-	lines.append("widest water run along the path = %d path points" % widest)
-	for be in bridge_ends:
+	var axis_i: int = 1 if run.river_axis.y != 0 else 0
+	var sign: int = run.river_axis.y if axis_i == 1 else run.river_axis.x
+	lines.append("feature='%s' planned=%s axis=%s band=%d margin=%d"
+		% [str(run.feature), str(run.river_planned), str(run.river_axis), run.river_band,
+			run.river_margin])
+	# Would the screen draw a rail here? A deck cell with WATER on a side gets one, and the deck
+	# pass is skipped entirely for a feature it does not recognise.
+	var railed_cells := 0
+	for cy in run.ROWS:
+		for cx in run.COLS:
+			if not run.is_deck_cell(cx, cy):
+				continue
+			if run.is_water_cell(cx - 1, cy) or run.is_water_cell(cx + 1, cy) \
+					or run.is_water_cell(cx, cy - 1) or run.is_water_cell(cx, cy + 1):
+				railed_cells += 1
+	lines.append("deck cells with water beside them (rail candidates) = %d" % railed_cells)
+	lines.append("bridge: has=%s span=%d cells near=%s far=%s"
+		% [str(run.has_bridge), run.bridge_span,
+			str(run.cell_of(run.bridge_near)), str(run.cell_of(run.bridge_far))])
+	if not run.has_bridge:
+		return lines
+	var near_half := 0
+	var far_half := 0
+	for z in run.zones:
+		var c: Vector2i = run.cell_of(z["centre"])
+		var along: int = (c.y if axis_i == 1 else c.x) - run.river_band
+		if along * sign < 0:
+			near_half += 1
+		else:
+			far_half += 1
+	lines.append("packs: near half %d, far half %d" % [near_half, far_half])
+	# The two ends are the gate: what stands on them, and how far away.
+	for end in [run.bridge_near, run.bridge_far]:
 		var best := 1e9
 		var kind := ""
+		var members := 0
 		for z in run.zones:
-			var d: float = (z["centre"] as Vector2).distance_to(be)
+			var d: float = (z["centre"] as Vector2).distance_to(end)
 			if d < best:
 				best = d
 				kind = str(z["kind"])
-		lines.append("bridge end at cell %s: nearest pack %.0f px away (%s)"
-			% [str(run.cell_of(be)), best, kind])
+				members = (z["members"] as Array).size()
+		lines.append("bridge end %s: nearest pack %.0f px away (%s, %d bodies)"
+			% [str(run.cell_of(end)), best, kind, members])
+	# A guard on the wrong bank is no guard: the exit must be on the far side.
+	var ec: Vector2i = run.cell_of(run.exit_point)
+	var exit_along: int = (ec.y if axis_i == 1 else ec.x) - run.river_band
+	lines.append("exit cell %s is %s the river (along*sign=%d)"
+		% [str(ec), "BEYOND" if exit_along * sign > 0 else "on the NEAR side of", exit_along * sign])
 	return lines
