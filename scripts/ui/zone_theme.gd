@@ -119,8 +119,19 @@ const ACT1 := [
 		"cover": [["rock", 4], ["cairn", 3]],
 		"marks": ["lm_cairn_field"],
 		# "Valley úplně vybízí k tomu, že by měla být lokace rozdělena řekou, přes kterou vede
-		# velký most."
+		# velký most." — and after the first pass Jan: "Teď jsem tam našel jen malý náznak vody a
+		# přes ni lávku. Tahle zóna má být specifická právě tím rozdělením na dvě půlky (řeka
+		# nebude perfektně rovná, bude různě vlnit) a přechodem přes obří most, který bude
+		# hlídaný silnými skupinami monster."
+		#
+		# So the valley's river is not the generic band: `great` switches on the wide, winding,
+		# edge-to-edge river with ONE guarded bridge across it (`_feature_great_river`).
+		#   half   half-thickness of the water in cells (6 = a 12-cell river, 720 px)
+		#   wind   how far the centreline wanders, in cells
+		#   wiggle wavelength of the bend, in cells
+		#   guard  the bridge's two banks each hold a champion pack
 		"feature": "river",
+		"river": {"great": true, "half": 6.0, "wind": 3.0, "wiggle": 11.0, "guard": true},
 		"shore": [["reed", 5], ["rock", 3]],
 	},
 	{   # 5 — the canyon and its stone bridge

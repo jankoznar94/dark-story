@@ -231,6 +231,14 @@ const ACTIVATE_RADIUS := 330.0
 ## into one pack does not wake the next. `PACK_MIN_GAP > 2 * ACTIVATE_RADIUS` leaves a margin for
 ## the pack's own members walking outward.
 const PACK_MIN_GAP := 460.0
+## The deepest tier a cell can be — the top band of the monster pool (`_pick_row`). The bridge
+## guards use it, because the gate has to be the hardest thing on its bank, not an average one.
+const TIER_DEEPEST := 4
+## How much road either side of a bridge end is cleared of ordinary cells, in px. Wide enough
+## that the guard pack is the only body the ACTIVATE_RADIUS can reach: 600 px > 330 px radius plus
+## a pack's own 104 px scatter, so approaching the bridge cannot pull in a second, weaker pack
+## and turn the gate into a crowd.
+const BRIDGE_GUARD_CLEAR := 600.0
 
 ## --- what a cell holds ------------------------------------------------------
 ## Jan, Nov 2026: "Nespawnoval bych je vždy jako skupiny. Spíš jako jednotlivce. Někdy blízko
@@ -368,6 +376,48 @@ var entry_side := 0
 var exit_side := 1
 ## The zone's terrain feature ("", "boardwalk", "river", "chasm"), resolved from `ZoneTheme`.
 var feature := ""
+## --- the valley's GREAT RIVER ------------------------------------------------
+## Jan, Nov 2026: "Valley má být striktně rozdělená na dvě poloviny velkou řekou, přes kterou vede
+## velký most, který hráč zkrátka musí přejít… řeka nebude perfektně rovná, bude různě vlnit…
+## most bude hlídaný silnými skupinami monster."
+##
+## Three facts follow from that, and `tools/test_valley_river.gd` asserts each one:
+##   * the water runs EDGE TO EDGE through the whole grid, so the zone really is two halves;
+##   * exactly ONE crossing exists — the bridge — because a second deck would be a way round the
+##     fight the bridge is there to be;
+##   * both bridge banks hold a champion pack, so crossing is an effort and not a walk.
+##
+## `bridge_*` is the geometry the screen and the pack placer both read; empty when the zone has
+## no such crossing (every zone but the valley, and most seeds of nothing at all).
+var has_bridge := false
+var bridge_dir := Vector2i.ZERO
+var bridge_mid := Vector2.ZERO
+## The bank the hero arrives on, and the far one — the exit is behind the far one.
+var bridge_near := Vector2.ZERO
+var bridge_far := Vector2.ZERO
+## How many cells of water the deck spans. A footbridge is 5; the valley's is 10-16.
+var bridge_span := 0
+## --- the valley's river, PLANNED BEFORE THE WALK -----------------------------------------
+## A band cut across a random walk cannot be made to divide it into two halves: the walk
+## doubles back, crosses the band two or three times, and every extra crossing strands the
+## stretch between two of them (measured: on one seed the exit itself would have been deleted).
+## So for the valley the ORDER is reversed — the river is decided first, and the walk is then
+## BUILT as two halves with one straight crossing between them, which is the shape Jan asked for:
+## near half, the bridge, far half with the exit.
+var river_planned := false
+## The direction the hero travels when he crosses the river (perpendicular to the band).
+var river_axis := Vector2i.ZERO
+## The cell coordinate of the band's centre along that axis.
+var river_band := 0
+## Cells of bank kept clear of corridor on each side of the band.
+var river_margin := 0
+## The width parameters the plan was made with — the cut MUST use the same numbers, or the
+## corridor planned to stop `margin` cells short ends up standing in the water.
+var river_half := 6.0
+var river_wind := 3.0
+var river_wiggle := 11.0
+## Where the crossing meets the band's centre line: the bridge's own anchor.
+var river_cross_point := Vector2.ZERO
 ## The walkable grid, one byte per cell (1 = floor). `COLS` x `ROWS`, index `cy * COLS + cx`.
 ## Built by `_build_corridor()`, read by the walk (`walkable`), the spawns and the screen.
 var floor_cells := PackedByteArray()
@@ -931,19 +981,74 @@ func _build_corridor() -> void:
 	start_point = cell_centre(start.x, start.y)
 	path_points.append(start_point)
 
+	# ⚠️  THE VALLEY'S RIVER IS DECIDED HERE, BEFORE THE WALK. See `_plan_river`: the band is
+	# placed so the entry is on one side and the exit on the other, and the walk below is then
+	# kept out of it and crosses it exactly once.
+	_plan_river(_great_river_opts())
+	var axis_i: int = -1
+	var sign := 0
+	if river_planned:
+		axis_i = 1 if river_axis.y != 0 else 0
+		sign = river_axis.y if axis_i == 1 else river_axis.x
+
 	var target := _side_anchor(exit_side)
 	var pos := start
 	var dir_i := _side_dir_index(entry_side)
 	var built := 0.0
 	var last: Vector2 = start_point
 	var guard := 0
+	# Where the first half ends and the crossing happens. Half the journey each side, so the far
+	# bank is genuinely "the other half" and not a stub.
+	var phase_a_target := PATH_TARGET * 0.5
+	var crossed := not river_planned
 	while built < PATH_TARGET and guard < 200:
 		guard += 1
-		dir_i = _pick_walk_dir(pos, dir_i)
+		# THE CROSSING: one straight leg from the near bank, through the band, to the far one.
+		# `path_points` gets its ENDPOINTS only — the carved cells in between are what the bridge
+		# will be stamped on, and `river_cross_point` remembers where the centre line is.
+		if not crossed and built >= phase_a_target:
+			crossed = true
+			var from_c: int = pos.y if axis_i == 1 else pos.x
+			var far_c: int = river_band + sign * (river_margin + 2)
+			var step_cells: int = absi(far_c - from_c)
+			if step_cells > 0:
+				var crossing: Vector2i = pos + river_axis * step_cells
+				_carve_leg(pos, crossing, CORRIDOR_HALF_MAX)
+				pos = crossing
+				river_cross_point = cell_centre(pos.x, river_band) if axis_i == 1 \
+					else cell_centre(river_band, pos.y)
+				var cc: Vector2 = cell_centre(pos.x, pos.y)
+				path_points.append(cc)
+				built += last.distance_to(cc)
+				last = cc
+			continue
+		# The walk is CONFINED to its own bank while the river is planned: the limit is the bank
+		# margin, and it flips to the far margin after the crossing.
+		var lo := 2
+		var hi := (ROWS if axis_i == 1 else COLS) - 3
+		if river_planned:
+			var near_limit := river_band - sign * river_margin
+			var far_limit := river_band + sign * river_margin
+			if not crossed:
+				if sign > 0:
+					hi = mini(hi, near_limit)
+				else:
+					lo = maxi(lo, near_limit)
+			else:
+				if sign > 0:
+					lo = maxi(lo, far_limit)
+				else:
+					hi = mini(hi, far_limit)
+		dir_i = _pick_walk_dir(pos, dir_i, axis_i, lo, hi)
 		var dir: Vector2i = DIRS[dir_i]
 		var nxt := pos + dir * rng.randi_range(3, 8)
 		nxt.x = clampi(nxt.x, 2, COLS - 3)
 		nxt.y = clampi(nxt.y, 2, ROWS - 3)
+		if axis_i >= 0:
+			if axis_i == 1:
+				nxt.y = clampi(nxt.y, lo, hi)
+			else:
+				nxt.x = clampi(nxt.x, lo, hi)
 		if nxt == pos:
 			continue
 		_carve_leg(pos, nxt, rng.randi_range(CORRIDOR_HALF_MIN, CORRIDOR_HALF_MAX))
@@ -961,7 +1066,19 @@ func _build_corridor() -> void:
 	# entrance's own edge), reached by a short approach and closed with a room to fight the deepest
 	# pack in. Aiming the whole walk at a pre-chosen exit anchor instead made it circle the anchor
 	# for the last half of its length, which folded the corridor onto itself.
-	exit_side = _closest_side(pos, entry_side)
+	#
+	# ⚠️  WITH THE VALLEY'S RIVER the exit is pinned to the OPPOSITE edge instead. The nearest edge
+	# can be a side edge whose anchor sits mid-height — i.e. inside the river band — and the
+	# approach leg would then carve a second crossing straight through the water, which is exactly
+	# the way round the guarded bridge this zone must not have.
+	if river_planned:
+		# ⚠️  `entry ^ 1`, NOT `(entry + 2) % 4`. The side enum is 0 bottom, 1 top, 2 left,
+		# 3 right, so the opposite edge is the OTHER one of the same pair — `+2` turned a top
+		# entrance into a RIGHT exit, whose anchor sits at mid-height, i.e. IN the river: measured,
+		# the exit cell was (35, 49) with the band at row 49.
+		exit_side = entry_side ^ 1
+	else:
+		exit_side = _closest_side(pos, entry_side)
 	target = _side_anchor(exit_side)
 	var mid := Vector2i(target.x, pos.y)
 	if rng.randf() < 0.5:
@@ -976,7 +1093,12 @@ func _build_corridor() -> void:
 	# chance to break it, and the fallback puts the walk back. A map whose exit cannot be reached
 	# is a zone the act stops dead at, so this is checked, not hoped for.
 	var walk_snapshot: PackedByteArray = floor_cells.duplicate()
-	_carve_loops()
+	# ⚠️  NO LOOPS IN THE VALLEY. A loop joins two stretches that are close in SPACE, and across a
+	# river that means a second crossing: the pocket between the two crossings is stranded, the
+	# repair turns it to rock, and on one measured seed the EXIT was on the wrong side of it. The
+	# river IS this zone's structure; a loop is the one thing it cannot have.
+	if not river_planned:
+		_carve_loops()
 	_carve_pillars()
 	_sync_kind_from_floor()
 	_apply_zone_feature()
@@ -1035,11 +1157,72 @@ func _closest_side(pos: Vector2i, avoid: int) -> int:
 	return best
 
 
+## The valley's river options, or `{}` for every other zone. One place decides what "this zone has
+## a great river" means, so the walk, the cut and the guards cannot disagree about it.
+func _great_river_opts() -> Dictionary:
+	var theme: Dictionary = ZoneThemeData.for_zone(act_id, zone_index)
+	var river: Dictionary = theme.get("river", {})
+	if str(theme.get("feature", "")) == "river" and bool(river.get("great", false)):
+		return river
+	return {}
+
+
+## Place the band BEFORE the walk. The axis is the hero's own way in (he crosses the river by
+## walking on), and the band sits mid-map with a margin wide enough for the widest the winding can
+## get there.
+##
+## ⚠️  THE WIDTH IS SCALED ON THE SHORT AXIS. The grid is 41 x 99, so a left/right entry divides
+## 41 cells: a 6 + 3 cell half would leave ~8 cells of bank on each side, and the corridor would be
+## a strip. On the short axis the river is 3.2 + 1.6 cells instead (a 7-8 cell river, 420-480 px —
+## still several screens wide compared to the 4-cell stream it replaces) and both banks are ~11
+## cells deep.
+func _plan_river(opts: Dictionary) -> void:
+	river_planned = false
+	if opts.is_empty():
+		return
+	river_axis = _side_forward(entry_side)
+	var axis_i: int = 1 if river_axis.y != 0 else 0
+	var length: int = ROWS if axis_i == 1 else COLS
+	river_half = float(opts.get("half", 6.0))
+	river_wind = float(opts.get("wind", 3.0))
+	river_wiggle = float(opts.get("wiggle", 11.0))
+	if length < 60:
+		# 2.8 + 1.2: a 6-8 cell river (360-480 px) with ~11 cells of bank on each side of the 41
+		# cell axis. The numbers are not taste — `_plan_river` fails its own guard below when the
+		# margin cannot fit between the gate and the band, and the zone then has no river at all
+		# (measured: 5 of 8 seeds, exactly the left/right entries).
+		river_half = minf(river_half, 4.0)
+		river_wind = minf(river_wind, 1.2)
+	river_margin = int(ceil(river_half + river_wind + 1.2)) + 1
+	river_band = length / 2
+	if DEBUG_TERRAIN:
+		print("    [plan] entry=%d axis=%s band=%d half=%.1f margin=%d"
+			% [entry_side, str(river_axis), river_band, river_half, river_margin])
+	# The band must clear the start room (a gate inset 6 cells plus `START_ROOM_HALF`) and still
+	# leave a usable far bank; a plan that cannot do both means no river rather than a broken map.
+	# The start room's own reach from the edge: the gate is inset ~6 cells and the room is
+	# `START_ROOM_HALF` each way, so the water must stay beyond that — not two cells beyond it,
+	# which is what pushed the short axis down to a 7-cell river and a 7-cell bridge.
+	var gate: int = 6 + START_ROOM_HALF
+	if river_band - river_margin <= gate:
+		river_planned = false
+		return
+	if river_band + river_margin >= length - gate:
+		river_planned = false
+		return
+	river_planned = true
+	has_bridge = false
+
+
 ## Which of the four directions the walk takes next: straight first, away from the rock border
 ## second, and OFF CELLS THE WALK ALREADY CARVED third. Never straight back. There is no bias
 ## toward a pre-chosen exit any more — the walk picks the edge it ends nearest to, and the retread
 ## penalty is what makes it spread across the map instead of circling one target.
-func _pick_walk_dir(pos: Vector2i, dir_i: int) -> int:
+##
+## `axis_i` (-1 = no bank) adds a heavy penalty for a step that would leave the band's bank, so the
+## valley's walk turns ALONG its own bank instead of being clamped into the water and burning the
+## guard counter on illegal steps.
+func _pick_walk_dir(pos: Vector2i, dir_i: int, axis_i: int = -1, lo: int = 0, hi: int = 0) -> int:
 	var best := dir_i
 	var best_score := -INF
 	for i in 4:
@@ -1052,6 +1235,10 @@ func _pick_walk_dir(pos: Vector2i, dir_i: int) -> int:
 		var ahead := pos + d * 4
 		if ahead.x < 2 or ahead.x > COLS - 3 or ahead.y < 2 or ahead.y > ROWS - 3:
 			score -= 1.6
+		if axis_i >= 0:
+			var ahead_c: int = ahead.y if axis_i == 1 else ahead.x
+			if ahead_c < lo or ahead_c > hi:
+				score -= 3.0
 		# DON'T RETREAD. A leg that lands on cells the walk already carved turns a journey into a
 		# blob: measured, a 224-cell walk lay on itself three times over (880 floor cells for what
 		# should have been ~1 500) and only five packs could then be spaced far enough apart to be
@@ -1256,11 +1443,184 @@ func _sync_floor_from_kind() -> void:
 func _apply_zone_feature(safe: bool = false) -> void:
 	var theme: Dictionary = ZoneThemeData.for_zone(act_id, zone_index)
 	feature = str(theme.get("feature", ""))
+	var river: Dictionary = theme.get("river", {})
 	match feature:
 		"boardwalk":
 			_feature_boardwalk(safe)
-		"river", "chasm":
-			_feature_river(feature == "chasm")
+		"river":
+			if bool(river.get("great", false)):
+				_feature_great_river(river)
+			else:
+				_feature_river(false)
+		"chasm":
+			_feature_river(true)
+
+
+## THE VALLEY'S GREAT RIVER — the zone's two halves, and the ONE bridge between them.
+##
+## The band was already PLACED by `_plan_river`, before the walk existed, and the walk was built
+## as two halves with one straight crossing (`_build_corridor`). So all that is left here is to
+## cut the water and lay the deck, and to check the result rather than hope for it:
+##   * FULL WIDTH — the cut goes through the whole grid, rock included, so the zone really is two
+##     halves ("striktně rozdělená na dvě poloviny"). A band that stops at the corridor's own wall
+##     is a puddle in a room, which is exactly what Jan rejected.
+##   * WINDING — two harmonics of a slow bend plus a slowly changing width, so the banks are not
+##     parallel and the river is not a stripe.
+##   * ONE BRIDGE, sized from the water it actually spans. `_stamp_bridge_spanning` measures the
+##     span instead of assuming `half`: on a winding band a fixed-length deck either leaves a cell
+##     of water at one end (a dead end) or hangs over dry rock (a jetty).
+##
+## ⚠️  NO "retry narrower" LOOP HERE, unlike `_feature_river`. That loop is why Jan found only a
+## small hint of water: a band that broke the flood fill was retried 26 % narrower each time, and
+## a zone that needed two retries shipped a thin stream with a footbridge over it.
+func _feature_great_river(_opts: Dictionary) -> void:
+	has_bridge = false
+	bridge_span = 0
+	if not river_planned:
+		if DEBUG_TERRAIN:
+			print("    [great river] SKIP: not planned (entry=%d)" % entry_side)
+		return
+	var backup: PackedByteArray = cell_kind.duplicate()
+	var cross: Vector2 = river_cross_point
+	if cross == Vector2.ZERO:
+		# The crossing leg is the last point pair that straddles the band's centre line.
+		cross = _band_crossing_point()
+		river_cross_point = cross
+	if cross == Vector2.ZERO:
+		return
+	_cut_band_wavy(cross, river_axis, river_half, river_wind, river_wiggle)
+	_sync_floor_from_kind()
+	if not _stamp_bridge_spanning(cross, river_axis, river_half):
+		if DEBUG_TERRAIN:
+			print("    [great river] SKIP: no span at %s (water there=%s)"
+				% [str(cell_of(cross)), str(is_water_cell(cell_of(cross).x, cell_of(cross).y))])
+		cell_kind = backup.duplicate()
+		_sync_floor_from_kind()
+		return
+	_sync_floor_from_kind()
+	# Rooms carved near the bank can be sliced by the water; anything the hero can no longer reach
+	# stops being floor, the same rule pockets behind the rock already follow.
+	_repair_isolated_floor()
+	if not _all_floor_connected():
+		if DEBUG_TERRAIN:
+			print("    [great river] SKIP: flood failed")
+		cell_kind = backup.duplicate()
+		_sync_floor_from_kind()
+		has_bridge = false
+		bridge_span = 0
+		return
+	if DEBUG_TERRAIN:
+		print("    [great river] axis=%s band=%d span=%d water=%d"
+			% [str(river_axis), river_band, bridge_span, _count_kind(KIND_WATER)])
+
+
+## The point where the walk's own crossing leg meets the band's centre line: the first path point
+## that is on the far side of `river_band`, walked back to the band. `path_points` only holds the
+## crossing leg's ENDPOINTS, so half-way between them is the band by construction.
+func _band_crossing_point() -> Vector2:
+	var axis_i: int = 1 if river_axis.y != 0 else 0
+	for i in range(1, path_points.size()):
+		var a: Vector2i = cell_of(path_points[i - 1])
+		var b: Vector2i = cell_of(path_points[i])
+		var ca: int = a.y if axis_i == 1 else a.x
+		var cb: int = b.y if axis_i == 1 else b.x
+		if (ca - river_band) * (cb - river_band) > 0:
+			continue
+		# This pair straddles the band. Take the band coordinate on the crossing's own row/column.
+		if axis_i == 1:
+			return cell_centre(a.x, river_band)
+		return cell_centre(river_band, a.y)
+	return Vector2.ZERO
+
+
+
+func _count_kind(kind: int) -> int:
+	var out := 0
+	for v in cell_kind:
+		if int(v) == kind:
+			out += 1
+	return out
+
+
+## A BRIDGE FROM BANK TO BANK along `dir`: march each way from the crossing until the water ends,
+## and lay a 3-cell-wide deck over that whole run plus one cell into each bank. Returns false when
+## the march runs away, i.e. the path reached the river lengthwise and there is no crossing here.
+##
+## The run is measured, not assumed: the band WINDS, so its thickness at this point is `half` plus
+## whatever the bend is doing there, and a deck of a fixed length hangs over the water at one end
+## (the dead end Jan would find) or stops on dry rock (a jetty).
+func _stamp_bridge_spanning(cross: Vector2, dir: Vector2i, half: float) -> bool:
+	var c: Vector2i = cell_of(cross)
+	var perp := Vector2i(-dir.y, dir.x)
+	var limit := int(ceil(half * 3.0)) + 3
+	var fwd := 0
+	while fwd < limit and is_water_cell(c.x + dir.x * (fwd + 1), c.y + dir.y * (fwd + 1)):
+		fwd += 1
+	if fwd >= limit:
+		return false
+	var back := 0
+	while back < limit and is_water_cell(c.x - dir.x * (back + 1), c.y - dir.y * (back + 1)):
+		back += 1
+	if back >= limit:
+		return false
+	if fwd + back + 1 < 3:
+		return false
+	bridge_span = fwd + back + 1
+	# The banks, recorded here rather than inferred from a walk of the path: `path_points` holds
+	# only the crossing leg's endpoints, so a deck lookup along it finds no deck at all.
+	bridge_near = cell_centre(c.x - dir.x * (back + 1), c.y - dir.y * (back + 1))
+	bridge_far = cell_centre(c.x + dir.x * (fwd + 1), c.y + dir.y * (fwd + 1))
+	bridge_mid = cross
+	bridge_dir = dir
+	has_bridge = true
+	# +1 into each bank, and stamped ONLY onto water, so the deck lands ON the shore instead of
+	# painting planks over the road the path already carved.
+	# ⚠️  FOUR CELLS WIDE, NOT THREE. At three (180 px of world, 147 px on a 390 px phone) the
+	# deck reads as a plank walkway laid across water — "spíš lávka než most" — however long it is.
+	# Five was rejected earlier because the bridge WAS the whole frame, but that was a 5-cell deck
+	# over a 4-cell stream; this one is 11-15 cells long, so four is a road bridge with water still
+	# visible on both sides.
+	for a in range(-back - 1, fwd + 2):
+		for b in range(-2, 2):
+			var x: int = c.x + dir.x * a + perp.x * b
+			var y: int = c.y + dir.y * a + perp.y * b
+			if is_water_cell(x, y):
+				_set_kind(x, y, KIND_DECK)
+	return true
+
+
+## The river's centreline, `wind` cells either side of `cross`'s band, plus a slowly changing
+## width. Sampled at every cell centre in the grid — the bank is therefore a one-cell staircase,
+## which is the same grain the rock outline already has at 60 px cells.
+func _cut_band_wavy(cross: Vector2, dir: Vector2i, half: float, wind: float, wiggle: float) -> void:
+	var axis := Vector2(dir)
+	var normal := Vector2(-dir.y, dir.x)
+	var phase := rng.randf() * TAU
+	var period := maxf(6.0, wiggle) * TILE
+	# ⚠️  THE BEND IS ZERO AT THE CROSSING (`across == 0`), by subtracting its own value there.
+	# Without this the river's centre can wander up to `wind` cells off the band, the bridge's
+	# anchor cell lands on dry ground, the span march finds no water and the zone silently loses
+	# its river — measured on 5 of 8 seeds.
+	var bend0 := wind * sin(phase) + 0.42 * wind * sin(phase * 1.7)
+	for cy in ROWS:
+		for cx in COLS:
+			var v: Vector2 = cell_centre(cx, cy) - cross
+			var along := v.dot(axis)
+			var across := v.dot(normal)
+			# Two harmonics: one long bend, one shorter one riding on it. One sine alone reads as
+			# a wave; the pair reads as a river that happens to wander.
+			var bend := wind * sin(across / period * TAU + phase) \
+				+ 0.42 * wind * sin(across / (period * 0.43) + phase * 1.7) - bend0
+			# The width breathes by ±22 % OF `half`, and is exactly `half` AT THE CROSSING (the
+			# same subtraction as the bend). A fixed ±1.2 cells pinched a short-axis river to 1.6
+			# cells right under the bridge — a 3-cell span is a plank, not a bridge.
+			var width := half + 0.22 * half \
+				* (sin(across / (period * 0.67) + phase * 2.3) - sin(phase * 2.3))
+			if absf(along - bend * TILE) <= width * TILE:
+				cell_kind[cell_index(cx, cy)] = KIND_WATER
+
+
+
 
 
 ## THE SWAMP. Every carved cell becomes impassable water and a plank walkway is laid along the
@@ -1623,6 +1983,35 @@ func _build_area() -> void:
 			"progress": clampi(int(round(9.0 * float(k) / float(maxi(count - 1, 1)))), 0, 9),
 		})
 
+	# ⚠️  THE BRIDGE IS THE GATE, so its two banks get the zone's strongest groups and the ordinary
+	# cells are cleared out of that stretch. A wanderer standing beside a champion pack makes the
+	# "guarded bridge" read as any other piece of road, and the fight the bridge exists to be is
+	# then whatever happens to be nearest. Both banks, not one: the hero meets a pack on the way
+	# onto the span and another as he comes off it, which is the two beats of a gate.
+	if has_bridge:
+		var kept: Array = []
+		for sp in spots:
+			var c: Vector2 = sp["centre"]
+			if c.distance_to(bridge_near) < BRIDGE_GUARD_CLEAR \
+					or c.distance_to(bridge_far) < BRIDGE_GUARD_CLEAR:
+				continue
+			kept.append(sp)
+		spots = kept
+		spots.append({
+			"centre": nearest_floor_point(bridge_near),
+			"tier": TIER_DEEPEST,
+			"progress": 6,
+			"kind": "champion",
+			"guard": true,
+		})
+		spots.append({
+			"centre": nearest_floor_point(bridge_far),
+			"tier": TIER_DEEPEST,
+			"progress": 7,
+			"kind": "champion",
+			"guard": true,
+		})
+
 	# At most ONE elite pack per zone, and it stands in the DEEPER half: walking further is
 	# what raises the stakes, the same rule the tier of a pack already follows.
 	var elite_at := -1
@@ -1632,7 +2021,9 @@ func _build_area() -> void:
 	for i in range(spots.size()):
 		var spot: Dictionary = spots[i]
 		var kind := "normal"
-		if i == elite_at:
+		if bool(spot.get("guard", false)):
+			kind = str(spot.get("kind", "champion"))
+		elif i == elite_at:
 			kind = "elite"
 		elif rng.randf() < CHAMPION_PACK_CHANCE:
 			kind = "champion"
