@@ -19,10 +19,18 @@ const ROWS := 6
 const TILE := 512
 const WORLD := Vector2(COLS * TILE, ROWS * TILE)
 
-## The atlas: 4 x 4 cells, one per mask (mask 1..15 sits at index mask - 1, row-major).
+## The atlas: the FIVE archetypes Jan drew, at full 512 px, in a 3 x 2 grid. The other ten
+## orientations are the same art ROTATED — 90° turns are exact on a pixel grid, so nothing is lost
+## and the file does not carry each orientation twice.
+##
+## Jan, Nov 2026: "Určitě chceme detaily." So the tiles are stored at their drawn size and the
+## budget goes to detail, not to duplicate rotations: 1536 x 1024 = 6 MB in VRAM (the 15-cell
+## version at the same size would be 16 MB). Disk is ~2 KB because it is a three-colour palette.
 const ATLAS := "res://assets/village/tiles.png"
-const ATLAS_COLS := 4
-const ATLAS_CELL := 128
+const ATLAS_COLS := 3
+const ATLAS_CELL := 512
+## The drawn archetypes, in the atlas order: dead end, straight, corner, tee, cross.
+const ARCHETYPES := [1, 3, 5, 7, 15]
 
 ## The jungle that everything else stands in. Seamless, repeated at its own texel size.
 const FOREST := "res://assets/village/forest.png"
@@ -63,9 +71,38 @@ static func is_walkway(ix: int, iy: int) -> bool:
 	return mask_at(ix, iy) != 0
 
 
-## The atlas region of the tile that has this opening mask. Mask 0 (jungle) has no tile.
+## Rotating a mask by 90° clockwise: N -> E -> S -> W -> N. A pixel grid makes this exact, which is
+## why one drawn tile covers four orientations.
+static func turn_mask(mask: int) -> int:
+	var out := 0
+	if mask & N:
+		out |= E
+	if mask & E:
+		out |= S
+	if mask & S:
+		out |= W
+	if mask & W:
+		out |= N
+	return out
+
+
+## Which drawn archetype a mask is, and how many 90° turns to put on it: `Vector2i(base_index,
+## turns)`. Index -1 means the mask cannot be built from the archetypes (a data bug).
+static func base_and_turns(mask: int) -> Vector2i:
+	for i in ARCHETYPES.size():
+		var cur := int(ARCHETYPES[i])
+		for turns in 4:
+			if cur == mask:
+				return Vector2i(i, turns)
+			cur = turn_mask(cur)
+	return Vector2i(-1, 0)
+
+
+## The atlas region of the DRAWN tile for this mask — the renderer turns the quad by
+## `base_and_turns(mask).y * 90°`. Mask 0 (jungle) has no tile.
 static func atlas_region(mask: int) -> Rect2:
-	var i := clampi(mask - 1, 0, 14)
+	var bt := base_and_turns(mask)
+	var i := maxi(bt.x, 0)
 	return Rect2(float(i % ATLAS_COLS) * ATLAS_CELL, float(i / ATLAS_COLS) * ATLAS_CELL,
 		ATLAS_CELL, ATLAS_CELL)
 

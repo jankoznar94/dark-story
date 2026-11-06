@@ -85,10 +85,23 @@ func _initialize() -> void:
 	if tex == null:
 		_check(false, "the atlas did not load — run --import first (an unimported PNG is invisible)")
 	else:
+		_check(tex.get_height() == VillageLayout.ATLAS_CELL * 2,
+			"atlas height %d, expected two rows of %d" % [tex.get_height(), VillageLayout.ATLAS_CELL])
 		_check(tex.get_width() == VillageLayout.ATLAS_CELL * VillageLayout.ATLAS_COLS,
 			"atlas width %d, expected %d" % [tex.get_width(),
 				VillageLayout.ATLAS_CELL * VillageLayout.ATLAS_COLS])
-		for m in [1, 3, 5, 7, 15]:
+		# Every one of the 15 orientations must be ONE drawn archetype plus a whole number of 90°
+		# turns — that is what lets the atlas stay at five tiles and still show all fifteen.
+		for m in range(1, 16):
+			var bt: Vector2i = VillageLayout.base_and_turns(m)
+			_check(bt.x >= 0, "mask %d has no archetype — a tile would draw as nothing" % m)
+			if bt.x < 0:
+				continue
+			var cur: int = int(VillageLayout.ARCHETYPES[bt.x])
+			for _t in bt.y:
+				cur = VillageLayout.turn_mask(cur)
+			_check(cur == m, "mask %d: archetype %d turned %d times gives %d"
+				% [m, int(VillageLayout.ARCHETYPES[bt.x]), bt.y, cur])
 			var r: Rect2 = VillageLayout.atlas_region(m)
 			_check(r.position.x >= 0.0 and r.end.x <= tex.get_width()
 				and r.end.y <= tex.get_height(),
