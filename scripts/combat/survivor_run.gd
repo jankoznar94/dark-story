@@ -1387,14 +1387,18 @@ func _path_dir_at(idx: int) -> Vector2i:
 
 
 ## A BRIDGE over the river at `cross`: `half + 2` cells along the path's own direction (it has to
-## span the water and stand on both banks) and 5 cells across. Stamped only on WATER, so the
+## span the water and stand on both banks) and THREE cells across. Stamped only on WATER, so the
 ## bridge lands ON the banks instead of painting deck over the road.
+##
+## ⚠️  THREE CELLS, NOT FIVE. At 5 cells the deck measured 300 px of a 390 px phone view ("the
+## bridge is the whole screen" — the water was left as two thin strips) and it stopped reading as
+## a bridge at all. 180 px still passes the body's disc test with a cell to spare.
 func _stamp_bridge(cross: Vector2, dir: Vector2i, half: float) -> void:
 	var perp := Vector2i(-dir.y, dir.x)
 	var c: Vector2i = cell_of(cross)
 	var length := int(ceil(half)) + 2
 	for a in range(-length, length + 1):
-		for b in range(-2, 3):
+		for b in range(-1, 2):
 			var x: int = c.x + dir.x * a + perp.x * b
 			var y: int = c.y + dir.y * a + perp.y * b
 			if is_water_cell(x, y):

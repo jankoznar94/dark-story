@@ -1393,9 +1393,13 @@ func _draw_deck() -> void:
 				if run.is_water_cell(cx, cy - 1):
 					draw_line(p + Vector2(0, 2.0), p + Vector2(t, 2.0), rail, 4.0)
 					draw_line(p + Vector2(0, 6.0), p + Vector2(t, 6.0), rail_shadow, 1.5)
+					draw_line(p + Vector2(10.0, 0), p + Vector2(10.0, 9.0), rail, 3.0)
+					draw_line(p + Vector2(40.0, 0), p + Vector2(40.0, 9.0), rail, 3.0)
 				if run.is_water_cell(cx, cy + 1):
 					draw_line(p + Vector2(0, t - 2.0), p + Vector2(t, t - 2.0), rail, 4.0)
 					draw_line(p + Vector2(0, t - 6.0), p + Vector2(t, t - 6.0), rail_shadow, 1.5)
+					draw_line(p + Vector2(10.0, t - 9.0), p + Vector2(10.0, t), rail, 3.0)
+					draw_line(p + Vector2(40.0, t - 9.0), p + Vector2(40.0, t), rail, 3.0)
 				if run.is_water_cell(cx - 1, cy):
 					draw_line(p + Vector2(2.0, 0), p + Vector2(2.0, t), rail, 4.0)
 					draw_line(p + Vector2(6.0, 0), p + Vector2(6.0, t), rail_shadow, 1.5)
