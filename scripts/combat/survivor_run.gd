@@ -174,14 +174,20 @@ const RANGED_FACES := ["assets/monsters/lesni_rarach.png"]
 ## a cell the hero has never been near is drawn black — Warcraft 2's shape, which is what Jan
 ## asked for ("tam, kde hráč ještě fyzicky nebyl, by to mělo být černé, nebo minimálně zašedlé").
 const TILE := 60.0
+## 40 x 96 cells = 5 x 12 chunks of 8 x 8 (`ChunkLibrary.SIZE`). The numbers are not taste: the
+## chunk grid has to tile the world EXACTLY, or the spare row of cells becomes a rock seam down one
+## side of every zone. 40 x 96 = 2400 x 5760 px — the old 41 x 99 was 2460 x 5940, i.e. 3 % larger
+## and impossible to tile.
+const COLS := 40
+const ROWS := 96
+## Assemble zones from `ChunkLibrary` pieces instead of walking a corridor through the grid.
+const USE_CHUNK_MAPS := true
+const CHUNK := 8
+const CHUNK_GX := COLS / CHUNK
+const CHUNK_GY := ROWS / CHUNK
 ## ⚠️  THE AREA'S SIZE. Jan: "Oblasti jsou stále hrozně krátké a na jedno brdo. Každá oblast by
-## měla být minimálně 3x rozsáhlejší než teď." The old grid was 25x35 cells (1500x2100 px) and
-## the corridor in it measured ~3 600 px from the entrance to the exit; this grid is 33x61
-## (1980x3660 px) and the winding path inside it runs ~3x as long. The generator's legs and
-## turns were widened with it (see `_build_corridor`), because a taller grid alone only makes
-## a longer pipe.
-const COLS := 41
-const ROWS := 99
+## měla být minimálně 3x rozsáhlejší než teď." The old grid was 25x35 cells; this one is 40x96
+## (2400x5760 px), i.e. 5x12 chunks of 8x8 — the size now follows the chunk grid, see above.
 ## Half-width of a corridor leg, in cells. 3 = a 7-cell leg (420 px): two hero discs pass a pack
 ## with room to spare. It was 2 (300 px) and Jan: "teď je příliš úzký s přímý" — a 5-cell tube
 ## reads as a pipe, not as a dungeon corridor. Legs VARY between `CORRIDOR_HALF_MIN` and
@@ -959,6 +965,31 @@ const DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 ##
 ## ⚠️  THE LENGTH IS A TARGET, NOT A CONSEQUENCE OF THE GRID (`PATH_TARGET`), and the walk is
 ## bounded by `guard` so a seed that keeps turning into its own trail cannot hang the build.
+# ============================================================================ chunk assembly
+#
+# Jan, Nov 2026: "Chci plnou mřížku dílů." A zone is now a grid of authored pieces
+# (`ChunkLibrary`) stitched by their connector contract, D2 style, instead of one walk drawn
+# through the grid:
+#
+#   1. the entrance and the exit are chunks on two different map edges;
+#   2. a simple route of adjacent chunks joins them (backtracking DFS with a bias toward the exit),
+#      MONOTONE along the river axis when the zone has the great river — that is what guarantees
+#      the "exactly one crossing" the valley is built on, by construction rather than by a repair;
+#   3. the route chunks get the pieces whose connectors match the route's in/out directions;
+#   4. one or two dead-end pockets branch off, so the map has somewhere to go that is not the exit;
+#   5. the pieces are rasterised into `floor_cells` and the route's chunk centres become
+#      `path_points` — the SAME contract every rule downstream already reads (packs along the path,
+#      the river's bridge stamp, fog, prop exclusion), so nothing else had to learn a new concept.
+#
+# The river, the bridge and the zone feature are still applied afterwards by `_apply_zone_feature`:
+# the river's band is planned from `entry_side` before the route exists, and the route crosses it
+# once, so `_feature_great_river` finds exactly one crossing to bridge.
+
+var _chunk_pieces: Dictionary = {}
+
+
+## The area's floor: assembled from chunks, or (one constant) walked. Both go through here so the
+## buffers are always zeroed in one place.
 func _build_corridor() -> void:
 	floor_cells.resize(COLS * ROWS)
 	floor_cells.fill(0)
@@ -966,7 +997,302 @@ func _build_corridor() -> void:
 	explored_cells.fill(0)
 	explored_version = 0
 	path_points.clear()
+	if USE_CHUNK_MAPS:
+		_build_chunk_corridor()
+		return
+	_build_corridor_legacy()
 
+
+func _build_chunk_corridor() -> void:
+	_chunk_pieces.clear()
+	entry_side = rng.randi_range(0, 3)
+	_plan_river(_great_river_opts())
+	if river_planned:
+		# Opposite edge, as the old walk did: the two halves of the valley are the two banks.
+		exit_side = entry_side ^ 1
+	else:
+		exit_side = (entry_side + rng.randi_range(1, 3)) % 4
+	# A zone with its river planned MUST ship with the river and its bridge — a valley without
+	# water is not the valley Jan described, and a valley whose bridge did not land is a zone with
+	# no way to the exit. So the layout is redrawn (a new route, a new crossing) up to four times
+	# before the walk is used as the last resort.
+	for attempt in 4:
+		if _assemble_once():
+			return
+		floor_cells.fill(0)
+		path_points.clear()
+		_chunk_pieces.clear()
+		river_cross_point = Vector2.ZERO
+		has_bridge = false
+	_build_corridor_legacy()
+
+
+## One assembly attempt. Returns false when the result is not a zone the player may meet: the exit
+## must be reachable, and a planned river must have actually been cut AND bridged.
+func _assemble_once() -> bool:
+	var entry_c := _gate_chunk(entry_side)
+	var exit_c := _gate_chunk(exit_side)
+	while exit_c == entry_c:
+		exit_c = _gate_chunk(exit_side)
+
+	var route := _chunk_route(entry_c, exit_c)
+	if route.is_empty():
+		return false
+
+	# Which edges each chunk on the route has to offer, from the route itself.
+	var need: Dictionary = {}
+	for i in route.size():
+		var c: Vector2i = route[i]
+		var dirs: Array = []
+		if i > 0:
+			dirs.append(_chunk_dir(c, route[i - 1]))
+		if i < route.size() - 1:
+			dirs.append(_chunk_dir(c, route[i + 1]))
+		need[c] = dirs
+
+	# Dead-end pockets: a branch off a route chunk, never off a gate. Two is enough to make the
+	# route a choice; more turns the zone into a labyrinth the hero backtracks through.
+	var branches := 3 if not river_planned else 2
+	for b in branches:
+		var cands: Array = []
+		for i in range(1, route.size() - 1):
+			var c: Vector2i = route[i]
+			for d in DIRS:
+				var n: Vector2i = c + d
+				if _chunk_free(n) and not need.has(n):
+					cands.append([c, n, d])
+		if cands.is_empty():
+			break
+		var pick: Array = cands[rng.randi_range(0, cands.size() - 1)]
+		var from: Vector2i = pick[0]
+		var to: Vector2i = pick[1]
+		var d: Vector2i = pick[2]
+		(need[from] as Array).append(_chunk_dir(from, to))
+		need[to] = [_chunk_dir(to, from)]
+
+	# ⚠️  THE GATES ARE ALWAYS A HALL. `test_corridor_fog` requires the start clearing to be at
+	# least 7x7 cells, and a "straight" piece is 4 wide: measured, the assembled start room was 48
+	# cells and the zone failed the gate. The entrance is also the first thing the player sees, and
+	# it should read as a room.
+	var gate_pool := ChunkLibrary.pool("hall")
+	for c in need:
+		var only: Array = gate_pool if (c == entry_c or c == exit_c) else []
+		var v: Dictionary = ChunkLibrary.pick(need[c], rng, only)
+		if v.is_empty():
+			return false
+		_chunk_pieces[c] = v
+
+	# Rasterise: every chunk's mask into the cell grid.
+	for c in _chunk_pieces:
+		_stamp_chunk(c, _chunk_pieces[c])
+
+	# The walk every downstream rule reads: chunk centres along the route, entrance first.
+	var pts: Array = []
+	for c in route:
+		pts.append(Vector2i(c.x * CHUNK + CHUNK / 2, c.y * CHUNK + CHUNK / 2))
+	start_point = cell_centre(pts[0].x, pts[0].y)
+	exit_point = cell_centre(pts[pts.size() - 1].x, pts[pts.size() - 1].y)
+	for p in pts:
+		path_points.append(cell_centre(p.x, p.y))
+
+	_sync_kind_from_floor()
+	# ⚠️  NO LOOPS AND NO PILLARS: both CARVE, and a carve through an authored piece is exactly the
+	# undoing of "the pieces are deliberate". The chunk graph supplies the branches instead.
+	_apply_zone_feature()
+	_sync_floor_from_kind()
+	_repair_isolated_floor()
+	if river_planned and not has_bridge:
+		return false
+	if not _exit_reachable():
+		return false
+	return true
+
+
+## Can the hero walk from the entrance to the exit? `_all_floor_connected` answers "is the floor one
+## piece"; this answers the question the player actually asks, and after the river cut the two can
+## disagree for a moment (the far bank's floor is one piece too — just not the same one).
+func _exit_reachable() -> bool:
+	var start: Vector2i = cell_of(start_point)
+	var goal: Vector2i = cell_of(exit_point)
+	if not in_grid(start.x, start.y) or not in_grid(goal.x, goal.y):
+		return false
+	var seen := PackedByteArray()
+	seen.resize(COLS * ROWS)
+	seen.fill(0)
+	var stack: Array[Vector2i] = [start]
+	seen[cell_index(start.x, start.y)] = 1
+	while not stack.is_empty():
+		var c: Vector2i = stack.pop_back()
+		if c == goal:
+			return true
+		for d in DIRS:
+			var n: Vector2i = c + d
+			if not in_grid(n.x, n.y) or seen[cell_index(n.x, n.y)] == 1:
+				continue
+			if floor_cells[cell_index(n.x, n.y)] != 1:
+				continue
+			seen[cell_index(n.x, n.y)] = 1
+			stack.append(n)
+	return false
+
+
+## A chunk on `side` of the map, one cell in from the corner so a gate never sits in a corner where
+## its only neighbour would be the map edge.
+func _gate_chunk(side: int) -> Vector2i:
+	match side:
+		0:
+			return Vector2i(rng.randi_range(1, CHUNK_GX - 2), CHUNK_GY - 1)
+		1:
+			return Vector2i(rng.randi_range(1, CHUNK_GX - 2), 0)
+		2:
+			return Vector2i(0, rng.randi_range(1, CHUNK_GY - 2))
+		_:
+			return Vector2i(CHUNK_GX - 1, rng.randi_range(1, CHUNK_GY - 2))
+
+
+func _chunk_free(c: Vector2i) -> bool:
+	return c.x >= 0 and c.y >= 0 and c.x < CHUNK_GX and c.y < CHUNK_GY
+
+
+## The edge name ("n"/"e"/"s"/"w") a chunk OFFERS toward its neighbour.
+func _chunk_dir(from: Vector2i, to: Vector2i) -> String:
+	var d := to - from
+	if d.y < 0:
+		return "n"
+	if d.y > 0:
+		return "s"
+	if d.x < 0:
+		return "w"
+	return "e"
+
+
+## A simple, connected route of adjacent chunks from `a` to `b`.
+##
+## ⚠️  IT IS NOT THE SHORTEST ROUTE, AND THAT IS THE POINT. A bias toward the exit produced ~12
+## chunks = 5 800 px of path, and `_build_area` turns path length into packs — the first assembled
+## zones had 7 fights where the walked ones had 15. So the route first WANDERS AWAY from the exit
+## for a drawn number of chunks, then walks to it (BFS). Length is a designed number here, exactly
+## like `PATH_TARGET` was for the walk.
+##
+## MONOTONE along the river axis when the river is planned. The valley's whole design is "one
+## crossing, one bridge"; a route that wanders back over the band would carve a second crossing and
+## the far bank would be reachable without the bridge — the exact bug `_plan_river`'s comments
+## describe, only now it would be structural.
+func _chunk_route(a: Vector2i, b: Vector2i) -> Array:
+	var axis := -1
+	var way := 0
+	if river_planned:
+		axis = 1 if river_axis.y != 0 else 0
+		way = 1 if (b.y > a.y if axis == 1 else b.x > a.x) else -1
+	# 60 chunks exist. `test_corridor_fog` holds Jan's 3x-area promise at >= 12 160 px, and the
+	# polyline through chunk centres is (n - 1) * 480 px — so 27 chunks is the smallest route that
+	# keeps the promise, and that is also where the draw starts. Measured short runs (23 chunks =
+	# 11 040 px) came from the wander hitting a wall early, hence `best` below.
+	var want := rng.randi_range(27, 33)
+	var best: Array = []
+	for attempt in 8:
+		var path: Array = [a]
+		var seen := {a: true}
+		# PHASE A — wander away from the exit.
+		var guard := 0
+		while path.size() < want and guard < 800:
+			guard += 1
+			var cur: Vector2i = path[path.size() - 1]
+			var opts := _chunk_options(cur, seen, axis, way)
+			if opts.is_empty():
+				break
+			# Farthest from the exit first, so the route fills the zone instead of hugging the
+			# straight line between the gates.
+			opts.sort_custom(func(p: Vector2i, q: Vector2i) -> bool:
+				return _chunk_span(p, b) > _chunk_span(q, b))
+			var idx := 0
+			if opts.size() > 1:
+				idx = rng.randi_range(0, mini(2, opts.size() - 1))
+			var nxt: Vector2i = opts[idx]
+			seen[nxt] = true
+			path.append(nxt)
+		# PHASE B — from wherever the wander ended, a real path to the far gate.
+		var tail := _chunk_path_to(path[path.size() - 1], b, seen, axis, way)
+		if tail.is_empty() and path[path.size() - 1] != b:
+			continue
+		for c in tail:
+			path.append(c)
+		if path.size() > best.size():
+			best = path.duplicate()
+		# The wander can hit a wall before its drawn length; then another draw is worth trying. The
+		# LONGEST route found wins, so a zone is never shorter than it has to be.
+		if path.size() >= want:
+			return path
+	return best
+
+
+## 1 = cells the chunk grid shares with the straight line to `b`; only used to sort.
+func _chunk_span(p: Vector2i, b: Vector2i) -> int:
+	return absi(p.x - b.x) + absi(p.y - b.y)
+
+
+func _chunk_options(cur: Vector2i, seen: Dictionary, axis: int, way: int) -> Array:
+	var opts: Array = []
+	for d in DIRS:
+		var n: Vector2i = cur + d
+		if not _chunk_free(n) or seen.has(n):
+			continue
+		if axis >= 0:
+			var delta: int = (n.y - cur.y) if axis == 1 else (n.x - cur.x)
+			if delta != 0 and delta != way:
+				continue
+		opts.append(n)
+	return opts
+
+
+## Breadth-first path on the chunk grid, avoiding what the wander already used.
+func _chunk_path_to(from: Vector2i, to: Vector2i, seen: Dictionary, axis: int, way: int) -> Array:
+	if from == to:
+		return []
+	var prev: Dictionary = {from: from}
+	var queue: Array = [from]
+	var head := 0
+	var blocked: Dictionary = seen.duplicate()
+	blocked.erase(from)
+	while head < queue.size():
+		var cur: Vector2i = queue[head]
+		head += 1
+		for n in _chunk_options(cur, blocked, axis, way):
+			blocked[n] = true
+			prev[n] = cur
+			if n == to:
+				var out: Array = []
+				var walk := to
+				while walk != from:
+					out.push_front(walk)
+					walk = prev[walk]
+				return out
+			queue.append(n)
+	return []
+
+
+## Paint one chunk's mask into `floor_cells` at its grid position.
+func _stamp_chunk(c: Vector2i, piece: Dictionary) -> void:
+	var mask: Array = piece["mask"]
+	var ox: int = c.x * CHUNK
+	var oy: int = c.y * CHUNK
+	for y in ChunkLibrary.SIZE:
+		var row := str(mask[y])
+		for x in ChunkLibrary.SIZE:
+			if row[x] != "#":
+				continue
+			var cx: int = ox + x
+			var cy: int = oy + y
+			if in_grid(cx, cy):
+				floor_cells[cell_index(cx, cy)] = 1
+
+
+## The old corridor walk, unchanged, for the fallback case (a route the DFS could not join).
+func _build_old_walk_corridor() -> void:
+	_build_corridor_legacy()
+
+
+func _build_corridor_legacy() -> void:
 	entry_side = rng.randi_range(0, 3)
 	exit_side = (entry_side + rng.randi_range(1, 3)) % 4
 	var start := _side_anchor(entry_side)
@@ -1551,6 +1877,13 @@ func _count_kind(kind: int) -> int:
 ## (the dead end Jan would find) or stops on dry rock (a jetty).
 func _stamp_bridge_spanning(cross: Vector2, dir: Vector2i, half: float) -> bool:
 	var c: Vector2i = cell_of(cross)
+	# ⚠️  THE CROSSING CELL ITSELF MUST BE WATER. Without this the march below counts water it
+	# finds AHEAD of a rock cell and "succeeds" with a span that has nothing under it: measured on
+	# the assembled valley (seed 21), the reported crossing cell was rock, the span was 13 and the
+	# deck was 0 — a zone that said it had a bridge, was cut in two, and had its far bank repaired
+	# into rock, i.e. an exit the hero could never reach.
+	if not is_water_cell(c.x, c.y):
+		return false
 	var perp := Vector2i(-dir.y, dir.x)
 	var limit := int(ceil(half * 3.0)) + 3
 	var fwd := 0
@@ -1852,6 +2185,83 @@ func walkable(p: Vector2, r: float) -> bool:
 	return true
 
 
+## Does the straight segment a→b cross rock? A monster steers at the hero in a straight line, and
+## on the assembled chunk maps that line is often a wall corner: measured, a body 189.7 px away
+## stayed at exactly 189.7 for sixty steps because both slide axes were blocked.
+func _line_clear(a: Vector2, b: Vector2) -> bool:
+	var d := b - a
+	var steps := int(ceil(d.length() / (TILE * 0.4)))
+	if steps <= 0:
+		return true
+	for i in range(1, steps + 1):
+		var p := a + d * (float(i) / float(steps))
+		if not is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE))):
+			return false
+	return true
+
+
+## The distance field a monster follows around a corner: BFS over walkable CELLS from the hero's
+## cell. A monster that cannot see the hero walks DOWN the field instead of into the wall, which is
+## what makes a corridor with right angles work at all.
+##
+## Why a field and not a per-monster A*: the hero is one point, so one BFS (3 840 cells) answers
+## every monster at once, and it is only rebuilt when the hero changes cell — a few times a second
+## at walking speed, not per body per frame.
+var _flow_from := Vector2i(-999, -999)
+var _flow_dist := PackedInt32Array()
+
+
+func _flow_field() -> PackedInt32Array:
+	var from: Vector2i = cell_of(player_pos)
+	if from == _flow_from and _flow_dist.size() == COLS * ROWS:
+		return _flow_dist
+	_flow_from = from
+	_flow_dist.resize(COLS * ROWS)
+	_flow_dist.fill(-1)
+	if not in_grid(from.x, from.y):
+		return _flow_dist
+	_flow_dist[cell_index(from.x, from.y)] = 0
+	var queue: Array = [from]
+	var head := 0
+	while head < queue.size():
+		var c: Vector2i = queue[head]
+		head += 1
+		var step: int = _flow_dist[cell_index(c.x, c.y)] + 1
+		for d in DIRS:
+			var n: Vector2i = c + d
+			if not in_grid(n.x, n.y) or _flow_dist[cell_index(n.x, n.y)] >= 0:
+				continue
+			if not is_floor_cell(n.x, n.y):
+				continue
+			_flow_dist[cell_index(n.x, n.y)] = step
+			queue.append(n)
+	return _flow_dist
+
+
+## The direction to walk to get closer to the hero along the floor. Zero when the body is already on
+## the hero's cell (nothing to follow).
+func _flow_dir(pos: Vector2) -> Vector2:
+	var c: Vector2i = cell_of(pos)
+	if not in_grid(c.x, c.y) or _flow_dist.size() != COLS * ROWS:
+		return Vector2.ZERO
+	var here: int = _flow_dist[cell_index(c.x, c.y)]
+	if here < 0:
+		return Vector2.ZERO
+	var best := c
+	var best_d := here
+	for d in DIRS:
+		var n: Vector2i = c + d
+		if not in_grid(n.x, n.y):
+			continue
+		var nd: int = _flow_dist[cell_index(n.x, n.y)]
+		if nd >= 0 and nd < best_d:
+			best_d = nd
+			best = n
+	if best == c:
+		return Vector2.ZERO
+	return (cell_centre(best.x, best.y) - pos).normalized()
+
+
 ## Move a body from `from` by `delta`, sliding along the rock instead of stopping dead: a full
 ## move, else the x component only, else the y component only. Without the slide the corridor's
 ## turns would be sticky — the player pushes into a wall and the walk stops even though the thumb
@@ -2115,11 +2525,19 @@ func _make_pack(kind: String, centre: Vector2, tier: int) -> Array:
 ## then the nearest floor point in the chosen direction — a "find room" loop that can fail
 ## forever is a hang, which is worse than a stray that stands closer than it wanted to.
 func _stray_slot(first: Vector2, centre: Vector2) -> Vector2:
-	for _try in 12:
-		var ang := rng.randf() * TAU
-		var gap := rng.randf_range(STRAY_GAP_MIN, STRAY_GAP_MAX)
-		var p := first + Vector2(cos(ang), sin(ang)) * gap
-		if walkable(p, MON_RADIUS) and p.distance_to(centre) <= ZONE_JITTER * 2.2:
+	# ⚠️  THE FALLBACK USED TO BE `nearest_floor_point` IN A RANDOM DIRECTION, and in a corridor it
+	# snapped the second stray back onto the first: measured 53.9 px where the design says >= 170.
+	# Instead, look for the FARTHEST standable spot around the pack, biggest separation first, so a
+	# narrow corridor places the stray along itself rather than piling two bodies in one spot.
+	for gap in [STRAY_GAP_MAX, (STRAY_GAP_MIN + STRAY_GAP_MAX) * 0.5, STRAY_GAP_MIN]:
+		var offset := rng.randf() * TAU
+		for i in 16:
+			var ang := offset + TAU * float(i) / 16.0
+			var p: Vector2 = first + Vector2(cos(ang), sin(ang)) * float(gap)
+			if not walkable(p, MON_RADIUS):
+				continue
+			if p.distance_to(centre) > ZONE_JITTER * 2.2:
+				continue
 			return p
 	var ang2 := rng.randf() * TAU
 	return nearest_floor_point(first + Vector2(cos(ang2), sin(ang2)) * STRAY_GAP_MIN, MON_RADIUS)
@@ -2319,9 +2737,46 @@ func _spawn_one() -> void:
 		return
 	var ang := rng.randf() * TAU
 	var dist := rng.randf_range(SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX)
-	var pos := nearest_floor_point(player_pos + Vector2(cos(ang), sin(ang)) * dist)
+	var pos := _spawn_point(dist, ang)
 	var lvl: int = _prog.monster_level(act_id, 0, 0) if _prog != null else 1
 	monsters.append(_make_monster(row, pos, lvl))
+
+
+## Where a body may appear: `want` px from the hero in the direction `ang`.
+##
+## ⚠️  A RING IS NOT A CORRIDOR. On the assembled chunk maps the world is 6 cells wide, so a point
+## 300-430 px away is usually inside rock and `nearest_floor_point` pulls it back to ~170 px — which
+## is inside a thrower's DEAD BAND (it stops at 232 and only backs off below 168), so the body stood
+## still for the whole fight. Measured by `test_survivor`: "a thrower must keep its distance,
+## gap=180 keep=232" and "a monster must walk toward the hero: 189.7 -> 189.7".
+##
+## So the ring is tried first (open rooms still get natural placement), and when it lands in rock the
+## spawn is taken ALONG the corridor: the cell whose distance field value is `want` cells away,
+## preferring the one nearest the drawn direction.
+func _spawn_point(want: float, ang: float) -> Vector2:
+	var ring := nearest_floor_point(player_pos + Vector2(cos(ang), sin(ang)) * want)
+	if ring.distance_to(player_pos) >= want * 0.75:
+		return ring
+	var field := _flow_field()
+	var target := int(round(want / TILE))
+	var best := Vector2.ZERO
+	var best_score := -INF
+	for i in field.size():
+		var d: int = field[i]
+		if d < target - 1 or d > target + 1:
+			continue
+		var cx := i % COLS
+		var cy := i / COLS
+		var q := cell_centre(cx, cy)
+		if not walkable(q, MON_RADIUS):
+			continue
+		var score: float = (q - player_pos).normalized().dot(Vector2(cos(ang), sin(ang)))
+		if score > best_score:
+			best_score = score
+			best = q
+	if best != Vector2.ZERO:
+		return best
+	return ring
 
 
 ## Every monster is a WALKING PORTRAIT: the record is the data row's own `face`, so a new
@@ -2421,6 +2876,15 @@ func _move_monsters(dt: float) -> void:
 		var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
 		var gap := to_hero.length()
 		var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
+		# ⚠️  THE HERO IS NOT ALWAYS VISIBLE. On the assembled chunk maps the straight line to him
+		# crosses rock at every corner, and a body that walks into that corner never moves at all
+		# (measured: 189.7 px before and after 60 steps). When the line is blocked, follow the cell
+		# field instead — the corridor is the only thing that knows how to get there.
+		if not _line_clear(m["pos"] as Vector2, player_pos):
+			_flow_field()
+			var flow := _flow_dir(m["pos"] as Vector2)
+			if flow != Vector2.ZERO:
+				dir = flow
 		var ranged := bool(m["ranged"])
 		var walk_mult := 1.0 + float(m.get("slow_pct", 0.0)) / 100.0
 		# A thrower stops OUT OF REACH and shoots; a melee kind stops when the two discs touch.

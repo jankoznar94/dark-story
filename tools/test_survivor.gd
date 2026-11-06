@@ -536,9 +536,11 @@ func _test_thrower_keeps_distance_and_fires() -> void:
 	m["speed"] = 60.0
 	m["atk_cd"] = 0.6
 	m["atk_ready"] = 0.0
-	# On FLOOR 400 px up the corridor — a point at +400 x may be solid rock now, which would
-	# freeze the body instead of testing the keep-distance rule.
-	m["pos"] = run.nearest_floor_point(run.player_pos + Vector2(0.0, -400.0))
+	# On FLOOR 400 px up the CORRIDOR. `+400 px straight up` is inside rock on the assembled chunk
+	# maps (the corridor turns every 8 cells), and `nearest_floor_point` pulled the body in to
+	# ~180 px — inside the thrower's dead band, so it stood still and the section measured nothing.
+	# `_spawn_point` walks the cell field instead, which is where "400 px up the corridor" really is.
+	m["pos"] = run._spawn_point(400.0, -PI * 0.5)
 
 	var fired := 0
 	for i in 240:
