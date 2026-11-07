@@ -51,6 +51,14 @@ const STEP := 1.0 / 60.0
 const MAX_STEPS_PER_FRAME := 6
 
 const TOP_BAR := 54.0
+## ⚠️  EVERY TOP-BAR CONTROL IS ONE SQUARE ICON IN THAT ONE BAR. Jan, Nov 2026: "Všechna horní
+## tlačítka uděláme bez textu, jen s příhodnými obrázky/ikonami a všechna tlačítka dáme nahoru do
+## lišty." There used to be TWO rows — `Mapa`/`Akce`/`Konec` in the bar and `Inventář`/`Portal`
+## hanging UNDER it, over the world. All five rects are laid out from this one size, right to left,
+## with the conditional portal last so a missing scroll never moves a button.
+const BAR_BTN := 38.0
+const BAR_BTN_GAP := 6.0
+const BAR_BTN_MARGIN := 6.0
 const STICK_RADIUS := 58.0
 const STICK_DEADZONE := 9.0
 ## THE ACTION WHEEL (left thumb). Jan, Nov 2026, second pass: the wheel is PERMANENT — drawn all the
@@ -1073,16 +1081,22 @@ func resume_run() -> void:
 	set_process(true)
 
 
-## The two fixed controls left in the fight: the way out and the wheel's editor. Both sit in the
-## top bar, out of both thumbs' way.
+## The five fixed controls of a fight, all on ONE row of the top bar, all icon-only.
 func _layout_buttons() -> void:
-	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
-	_bind_rect = Rect2(size.x - 180.0, 10.0, 76.0, 34.0)
-	# The map button fits the one free rectangle of the top row: between the clock (which ends at
-	# x = 130) and `Akce` (which starts at x = size.x - 180). Nothing may share it.
-	_map_rect = Rect2(size.x - 258.0, 10.0, 76.0, 34.0)
-	_portal_rect = Rect2(size.x - 96.0, TOP_BAR + 6.0, 84.0, 34.0)
-	_hero_rect = Rect2(size.x - 186.0, TOP_BAR + 6.0, 84.0, 34.0)
+	var s := BAR_BTN
+	var y := (TOP_BAR - s) * 0.5
+	var x := size.x - BAR_BTN_MARGIN - s
+	# Right to left: out, map, hero, wheel editor, portal. The portal is LAST because it only exists
+	# while a scroll is carried — a button that comes and goes must not shift the four that don't.
+	_exit_rect = Rect2(x, y, s, s)
+	x -= s + BAR_BTN_GAP
+	_map_rect = Rect2(x, y, s, s)
+	x -= s + BAR_BTN_GAP
+	_hero_rect = Rect2(x, y, s, s)
+	x -= s + BAR_BTN_GAP
+	_bind_rect = Rect2(x, y, s, s)
+	x -= s + BAR_BTN_GAP
+	_portal_rect = Rect2(x, y, s, s)
 	_layout_whirlwind()
 
 
@@ -2990,51 +3004,26 @@ func _draw_hud() -> void:
 	# Top bar
 	draw_rect(Rect2(0, 0, size.x, TOP_BAR), Color(0, 0, 0, 0.55))
 	var act_name := "Akt %d" % (run.act_id + 1)
-	draw_string(font_r, Vector2(12, 22), act_name, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
+	draw_string(font_r, Vector2(10, 21), act_name, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
 	# ⚠️  The clock sits on the FIRST line, beside the act. It used to be at `size.x - 168` on the
-	# second line — exactly where the wheel's "Akce" button now lives, so the two drew over each
-	# other (measured: the timer was hidden behind the button). Nothing on this bar may share a
-	# rectangle with another element.
-	draw_string(font, Vector2(64, 22), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 66.0, 13, C_GOLD)
-	draw_string(font, Vector2(12, 42), "Oblasti %d/%d" % [run.cleared_zones(), run.zones.size()],
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 15, C_TEXT)
-	draw_string(font_r, Vector2(126, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, C_DIM)
+	# second line — exactly where a button lived, so the two drew over each other (measured: the
+	# timer was hidden behind the button). Nothing on this bar may share a rectangle with another
+	# element — and since the five icons now own the whole right half of the bar, the INFO has to
+	# fit in the left-hand gap they leave, not spread across the row.
+	draw_string(font, Vector2(52, 21), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 70.0, 12, C_GOLD)
+	draw_string(font, Vector2(10, 42), "Oblasti %d/%d" % [run.cleared_zones(), run.zones.size()],
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 13, C_TEXT)
+	draw_string(font_r, Vector2(102, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
 
-	# Exit (a fixed, always-visible way out — a run must never trap the player on a phone) and the
-	# wheel's editor beside it. Both are TOP bar controls: the bottom belongs to the two thumbs.
-	draw_rect(_bind_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
-	draw_rect(_bind_rect, Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75), false, 1.5)
-	draw_string(font_r, Vector2(_bind_rect.position.x + _bind_rect.size.x * 0.5,
-		_bind_rect.position.y + 23), "Akce", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_DIM)
-	draw_rect(_exit_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
-	draw_rect(_exit_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
-	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
-		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
-
-	# THE MAP BUTTON — an overlay with everything the hero has already walked, and his own dot.
-	draw_rect(_map_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
-	draw_rect(_map_rect, Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75), false, 1.5)
-	draw_string(font_r, Vector2(_map_rect.position.x + _map_rect.size.x * 0.5,
-		_map_rect.position.y + 23), "Mapa", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
-
-	# THE HERO BUTTON — Inventory / Skills / Stats are reachable DURING a fight (Jan, Nov 2026):
-	# loot picked up mid-run has to be wearable without walking out of the zone first. It sits on
-	# the second row, left of the portal, because the top row has no free rectangle left.
-	draw_rect(_hero_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
-	draw_rect(_hero_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.45), false, 1.5)
-	draw_string(font_r, Vector2(_hero_rect.position.x + _hero_rect.size.x * 0.5,
-		_hero_rect.position.y + 23), "Inventar", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_DIM)
-
-	# THE TOWN PORTAL BUTTON — only while a scroll is carried, so the bar does not grow a dead
-	# control. Jan: "po návratu z města pomocí portálu (ve městě na to musí být tlačítko) to hráče
-	# musí vrátit na stejnou pozici" — the button on THIS side is what opens the portal, the one in
-	# town is what brings him back.
+	# ONE ROW OF ICON PLATES, right to left: out / map / hero / wheel editor / portal. Nothing hangs
+	# under the bar any more, and no control carries a word.
+	_draw_bar_button(_bind_rect, "wheel", Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0))
+	_draw_bar_button(_hero_rect, "hero", C_GOLD)
+	_draw_bar_button(_map_rect, "map", C_GOLD)
+	_draw_bar_button(_exit_rect, "exit", C_GOLD)
+	# THE TOWN PORTAL exists only while a scroll is carried, so the bar does not grow a dead control.
 	if _has_portal_scroll():
-		draw_rect(_portal_rect, Color(0x1e / 255.0, 0x27 / 255.0, 0x2b / 255.0, 0.95))
-		draw_rect(_portal_rect, Color(0x5b / 255.0, 0x7d / 255.0, 0x8c / 255.0, 0.8), false, 1.5)
-		draw_string(font_r, Vector2(_portal_rect.position.x + _portal_rect.size.x * 0.5,
-			_portal_rect.position.y + 23), "Portal", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12,
-			Color("#a8c2cc"))
+		_draw_bar_button(_portal_rect, "portal", Color(0x5b / 255.0, 0x7d / 255.0, 0x8c / 255.0))
 
 	# HP bar, above the thumb row
 	# ⚠️  Not flush with the bottom: a phone's home-gesture strip sits there and a bar a few
@@ -3078,6 +3067,84 @@ func _draw_hud() -> void:
 		run.items_taken, _plural(run.items_taken, "predmet", "predmety", "predmetu")]
 	draw_string(font_r, Vector2(8, size.y - 6), _with_diacritics(tally),
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+
+
+## ONE top-bar plate. Every control in the bar is this same square, so a thumb learns one target
+## size and the bar cannot grow a taller control than the one beside it.
+func _draw_bar_button(r: Rect2, glyph: String, accent: Color) -> void:
+	draw_rect(r, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
+	draw_rect(r, Color(accent.r, accent.g, accent.b, 0.55), false, 1.5)
+	var c := r.get_center()
+	# A 24 px drawing box inside a 38 px plate: 2 px strokes and 1.5 px gaps still read on a phone,
+	# and the plate keeps a 7 px rim a thumb cannot miss.
+	var k := r.size.x * 0.5 - 7.0
+	var ink := C_TEXT
+	match glyph:
+		"exit":
+			# A doorway with the way OUT beside it: the frame is the zone, the arrow is leaving it.
+			_ink_line(c + Vector2(-0.62, -0.72) * k, c + Vector2(0.10, -0.72) * k, ink)
+			_ink_line(c + Vector2(-0.62, -0.72) * k, c + Vector2(-0.62, 0.72) * k, ink)
+			_ink_line(c + Vector2(-0.62, 0.72) * k, c + Vector2(0.10, 0.72) * k, ink)
+			_ink_line(c + Vector2(-0.16, 0.0) * k, c + Vector2(0.76, 0.0) * k, ink)
+			_ink_line(c + Vector2(0.34, -0.40) * k, c + Vector2(0.78, 0.0) * k, ink)
+			_ink_line(c + Vector2(0.34, 0.40) * k, c + Vector2(0.78, 0.0) * k, ink)
+		"wheel":
+			# SIX FILLED WEDGES around a hub: the action wheel itself. The first version was a ring
+			# with four diagonal spokes and it read as a CIRCLED X, i.e. as "close" — a button that
+			# looks like the way out is the worst thing an action editor can look like.
+			for i in 6:
+				var a0 := TAU * float(i) / 6.0 - PI * 0.5 + 0.08
+				var a1 := TAU * float(i + 1) / 6.0 - PI * 0.5 - 0.08
+				_ink_wedge(c, k * 0.32, k * 0.88, a0, a1, ink)
+			draw_circle(c, k * 0.15, ink)
+		"map":
+			# A MAP PIN. The folded-sheet icon was read as an OPEN BOOK (two pages with a spine) —
+			# the one thing a map must never look like in a game full of journals. A pin is the one
+			# silhouette nobody mistakes: it says "where I am on the map", which is what this does.
+			var pin := PackedVector2Array()
+			pin.append(c + Vector2(-0.62, -0.10) * k)
+			pin.append(c + Vector2(0.0, 0.86) * k)
+			pin.append(c + Vector2(0.62, -0.10) * k)
+			draw_polyline(pin, ink, 2.0, true)
+			draw_arc(c + Vector2(0.0, -0.26) * k, k * 0.44, PI * 0.86, PI * 2.14, 20, ink, 2.0, true)
+			draw_circle(c + Vector2(0.0, -0.26) * k, k * 0.15, ink)
+		"hero":
+			# A PERSON: head and shoulders. The helmet version read as "armour", "settings" or even
+			# as a small house — and this button opens the hero's own sheet, not an armory.
+			draw_circle(c + Vector2(0.0, -0.40) * k, k * 0.27, ink)
+			var sh := PackedVector2Array()
+			for i in 13:
+				var a := PI + PI * float(i) / 12.0
+				sh.append(c + Vector2(cos(a) * 0.64, 0.72 + sin(a) * 0.62) * k)
+			draw_colored_polygon(sh, ink)
+		"portal":
+			# The town portal: an upright oval with three sparks inside.
+			var pts := PackedVector2Array()
+			for i in 25:
+				var a := TAU * float(i) / 24.0
+				pts.append(c + Vector2(cos(a) * 0.48, sin(a) * 0.80) * k)
+			draw_polyline(pts, ink, 2.0, true)
+			draw_circle(c + Vector2(-0.13, -0.24) * k, 1.6, ink)
+			draw_circle(c + Vector2(0.13, 0.10) * k, 1.6, ink)
+			draw_circle(c + Vector2(-0.13, 0.34) * k, 1.6, ink)
+
+
+func _ink_line(a: Vector2, b: Vector2, col: Color) -> void:
+	draw_line(a, b, col, 2.0, true)
+
+
+## A filled annulus sector, used by the action-wheel glyph. `draw_arc` only draws OUTLINES, and the
+## wheel icon has to be a solid dial so it cannot be mistaken for a ring around an X.
+func _ink_wedge(c: Vector2, r0: float, r1: float, a0: float, a1: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	var steps := 8
+	for i in steps + 1:
+		var a := a0 + (a1 - a0) * float(i) / float(steps)
+		pts.append(c + Vector2(cos(a), sin(a)) * r1)
+	for i in range(steps, -1, -1):
+		var a := a0 + (a1 - a0) * float(i) / float(steps)
+		pts.append(c + Vector2(cos(a), sin(a)) * r0)
+	draw_colored_polygon(pts, col)
 
 
 ## THE ACTION WHEEL — ALWAYS on screen, bottom-left (Jan: "měl by být viditelný permanentně. I s

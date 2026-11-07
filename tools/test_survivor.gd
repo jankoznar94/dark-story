@@ -2057,10 +2057,18 @@ func _test_screen_hero_button() -> void:
 			_check(not (rects[a] as Rect2).intersects(rects[b] as Rect2),
 				"the %s and %s buttons overlap: %s vs %s"
 					% [a, b, str(rects[a]), str(rects[b])])
-	_check(screen._hero_rect.position.y >= SurvivorScreen.TOP_BAR,
-		"the hero button must sit on the second row, below the top bar")
+	_check(screen._hero_rect.end.y <= SurvivorScreen.TOP_BAR,
+		"every control must sit INSIDE the top bar, not on a second row under it: %s"
+			% str(screen._hero_rect))
 	_check(screen._hero_rect.end.x <= 390.0 and screen._hero_rect.end.y <= 844.0,
 		"the hero button must be on screen: %s" % str(screen._hero_rect))
+	# One square row: same size for every plate, and big enough for a thumb.
+	for key in ["hero", "portal", "exit", "bind", "map"]:
+		var r: Rect2 = screen.get("_%s_rect" % key)
+		_check(r.size.x >= 36.0 and r.size.y >= 36.0,
+			"the %s icon plate must be a thumb target: %s" % [key, str(r.size)])
+		_check(r.position.y >= 0.0 and r.end.y <= SurvivorScreen.TOP_BAR,
+			"the %s plate must be inside the top bar: %s" % [key, str(r)])
 
 	# A tap on it asks for the modal and arms NOTHING else — not a walk, not an action.
 	var centre: Vector2 = screen._hero_rect.get_center()
