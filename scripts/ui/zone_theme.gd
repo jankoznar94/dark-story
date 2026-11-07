@@ -104,7 +104,32 @@ const ACT1 := [
 		"feature": "boardwalk",
 		"shore": [["reed", 6], ["dead_tree", 2], ["stump", 2]],
 	},
-	{   # 4 — the mountain valley road
+	{   # 4 — the wooded hills and their canyon road
+		# ⚠️  The STOP NAMES are the act's own order (`STOP_NAMES_EN.0`): stop 5 is "Wooded Hills"
+		# and stop 6 is "Valley". The themes were one slot out of step with that list, so the
+		# player met the canyon where he expected the valley ("ta zóna má být jakože údolí").
+		# The two entries are therefore in the order the map names them.
+		"name": "Kaňon",
+		"ground": "gravel",
+		"tint": "#c2c0bb",
+		"rock": "#17181a", "rock_line": "#22252a",
+		"patch_a": "#454a4d", "patch_b": "#515759",
+		"stone": "#6d7375", "stone_light": "#8a9092",
+		"wood": "#3b332a", "wood_light": "#4c4237",
+		"foliage": "#2a352e", "foliage_light": "#374439",
+		"accent": "#77939c",
+		"water": "#1f252a", "water_line": "#39434a",
+		"wall": ["rock", "rubble", "rock"],
+		"cover": [["rubble", 4], ["cairn", 3]],
+		"marks": ["lm_bridge"],
+		"feature": "chasm",
+		# The chasm splits the zone and ONE stone bridge is the only way across (planned band,
+		# exit pinned to the far bank). Guarded, because a crossing that costs nothing is not a
+		# gate — the two banks hold a champion pack each.
+		"river": {"half": 4.2, "wind": 1.2, "wiggle": 9.0, "guard": true},
+		"shore": [["rubble", 4], ["rock", 3], ["cairn", 2]],
+	},
+	{   # 5 — the valley, split down its whole length by one river and one great bridge
 		"name": "Horské údolí",
 		"ground": "dirt",
 		"tint": "#d2c8b6",
@@ -122,10 +147,12 @@ const ACT1 := [
 		# velký most." — and after the first pass Jan: "Teď jsem tam našel jen malý náznak vody a
 		# přes ni lávku. Tahle zóna má být specifická právě tím rozdělením na dvě půlky (řeka
 		# nebude perfektně rovná, bude různě vlnit) a přechodem přes obří most, který bude
-		# hlídaný silnými skupinami monster."
+		# hlídaný silnými skupinami monster." A Nov 2026: "Most musí být vždy průchodný! Mělo by
+		# být nezbytné přes něj přejít! Jiná cesta na druhou polovinu mapy by vést neměla."
 		#
 		# So the valley's river is not the generic band: `great` switches on the wide, winding,
-		# edge-to-edge river with ONE guarded bridge across it (`_feature_great_river`).
+		# edge-to-edge river with ONE guarded bridge across it (`_feature_great_river`), the exit
+		# pinned to the far bank and the route monotone along the river axis.
 		#   half   half-thickness of the water in cells (6 = a 12-cell river, 720 px)
 		#   wind   how far the centreline wanders, in cells
 		#   wiggle wavelength of the bend, in cells
@@ -133,23 +160,6 @@ const ACT1 := [
 		"feature": "river",
 		"river": {"great": true, "half": 6.0, "wind": 3.0, "wiggle": 11.0, "guard": true},
 		"shore": [["reed", 5], ["rock", 3]],
-	},
-	{   # 5 — the canyon and its stone bridge
-		"name": "Kaňon",
-		"ground": "gravel",
-		"tint": "#c2c0bb",
-		"rock": "#17181a", "rock_line": "#22252a",
-		"patch_a": "#454a4d", "patch_b": "#515759",
-		"stone": "#6d7375", "stone_light": "#8a9092",
-		"wood": "#3b332a", "wood_light": "#4c4237",
-		"foliage": "#2a352e", "foliage_light": "#374439",
-		"accent": "#77939c",
-		"water": "#1f252a", "water_line": "#39434a",
-		"wall": ["rock", "rubble", "rock"],
-		"cover": [["rubble", 4], ["cairn", 3]],
-		"marks": ["lm_bridge"],
-		"feature": "chasm",
-		"shore": [["rubble", 4], ["rock", 3], ["cairn", 2]],
 	},
 	{   # 6 — the village in the trees
 		"name": "Stromová vesnice",

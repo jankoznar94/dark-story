@@ -86,6 +86,7 @@ func _initialize() -> void:
 	_test_strength_ladder()
 	_test_refresh_from_save()
 	_test_screen_hero_button()
+	_test_screen_map()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -1981,6 +1982,55 @@ func _run_at(act_id: int, zone: int) -> SurvivorRun:
 	var run := SurvivorRun.new()
 	run.setup(_state, _find_item, _loot, act_id, 4242 + act_id * 10 + zone, zone)
 	return run
+
+
+func _test_screen_map() -> void:
+	_log("  section: screen_map")
+	var screen = SurvivorScreen.new()
+	root.add_child(screen)
+	screen.size = Vector2(390, 844)
+	screen.setup(_state, _find_item, _loot, 0)
+	screen._layout_buttons()
+
+	# The button must not share a rectangle with any other top-bar control and must be on screen.
+	var rects := {"map": screen._map_rect, "exit": screen._exit_rect, "bind": screen._bind_rect,
+		"hero": screen._hero_rect, "portal": screen._portal_rect}
+	for a in rects:
+		for b in rects:
+			if str(a) >= str(b):
+				continue
+			_check(not (rects[a] as Rect2).intersects(rects[b] as Rect2),
+				"the %s and %s buttons overlap: %s vs %s"
+					% [a, b, str(rects[a]), str(rects[b])])
+	_check(screen._map_rect.end.x <= 390.0 and screen._map_rect.end.y <= SurvivorScreen.TOP_BAR,
+		"the map button must fit inside the top bar: %s" % str(screen._map_rect))
+
+	# A tap opens it, and the fight STOPS behind it (a monster must not walk into a hero who is
+	# reading a map).
+	screen._on_press(screen._map_rect.get_center(), 0)
+	_check(screen._map_open, "a tap on the Mapa button must open the map")
+	_check(screen._paused and not screen.is_processing(), "the open map must pause the fight")
+	_check(screen._map_tex != null, "the map sheet must be baked on open")
+	_check(screen._map_rect.size.x > 100.0 and screen._map_rect.size.y > 100.0,
+		"the map sheet must be big enough to read: %s" % str(screen._map_rect.size))
+
+	# Only what he has walked: a cell that is not explored must not be painted.
+	var run = screen.run
+	var far := Vector2i(SurvivorRun.COLS - 2, SurvivorRun.ROWS - 2)
+	_check(int(run.explored_cells[far.y * SurvivorRun.COLS + far.x]) == 0,
+		"the far corner must still be unexplored for this check to mean anything")
+	var img: Image = screen._map_tex.get_image()
+	var px := int((float(far.x) + 0.5) * float(img.get_width()) / float(SurvivorRun.COLS))
+	var py := int((float(far.y) + 0.5) * float(img.get_height()) / float(SurvivorRun.ROWS))
+	var got := img.get_pixel(px, py)
+	_check(got.is_equal_approx(SurvivorScreen.MAP_BG),
+		"the map must not show an unexplored cell (%s shows %s)" % [str(far), str(got)])
+
+	# A tap outside the sheet closes it and the clock comes back.
+	screen._on_press(Vector2(5, 420), 0)
+	_check(not screen._map_open, "a tap outside the sheet must close the map")
+	_check(not screen._paused, "closing the map must resume the run")
+	screen.queue_free()
 
 
 ## Jan, Nov 2026: "Inventář a staty hrdiny by měly být dostupné i při souboji. Aby hráč mohl hned

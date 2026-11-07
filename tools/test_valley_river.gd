@@ -27,9 +27,10 @@ const GameState := preload("res://scripts/state/game_state.gd")
 const LootSystem := preload("res://scripts/items/loot_system.gd")
 const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 
-## The valley is zone index 4 of act 1. A seed list, not one seed: the river is placed from the
-## run's rng, so a single seed proves nothing about the generator.
-const ZONE := 4
+## The valley is zone index 5 of act 1 — stop 6, which `STOP_NAMES_EN.0` names "Valley". A seed
+## list, not one seed: the river is placed from the run's rng, so a single seed proves nothing
+## about the generator.
+const ZONE := 5
 const SEEDS := [1, 7, 42, 90210, 31337, 123]
 ## The river must be at least this thick on average. Measured 6.8-9.2 cells on the short axis and
 ## 12-18 on the long one; anything under 6 is the "small hint of water" Jan rejected.

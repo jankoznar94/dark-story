@@ -61,6 +61,13 @@ var _zone := 0
 ## like. Without it the only way to photograph the drop marker is to wait for a kill, which
 ## makes the capture depend on the fight (and on a save that may already own every item).
 var _drop := 0
+## Open the ZONE MAP overlay for the shot, so the explored sheet and the hero's dot can be judged
+## from a frame instead of from a description.
+var _map := false
+## Reveal the fog along the whole ROUTE before the shot, so a map frame shows what a player who
+## walked the zone would see. The reveal goes through `run._reveal_around()` — the same call the
+## step loop makes — so the bytes are the ones a walk produces, only without the fifteen minutes.
+var _explore := false
 
 var _screen = null
 var _started := false
@@ -173,6 +180,10 @@ func _initialize() -> void:
 				_zone = int(args[i + 1])
 			"--drop":
 				_drop = int(args[i + 1])
+			"--map":
+				_map = args[i + 1] != "0"
+			"--explore":
+				_explore = args[i + 1] != "0"
 		i += 2
 	_main = load("res://scripts/main.gd").new()
 	root.add_child(_main)
@@ -198,6 +209,8 @@ func _process(_delta: float) -> bool:
 		# A look-probe is not a play session: it must not overwrite the local save.
 		_main.state.save_enabled = false
 		_place_hero()
+		if _explore and _screen.run != null:
+			_explore_route()
 		if _drop > 0 and _screen.run != null:
 			_stage_drops()
 		if _portal:
@@ -269,6 +282,13 @@ func _process(_delta: float) -> bool:
 					_screen.run._pick_target(), str(_screen.run.facing),
 					(_screen.run.monsters[0]["pos"] as Vector2).distance_to(_screen.run.player_pos)
 						if not _screen.run.monsters.is_empty() else -1.0])
+	if _map and _screen != null:
+		# Through the REAL press path, so the frame also proves the button is hittable where it is
+		# drawn — a private `_open_map()` would photograph a map nobody can open.
+		_screen._on_press(_screen._map_rect.get_center())
+		if not _screen._map_open:
+			print("look_survivor: the Mapa button did not take a press at %s" % str(_screen._map_rect))
+			_screen._open_map()
 	_capture()
 	return false
 
@@ -304,6 +324,29 @@ func _grant_spells() -> void:
 	# The wheel's defaults are DERIVED from the bar, so a freshly granted spell has to re-resolve
 	# them or the frame shows a wheel with the old (shorter) bar.
 	_screen._wheel_slots = _screen._resolve_wheel()
+
+
+## Walk the ROUTE through the fog, one reveal per ~120 px, then put the hero back where the probe
+## staged him. Used by `--explore` so a map frame is judged on "what a player who walked here
+## sees" instead of on the 6 cells around the spawn.
+func _explore_route() -> void:
+	var run = _screen.run
+	if run.path_points.size() < 2:
+		return
+	var keep: Vector2 = run.player_pos
+	var prev: Vector2 = run.path_points[0]
+	run.player_pos = run.nearest_floor_point(prev)
+	run._reveal_around(run.player_pos)
+	for i in range(1, run.path_points.size()):
+		var p: Vector2 = run.path_points[i]
+		var steps := maxi(1, int(ceil(prev.distance_to(p) / 120.0)))
+		for s in range(1, steps + 1):
+			var q := prev.lerp(p, float(s) / float(steps))
+			run.player_pos = run.nearest_floor_point(q)
+			run._reveal_around(run.player_pos)
+		prev = p
+	run.player_pos = keep
+	run._reveal_around(keep)
 
 
 func _capture() -> void:

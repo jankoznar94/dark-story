@@ -1580,8 +1580,21 @@ func _closest_side(pos: Vector2i, avoid: int) -> int:
 func _great_river_opts() -> Dictionary:
 	var theme: Dictionary = ZoneThemeData.for_zone(act_id, zone_index)
 	var river: Dictionary = theme.get("river", {})
-	if str(theme.get("feature", "")) == "river" and bool(river.get("great", false)):
+	var feature := str(theme.get("feature", ""))
+	if feature == "river" and bool(river.get("great", false)):
 		return river
+	# ⚠️  A CHASM IS THE SAME STRUCTURAL PROBLEM, so it is PLANNED THE SAME WAY. Jan, Nov 2026:
+	# "Lesnaté údolí, které je v polovině po celé délce rozdělené na dvě poloviny. Most musí být
+	# vždy průchodný! Mělo by být nezbytné přes něj přejít! Jiná cesta na druhou polovinu mapy by
+	# vést neměla." The generic band (`_feature_river`) cuts AFTER the route exists, which cannot
+	# promise any of that: measured on zone 5 the cut landed below the exit and its bridge led into
+	# a dead pocket — a bridge that is decoration and a hero who cannot find the way out. Planning
+	# the band first (mid-map, axis = the way he walked in), pinning the exit to the opposite edge
+	# and keeping the route monotone along the axis is what makes "one mandatory crossing"
+	# structural instead of hopeful.
+	if feature == "chasm":
+		return river if not river.is_empty() \
+			else {"half": 4.2, "wind": 1.2, "wiggle": 9.0, "guard": true}
 	return {}
 
 
@@ -1871,7 +1884,8 @@ func _apply_zone_feature(safe: bool = false) -> void:
 			else:
 				_feature_river(false)
 		"chasm":
-			_feature_river(true)
+			# Planned like the valley: one band, one bridge, the exit on the far bank.
+			_feature_great_river(river)
 
 
 ## THE VALLEY'S GREAT RIVER — the zone's two halves, and the ONE bridge between them.
@@ -2628,7 +2642,16 @@ func _build_area() -> void:
 	for k in range(count):
 		# Evenly spaced along the path, from past the clearing to the far end.
 		var want := d_min + (max_d - d_min) * float(k + 1) / float(count + 1)
-		var centre := _point_at_distance(lengths, want)
+		var raw := _point_at_distance(lengths, want)
+		# ⚠️  A PACK STANDS ON FLOOR THE HERO CAN ACTUALLY REACH — a path point is not proof of it.
+		# On a chunk map the chasm / river band is cut ACROSS the route after the pieces are laid,
+		# so a sample can land in WATER (measured on zone 5: two packs standing in the canyon, no
+		# collision, no way to reach them — it reads as "the bridge is blocked by objects"). Snap
+		# to the nearest floor, and drop the cell when the snap has to travel more than two cells:
+		# that far away is a different pocket, not this stretch of the road.
+		var centre := nearest_floor_point(raw)
+		if raw.distance_to(centre) > TILE * 2.0:
+			continue
 		if centre.distance_to(start_point) < ACTIVATE_RADIUS + 60.0:
 			continue
 		# ⚠️  TWO PACKS MUST NOT BE FIGHTABLE AT ONCE. Cells are spaced along the PATH, and since

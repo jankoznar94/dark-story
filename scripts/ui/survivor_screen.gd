@@ -161,6 +161,19 @@ var _hero_rect := Rect2()
 ## VISIBILITY change must not silently resume a paused run — that would let the monsters walk
 ## while the player reads his inventory.
 var _paused := false
+## THE ZONE MAP. Jan, Nov 2026: "Přidat zobrazení mapy, na které by byla odhalena vždy jen část,
+## kterou už hráč prošel, ale přesně by viděl, kde už byl. Měl by na mapě vždy puntík podle své
+## pozice." It is an OVERLAY over a PAUSED fight, opened from the top bar.
+##
+## The corridor half is baked into ONE `ImageTexture` at the map's own pixel size (one flat block
+## per cell) for the same reason the fog veil is baked: a `draw_rect` per cell is hundreds of draw
+## calls for a sheet of squares. The bake is redone only when the explored set changed.
+var _map_open := false
+var _map_rect := Rect2()
+var _map_close_rect := Rect2()
+var _map_tex: ImageTexture = null
+var _map_version := -1
+var _map_cell := 0.0
 
 ## THE ACTION WHEEL (left thumb). It is FIXED in the bottom-left and always drawn; the wedge the
 ## thumb is pushed into is the action. `_wheel_slot` is the wedge under the thumb right now (-1 =
@@ -258,6 +271,10 @@ func setup(state, find_item: Callable, loot_system, act_id: int,
 	# A fresh run has a fresh fog; the cache must not survive into it.
 	_fog_tex = null
 	_fog_version = -1
+	# The map belongs to the run that is being set up, never to the previous one.
+	_map_open = false
+	_map_tex = null
+	_map_version = -1
 	_wheel_slots = _resolve_wheel()
 	_build_decoration()
 	# The props are static, so they are baked into ONE mesh here — once per zone, never per frame.
@@ -592,6 +609,11 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _on_press(pos: Vector2, index: int = 0) -> void:
+	# The map is modal over a paused fight: it owns every press while it is open.
+	if _map_open:
+		if _map_close_rect.has_point(pos) or not _map_rect.has_point(pos):
+			_close_map()
+		return
 	# The bind panel owns every press while it is open: it is a modal over a live fight.
 	if _bind_open:
 		_bind_press(pos)
@@ -614,6 +636,9 @@ func _on_press(pos: Vector2, index: int = 0) -> void:
 		return
 	if _bind_rect.has_point(pos):
 		_open_bind()
+		return
+	if _map_rect.has_point(pos):
+		_open_map()
 		return
 	# The HERO button, on the second row beside the portal. Checked here (below the `TOP_BAR`
 	# guard's y) because it hangs UNDER the bar, over the world.
@@ -1053,6 +1078,9 @@ func resume_run() -> void:
 func _layout_buttons() -> void:
 	_exit_rect = Rect2(size.x - 96.0, 10.0, 84.0, 34.0)
 	_bind_rect = Rect2(size.x - 180.0, 10.0, 76.0, 34.0)
+	# The map button fits the one free rectangle of the top row: between the clock (which ends at
+	# x = 130) and `Akce` (which starts at x = size.x - 180). Nothing may share it.
+	_map_rect = Rect2(size.x - 258.0, 10.0, 76.0, 34.0)
 	_portal_rect = Rect2(size.x - 96.0, TOP_BAR + 6.0, 84.0, 34.0)
 	_hero_rect = Rect2(size.x - 186.0, TOP_BAR + 6.0, 84.0, 34.0)
 	_layout_whirlwind()
@@ -1231,6 +1259,10 @@ func _draw() -> void:
 	_draw_hud()
 	_draw_wheel()
 	_draw_whirlwind()
+	# The zone map is a modal as well — over a PAUSED fight, and under the bind panel (the two can
+	# never be open together, but the paint order should still say which one wins).
+	if _map_open:
+		_draw_map()
 	# The bind panel is the LAST paint: it is a modal over a live fight and nothing may come up
 	# over it.
 	if _bind_open:
@@ -2979,6 +3011,12 @@ func _draw_hud() -> void:
 	draw_string(font_r, Vector2(_exit_rect.position.x + _exit_rect.size.x * 0.5, _exit_rect.position.y + 23),
 		"Konec", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
 
+	# THE MAP BUTTON — an overlay with everything the hero has already walked, and his own dot.
+	draw_rect(_map_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
+	draw_rect(_map_rect, Color(0x6a / 255.0, 0x61 / 255.0, 0x4f / 255.0, 0.75), false, 1.5)
+	draw_string(font_r, Vector2(_map_rect.position.x + _map_rect.size.x * 0.5,
+		_map_rect.position.y + 23), "Mapa", HORIZONTAL_ALIGNMENT_CENTER, -1.0, 12, C_TEXT)
+
 	# THE HERO BUTTON — Inventory / Skills / Stats are reachable DURING a fight (Jan, Nov 2026):
 	# loot picked up mid-run has to be wearable without walking out of the zone first. It sits on
 	# the second row, left of the portal, because the top row has no free rectangle left.
@@ -3421,6 +3459,172 @@ func _draw_cracks(pos: Vector2, col: Color, age: float, life: float,
 		draw_polyline(shown, Color(0.02, 0.08, 0.16, alpha * 0.75), 9.0, true)
 		draw_polyline(shown, Color(col.r, col.g, col.b, alpha * 0.95), 5.0, true)
 		draw_polyline(shown, Color(0.88, 0.95, 1.0, alpha), 2.0, true)
+
+
+# ============================================================================ the zone map
+#
+# Jan, Nov 2026: "Přidat zobrazení mapy, na které by byla odhalena vždy jen část, kterou už hráč
+# prošel, ale přesně by viděl, kde už byl. Měl by na mapě vždy puntík podle své pozice."
+#
+# Three rules this obeys:
+#   * ONLY WHAT HE HAS WALKED. The corridor map reads `explored_cells` (the same bytes the fog
+#     veil paints), so the map cannot show a room the hero has never stood next to.
+#   * THE SHAPE OF THE PLACE, not a floor plan: ground / water / deck / rock are the four tones,
+#     so a chasm reads as a blue band with a brown bridge exactly where the world shows it.
+#   * ONE DOT for the hero, gold like the HUD, no glow and no pulse (flat UI, mobile PWA).
+#
+# The corridor half is BAKED into one `ImageTexture` at the map's own pixel size — a `draw_rect`
+# per cell would be a thousand draw calls for a sheet of squares, the same trap the fog veil had.
+# The village has no fog and only 36 tiles, so it is drawn as geometry (bands + hut decks).
+
+const VillageLayout := preload("res://scripts/ui/village_layout.gd")
+
+const MAP_BG := Color("#0b0a08")
+const MAP_ROCK := Color("#241f19")
+
+
+func _open_map() -> void:
+	if run == null:
+		return
+	_map_open = true
+	_map_version = -1
+	_layout_map()
+	_bake_map()
+	# The fight STOPS while the map is read: a monster must not walk into him behind it.
+	pause_run()
+	queue_redraw()
+
+
+func _close_map() -> void:
+	if not _map_open:
+		return
+	_map_open = false
+	resume_run()
+	queue_redraw()
+
+
+## How many cells the map sheet has: one per corridor cell, one per village tile.
+func _map_grid_cells() -> Vector2i:
+	if run != null and not run.village.is_empty():
+		return Vector2i(VillageLayout.COLS, VillageLayout.ROWS)
+	return Vector2i(SurvivorRun.COLS, SurvivorRun.ROWS)
+
+
+func _layout_map() -> void:
+	var grid := _map_grid_cells()
+	var top := TOP_BAR + 46.0
+	var bottom := size.y - 124.0
+	var avail := Vector2(size.x - 30.0, maxf(160.0, bottom - top))
+	var cell := minf(avail.x / float(grid.x), avail.y / float(grid.y))
+	_map_cell = cell
+	var w := cell * float(grid.x)
+	var h := cell * float(grid.y)
+	_map_rect = Rect2((size.x - w) * 0.5, top + (avail.y - h) * 0.5, w, h)
+	# The close button sits ABOVE the HP/mana bars (they are 48 px off the bottom edge), never on
+	# them: a control that covers the health bar is one the player reads as a broken HUD.
+	_map_close_rect = Rect2(size.x * 0.5 - 72.0, bottom + 14.0, 144.0, 42.0)
+
+
+## One flat block per cell, in the map's own pixels. Re-baked only when the explored set changed
+## (`explored_version`), so walking with the map open updates it, standing still does not.
+func _bake_map() -> void:
+	if run == null or run.village.is_empty() == false or _map_rect.size.x < 2.0:
+		return
+	var w := maxi(1, int(round(_map_rect.size.x)))
+	var h := maxi(1, int(round(_map_rect.size.y)))
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(MAP_BG)
+	var ground_c := _col("tint", "#d2c8b6").darkened(0.42)
+	var water_c := _col("water", "#33454c").darkened(0.10)
+	var deck_c := _col("wood_light", "#5c4730")
+	for cy in SurvivorRun.ROWS:
+		for cx in SurvivorRun.COLS:
+			var idx := cy * SurvivorRun.COLS + cx
+			if idx >= run.explored_cells.size() or int(run.explored_cells[idx]) == 0:
+				continue
+			var k: int = run.cell_kind_at(cx, cy)
+			var col := MAP_ROCK
+			if k == SurvivorRun.KIND_GROUND:
+				col = ground_c
+			elif k == SurvivorRun.KIND_WATER:
+				col = water_c
+			elif k == SurvivorRun.KIND_DECK:
+				col = deck_c
+			var x0 := int(floor(float(cx) * float(w) / float(SurvivorRun.COLS)))
+			var x1 := int(floor(float(cx + 1) * float(w) / float(SurvivorRun.COLS)))
+			var y0 := int(floor(float(cy) * float(h) / float(SurvivorRun.ROWS)))
+			var y1 := int(floor(float(cy + 1) * float(h) / float(SurvivorRun.ROWS)))
+			img.fill_rect(Rect2i(x0, y0, maxi(1, x1 - x0), maxi(1, y1 - y0)), col)
+	_map_tex = ImageTexture.create_from_image(img)
+	_map_version = run.explored_version
+
+
+func _draw_map() -> void:
+	if run == null:
+		return
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.82))
+	var font := UIFonts.bold()
+	var font_r := UIFonts.regular()
+	draw_string(font, Vector2(14, TOP_BAR + 32), "Mapa", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 20, C_GOLD)
+	draw_string(font_r, Vector2(96, TOP_BAR + 32), str(_theme.get("name", "")),
+		HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 12, C_DIM)
+	draw_rect(_map_rect, MAP_BG)
+	if run.village.is_empty():
+		if _map_tex == null or run.explored_version != _map_version:
+			_bake_map()
+		if _map_tex != null:
+			draw_texture_rect(_map_tex, _map_rect, false)
+	else:
+		_draw_map_village()
+	# The sheet's own edge, so the map reads as a plate and not as a hole in the fight.
+	draw_rect(_map_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.28), false, 1.5)
+	# THE DOT. Position only — no trail, no pulse; a flat gold marker that moves as he moves.
+	var world: Vector2 = run.world
+	var dot := _map_rect.position + _map_rect.size * 0.5
+	if world.x > 0.0 and world.y > 0.0:
+		dot = _map_rect.position + Vector2(run.player_pos.x / world.x * _map_rect.size.x,
+			run.player_pos.y / world.y * _map_rect.size.y)
+	dot.x = clampf(dot.x, _map_rect.position.x + 3.0, _map_rect.end.x - 3.0)
+	dot.y = clampf(dot.y, _map_rect.position.y + 3.0, _map_rect.end.y - 3.0)
+	draw_circle(dot, 6.0, Color(0, 0, 0, 0.78))
+	draw_circle(dot, 4.2, C_GOLD)
+	# Close, and a line saying a tap outside the sheet closes it too — the plate is small on a
+	# phone and a thumb aiming past it must not walk the hero instead.
+	draw_rect(_map_close_rect, Color(0x2a / 255.0, 0x24 / 255.0, 0x1c / 255.0, 0.95))
+	draw_rect(_map_close_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.55), false, 1.5)
+	draw_string(font_r, Vector2(_map_close_rect.position.x,
+		_map_close_rect.position.y + _map_close_rect.size.y * 0.5 + 5.0), "Zavřít",
+		HORIZONTAL_ALIGNMENT_CENTER, _map_close_rect.size.x, 14, C_TEXT)
+
+
+## The treetop settlement on paper: the 80 px walkway band toward each open edge and the deck
+## square under each hut. Derived from the art (`VillageLayout`), never hand-typed per tile, so a
+## tile that changes its mask changes the map with it.
+func _draw_map_village() -> void:
+	var grid: PackedInt32Array = run.village_grid
+	if grid.size() != VillageLayout.COLS * VillageLayout.ROWS:
+		return
+	var tile := _map_rect.size.x / float(VillageLayout.COLS)
+	var band := tile * 80.0 / float(VillageLayout.TILE)
+	var deck := tile * 208.0 / float(VillageLayout.TILE)
+	var walk_c := _col("tint", "#d8c49c").darkened(0.50)
+	var deck_c := _col("wood", "#4d3a26").lightened(0.12)
+	for ty in VillageLayout.ROWS:
+		for tx in VillageLayout.COLS:
+			var m := int(grid[ty * VillageLayout.COLS + tx])
+			if m == 0:
+				continue
+			var cx := _map_rect.position.x + (float(tx) + 0.5) * tile
+			var cy := _map_rect.position.y + (float(ty) + 0.5) * tile
+			if (m & VillageLayout.N) != 0:
+				draw_rect(Rect2(cx - band * 0.5, cy - tile * 0.5, band, tile * 0.5), walk_c)
+			if (m & VillageLayout.S) != 0:
+				draw_rect(Rect2(cx - band * 0.5, cy, band, tile * 0.5), walk_c)
+			if (m & VillageLayout.W) != 0:
+				draw_rect(Rect2(cx - tile * 0.5, cy - band * 0.5, tile * 0.5, band), walk_c)
+			if (m & VillageLayout.E) != 0:
+				draw_rect(Rect2(cx, cy - band * 0.5, tile * 0.5, band), walk_c)
+			draw_rect(Rect2(cx - deck * 0.5, cy - deck * 0.5, deck, deck), deck_c)
 
 
 ## The Whirlwind row: the duel's four PS symbols, the one being asked for pulled OUT of the row
