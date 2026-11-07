@@ -232,6 +232,12 @@ const PATH_TARGET := 12800.0
 ## path is three times longer, and holding the old spacing would have tripled the bodies per
 ## area together with it — more kills, a longer run and the same "full bag" as before.
 const CELL_SPACING := 380.0
+## What makes a zone a VILLAGE: the theme row's name (`ZoneThemeData`). Data, not an index, so the
+## tiles follow the theme wherever it is used.
+const VILLAGE_THEME_NAME := "Stromová vesnice"
+## The village's flow lattice. 48 px is a third of the 120 px walkway, so BFS has a real choice of
+## columns instead of a staircase of two, and 4 608 / 48 = 96 x 96 cells is still nothing.
+const FLOW_CELL_VILLAGE := 48.0
 const ACTIVATE_RADIUS := 330.0
 ## Two spawn cells must be at least this far apart in SPACE (not along the path), so that walking
 ## into one pack does not wake the next. `PACK_MIN_GAP > 2 * ACTIVATE_RADIUS` leaves a margin for
@@ -478,6 +484,22 @@ var is_boss := false
 var waypoint_point := Vector2.ZERO
 ## The exit to the NEXT zone — the far end of the corridor, guaranteed far from the entrance.
 var exit_point := Vector2.ZERO
+## THE VILLAGE: act 1's sixth zone is not carved out of a cell grid but ASSEMBLED from Jan's own
+## tile set (`VillageLayout`): walkways between the treetop huts. `village` is the generated
+## layout, `village_grid` its 6 x 6 mask table (so a collision query in a fight is one array
+## read), and `world` is the size of THIS map — a village is square, a corridor is tall and thin.
+var village: Dictionary = {}
+var village_grid := PackedInt32Array()
+var world := WORLD
+## How much the village art is scaled up in world px. One 512 px tile is one screen, and an 80 px
+## walkway would be a 65 px corridor at the phone's zoom — the hero (62 px wide) would be on a
+## rail and could not dodge. 1.5x makes the walkway 120 px, i.e. a corridor he can fight in.
+var village_scale := VillageLayout.SCALE
+## The flow field's own lattice: 60 px cells on a corridor, 48 px on a village (a village walkway
+## is 120 px, so 60 px cells would fit it into two columns and the path would be a staircase).
+var _flow_w := COLS
+var _flow_h := ROWS
+var _flow_cell := TILE
 ## The town PORTAL: where it opened (the spot the hero stood on when he used the scroll) and
 ## whether it is still open. Pure world state — the trip itself belongs to `Main`. Drawing it is
 ## what makes the return read as "I came out of that thing", and walking away from it closes it.
@@ -640,7 +662,32 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	drops.clear()
 	numbers.clear()
 	events.clear()
+	# ⚠️  THE VILLAGE IS CHOSEN BY THE ZONE'S THEME, not by its index: the theme row is the data
+	# that says "this place is the treetop settlement", so a village in another act (or a village
+	# moved to another zone) still assembles from the tiles.
+	village.clear()
+	village_grid = PackedInt32Array()
+	world = WORLD
+	_flow_w = COLS
+	_flow_h = ROWS
+	_flow_cell = TILE
+	var theme_row: Dictionary = ZoneThemeData.for_zone(act_id, zone_index)
+	if str(theme_row.get("name", "")) == VILLAGE_THEME_NAME:
+		village = VillageLayout.generate(seed_value + zone_index * 977)
+		if not village.is_empty():
+			village_grid = VillageLayout.mask_grid(village)
+			world = VillageLayout.WORLD * VillageLayout.SCALE
+			_flow_cell = FLOW_CELL_VILLAGE
+			_flow_w = int(world.x / _flow_cell)
+			_flow_h = int(world.y / _flow_cell)
 	_build_area()
+	# ⚠️  A village has no `floor_cells` (its floor is the tile rule, not a cell table), so the fog
+	# grid would index an empty array. The village also has no fog: the walkways ARE the map, and a
+	# black veil over a treetop settlement hides the only thing that says where you may go.
+	if not village.is_empty():
+		explored_cells.resize(COLS * ROWS)
+		explored_cells.fill(1)
+		explored_version += 1
 	is_boss = zone_index >= _prog.total_zones(act_id) - 1
 	# The hero starts in the middle of the start clearing, and the fog is lifted only around him.
 	player_pos = start_point
@@ -2211,6 +2258,10 @@ func _bridge_over_path(half: int) -> void:
 ## Eight sample points on the rim (the four cardinals and the four diagonals) are enough for a
 ## 60 px grid and a ~31 px body: a corner of rock cannot slip between them.
 func walkable(p: Vector2, r: float) -> bool:
+	# ⚠️  A village is not a cell grid: its floor is the walkway band and the ring around each hut,
+	# and `VillageLayout` owns that rule so the collision and the drawing cannot disagree.
+	if not village.is_empty():
+		return VillageLayout.walkable_grid(village_grid, p, r)
 	if not is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE))):
 		return false
 	if is_floor_cell(int(floor((p.x - r) / TILE)), int(floor((p.y - r) / TILE))) \
@@ -2231,14 +2282,22 @@ func walkable(p: Vector2, r: float) -> bool:
 ## stayed at exactly 189.7 for sixty steps because both slide axes were blocked.
 func _line_clear(a: Vector2, b: Vector2) -> bool:
 	var d := b - a
-	var steps := int(ceil(d.length() / (TILE * 0.4)))
+	var steps := int(ceil(d.length() / (_flow_cell * 0.4)))
 	if steps <= 0:
 		return true
 	for i in range(1, steps + 1):
 		var p := a + d * (float(i) / float(steps))
-		if not is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE))):
+		if not _floor_at(p):
 			return false
 	return true
+
+
+## Is this point on floor at all? The ONE query for "solid or not", with no body width, shared by
+## the line test, the flow lattice and the fallback route.
+func _floor_at(p: Vector2) -> bool:
+	if not village.is_empty():
+		return VillageLayout.walkable_grid(village_grid, p, 0.0)
+	return is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE)))
 
 
 ## The distance field a monster follows around a corner: BFS over walkable CELLS from the hero's
@@ -2253,54 +2312,78 @@ var _flow_dist := PackedInt32Array()
 
 
 func _flow_field() -> PackedInt32Array:
-	var from: Vector2i = cell_of(player_pos)
-	if from == _flow_from and _flow_dist.size() == COLS * ROWS:
+	var from := _flow_cell_of(player_pos)
+	if from == _flow_from and _flow_dist.size() == _flow_w * _flow_h:
 		return _flow_dist
 	_flow_from = from
-	_flow_dist.resize(COLS * ROWS)
+	_flow_dist.resize(_flow_w * _flow_h)
 	_flow_dist.fill(-1)
-	if not in_grid(from.x, from.y):
+	if not _flow_inside(from):
 		return _flow_dist
-	_flow_dist[cell_index(from.x, from.y)] = 0
+	_flow_dist[from.y * _flow_w + from.x] = 0
 	var queue: Array = [from]
 	var head := 0
 	while head < queue.size():
 		var c: Vector2i = queue[head]
 		head += 1
-		var step: int = _flow_dist[cell_index(c.x, c.y)] + 1
+		var step: int = _flow_dist[c.y * _flow_w + c.x] + 1
 		for d in DIRS:
 			var n: Vector2i = c + d
-			if not in_grid(n.x, n.y) or _flow_dist[cell_index(n.x, n.y)] >= 0:
+			if not _flow_inside(n) or _flow_dist[n.y * _flow_w + n.x] >= 0:
 				continue
-			if not is_floor_cell(n.x, n.y):
+			if not _flow_passable(n):
 				continue
-			_flow_dist[cell_index(n.x, n.y)] = step
+			_flow_dist[n.y * _flow_w + n.x] = step
 			queue.append(n)
 	return _flow_dist
+
+
+## The flow field's lattice is a VARIABLE (`_flow_cell`): 60 px cells on a corridor, 48 px on a
+## village, where a 120 px walkway would otherwise fit into two columns and the path would be a
+## staircase. Everything that walks the field goes through these four helpers.
+func _flow_cell_of(p: Vector2) -> Vector2i:
+	return Vector2i(int(floor(p.x / _flow_cell)), int(floor(p.y / _flow_cell)))
+
+
+func _flow_centre(c: Vector2i) -> Vector2:
+	return Vector2((float(c.x) + 0.5) * _flow_cell, (float(c.y) + 0.5) * _flow_cell)
+
+
+func _flow_inside(c: Vector2i) -> bool:
+	return c.x >= 0 and c.y >= 0 and c.x < _flow_w and c.y < _flow_h
+
+
+func _flow_passable(c: Vector2i) -> bool:
+	# ⚠️  RADIUS 0, like the corridor's `is_floor_cell`: the field answers "which way is the floor",
+	# not "does a body fit". With `MON_RADIUS` the 116 px ring around a hut became a 54 px lane that
+	# a 48 px lattice steps over — measured: the exit came back unreachable.
+	if not village.is_empty():
+		return VillageLayout.walkable_grid(village_grid, _flow_centre(c), 0.0)
+	return is_floor_cell(c.x, c.y)
 
 
 ## The direction to walk to get closer to the hero along the floor. Zero when the body is already on
 ## the hero's cell (nothing to follow).
 func _flow_dir(pos: Vector2) -> Vector2:
-	var c: Vector2i = cell_of(pos)
-	if not in_grid(c.x, c.y) or _flow_dist.size() != COLS * ROWS:
+	var c := _flow_cell_of(pos)
+	if not _flow_inside(c) or _flow_dist.size() != _flow_w * _flow_h:
 		return Vector2.ZERO
-	var here: int = _flow_dist[cell_index(c.x, c.y)]
+	var here: int = _flow_dist[c.y * _flow_w + c.x]
 	if here < 0:
 		return Vector2.ZERO
 	var best := c
 	var best_d := here
 	for d in DIRS:
 		var n: Vector2i = c + d
-		if not in_grid(n.x, n.y):
+		if not _flow_inside(n):
 			continue
-		var nd: int = _flow_dist[cell_index(n.x, n.y)]
+		var nd: int = _flow_dist[n.y * _flow_w + n.x]
 		if nd >= 0 and nd < best_d:
 			best_d = nd
 			best = n
 	if best == c:
 		return Vector2.ZERO
-	return (cell_centre(best.x, best.y) - pos).normalized()
+	return (_flow_centre(best) - pos).normalized()
 
 
 ## Move a body from `from` by `delta`, sliding along the rock instead of stopping dead: a full
@@ -2325,6 +2408,27 @@ func _step_body(from: Vector2, delta: Vector2, r: float) -> Vector2:
 func nearest_floor_point(p: Vector2, r: float = MON_RADIUS) -> Vector2:
 	if walkable(p, r):
 		return p
+	# A village has no cell table to walk, so the search runs on the flow lattice instead — same
+	# outward ring, same "nearest point a body actually fits on".
+	if not village.is_empty():
+		var vbest := start_point
+		var vbest_d := INF
+		var step := _flow_cell
+		for ring_i in range(1, 40):
+			for gy in range(-ring_i, ring_i + 1):
+				for gx in range(-ring_i, ring_i + 1):
+					if absi(gx) != ring_i and absi(gy) != ring_i:
+						continue
+					var q := p + Vector2(gx, gy) * step
+					if not walkable(q, r):
+						continue
+					var dd := q.distance_squared_to(p)
+					if dd < vbest_d:
+						vbest_d = dd
+						vbest = q
+			if vbest_d < INF:
+				return vbest
+		return start_point
 	var c := cell_of(p)
 	for radius in range(1, 8):
 		var best := Vector2.ZERO
@@ -2377,17 +2481,120 @@ func _mark_explored(x: int, y: int) -> void:
 ## One pack per STOP along the corridor, the hero's own clearing left EMPTY. `minArea` is honoured
 ## by DISTANCE from the start instead of elapsed time: the far end holds the heavy kinds, so
 ## walking deeper is what raises the stakes and the run cannot be farmed by standing still.
+## THE VILLAGE'S PACKS. There is no centreline to space them along, so the TILE GRAPH is the
+## corridor: a BFS from the entry gives each walkway tile a depth, and a pack stands on every tile
+## deeper than the first — one fight per platform, and the deeper the tile, the stronger the pack.
+## That keeps the rule the corridor already follows (walking further is what raises the stakes)
+## without inventing a second difficulty ladder.
+##
+## A pack stands on the tile's RING, offset away from the entry, so it is never inside a hut and the
+## hero meets it as he steps onto the deck.
+func _build_village_packs() -> void:
+	zones.clear()
+	var cells: Array = village.get("cells", [])
+	var entry: Vector2i = village.get("entry", Vector2i.ZERO)
+	var masks := {}
+	for c in cells:
+		masks[Vector2i(int(c[0]), int(c[1]))] = int(c[2])
+	var depth := {entry: 0}
+	var queue: Array = [entry]
+	var head := 0
+	while head < queue.size():
+		var at: Vector2i = queue[head]
+		head += 1
+		var m: int = int(masks.get(at, 0))
+		for pair in [[VillageLayout.N, Vector2i(0, -1)], [VillageLayout.S, Vector2i(0, 1)],
+				[VillageLayout.E, Vector2i(1, 0)], [VillageLayout.W, Vector2i(-1, 0)]]:
+			if (m & int(pair[0])) == 0:
+				continue
+			var n: Vector2i = at + (pair[1] as Vector2i)
+			if not masks.has(n) or depth.has(n):
+				continue
+			depth[n] = int(depth[at]) + 1
+			queue.append(n)
+	var order: Array = []
+	for c in masks:
+		if depth.has(c) and c != entry:
+			order.append(c)
+	order.sort_custom(func(a, b): return int(depth[a]) < int(depth[b]))
+	if order.is_empty():
+		return
+	var deepest := 1
+	for c in order:
+		deepest = maxi(deepest, int(depth[c]))
+	# The ring mid-line: well clear of the hut (46) and of the deck's rim (104).
+	var ring_at := float(VillageLayout.RING_R) * 0.72
+	var taken: Array = []
+	for c in order:
+		var d := int(depth[c])
+		var away := Vector2(c - entry)
+		away = away.normalized() if away.length() > 0.01 else Vector2.RIGHT
+		var local := Vector2(float(c.x) * VillageLayout.TILE + VillageLayout.TILE * 0.5,
+			float(c.y) * VillageLayout.TILE + VillageLayout.TILE * 0.5) + away * ring_at
+		var centre := local * village_scale
+		# The first platform is not a fight: it is where the hero arrives, and a pack standing on
+		# his spawn would be on him before the screen faded in.
+		if centre.distance_to(start_point) < ACTIVATE_RADIUS + 60.0:
+			continue
+		var too_close := false
+		for other in taken:
+			if (other as Vector2).distance_to(centre) < PACK_MIN_GAP:
+				too_close = true
+				break
+		if too_close:
+			continue
+		taken.append(centre)
+		var tier := 1 + int(round(3.0 * float(d) / float(maxi(deepest, 1))))
+		var progress := clampi(int(round(9.0 * float(d) / float(maxi(deepest, 1)))), 0, 9)
+		var kind := "normal"
+		if rng.randf() < CHAMPION_PACK_CHANCE:
+			kind = "champion"
+		zones.append({
+			"centre": centre,
+			"progress": progress,
+			"kind": kind,
+			"members": _make_pack(kind, centre, tier, progress),
+			"active": false,
+			"cleared": false,
+			"ids": [],
+			"tier": tier,
+			"depth": d,
+		})
+
+
 func _build_area() -> void:
 	zones.clear()
 	path_points.clear()
-	_build_corridor()
-	# The act's chain: the entrance is where the hero stands, the exit is the far END of the
-	# centreline (always a cleared room), and the waypoint sits just off the entrance — INSIDE the
-	# start room, i.e. opposite the edge the hero walked in through, now that the entrance can be
-	# any of the four edges.
-	exit_point = path_points[path_points.size() - 1]
-	var inward: Vector2 = Vector2(_side_forward(entry_side))
-	waypoint_point = nearest_floor_point(start_point + inward * TILE * 2.0)
+	var route: Array = []
+	if not village.is_empty():
+		route = VillageLayout.route(village, BODY_RADIUS / VillageLayout.SCALE)
+	# ⚠️  A generated village with no walkable route out would seal the hero in, so it FALLS BACK
+	# to the corridor instead of shipping a map he cannot leave. `route` is in tile coordinates;
+	# the run works in scaled world px.
+	if route.size() >= 2:
+		for i in range(route.size()):
+			path_points.append((route[i] as Vector2) * village_scale)
+		start_point = (village.get("spawn", VillageLayout.SPAWN) as Vector2) * village_scale
+		exit_point = (village.get("exit_point", VillageLayout.EXIT_POINT) as Vector2) * village_scale
+		# The waypoint sits just along the route, on the walkway the hero came in on.
+		waypoint_point = path_points[mini(3, path_points.size() - 1)]
+		_build_village_packs()
+		return
+	else:
+		village.clear()
+		village_grid = PackedInt32Array()
+		world = WORLD
+		_flow_w = COLS
+		_flow_h = ROWS
+		_flow_cell = TILE
+		_build_corridor()
+		# The act's chain: the entrance is where the hero stands, the exit is the far END of the
+		# centreline (always a cleared room), and the waypoint sits just off the entrance — INSIDE the
+		# start room, i.e. opposite the edge the hero walked in through, now that the entrance can be
+		# any of the four edges.
+		exit_point = path_points[path_points.size() - 1]
+		var inward: Vector2 = Vector2(_side_forward(entry_side))
+		waypoint_point = nearest_floor_point(start_point + inward * TILE * 2.0)
 	# How many packs the corridor holds: one per `CELL_SPACING` px of path, clamped to something a
 	# phone run can finish. The ceiling moved from 20 to 34 with the 3x grid — 20 was already
 	# binding on the OLD corridor, so leaving it would have made a bigger map with the same
@@ -2846,16 +3053,16 @@ func _spawn_point(want: float, ang: float) -> Vector2:
 	if ring.distance_to(player_pos) >= want * 0.75:
 		return ring
 	var field := _flow_field()
-	var target := int(round(want / TILE))
+	var target := int(round(want / _flow_cell))
 	var best := Vector2.ZERO
 	var best_score := -INF
 	for i in field.size():
 		var d: int = field[i]
 		if d < target - 1 or d > target + 1:
 			continue
-		var cx := i % COLS
-		var cy := i / COLS
-		var q := cell_centre(cx, cy)
+		var cx := i % _flow_w
+		var cy := i / _flow_w
+		var q := _flow_centre(Vector2i(cx, cy))
 		if not walkable(q, MON_RADIUS):
 			continue
 		var score: float = (q - player_pos).normalized().dot(Vector2(cos(ang), sin(ang)))

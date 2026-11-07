@@ -289,6 +289,11 @@ func _build_decoration() -> void:
 	_patches.clear()
 	if run == null:
 		return
+	# ⚠️  A VILLAGE HAS NO PROPS: there is no rock wall to line with boulders and no floor cells at
+	# all — the jungle between the walkways IS the wall, and Jan's tiles are the whole look. Props
+	# would also bake a mesh of the wrong world (their positions are cell coordinates).
+	if not run.village.is_empty():
+		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = randi()
 	# Dirt patches: only on floor, and never on the wall line.
@@ -970,8 +975,8 @@ func _place_camera() -> void:
 		return
 	var view := _view_world_size()
 	_cam = run.player_pos - view * 0.5
-	_cam.x = clampf(_cam.x, 0.0, maxf(0.0, SurvivorRun.WORLD.x - view.x))
-	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, SurvivorRun.WORLD.y - view.y))
+	_cam.x = clampf(_cam.x, 0.0, maxf(0.0, run.world.x - view.x))
+	_cam.y = clampf(_cam.y, 0.0, maxf(0.0, run.world.y - view.y))
 
 
 ## Is a town-portal scroll carried? BOTH forms count — the belt counter AND a scroll lying in the
@@ -1232,7 +1237,45 @@ func _draw() -> void:
 		_draw_bind_panel()
 
 
+## THE VILLAGE: Jan's five drawn tiles, assembled by `VillageLayout` and scaled up 1.5x. Two draws
+## per frame plus 25 rotated quads — the jungle is ONE tiling call, and each tile is one region of
+## the 3 x 2 atlas under its own rotation, so no orientation is stored twice.
+var _village_atlas: Texture2D = null
+var _village_forest: Texture2D = null
+
+
+func _draw_village() -> void:
+	if _village_forest == null:
+		_village_forest = UIKit.load_texture(VillageLayout.FOREST)
+	if _village_atlas == null:
+		_village_atlas = UIKit.load_texture(VillageLayout.ATLAS)
+	var s := float(VillageLayout.SCALE)
+	var tile := float(VillageLayout.TILE) * s
+	# The jungle covers the WHOLE village: everywhere a tile is not, is treetops. One tiling call,
+	# exactly like the grass on a corridor.
+	if _village_forest != null:
+		draw_texture_rect(_village_forest, Rect2(-_cam, run.world), true, Color.WHITE)
+	else:
+		draw_rect(Rect2(-_cam, run.world), Color("#33776c"))
+	if _village_atlas == null:
+		return
+	var base := _world_xform()
+	for c in (run.village.get("cells", []) as Array):
+		var bt := VillageLayout.base_and_turns(int(c[2]))
+		var region := VillageLayout.atlas_region(int(c[2]))
+		var centre := Vector2(int(c[0]) * tile, int(c[1]) * tile) + Vector2(tile, tile) * 0.5 - _cam
+		# Rotation is CLOCKWISE per turn, and a 90° turn on a pixel grid is exact — that is the whole
+		# reason five drawn archetypes cover fifteen openings.
+		draw_set_transform_matrix(base * Transform2D(float(bt.y) * PI * 0.5, Vector2(s, s), 0.0, centre))
+		draw_texture_rect_region(_village_atlas,
+			Rect2(-Vector2(256.0, 256.0), Vector2(512.0, 512.0)), region)
+	draw_set_transform_matrix(base)
+
+
 func _draw_ground() -> void:
+	if run != null and not run.village.is_empty():
+		_draw_village()
+		return
 	if _ground == null:
 		# The world half is drawn under the zoom, so a canvas-sized rect would cover only
 		# `ZOOM` of the canvas. Cover the VISIBLE world instead.

@@ -59,6 +59,16 @@ const S := 2
 const E := 4
 const W := 8
 
+## ⚠️  THE ART IS 512 px PER TILE, THE WORLD IS NOT, and the factor was MEASURED, not picked for
+## looks. The hut is r=46 and the deck r=104, so the walkable ring around a hut is 58 art px wide.
+## A body is 62 world px across, so the ring is only passable at all if the art is scaled up:
+##   x1.5 -> ring 87 world px, a 25 px lane for the hero's centre — he could not squeeze past a hut;
+##   x2.0 -> ring 116 world px, a 54 px lane, and the walkway becomes 160 px, i.e. a corridor he can
+##           actually fight in. 2x also keeps the pixels exact (no mushy 1.5x resampling).
+## The LAYOUT data (cells, spawn, exit_point) stays in tile coordinates; only the run and the
+## screen multiply by this.
+const SCALE := 2.0
+
 
 ## The radius of the hut in the middle of every tile, and of the ring around it (art: 46 and 104).
 const HUT_R := 46.0
@@ -127,19 +137,46 @@ static func walkable_point(p: Vector2, radius: float = 0.0) -> bool:
 ## The same rule for ANY layout (`{"cells": [[x, y, mask], ...]}`), so a generated village and the
 ## authored one cannot disagree about where a body may stand. An empty layout means `CELLS`.
 static func walkable_in(layout: Dictionary, p: Vector2, radius: float = 0.0) -> bool:
-	var ix := int(floor(p.x / float(TILE)))
-	var iy := int(floor(p.y / float(TILE)))
+	return walkable_grid(mask_grid(layout), p, radius)
+
+
+## A 6 x 6 table of masks, so a collision query in the middle of a fight is one array read instead
+## of a scan through 36 rows. The run caches this once per zone; the probe still calls the layout
+## form, which rebuilds it.
+static func mask_grid(layout: Dictionary) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(COLS * ROWS)
+	out.fill(0)
+	for c in (layout.get("cells", CELLS) as Array):
+		var ix := int(c[0])
+		var iy := int(c[1])
+		if ix >= 0 and iy >= 0 and ix < COLS and iy < ROWS:
+			out[iy * COLS + ix] = int(c[2])
+	return out
+
+
+## THE one place that decides where a body may stand in a village: the walkway band is 80 of the
+## 512 px (measured off Jan's art: x 216..296), the deck is a walkable ring around the hut, and the
+## hut itself is the obstacle. `radius` widens the hut and narrows the band, so a body is tested
+## with its own size instead of a point.
+static func walkable_grid(grid: PackedInt32Array, p: Vector2, radius: float = 0.0) -> bool:
+	return _walk_tile(grid, p / SCALE, radius / SCALE)
+
+
+## The rule in TILE coordinates (0..512 per tile). `walkable_grid` only converts world px into
+## these, so the geometry is written once, at the size Jan drew it.
+static func _walk_tile(grid: PackedInt32Array, q: Vector2, radius: float = 0.0) -> bool:
+	var ix := int(floor(q.x / float(TILE)))
+	var iy := int(floor(q.y / float(TILE)))
 	if ix < 0 or iy < 0 or ix >= COLS or iy >= ROWS:
 		return false
-	var m := 0
-	for c in (layout.get("cells", CELLS) as Array):
-		if int(c[0]) == ix and int(c[1]) == iy:
-			m = int(c[2])
-			break
+	if grid.size() != COLS * ROWS:
+		return false
+	var m := grid[iy * COLS + ix]
 	if m == 0:
 		return false
 	var c := Vector2(ix * TILE + TILE * 0.5, iy * TILE + TILE * 0.5)
-	var rel := p - c
+	var rel := q - c
 	var dist := rel.length()
 	# THE HUT IS THE OBSTACLE IN THE MIDDLE of every tile: a round straw-roofed building of
 	# 46 px radius. Jan: "kolem něj se dali projít" — so the centre is NOT walkable.
@@ -150,7 +187,9 @@ static func walkable_in(layout: Dictionary, p: Vector2, radius: float = 0.0) -> 
 	if dist <= RING_R - radius:
 		return true
 	# The walkway: an 80 px band through the tile centre, towards each open edge (art: x 216..296).
-	var half := 40.0 + radius
+	# ⚠️  MINUS the radius, not plus: this is the space the body's CENTRE may occupy, so a wider
+	# body leaves a narrower lane. `+ radius` let the hero's shoulders hang 62 px over the jungle.
+	var half := 40.0 - radius
 	if (m & N) and rel.y <= 0.0 and absf(rel.x) <= half:
 		return true
 	if (m & S) and rel.y >= 0.0 and absf(rel.x) <= half:
@@ -160,6 +199,77 @@ static func walkable_in(layout: Dictionary, p: Vector2, radius: float = 0.0) -> 
 	if (m & W) and rel.x <= 0.0 and absf(rel.y) <= half:
 		return true
 	return false
+
+
+## The route a pack can be laid along, from the entry walkway to the exit one. It is a BFS on a
+## 32 px lattice over the SAME rule as the collision, so it goes through the rings and around the
+## huts — a route of tile centres would run straight into the huts, which is the trap this
+## replaces. Returned thinned to roughly one point per 96 px.
+static func route(layout: Dictionary, body: float = 15.5) -> Array:
+	var grid := mask_grid(layout)
+	# 16 px: the ring around a hut is 58 px wide and a body eats 2 x 15.5 of it, so the lane for its
+	# centre is 27 px — a 32 px lattice steps straight over it and the route comes back empty.
+	var step := 16
+	var w := COLS * TILE / step
+	var h := ROWS * TILE / step
+	var from: Vector2 = layout.get("spawn", SPAWN)
+	var to: Vector2 = layout.get("exit_point", EXIT_POINT)
+	var start := Vector2i(int(from.x / step), int(from.y / step))
+	var goal := Vector2i(int(to.x / step), int(to.y / step))
+	var prev := PackedInt32Array()
+	prev.resize(w * h)
+	prev.fill(-2)
+	var free := PackedByteArray()
+	free.resize(w * h)
+	free.fill(0)
+	# The body radius is passed in (the hero's own, in TILE units), so a pack standing on the route
+	# is a pack the hero can actually reach.
+	for gy in h:
+		for gx in w:
+			var p := Vector2((gx + 0.5) * step, (gy + 0.5) * step)
+			if _walk_tile(grid, p, body):
+				free[gy * w + gx] = 1
+	var si := start.y * w + start.x
+	var gi := goal.y * w + goal.x
+	if si < 0 or gi < 0 or si >= w * h or gi >= w * h or free[si] == 0 or free[gi] == 0:
+		return []
+	prev[si] = -1
+	var queue: Array = [si]
+	var head := 0
+	while head < queue.size():
+		var i: int = queue[head]
+		head += 1
+		if i == gi:
+			break
+		var cx := i % w
+		var cy := i / w
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx: int = cx + d.x
+			var ny: int = cy + d.y
+			if nx < 0 or ny < 0 or nx >= w or ny >= h:
+				continue
+			var ni: int = ny * w + nx
+			if free[ni] == 0 or prev[ni] != -2:
+				continue
+			prev[ni] = i
+			queue.append(ni)
+	if prev[gi] == -2:
+		return []
+	var cells: Array = []
+	var cur := gi
+	while cur != -1:
+		cells.append(cur)
+		cur = prev[cur]
+	cells.reverse()
+	var out: Array = []
+	var last := -999.0
+	for i in range(cells.size()):
+		if i != 0 and i != cells.size() - 1 and i - last < 3:
+			continue
+		var ci: int = cells[i]
+		out.append(Vector2(((ci % w) + 0.5) * step, ((ci / w) + 0.5) * step))
+		last = i
+	return out
 
 # ============================================================================ generator
 ## A FRESH village for every entry, from the same five tiles. Jan: "Tenhle grid (pokud tedy bude
