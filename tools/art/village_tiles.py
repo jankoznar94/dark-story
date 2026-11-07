@@ -32,7 +32,7 @@ import math
 import random
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 T = 512
 CX = CY = 256
@@ -153,11 +153,10 @@ def ring(d, mask):
         wedge(d, math.radians(k), math.radians(k + 2), EDGE - BEAM, EDGE, P_RIM)
     for k in range(200):
         wedge(d, math.radians(180 + k), math.radians(182 + k), EDGE - BEAM, EDGE - BEAM + 2, W_HI)
-    # The deck's shadow falling on the planks that pass beneath it: this is the whole depth cue.
-    for k in range(360):
-        if not in_walk(mask, math.radians(k + 0.5), math.radians(22)):
-            continue
-        wedge(d, math.radians(k), math.radians(k + 1.5), EDGE + 1, EDGE + 7, (0, 0, 0, 90))
+    # The deck's shadow on the planks is NOT drawn here: it has to be COMPOSITED (see `tile()`),
+    # because `ImageDraw` REPLACES a pixel with the fill it is given — an `(0,0,0,90)` wedge overwrites
+    # the planks with a semi-transparent black, and in the game that pixel mixes with the JUNGLE behind
+    # the sprite. That was the green band across the walkway at every deck.
 
 
 def hut(d):
@@ -187,7 +186,20 @@ def tile(mask):
             band(d, name)
     ring(d, mask)
     hut(d)
-    return im
+    # ⚠️  PIXEL ART HERE HAS BINARY ALPHA: 0 or 255, nothing in between. A shadow that falls on WOOD
+    # must DARKEN the planks, and `ImageDraw` cannot blend — it replaces. So the shadow goes on its own
+    # layer and is composited, which gives an opaque darker plank instead of a see-through hole that
+    # lets the canopy shine through (Jan: "u lávek chybí kus lávky a prosvítají stromy").
+    shade = Image.new("RGBA", (T, T), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shade)
+    for k in range(360):
+        if in_walk(mask, math.radians(k + 0.5), math.radians(22)):
+            wedge(sd, math.radians(k), math.radians(k + 1.5), EDGE + 1, EDGE + 7, (0, 0, 0, 115))
+    # The shadow may only darken what is ALREADY there: multiplied by the base alpha it stops dead at
+    # the silhouette, so no pixel is left half-transparent at the edge (20 such pixels showed up as
+    # green specks before this line — they were shadow over jungle).
+    shade.putalpha(ImageChops.multiply(shade.getchannel("A"), im.getchannel("A")))
+    return Image.alpha_composite(im, shade)
 
 
 def build_tiles(out):
