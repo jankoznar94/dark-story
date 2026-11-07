@@ -217,7 +217,11 @@ func _process(_delta: float) -> bool:
 			for i in _pack:
 				run._spawn_one()
 				var ang := TAU * float(i) / float(_pack) + 0.4
-				run.monsters[i]["pos"] = run.player_pos + Vector2(cos(ang), sin(ang)) * 105.0
+				# ⚠️  CLAMPED TO FLOOR. A raw ring of 105 px around the hero lands in the jungle on a
+				# village walkway, so the frame showed three bodies hanging off the planks and read as
+				# a spawn bug. The look-probe must photograph the game, not its own geometry.
+				run.monsters[i]["pos"] = run.nearest_floor_point(
+					run.player_pos + Vector2(cos(ang), sin(ang)) * 105.0)
 		return false
 
 	if _screen == null:

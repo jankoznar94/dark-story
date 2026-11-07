@@ -171,7 +171,11 @@ def hut(d):
 def tile(mask):
     im = Image.new("RGBA", (T, T), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.ellipse((CX - EDGE + 8, CY - EDGE + 10, CX + EDGE + 8, CY + EDGE + 10), fill=(0, 0, 0, 80))
+    # ⚠️  SYMMETRIC contact shadow. An ellipse offset by (8, 10) left a dark CRESCENT on the
+    # bottom-right of every deck and nothing on the top-left — Jan read that asymmetrical crescent
+    # as "kolem ochozu je mezera". A ring of the same width all the way round reads as "the deck
+    # lies ON the canopy", which is what it is.
+    d.ellipse((CX - EDGE - 6, CY - EDGE - 6, CX + EDGE + 6, CY + EDGE + 6), fill=(0, 0, 0, 70))
     for bit, name in ((1, "N"), (2, "S"), (4, "E"), (8, "W")):
         if mask & bit:
             band(d, name)

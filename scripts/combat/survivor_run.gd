@@ -238,6 +238,10 @@ const VILLAGE_THEME_NAME := "Stromová vesnice"
 ## The village's flow lattice. 48 px is a third of the 120 px walkway, so BFS has a real choice of
 ## columns instead of a staircase of two, and 4 608 / 48 = 96 x 96 cells is still nothing.
 const FLOW_CELL_VILLAGE := 48.0
+## How much extra clearance a body keeps on a village walkway. The token is drawn wider than the
+## collision disc (portrait + outline + selection ring), so without it a monster standing legally at
+## the plank's edge visibly hangs over the jungle.
+const VILLAGE_KEEP_OFF := 8.0
 const ACTIVATE_RADIUS := 330.0
 ## Two spawn cells must be at least this far apart in SPACE (not along the path), so that walking
 ## into one pack does not wake the next. `PACK_MIN_GAP > 2 * ACTIVATE_RADIUS` leaves a margin for
@@ -2261,7 +2265,11 @@ func walkable(p: Vector2, r: float) -> bool:
 	# ⚠️  A village is not a cell grid: its floor is the walkway band and the ring around each hut,
 	# and `VillageLayout` owns that rule so the collision and the drawing cannot disagree.
 	if not village.is_empty():
-		return VillageLayout.walkable_grid(village_grid, p, r)
+		# ⚠️  A KEEP-OFF, not the bare body radius: the drawn token is a portrait with an outline and
+		# a selection ring, so a body allowed to stand with its disc exactly on the plank edge hangs
+		# visibly over the jungle (Jan: "monstra jsou lehce mimo lávku"). 8 world px keeps the disc,
+		# and therefore the token, inside the planks.
+		return VillageLayout.walkable_grid(village_grid, p, r + VILLAGE_KEEP_OFF)
 	if not is_floor_cell(int(floor(p.x / TILE)), int(floor(p.y / TILE))):
 		return false
 	if is_floor_cell(int(floor((p.x - r) / TILE)), int(floor((p.y - r) / TILE))) \
