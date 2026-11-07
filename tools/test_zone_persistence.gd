@@ -145,7 +145,10 @@ func _test_death_rolls_the_act_again() -> void:
 
 ## The button that USES the scroll lives in the zone's own HUD, and it may only exist while a
 ## scroll is carried — a permanently drawn control that does nothing is the "dead road button"
-## this project already shipped once. Its rectangle also must not sit on `Konec` or `Akce`.
+## this project already shipped once. Its rectangle also must not sit on any other plate.
+## ⚠️  Nov 2026: Jan moved EVERY control into the top bar as an icon, so this used to assert the
+## opposite (`position.y >= TOP_BAR`) and became the one CI step that failed the icon-bar change.
+## The rule now is the same as the rest of the row: inside the bar, clear of its neighbours.
 func _test_the_portal_button_exists_only_with_a_scroll() -> void:
 	_main.state.data["townPortalCount"] = 0
 	_main._enter_survivor(0, 1)
@@ -155,10 +158,11 @@ func _test_the_portal_button_exists_only_with_a_scroll() -> void:
 	var r: Rect2 = screen._portal_rect
 	if r.size.x < 1.0:
 		_fail("the portal button has no rect")
-	if r.intersects(screen._exit_rect) or r.intersects(screen._bind_rect):
-		_fail("the portal button overlaps Konec/Akce")
-	if r.position.y < screen.TOP_BAR:
-		_fail("the portal button sits inside the top bar, where the second row's text already is")
+	for other in [screen._exit_rect, screen._bind_rect, screen._map_rect, screen._hero_rect]:
+		if r.intersects(other):
+			_fail("the portal button overlaps another top-bar plate: %s vs %s" % [str(r), str(other)])
+	if r.end.y > screen.TOP_BAR or r.position.y < 0.0:
+		_fail("the portal button must sit inside the top bar: %s" % str(r))
 
 	# With no scroll the press must do NOTHING — neither open a portal nor store a return.
 	var before: String = JSON.stringify(_main.state.data.get("townPortalReturn"))
