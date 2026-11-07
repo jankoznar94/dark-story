@@ -36,6 +36,7 @@ const ShopScreen := preload("res://scripts/ui/shop_screen.gd")
 const GambleScreen := preload("res://scripts/ui/gamble_screen.gd")
 const CraftScreen := preload("res://scripts/ui/craft_screen.gd")
 const CharacterModal := preload("res://scripts/ui/character_modal.gd")
+const ConfirmModal := preload("res://scripts/ui/confirm_modal.gd")
 const ResultScreen := preload("res://scripts/ui/result_screen.gd")
 const BestiaryScreen := preload("res://scripts/ui/bestiary_screen.gd")
 const SpellbookScreen := preload("res://scripts/ui/spellbook_screen.gd")
@@ -65,11 +66,11 @@ var _socket_rng_source: RandomNumberGenerator = null
 ## toast; a plain label above the nav bar is enough and cannot cover the buttons.
 var _status: Label
 var _status_ticks := 0
-## The clear-save entry is ARMED by its first tap and only commits on the second, within
-## `CLEAR_ARM_MS`. `Time.get_ticks_msec()` rather than a frame count, so pausing (or a slow
-## frame) cannot stretch the window; 0 = disarmed.
-var _clear_armed_at := 0
-const CLEAR_ARM_MS := 6000
+## The clear-save entry asks through a MODAL (`scripts/ui/confirm_modal.gd`), not through a
+## second "tap again" on the bar: Jan tapped the trash once, saw nothing change and reported
+## the entry as dead. The dialog also carries the "hotovo" message afterwards, which is what
+## he asked for ("abych věděl, že k tomu skutečně došlo").
+var _confirm: ConfirmModal = null
 var _nav_bar      # UIKit.NavBar
 ## The PWA's `#splashScreen`. Built once per launch, hides itself after ~3.1 s.
 var _splash: SplashScreen = null
@@ -393,6 +394,17 @@ func _build_nav() -> void:
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(_status)
 
+	# The clear-save confirmation. Built into the SAME parent as the bar and added after it,
+	# so it paints over the bar and over the current screen; every `_open()` also calls
+	# `move_to_front()`, because changing screens raises them above this node again.
+	_confirm = ConfirmModal.new()
+	_confirm.name = "Confirm"
+	nav_parent.add_child(_confirm)
+	if _portrait_root != null:
+		_confirm.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_confirm.size = PORTRAIT_SIZE
+	_confirm.confirmed.connect(_on_clear_save_confirmed)
+
 
 const PORTRAIT_SIZE := Vector2(390.0, 844.0)
 ## Screens that use the LANDSCAPE canvas itself rather than the portrait stage. EMPTY: the
@@ -632,9 +644,6 @@ func _on_nav_selected(key: String) -> void:
 
 	# The three PWA nav entries that are toggles rather than screens. They exist in the bar
 	# because the PWA's bar has them; a tap has to do something real or the entry is a lie.
-	# Any other entry drops a pending clear-save arming: a tap somewhere else means "not this".
-	if key != "clearsave":
-		_clear_armed_at = 0
 	match key:
 		"music":
 			_toggle_music()
@@ -869,7 +878,6 @@ func _clear_save() -> void:
 	#   * the hero was left with NO CLASS (`reset()` empties `heroClass`) and the derived pools
 	#     were never recomputed, so a wiped game had no skills, no weapon rules and no mana;
 	#   * the shop and gamble stock caches survived the wipe.
-	_clear_armed_at = 0
 	ZoneMemory.clear_all()
 	_reset_shop_cache()
 	if _screens.has("gamble"):
@@ -880,21 +888,34 @@ func _clear_save() -> void:
 	_seed_first_class()
 	_recompute_hero_pools()
 	state.save()
-	_set_status("Cache smazana - nova hra.")
+	# The town is rebuilt from the wiped state BEFORE the message goes up: `show_screen` raises
+	# the screen (and the nav bar) above this dialog, so opening the dialog last is what keeps
+	# the confirmation on top.
 	show_screen("town")
+	_set_status("Cache smazána — nová hra.")
+	if _confirm != null:
+		_confirm.tell("Hotovo",
+			"Hra byla smazána. Začínáš od začátku: level 1, žádné skilly ani talenty, "
+			+ "prázdný inventář i truhla a žádná oblast není projitá.")
+		_confirm.move_to_front()
 
 
-## The nav bar's `clearsave` entry. Wiping the save is the one tap in the game that destroys a
-## whole run, and the bar is eight 44px icons in a row — so it is ARMED by the first tap and
-## commits on the second, with the pending state drawn on the status strip immediately above
-## the bar the finger is on. A tap anywhere else (any other nav entry) disarms it.
+## The nav bar's `clearsave` entry opens a confirmation MODAL. It used to arm itself on the
+## first tap and commit on a second one printed small on the status strip — Jan tapped once,
+## nothing moved, and the report was "teď se to neděje". A dialog is the only confirmation he
+## can see, and the wipe is the one tap in the game that destroys a whole run.
 func _on_clear_save_tapped() -> void:
-	var now := Time.get_ticks_msec()
-	if _clear_armed_at != 0 and now - _clear_armed_at <= CLEAR_ARM_MS:
+	if _confirm == null:
 		_clear_save()
 		return
-	_clear_armed_at = now
-	_set_status("Smazani cache: tapni ZNOVU pro potvrzeni.")
+	_confirm.ask("Smazat uloženou hru?",
+		"Přijdeš o všechno: level, skilly, talenty, zlato, inventář, odemčené oblasti "
+		+ "i probuzená monstra. Tohle nejde vzít zpět.",
+		"Smazat", "Zrušit")
+
+
+func _on_clear_save_confirmed() -> void:
+	_clear_save()
 
 
 ## The shop's stock is rebuilt on every town visit. The stock itself lives in the shop
@@ -919,15 +940,6 @@ func _process(_delta: float) -> void:
 	# numbers per frame is cheaper than any resize signal that might not fire.
 	if _portrait_root != null and get_viewport_rect().size != _stage_canvas:
 		_layout_portrait_stage()
-	# The armed clear-save message owns the strip for its whole window: the normal 30-frame
-	# timeout would wipe the "tap again" instruction in half a second, which reads as a dead
-	# button — the exact report this gate must not create.
-	if _clear_armed_at != 0:
-		if Time.get_ticks_msec() - _clear_armed_at > CLEAR_ARM_MS:
-			_clear_armed_at = 0
-			_status_ticks = 1
-		else:
-			_status_ticks = 2
 	if _status_ticks > 0:
 		_status_ticks -= 1
 		if _status_ticks == 0:

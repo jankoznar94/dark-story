@@ -2,13 +2,18 @@ extends SceneTree
 ## tools/test_clear_save.gd — the nav bar's "Smazat ulozenou hru" entry, which is Jan's cache
 ## button ("Přidáme tam tlačítko na smazání cache, abych mohl zkusit jít od začátku").
 ##
-## The old handler called `state.reset()` + `state.save()` and left three things alive, so the
-## player tapped it, saw his numbers go to zero and STILL walked into the same half-cleared
-## world: `ZoneMemory` (process memory, deliberately outside the save) kept fog lifted and packs
-## dead, the hero came out with NO class (no skills, no weapon rules, no mana) because
-## `reset()` empties `heroClass`, and the shop/gamble stock caches survived.
+## The entry wipes a whole run, so it asks through a MODAL (`scripts/ui/confirm_modal.gd`) and
+## then SAYS that it happened. Both halves matter: the old double-tap version armed itself with
+## a line of small text on the status strip, Jan tapped once, saw no change and reported the
+## button as dead — and he asked for a message he cannot miss ("abych věděl, že k tomu
+## skutečně došlo").
 ##
-## Everything is driven through the REAL input pipeline at the button's own centre, not by
+## Two things live OUTSIDE `GameState.data` and a wipe that forgets them leaves the player in a
+## game he did not want: `ZoneMemory` (process memory, deliberately not in the save — fog
+## lifted, packs dead) and the derived hero (a `reset()` empties `heroClass`, so a wiped hero
+## has no skills, no weapon rules and no mana until the class is re-seeded).
+##
+## Everything is driven through the REAL input pipeline at the buttons' own centres, not by
 ## calling the handler: the state half and the finger half break independently, and the finger
 ## half is what the player reports ("nefunguje").
 ##
@@ -37,8 +42,7 @@ func _verdict() -> void:
 	quit(0 if _failures.is_empty() else 1)
 
 
-func _tap(key: String) -> void:
-	var button: Button = _main._nav_bar._buttons[key]
+func _tap_button(button: Button) -> void:
 	var centre := button.get_global_rect().get_center()
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
@@ -52,6 +56,17 @@ func _tap(key: String) -> void:
 	root.push_input(release)
 	await process_frame
 	await process_frame
+
+
+func _tap(key: String) -> void:
+	await _tap_button(_main._nav_bar._buttons[key])
+
+
+## The dialog ignores input for `OPEN_GUARD_MS` after it opens: the finger that opened it is
+## still on the glass. Headless frames do not advance real time, so the test winds the stamp
+## back instead of sleeping.
+func _age_dialog() -> void:
+	_main._confirm._opened_at -= 5000
 
 
 func _fresh():
@@ -69,14 +84,15 @@ func _fresh():
 	_main.state.delete_save()
 
 
-## A played-in game: progress on every axis the wipe must reset, plus the two caches that do
-## NOT live in the save file.
+## A played-in game: progress on every axis the wipe must reset, plus the caches that do NOT
+## live in the save file.
 func _seed_played_game() -> void:
 	var state = _main.state
 	state.hero()["level"] = 9
 	state.hero()["xp"] = 4242
 	state.hero()["gold"] = 1234
 	state.hero()["hp"] = 7
+	state.hero()["inventory"] = [{"name": "Test Sword", "type": "weapon"}]
 	state.data["talentPoints"] = 6
 	state.data["talentLevels"] = {"cleave": 2}
 	state.data["locationProgress"] = [4, 0, 0, 0, 0]
@@ -92,34 +108,67 @@ func _seed_played_game() -> void:
 func _run() -> void:
 	await _fresh()
 
-	# --- the gate: the first tap ARMS and changes nothing -------------------------------
-	print("== the first tap only arms ==")
+	# --- the trash entry is reachable on the 390px bar ----------------------------------
+	print("== the entry sits on the bar ==")
+	var bar: Button = _main._nav_bar._buttons["clearsave"]
+	var r := bar.get_global_rect()
+	_check(r.size.x >= 40.0 and r.position.x >= 0.0 and r.end.x <= 390.0,
+		"the clearsave entry is off the 390px canvas: %s" % str(r))
+
+	# --- the first tap ASKS, it does not wipe ------------------------------------------
+	print("== tapping the trash asks first ==")
 	_seed_played_game()
 	await _tap("clearsave")
+	_check(_main._confirm.visible, "the trash tap opened no dialog — the entry reads as dead")
+	_check(_main._confirm.title_text().contains("Smazat"),
+		"the dialog does not say what it will do: '%s'" % _main._confirm.title_text())
+	_check(_main._confirm.cancel_button().visible,
+		"a destructive confirm with no way back has no cancel button")
 	_check(int(_main.state.hero()["gold"]) == 1234,
-		"the FIRST tap already wiped the gold (%d) — an irreversible wipe needs its confirm"
-		% int(_main.state.hero()["gold"]))
-	_check(int(_main.state.hero()["level"]) == 9, "the first tap already reset the level")
-	_check(int(ZoneMemory.count()) == 2, "the first tap already dropped the zone snapshots")
-	_check(_main._status.text.contains("ZNOVU"),
-		"the arming tap must say so on the status strip, got '%s'" % _main._status.text)
-	print("  status after the arming tap: '%s'" % _main._status.text)
+		"opening the dialog already wiped the gold — nothing may change before the answer")
+	_check(int(_main.state.hero()["level"]) == 9, "opening the dialog already reset the level")
+	_check(int(ZoneMemory.count()) == 2, "opening the dialog already dropped the zone snapshots")
 
-	# --- another nav entry cancels the arming -------------------------------------------
-	print("== a tap elsewhere disarms ==")
-	await _tap("music")
-	_check(_main._clear_armed_at == 0, "another nav entry must drop the pending wipe")
-	await _tap("clearsave")
-	_check(int(_main.state.hero()["gold"]) == 1234,
-		"the wipe ran on a tap that was only arming again")
+	# --- cancel changes nothing ---------------------------------------------------------
+	print("== cancel changes nothing ==")
+	_age_dialog()
+	await _tap_button(_main._confirm.cancel_button())
+	_check(not _main._confirm.visible, "cancel left the dialog on screen")
+	_check(int(_main.state.hero()["gold"]) == 1234, "cancel wiped the gold")
+	_check(int(_main.state.hero()["level"]) == 9, "cancel reset the level")
+	_check(int(ZoneMemory.count()) == 2, "cancel dropped the zone snapshots")
 
-	# --- the second tap: the full wipe --------------------------------------------------
-	print("== the confirming tap wipes everything ==")
+	# --- a tap on the dim outside the panel backs out too -------------------------------
+	print("== a tap outside the panel backs out ==")
 	await _tap("clearsave")
+	_age_dialog()
+	var dim_press := InputEventMouseButton.new()
+	dim_press.button_index = MOUSE_BUTTON_LEFT
+	dim_press.pressed = true
+	dim_press.position = Vector2(20, 20)
+	root.push_input(dim_press)
+	await process_frame
+	var dim_release := InputEventMouseButton.new()
+	dim_release.button_index = MOUSE_BUTTON_LEFT
+	dim_release.pressed = false
+	dim_release.position = Vector2(20, 20)
+	root.push_input(dim_release)
+	await process_frame
+	await process_frame
+	_check(not _main._confirm.visible, "a tap on the dim did not close the dialog")
+	_check(int(_main.state.hero()["gold"]) == 1234, "a tap on the dim wiped the gold")
+
+	# --- the confirming tap: the full wipe AND a message -------------------------------
+	print("== confirming wipes everything and says so ==")
+	await _tap("clearsave")
+	_age_dialog()
+	await _tap_button(_main._confirm.ok_button())
+
 	var h: Dictionary = _main.state.hero()
 	_check(int(h["gold"]) == 0, "gold survived the wipe: %d" % int(h["gold"]))
 	_check(int(h["level"]) == 1, "level survived the wipe: %d" % int(h["level"]))
 	_check(int(h["xp"]) == 0, "xp survived the wipe")
+	_check((h["inventory"] as Array).is_empty(), "the bag survived the wipe")
 	_check(int(_main.state.data["talentPoints"]) == 0, "talent points survived the wipe")
 	_check((_main.state.data["talentLevels"] as Dictionary).is_empty(),
 		"talent levels survived the wipe")
@@ -144,7 +193,22 @@ func _run() -> void:
 	_check(int(h["hp"]) == int(h["maxHp"]),
 		"the wiped hero must be at full HP (%d/%d)" % [int(h["hp"]), int(h["maxHp"])])
 	_check(_main._current == "town", "the wipe must land back on the town, on '%s'" % _main._current)
-	_check(_main._clear_armed_at == 0, "the arming must be consumed by the wipe")
+
+	# The message is the half Jan asked for: he has to SEE that it happened.
+	print("== the 'hotovo' message ==")
+	_check(_main._confirm.visible, "the wipe said nothing — no confirmation message on screen")
+	_check(_main._confirm.title_text() == "Hotovo",
+		"the message title is '%s'" % _main._confirm.title_text())
+	_check(_main._confirm.body_text().to_lower().contains("smaz"),
+		"the message does not say the game was deleted: '%s'" % _main._confirm.body_text())
+	_check(not _main._confirm.cancel_button().visible,
+		"the 'hotovo' message offers a cancel button; it has nothing to cancel")
+	# The dialog must be ABOVE the town it just rebuilt, or the player sees the town instead.
+	_check(_main._confirm.get_index() > _main._screens["town"].get_index(),
+		"the message sits under the town screen — the player sees the town, not the message")
+	_age_dialog()
+	await _tap_button(_main._confirm.ok_button())
+	_check(not _main._confirm.visible, "the message did not close on its button")
 
 	# --- the SAVE on disk is the new game, not the old one ------------------------------
 	print("== the save file on disk ==")
@@ -162,18 +226,8 @@ func _run() -> void:
 			_check(int(saved.get("hero", {}).get("level", -1)) == 1,
 				"the save on disk still holds the old level")
 			_check(str(saved.get("heroClass", "")) != "", "the save on disk has no class")
-			_check(int(saved.get("locationProgress", [9])[0]) == 0,
+			_check(int((saved.get("locationProgress", [9]) as Array)[0]) == 0,
 				"the save on disk still holds act progress")
-
-	# --- the arming EXPIRES ------------------------------------------------------------
-	print("== a stale arming does not commit ==")
-	_seed_played_game()
-	_main._on_clear_save_tapped()
-	_check(_main._clear_armed_at != 0, "the handler did not arm")
-	_main._clear_armed_at = Time.get_ticks_msec() - _main.CLEAR_ARM_MS - 1000
-	_main._on_clear_save_tapped()
-	_check(int(_main.state.hero()["gold"]) == 1234,
-		"a tap after the window still wiped the game — the arming never expires")
 
 	_main.state.save_enabled = false
 	_main.state.delete_save()
