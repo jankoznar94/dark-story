@@ -58,12 +58,27 @@ S_BASE = (198, 164, 92)
 S_D1 = (176, 141, 72)
 S_D2 = (216, 184, 112)
 S_EDGE = (168, 130, 64)
+## The eave, in shade: the straw's own tone stepped down, so the roof has a visible edge against the
+## planks instead of dissolving into them.
+S_SHADE = (132, 96, 44)
 ## ⚠️  A SHADOW IS NOT A TRANSPARENCY. Semi-transparent black over the green canopy produced a GREEN
 ## shadow — it read as the trees showing through beneath the deck, not as shade (Jan: "vadí to, že ten
 ## stín je zelený, působí to, jak kdyby pod tím prosvítaly stromy"). Every shadow that falls on the
 ## JUNGLE is drawn in this opaque warm tone instead; black at low alpha is only used where the shadow
 ## falls on WOOD, where it correctly darkens the planks.
 SHADOW = (41, 29, 18)
+## ⚠️  THE WALKWAY'S SHADE IS SYMMETRIC AND NARROW. It used to be an 8 px strip on ONE long side
+## (right of a vertical walkway, below a horizontal one). On a corner or a tee the two bands shade
+## OPPOSITE sides, so the strip jumped from one side of the path to the other at the deck — Jan:
+## "u všech lávek je stín jen z jedné strany … uprostřed cesty je najednou zlom a místo stínu vpravo
+## je najednou vlevo". The shade now runs down BOTH long sides at the same width, so every tile
+## agrees with its neighbour whatever the rotation, and it is thinner than before.
+SHADOW_W = 5
+## The hut's cast shadow, in px, from the light at the upper left. Only the part that falls OUTSIDE
+## the roof silhouette shows, so it touches the roof and reads as shade on the planks instead of a
+## dark ring around a floating disc (Jan: "jen světle kolečko na podlaze").
+HUT_SHX = 7
+HUT_SHY = 9
 
 DIRS = {1: (0, -1), 2: (0, 1), 4: (1, 0), 8: (-1, 0)}
 ARCHETYPES = [1, 3, 5, 7, 15]
@@ -83,10 +98,15 @@ def band_rect(direction):
 
 def band(d, direction):
     x0, y0, x1, y1 = band_rect(direction)
+    # The shade runs down BOTH long sides, at the same width, so a corner or a tee cannot hand the
+    # dark side over to the other edge mid-path (see SHADOW_W). It never runs past the band's ENDS,
+    # which is the direction of travel — that is what keeps the seam between two tiles invisible.
     if direction in ("N", "S"):
-        d.rectangle((x1, y0, x1 + 8, y1), fill=SHADOW)
+        d.rectangle((x0 - SHADOW_W, y0, x0 - 1, y1), fill=SHADOW)
+        d.rectangle((x1 + 1, y0, x1 + SHADOW_W, y1), fill=SHADOW)
     else:
-        d.rectangle((x0, y1, x1, y1 + 8), fill=SHADOW)
+        d.rectangle((x0, y0 - SHADOW_W, x1, y0 - 1), fill=SHADOW)
+        d.rectangle((x0, y1 + 1, x1, y1 + SHADOW_W), fill=SHADOW)
     d.rectangle((x0, y0, x1, y1), fill=P_BASE)
     if direction in ("N", "S"):
         d.rectangle((x0, y0, x0 + BEAM, y1), fill=P_RIM)
@@ -160,12 +180,29 @@ def ring(d, mask):
 
 
 def hut(d):
-    d.ellipse((CX - ROOF_R, CY - ROOF_R, CX + ROOF_R, CY + ROOF_R), fill=S_BASE)
+    # ⚠️  THE HUT MUST READ AS A RAISED CONE, NOT A PALE DISC. Jan, Nov 2026: "Kolem slámových budov
+    # musíme taky udělat nějaký stín a nebo nějak jinak zvýraznit, že se jedná o 3D objekt a ne jen
+    # světle kolečko na podlaze." Three cues, in this order, and each one alone is not enough:
+    #   1. a CAST SHADOW offset from the light at the upper left. It TOUCHES the roof's silhouette —
+    #      an offset shadow with bare deck between it and the hut is what the old version was read
+    #      as ("mezera kolem boudy"), so the roof keeps the full footprint and the shadow is drawn
+    #      FIRST, underneath it.
+    #   2. a CONCENTRIC TONE RAMP: eave in shade -> straw -> lit crown. That is the volume cue; a
+    #      single flat straw fill at any radius reads as a circle painted on the planks.
+    #   3. the straw strokes stay, radiating from the crown, so the ramp does not read as a bullseye.
+    d.ellipse((CX - ROOF_R + HUT_SHX, CY - ROOF_R + HUT_SHY,
+               CX + ROOF_R + HUT_SHX, CY + ROOF_R + HUT_SHY), fill=SHADOW)
+    d.ellipse((CX - ROOF_R, CY - ROOF_R, CX + ROOF_R, CY + ROOF_R), fill=S_SHADE)
+    for rad, col in ((ROOF_R - 4, S_D1), (ROOF_R - 11, S_BASE)):
+        d.ellipse((CX - rad, CY - rad, CX + rad, CY + rad), fill=col)
+    # The crown is pulled toward the light (upper left), so the lit cap is bigger than the shaded
+    # slope instead of the ramp being a symmetric bullseye.
+    d.ellipse((CX - 23 - 3, CY - 23 - 4, CX + 23 - 3, CY + 23 - 4), fill=S_D2)
     rng = random.Random(77)
-    for k in range(130):
+    for k in range(150):
         a = rng.random() * math.tau
-        r0 = rng.random() * ROOF_R * 0.5
-        r1 = ROOF_R * (0.5 + rng.random() * 0.5)
+        r0 = rng.random() * ROOF_R * 0.4
+        r1 = (ROOF_R - 3) * (0.4 + rng.random() * 0.6)
         d.line([(CX + math.cos(a) * r0, CY + math.sin(a) * r0),
                 (CX + math.cos(a) * r1, CY + math.sin(a) * r1)],
                fill=(S_D1 if k % 2 else S_D2), width=2)
