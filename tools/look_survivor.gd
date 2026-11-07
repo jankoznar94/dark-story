@@ -64,6 +64,10 @@ var _drop := 0
 ## Open the ZONE MAP overlay for the shot, so the explored sheet and the hero's dot can be judged
 ## from a frame instead of from a description.
 var _map := false
+## Close the map again through the REAL press path before the shot, so the frame shows the HUD AFTER
+## a map round trip. That is the state where the button used to be a screen-sized plate in the middle
+## of the screen (Jan, Nov 2026) — a frame of the open map could never show it.
+var _map_close := false
 ## Reveal the fog along the whole ROUTE before the shot, so a map frame shows what a player who
 ## walked the zone would see. The reveal goes through `run._reveal_around()` — the same call the
 ## step loop makes — so the bytes are the ones a walk produces, only without the fifteen minutes.
@@ -182,6 +186,8 @@ func _initialize() -> void:
 				_drop = int(args[i + 1])
 			"--map":
 				_map = args[i + 1] != "0"
+			"--mapclose":
+				_map_close = args[i + 1] != "0"
 			"--explore":
 				_explore = args[i + 1] != "0"
 		i += 2
@@ -289,6 +295,12 @@ func _process(_delta: float) -> bool:
 		if not _screen._map_open:
 			print("look_survivor: the Mapa button did not take a press at %s" % str(_screen._map_rect))
 			_screen._open_map()
+	if _map_close and _screen != null and _screen._map_open:
+		_screen._on_press(Vector2(6, 6), 0)
+		if _screen._map_open:
+			print("look_survivor: a tap outside the sheet did NOT close the map")
+		print("look_survivor: after the map round trip the button is %s (was a 38x38 plate in the bar)"
+			% str(_screen._map_rect))
 	_capture()
 	return false
 

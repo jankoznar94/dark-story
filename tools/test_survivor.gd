@@ -2005,14 +2005,23 @@ func _test_screen_map() -> void:
 	_check(screen._map_rect.end.x <= 390.0 and screen._map_rect.end.y <= SurvivorScreen.TOP_BAR,
 		"the map button must fit inside the top bar: %s" % str(screen._map_rect))
 
-	# A tap opens it, and the fight STOPS behind it (a monster must not walk into a hero who is
-	# reading a map).
+	# ⚠️  THE BUTTON AND THE SHEET ARE TWO RECTS. They were one variable, so opening the map moved the
+	# button to the screen's centre at the sheet's size and closing it left it there — the HUD was
+	# wrecked and every tap reopened the map. The assertion below is the gate: the button's rect must
+	# be IDENTICAL after open and after close, and a tap where the sheet was must not reopen it.
+	var button_before: Rect2 = screen._map_rect
 	screen._on_press(screen._map_rect.get_center(), 0)
 	_check(screen._map_open, "a tap on the Mapa button must open the map")
 	_check(screen._paused and not screen.is_processing(), "the open map must pause the fight")
 	_check(screen._map_tex != null, "the map sheet must be baked on open")
-	_check(screen._map_rect.size.x > 100.0 and screen._map_rect.size.y > 100.0,
-		"the map sheet must be big enough to read: %s" % str(screen._map_rect.size))
+	_check(screen._map_sheet_rect.size.x > 100.0 and screen._map_sheet_rect.size.y > 100.0,
+		"the map sheet must be big enough to read: %s" % str(screen._map_sheet_rect.size))
+	_check(screen._map_rect == button_before,
+		"opening the map must not move the BUTTON (it is the sheet's box): %s vs %s"
+			% [str(screen._map_rect), str(button_before)])
+	_check(screen._map_rect.end.y <= SurvivorScreen.TOP_BAR,
+		"the map button must still be a plate in the top bar while the map is open: %s"
+			% str(screen._map_rect))
 
 	# Only what he has walked: a cell that is not explored must not be painted.
 	var run = screen.run
@@ -2030,6 +2039,16 @@ func _test_screen_map() -> void:
 	screen._on_press(Vector2(5, 420), 0)
 	_check(not screen._map_open, "a tap outside the sheet must close the map")
 	_check(not screen._paused, "closing the map must resume the run")
+	# ...and the BUTTON survived it: same rect, still a plate in the bar, and a tap where the sheet
+	# used to be must not reopen the map (that is the exact defect Jan reported).
+	_check(screen._map_rect == button_before,
+		"closing the map must leave the BUTTON where it was: %s vs %s"
+			% [str(screen._map_rect), str(button_before)])
+	_check(screen._map_rect.end.y <= SurvivorScreen.TOP_BAR,
+		"after closing, the map button is not a top-bar plate any more: %s" % str(screen._map_rect))
+	screen._on_press(screen._map_sheet_rect.get_center(), 0)
+	_check(not screen._map_open,
+		"a tap in the middle of the screen must NOT reopen the map (the button used to grow there)")
 	screen.queue_free()
 
 

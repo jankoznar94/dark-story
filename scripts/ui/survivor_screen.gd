@@ -177,7 +177,14 @@ var _paused := false
 ## per cell) for the same reason the fog veil is baked: a `draw_rect` per cell is hundreds of draw
 ## calls for a sheet of squares. The bake is redone only when the explored set changed.
 var _map_open := false
+## ⚠️  TWO RECTS, TWO MEANINGS. `_map_rect` is the BUTTON in the top bar and `_map_sheet_rect` is the
+## sheet the overlay draws. They used to be ONE variable, so opening the map overwrote the button's
+## rect with the sheet's — and closing the map left a button the size of the screen sitting in the
+## middle of the HUD, which then reopened the map on every tap (Jan, Nov 2026: "po vypnutí mapy se
+## tlačítko přemístí na střed obrazovky, roztáhne se skoro přes celou obrazovku a nejde to zrušit").
+## The two must never share storage, and a test asserts the button rect is UNCHANGED by an open/close.
 var _map_rect := Rect2()
+var _map_sheet_rect := Rect2()
 var _map_close_rect := Rect2()
 var _map_tex: ImageTexture = null
 var _map_version := -1
@@ -619,7 +626,7 @@ func _gui_input(event: InputEvent) -> void:
 func _on_press(pos: Vector2, index: int = 0) -> void:
 	# The map is modal over a paused fight: it owns every press while it is open.
 	if _map_open:
-		if _map_close_rect.has_point(pos) or not _map_rect.has_point(pos):
+		if _map_close_rect.has_point(pos) or not _map_sheet_rect.has_point(pos):
 			_close_map()
 		return
 	# The bind panel owns every press while it is open: it is a modal over a live fight.
@@ -3586,7 +3593,7 @@ func _layout_map() -> void:
 	_map_cell = cell
 	var w := cell * float(grid.x)
 	var h := cell * float(grid.y)
-	_map_rect = Rect2((size.x - w) * 0.5, top + (avail.y - h) * 0.5, w, h)
+	_map_sheet_rect = Rect2((size.x - w) * 0.5, top + (avail.y - h) * 0.5, w, h)
 	# The close button sits ABOVE the HP/mana bars (they are 48 px off the bottom edge), never on
 	# them: a control that covers the health bar is one the player reads as a broken HUD.
 	_map_close_rect = Rect2(size.x * 0.5 - 72.0, bottom + 14.0, 144.0, 42.0)
@@ -3595,10 +3602,10 @@ func _layout_map() -> void:
 ## One flat block per cell, in the map's own pixels. Re-baked only when the explored set changed
 ## (`explored_version`), so walking with the map open updates it, standing still does not.
 func _bake_map() -> void:
-	if run == null or run.village.is_empty() == false or _map_rect.size.x < 2.0:
+	if run == null or run.village.is_empty() == false or _map_sheet_rect.size.x < 2.0:
 		return
-	var w := maxi(1, int(round(_map_rect.size.x)))
-	var h := maxi(1, int(round(_map_rect.size.y)))
+	var w := maxi(1, int(round(_map_sheet_rect.size.x)))
+	var h := maxi(1, int(round(_map_sheet_rect.size.y)))
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	img.fill(MAP_BG)
 	var ground_c := _col("tint", "#d2c8b6").darkened(0.42)
@@ -3635,24 +3642,24 @@ func _draw_map() -> void:
 	draw_string(font, Vector2(14, TOP_BAR + 32), "Mapa", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 20, C_GOLD)
 	draw_string(font_r, Vector2(96, TOP_BAR + 32), str(_theme.get("name", "")),
 		HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 12, C_DIM)
-	draw_rect(_map_rect, MAP_BG)
+	draw_rect(_map_sheet_rect, MAP_BG)
 	if run.village.is_empty():
 		if _map_tex == null or run.explored_version != _map_version:
 			_bake_map()
 		if _map_tex != null:
-			draw_texture_rect(_map_tex, _map_rect, false)
+			draw_texture_rect(_map_tex, _map_sheet_rect, false)
 	else:
 		_draw_map_village()
 	# The sheet's own edge, so the map reads as a plate and not as a hole in the fight.
-	draw_rect(_map_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.28), false, 1.5)
+	draw_rect(_map_sheet_rect, Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.28), false, 1.5)
 	# THE DOT. Position only — no trail, no pulse; a flat gold marker that moves as he moves.
 	var world: Vector2 = run.world
-	var dot := _map_rect.position + _map_rect.size * 0.5
+	var dot := _map_sheet_rect.position + _map_sheet_rect.size * 0.5
 	if world.x > 0.0 and world.y > 0.0:
-		dot = _map_rect.position + Vector2(run.player_pos.x / world.x * _map_rect.size.x,
-			run.player_pos.y / world.y * _map_rect.size.y)
-	dot.x = clampf(dot.x, _map_rect.position.x + 3.0, _map_rect.end.x - 3.0)
-	dot.y = clampf(dot.y, _map_rect.position.y + 3.0, _map_rect.end.y - 3.0)
+		dot = _map_sheet_rect.position + Vector2(run.player_pos.x / world.x * _map_sheet_rect.size.x,
+			run.player_pos.y / world.y * _map_sheet_rect.size.y)
+	dot.x = clampf(dot.x, _map_sheet_rect.position.x + 3.0, _map_sheet_rect.end.x - 3.0)
+	dot.y = clampf(dot.y, _map_sheet_rect.position.y + 3.0, _map_sheet_rect.end.y - 3.0)
 	draw_circle(dot, 6.0, Color(0, 0, 0, 0.78))
 	draw_circle(dot, 4.2, C_GOLD)
 	# Close, and a line saying a tap outside the sheet closes it too — the plate is small on a
@@ -3671,7 +3678,7 @@ func _draw_map_village() -> void:
 	var grid: PackedInt32Array = run.village_grid
 	if grid.size() != VillageLayout.COLS * VillageLayout.ROWS:
 		return
-	var tile := _map_rect.size.x / float(VillageLayout.COLS)
+	var tile := _map_sheet_rect.size.x / float(VillageLayout.COLS)
 	var band := tile * 80.0 / float(VillageLayout.TILE)
 	var deck := tile * 208.0 / float(VillageLayout.TILE)
 	var walk_c := _col("tint", "#d8c49c").darkened(0.50)
@@ -3681,8 +3688,8 @@ func _draw_map_village() -> void:
 			var m := int(grid[ty * VillageLayout.COLS + tx])
 			if m == 0:
 				continue
-			var cx := _map_rect.position.x + (float(tx) + 0.5) * tile
-			var cy := _map_rect.position.y + (float(ty) + 0.5) * tile
+			var cx := _map_sheet_rect.position.x + (float(tx) + 0.5) * tile
+			var cy := _map_sheet_rect.position.y + (float(ty) + 0.5) * tile
 			if (m & VillageLayout.N) != 0:
 				draw_rect(Rect2(cx - band * 0.5, cy - tile * 0.5, band, tile * 0.5), walk_c)
 			if (m & VillageLayout.S) != 0:
