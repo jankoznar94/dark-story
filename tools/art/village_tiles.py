@@ -58,6 +58,12 @@ S_BASE = (198, 164, 92)
 S_D1 = (176, 141, 72)
 S_D2 = (216, 184, 112)
 S_EDGE = (168, 130, 64)
+## ⚠️  A SHADOW IS NOT A TRANSPARENCY. Semi-transparent black over the green canopy produced a GREEN
+## shadow — it read as the trees showing through beneath the deck, not as shade (Jan: "vadí to, že ten
+## stín je zelený, působí to, jak kdyby pod tím prosvítaly stromy"). Every shadow that falls on the
+## JUNGLE is drawn in this opaque warm tone instead; black at low alpha is only used where the shadow
+## falls on WOOD, where it correctly darkens the planks.
+SHADOW = (41, 29, 18)
 
 DIRS = {1: (0, -1), 2: (0, 1), 4: (1, 0), 8: (-1, 0)}
 ARCHETYPES = [1, 3, 5, 7, 15]
@@ -78,9 +84,9 @@ def band_rect(direction):
 def band(d, direction):
     x0, y0, x1, y1 = band_rect(direction)
     if direction in ("N", "S"):
-        d.rectangle((x1, y0, x1 + 8, y1), fill=(0, 0, 0, 80))
+        d.rectangle((x1, y0, x1 + 8, y1), fill=SHADOW)
     else:
-        d.rectangle((x0, y1, x1, y1 + 8), fill=(0, 0, 0, 80))
+        d.rectangle((x0, y1, x1, y1 + 8), fill=SHADOW)
     d.rectangle((x0, y0, x1, y1), fill=P_BASE)
     if direction in ("N", "S"):
         d.rectangle((x0, y0, x0 + BEAM, y1), fill=P_RIM)
@@ -175,7 +181,7 @@ def tile(mask):
     # bottom-right of every deck and nothing on the top-left — Jan read that asymmetrical crescent
     # as "kolem ochozu je mezera". A ring of the same width all the way round reads as "the deck
     # lies ON the canopy", which is what it is.
-    d.ellipse((CX - EDGE - 6, CY - EDGE - 6, CX + EDGE + 6, CY + EDGE + 6), fill=(0, 0, 0, 70))
+    d.ellipse((CX - EDGE - 6, CY - EDGE - 6, CX + EDGE + 6, CY + EDGE + 6), fill=SHADOW)
     for bit, name in ((1, "N"), (2, "S"), (4, "E"), (8, "W")):
         if mask & bit:
             band(d, name)
