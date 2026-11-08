@@ -468,6 +468,15 @@ var river_cross_point := Vector2.ZERO
 var floor_cells := PackedByteArray()
 ## Fog of war, one byte per cell: 1 once the hero has been within `FOG_REVEAL` of it. A cell
 ## that is still 0 is drawn BLACK — nothing about the map leaks before he walks there.
+## THE VILLAGE'S OWN FOG GRID, one flag per 512 px ART tile (`VillageLayout.COLS x ROWS`).
+## ⚠️  The corridor's grid above cannot serve here: it is `COLS x ROWS` cells of 60 px = 2460 x 5940
+## and the settlement is 6144 x 6144 world px, so the fog walk simply does not exist there — which
+## is why the village used to mark EVERYTHING explored and its map drew the whole layout on the
+## first frame ("stojím na začátku a vidím tvar mapy" — Jan, Nov 2026). The world stays unveiled (the
+## walkways are what tell the player where he may go); the MAP is what reveals as he walks.
+var village_explored := PackedByteArray()
+var village_explored_version := 0
+
 var explored_cells := PackedByteArray()
 ## Bumped every time a cell flips 0 -> 1. The screen bakes the fog veil into a texture and
 ## re-bakes it ONLY when this changes, so a frame with no discovery uploads nothing.
@@ -692,6 +701,10 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 		explored_cells.resize(COLS * ROWS)
 		explored_cells.fill(1)
 		explored_version += 1
+		# …and the MAP's own grid starts EMPTY: the settlement is discovered by walking it.
+		village_explored.resize(VillageLayout.COLS * VillageLayout.ROWS)
+		village_explored.fill(0)
+		village_explored_version = 0
 	is_boss = zone_index >= _prog.total_zones(act_id) - 1
 	# The hero starts in the middle of the start clearing, and the fog is lifted only around him.
 	player_pos = start_point
@@ -2474,6 +2487,9 @@ func nearest_floor_point(p: Vector2, r: float = MON_RADIUS) -> Vector2:
 ## Mark every cell the hero can see as explored. Called once per step; 5x5 to 7x7 cells is all
 ## the work a 60 px grid needs, so the fog costs nothing per frame.
 func _reveal_around(p: Vector2) -> void:
+	if not village.is_empty():
+		_reveal_village(p)
+		return
 	var c := cell_of(p)
 	var reach := int(ceil(FOG_REVEAL / TILE))
 	for y in range(c.y - reach, c.y + reach + 1):
@@ -2498,6 +2514,37 @@ func _mark_explored(x: int, y: int) -> void:
 		return
 	explored_cells[i] = 1
 	explored_version += 1
+
+
+## THE VILLAGE'S REVEAL — one flag per ART tile, marked when the hero has been within `FOG_REVEAL`
+## of the tile's own rectangle. Finer would be a second pixel grid for one zone; coarser would give
+## the player a quarter of the settlement for standing still. The map reads this and nothing else,
+## so what he sees on paper is exactly what he has walked.
+func _reveal_village(p: Vector2) -> void:
+	if village_explored.size() != VillageLayout.COLS * VillageLayout.ROWS:
+		return
+	var side := float(VillageLayout.TILE) * village_scale
+	for ty in VillageLayout.ROWS:
+		for tx in VillageLayout.COLS:
+			var i := ty * VillageLayout.COLS + tx
+			if village_explored[i] == 1:
+				continue
+			var x0 := float(tx) * side
+			var y0 := float(ty) * side
+			var dx := maxf(maxf(x0 - p.x, 0.0), p.x - (x0 + side))
+			var dy := maxf(maxf(y0 - p.y, 0.0), p.y - (y0 + side))
+			if Vector2(dx, dy).length() <= FOG_REVEAL:
+				village_explored[i] = 1
+				village_explored_version += 1
+
+
+## Has the hero been near this settlement tile? The map's only question.
+func is_village_tile_explored(tx: int, ty: int) -> bool:
+	if tx < 0 or ty < 0 or tx >= VillageLayout.COLS or ty >= VillageLayout.ROWS:
+		return false
+	if village_explored.size() != VillageLayout.COLS * VillageLayout.ROWS:
+		return false
+	return village_explored[ty * VillageLayout.COLS + tx] == 1
 
 
 ## One pack per STOP along the corridor, the hero's own clearing left EMPTY. `minArea` is honoured
@@ -3715,6 +3762,22 @@ func _swing_hand(index: int, is_off: bool) -> void:
 	events.append("crit" if crit else "hit")
 	if int(m["hp"]) <= 0:
 		_kill(index)
+
+
+## The live level, the XP the next one costs, and the fraction between them — read by the HUD's XP
+## line. ⚠️  They read the SAME threshold `_award_xp` spends, so a bar drawn from these can never
+## promise progress the rules do not pay. Nothing in the rules reads them back.
+func hero_level() -> int:
+	return int(_state.hero().get("level", 1))
+
+
+func xp_need() -> int:
+	var lvl := hero_level()
+	return lvl * 40 if lvl <= 2 else lvl * 80
+
+
+func xp_frac() -> float:
+	return clampf(float(_state.hero().get("xp", 0)) / maxf(1.0, float(xp_need())), 0.0, 1.0)
 
 
 ## XP and LEVEL-UPS — the same rule as `arena_screen.apply_levels()`: 40 XP buys level 2, then

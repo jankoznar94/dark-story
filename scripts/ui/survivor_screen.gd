@@ -113,6 +113,24 @@ const C_GOLD := Color("#d8b876")
 const C_RED := Color("#d4524a")
 const C_BAR_BG := Color(0, 0, 0, 0.55)
 
+## ── the two orbs and the XP line (Jan, Nov 2026) ─────────────────────────────────────────────
+## "HP bar a mana bar budou barevné koule… lehká textura, ať to není jen jednolitý barevný kruh a
+## má to hloubku." Both are drawn from code — no texture, no glow — and the depth comes from
+## FLAT passes, not from a gradient shader: a dark glass body, the liquid up to its level, a dark
+## inner rim, a thin lit rim and one soft highlight. Desaturated on purpose (Jan's astigmatism).
+const ORB_R := 32.0
+## Gap between the two orbs.
+const ORB_SEP := 8.0
+## Distance from the screen's right edge to the health orb.
+const ORB_PAD := 14.0
+## Bottom of the orbs above the screen's edge: the XP line and the loot tally live UNDER them, and
+## a phone's home-gesture strip owns the last ~20 px.
+const ORB_BOTTOM := 46.0
+const ORB_HP := Color("#c0493f")
+const ORB_MANA := Color("#3f6ea8")
+const ORB_GLASS := Color("#141009")
+const XP_BAR_H := 7.0
+
 var run = null
 var _state
 var _find_item: Callable
@@ -919,7 +937,10 @@ func _play_events() -> void:
 				Sfx.play_global(Sfx.CUE_THUNDER_CLAP)
 				_say("Elita se svými otroky")
 			"zone":
-				_say("Oblast vyčištěna")
+				# NO word for an emptied area (Jan, Nov 2026): the toast said nothing the player
+				# could not already see, and it fired over the fight he was still in. The rules
+				# keep emitting the cue — the screen simply has nothing to say about it.
+				pass
 			"cleared":
 				# NO victory sting: an emptied corridor is not a win any more, it is QUIET, and
 				# the player's next move is the exit — say that instead of congratulating him.
@@ -3018,9 +3039,10 @@ func _draw_hud() -> void:
 	# element — and since the five icons now own the whole right half of the bar, the INFO has to
 	# fit in the left-hand gap they leave, not spread across the row.
 	draw_string(font, Vector2(52, 21), _clock(), HORIZONTAL_ALIGNMENT_LEFT, 70.0, 12, C_GOLD)
-	draw_string(font, Vector2(10, 42), "Oblasti %d/%d" % [run.cleared_zones(), run.zones.size()],
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 13, C_TEXT)
-	draw_string(font_r, Vector2(102, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+	# NO "Oblasti X/Y" counter (Jan, Nov 2026): the act's chain of zones is the player's progress
+	# already, and a number in the corner measured something he never acts on. The kill tally
+	# stays — it is the one line that moves while he fights.
+	draw_string(font_r, Vector2(10, 42), "%d zabito" % run.kills, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
 
 	# ONE ROW OF ICON PLATES, right to left: out / map / hero / wheel editor / portal. Nothing hangs
 	# under the bar any more, and no control carries a word.
@@ -3032,28 +3054,21 @@ func _draw_hud() -> void:
 	if _has_portal_scroll():
 		_draw_bar_button(_portal_rect, "portal", Color(0x5b / 255.0, 0x7d / 255.0, 0x8c / 255.0))
 
-	# HP bar, above the thumb row
-	# ⚠️  Not flush with the bottom: a phone's home-gesture strip sits there and a bar a few
-	# pixels from the edge is read as cut off.
-	var bar_h := 14.0
-	var bar_y := size.y - bar_h - 26.0
-	draw_rect(Rect2(0, bar_y, size.x, bar_h), C_BAR_BG)
-	var frac := clampf(float(run.hp) / maxf(1.0, float(run.max_hp)), 0.0, 1.0)
-	draw_rect(Rect2(0, bar_y, size.x * frac, bar_h), C_RED)
-	draw_rect(Rect2(0, bar_y, size.x, bar_h), Color(0, 0, 0, 0.5), false, 1.0)
-	draw_string(font, Vector2(8, bar_y + 11), "%d / %d" % [run.hp, run.max_hp],
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_TEXT)
+	# ══ THE ORBS ════════════════════════════════════════════════════════════════════════════
+	# Jan, Nov 2026: "HP bar a mana bar budou barevné koule." A bar is a line the eye reads as a
+	# timer; a body's reserve is a VOLUME, and a round body reads as one at a glance. Right-hand
+	# corner, above the XP line — the action wheel owns the bottom-left, so the health cannot sit
+	# there. No glow, no pulse: the depth is three flat passes (glass, liquid, rim + highlight).
+	_draw_orb(hp_orb_centre(), ORB_R, clampf(float(run.hp) / maxf(1.0, float(run.max_hp)), 0.0, 1.0),
+		ORB_HP, "%d" % run.hp)
+	_draw_orb(mana_orb_centre(), ORB_R,
+		clampf(float(run.mana) / maxf(1.0, float(run.max_mana)), 0.0, 1.0),
+		ORB_MANA, "%d" % int(run.mana))
 
-	# MANA, just above the health: the pool every class spell is paid from. A fight that can
-	# refuse a spell for "Malo many" without ever showing the pool is a fight that hides its own
-	# rule — the duel shows the same number as a thin bar.
-	var mana_h := 8.0
-	var mana_y := bar_y - mana_h - 3.0
-	draw_rect(Rect2(0, mana_y, size.x, mana_h), C_BAR_BG)
-	var mfrac := clampf(float(run.mana) / maxf(1.0, float(run.max_mana)), 0.0, 1.0)
-	draw_rect(Rect2(0, mana_y, size.x * mfrac, mana_h), Color(UIKit.MOD_BLUE))
-	draw_string(font_r, Vector2(8, mana_y - 2.0), "%d / %d" % [int(run.mana), run.max_mana],
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 9, C_DIM)
+	# THE XP LINE, across the whole bottom edge: the one number that only ever grows, so it is a
+	# line rather than a body. Level on its left, because "how far to the next one" needs the one
+	# number that says where he stands.
+	_draw_xp_line(font, font_r)
 
 	# Floating stick
 	if _pointer_down and _stick_vec != Vector2.ZERO:
@@ -3074,6 +3089,91 @@ func _draw_hud() -> void:
 		run.items_taken, _plural(run.items_taken, "predmet", "predmety", "predmetu")]
 	draw_string(font_r, Vector2(8, size.y - 6), _with_diacritics(tally),
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, C_DIM)
+
+
+## Where the health orb sits: the right-hand corner, above the XP line. Health is the one readout
+## the player must find without looking for it, and the action wheel already owns the bottom-left
+## — so the corner his eye falls on when it leaves the fight is the free one.
+func hp_orb_centre() -> Vector2:
+	return Vector2(size.x - ORB_PAD - ORB_R, size.y - ORB_BOTTOM - ORB_R)
+
+
+## The mana orb sits BESIDE the health, on the inside: the two pools are read together ("can I
+## still cast?"), and a stack would put one of them over the thumb's own travel.
+func mana_orb_centre() -> Vector2:
+	return hp_orb_centre() - Vector2(ORB_R * 2.0 + ORB_SEP, 0.0)
+
+
+## ONE orb, drawn flat: a dark glass disc, the liquid as the bottom segment of it, a dark ring just
+## inside the rim (that ring IS the depth), a thin lit rim on the upper half and one soft highlight.
+## No glow, no bloom — Jan's rule, and a glow also eats the number.
+##
+## ⚠️  Two draws for the level, not a clip: the whole disc is painted in the liquid colour and the
+## cap ABOVE the level is painted back over in the glass colour as ONE convex polygon (a circular
+## segment is convex). A clip region would be a shader; a per-row rect would be 30 draws per orb
+## per frame, which is the trap the fog veil taught.
+func _draw_orb(c: Vector2, r: float, frac: float, liquid: Color, value_text: String) -> void:
+	var f := clampf(frac, 0.0, 1.0)
+	# Glass: an EMPTY orb must still read as a container, not as a hole in the HUD.
+	draw_circle(c, r, ORB_GLASS)
+	if f > 0.002:
+		draw_circle(c, r, liquid)
+		var level := c.y + r - f * 2.0 * r
+		var dy := c.y - level
+		var theta := acos(clampf(dy / r, -1.0, 1.0))
+		if theta > 0.01:
+			var cap := PackedVector2Array()
+			var steps := 24
+			for i in steps + 1:
+				var a := -PI * 0.5 - theta + 2.0 * theta * float(i) / float(steps)
+				cap.append(c + Vector2(cos(a), sin(a)) * r)
+			draw_colored_polygon(cap, ORB_GLASS)
+			# The surface: one lit chord. Without it the liquid simply stops somewhere inside a
+			# circle and the level cannot be read at a glance.
+			if f < 0.995:
+				var half := sqrt(maxf(0.0, r * r - dy * dy))
+				draw_line(c + Vector2(-half, level - c.y), c + Vector2(half, level - c.y),
+					liquid.lightened(0.32), 1.5, true)
+	# Depth, three flat passes: a dark ring inside the rim, the rim itself, a lit arc on top.
+	draw_arc(c, r - 2.0, 0.0, TAU, 40, Color(0, 0, 0, 0.55), 3.0, true)
+	draw_arc(c, r, 0.0, TAU, 40, Color(0x23 / 255.0, 0x1c / 255.0, 0x15 / 255.0, 0.98), 2.0, true)
+	draw_arc(c, r - 1.5, PI * 1.08, PI * 1.92, 18, Color(1, 1, 1, 0.13), 1.5, true)
+	# The glass texture: two hairlines and one soft highlight. Static, so it never pulls the eye
+	# off the fight — it is only what stops the orb reading as a flat coloured coin.
+	draw_arc(c, r * 0.62, PI * 1.12, PI * 1.62, 10, Color(1, 1, 1, 0.07), 1.0, true)
+	draw_arc(c, r * 0.40, PI * 1.18, PI * 1.58, 8, Color(1, 1, 1, 0.06), 1.0, true)
+	draw_circle(c + Vector2(-r * 0.34, -r * 0.40), r * 0.20, Color(1, 1, 1, 0.10))
+	draw_circle(c + Vector2(-r * 0.40, -r * 0.46), r * 0.10, Color(1, 1, 1, 0.12))
+	# The number: bold, with a dark offset under it so it survives on the liquid AND on the empty
+	# glass. One value only — "175 / 175" does not fit in a 64 px orb, and the pool's MAX is the
+	# number the player never acts on.
+	if value_text != "":
+		var fnt := UIFonts.bold()
+		draw_string(fnt, c + Vector2(-r, 5.0), value_text, HORIZONTAL_ALIGNMENT_CENTER, r * 2.0,
+			13, Color(0, 0, 0, 0.60))
+		draw_string(fnt, c + Vector2(-r, 4.0), value_text, HORIZONTAL_ALIGNMENT_CENTER, r * 2.0,
+			13, C_TEXT)
+
+
+## The XP line: the full width of the bottom edge, gold, with the hero's LEVEL at its left end. The
+## fraction comes from the RUN's own rule (`xp_frac()` — the same threshold `_award_xp` spends), so
+## the HUD can never show progress the game does not pay. A line, not an orb: XP only ever grows,
+## and a body with a level in it would read as a third pool to manage.
+func _draw_xp_line(font, _font_r) -> void:
+	var y := size.y - 24.0
+	var x0 := 10.0
+	var w := size.x - 20.0
+	var track := Rect2(x0, y, w, XP_BAR_H)
+	draw_rect(track, Color(0, 0, 0, 0.62))
+	var frac := clampf(run.xp_frac(), 0.0, 1.0) if run != null else 0.0
+	if frac > 0.0:
+		draw_rect(Rect2(x0, y, w * frac, XP_BAR_H), C_GOLD)
+		# The lit top edge of the fill — 1 px, and it is what makes flat gold read as a filled
+		# channel instead of a painted stripe.
+		draw_rect(Rect2(x0, y, w * frac, 1.5), C_GOLD.lightened(0.30))
+	draw_rect(track, Color(0, 0, 0, 0.55), false, 1.0)
+	var lvl: int = run.hero_level() if run != null else 1
+	draw_string(font, Vector2(x0, y - 5.0), "Lv %d" % lvl, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 10, C_DIM)
 
 
 ## ONE top-bar plate. Every control in the bar is this same square, so a thumb learns one target
@@ -3587,16 +3687,18 @@ func _map_grid_cells() -> Vector2i:
 func _layout_map() -> void:
 	var grid := _map_grid_cells()
 	var top := TOP_BAR + 46.0
-	var bottom := size.y - 124.0
-	var avail := Vector2(size.x - 30.0, maxf(160.0, bottom - top))
+	# ⚠️  The sheet stops ABOVE the health and mana ORBS (their top edge is `size.y - 78`): a close
+	# button drawn over a pool reads as a broken HUD, and the orbs live in the bottom-right corner
+	# where a centred button used to reach.
+	var bottom := size.y - 176.0
+	var avail := Vector2(size.x - 30.0, maxf(120.0, bottom - top))
 	var cell := minf(avail.x / float(grid.x), avail.y / float(grid.y))
 	_map_cell = cell
 	var w := cell * float(grid.x)
 	var h := cell * float(grid.y)
 	_map_sheet_rect = Rect2((size.x - w) * 0.5, top + (avail.y - h) * 0.5, w, h)
-	# The close button sits ABOVE the HP/mana bars (they are 48 px off the bottom edge), never on
-	# them: a control that covers the health bar is one the player reads as a broken HUD.
-	_map_close_rect = Rect2(size.x * 0.5 - 72.0, bottom + 14.0, 144.0, 42.0)
+	# The close button sits under the sheet and above the orbs, never on either.
+	_map_close_rect = Rect2(size.x * 0.5 - 72.0, bottom + 12.0, 144.0, 40.0)
 
 
 ## One flat block per cell, in the map's own pixels. Re-baked only when the explored set changed
@@ -3685,6 +3787,11 @@ func _draw_map_village() -> void:
 	var deck_c := _col("wood", "#4d3a26").lightened(0.12)
 	for ty in VillageLayout.ROWS:
 		for tx in VillageLayout.COLS:
+			# ONLY WHAT HE WALKED (Jan, Nov 2026): the settlement used to be on paper in full on the
+			# first frame, so the player saw the shape of the zone and where the paths lead without
+			# moving. Same rule as the corridor: the sheet shows exactly what the fog recorded.
+			if not bool(run.is_village_tile_explored(tx, ty)):
+				continue
 			var m := int(grid[ty * VillageLayout.COLS + tx])
 			if m == 0:
 				continue

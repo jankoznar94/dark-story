@@ -28,6 +28,7 @@ const SurvivorRun := preload("res://scripts/combat/survivor_run.gd")
 const SurvivorScreen := preload("res://scripts/ui/survivor_screen.gd")
 const ActionWheel := preload("res://scripts/combat/action_wheel.gd")
 const Progression := preload("res://scripts/combat/progression.gd")
+const VillageLayout := preload("res://scripts/ui/village_layout.gd")
 
 const STEP := 1.0 / 60.0
 
@@ -87,6 +88,7 @@ func _initialize() -> void:
 	_test_refresh_from_save()
 	_test_screen_hero_button()
 	_test_screen_map()
+	_test_village_map()
 
 	for f in _failures:
 		print("  FAIL: %s" % f)
@@ -2049,6 +2051,40 @@ func _test_screen_map() -> void:
 	screen._on_press(screen._map_sheet_rect.get_center(), 0)
 	_check(not screen._map_open,
 		"a tap in the middle of the screen must NOT reopen the map (the button used to grow there)")
+	screen.queue_free()
+
+
+## Jan, Nov 2026: "Stojím na začátku lokace, ještě jsem se nepohnul, a už přesně vidím tvar mapy,
+## kam cesty vedou." The SETTLEMENT (theme "Stromová vesnice") was the one zone with no fog at all —
+## `explored_cells` filled with 1s and the map drawn from geometry — so its sheet was complete on
+## the first frame. The gate: at the spawn only the tiles around the hero are on paper, the far
+## corner is NOT, and walking to the exit does reveal it.
+func _test_village_map() -> void:
+	_log("  section: village_map")
+	var screen = SurvivorScreen.new()
+	root.add_child(screen)
+	screen.size = Vector2(390, 844)
+	screen.setup(_state, _find_item, _loot, 0, 0, 6)
+	var run = screen.run
+	_check(not run.village.is_empty(), "zone 6 must assemble as the village for this check")
+	if run.village.is_empty():
+		screen.queue_free()
+		return
+	# The spawn is not a fixed tile — the run places the hero on the entry ring — so the tile is
+	# DERIVED from where he actually stands. Hard-coding `VillageLayout.ENTRY` measured the wrong
+	# tile and read as "the reveal does nothing".
+	var side: float = float(VillageLayout.TILE) * float(run.village_scale)
+	var spawn_tile := Vector2i(int(run.player_pos.x / side), int(run.player_pos.y / side))
+	_check(run.is_village_tile_explored(spawn_tile.x, spawn_tile.y),
+		"the tile the hero SPAWNS in must be explored: %s" % str(spawn_tile))
+	_check(not run.is_village_tile_explored(5, 0),
+		"the far corner of the settlement must NOT be explored before he walks there")
+	# The reveal is the game's own call, made on the point the exit really is.
+	run._reveal_village(VillageLayout.EXIT_POINT * VillageLayout.SCALE)
+	_check(run.is_village_tile_explored(5, 3),
+		"the exit tile must be explored once the hero has walked to it")
+	_check(not run.is_village_tile_explored(5, 0),
+		"a tile the hero never came near must stay unexplored")
 	screen.queue_free()
 
 
