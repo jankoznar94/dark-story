@@ -58,6 +58,7 @@ func _initialize() -> void:
 	_test_walk_over_pays_into_the_save()
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
+	_test_telegraph_and_iframes()
 	_test_bodies_are_solid()
 	_test_reach_is_the_drawn_circle()
 	_test_weapon_pace_and_two_hands()
@@ -504,6 +505,154 @@ func _test_contact_damage_kills() -> void:
 	_check(run.finished and run.outcome == "dead",
 		"contact damage must be able to end the run, hp=%d finished=%s" % [run.hp, str(run.finished)])
 	_check(run.hp == 0, "hp must clamp at 0, got %d" % run.hp)
+
+# ============================================================================ telegraph
+
+## THE TELEGRAPH, the hero's reaction window and the crit's interrupt. Together they are what
+## turns "a body touched me, therefore I lost HP" into a fight the player can read and answer.
+## Asserted as RULES (timing, events, the record's own numbers) — the drawing is not the claim.
+func _test_telegraph_and_iframes() -> void:
+	_log("  section: telegraph_and_iframes")
+	# --- A. a committed blow is announced BEFORE it lands -------------------------------
+	var run := _fresh()
+	run.hp = 999999
+	run.max_hp = 999999
+	run.defense = 0
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	_pin_melee_at_contact(run, m, 1.5)
+	var hp0 := int(run.hp)
+	var committed := false
+	for i in 90:
+		run.step(STEP, Vector2.ZERO)
+		if float(m["atk_t"]) >= 0.0:
+			committed = true
+			break
+	_check(committed, "a body in contact must COMMIT to a blow, atk_t=%.2f" % float(m["atk_t"]))
+	_check(int(run.hp) == hp0,
+		"the frame that ANNOUNCES a blow must not deal damage, hp=%d" % int(run.hp))
+	var wind := float(m.get("windup", 0.0))
+	_check(absf(wind - SurvivorRun.WINDUP_FRAC * 1.5) < 0.02,
+		"the wind-up must be DERIVED from atk_cd (0.4 x 1.5 = 0.6), got %.3f" % wind)
+	var spent := 0.0
+	while int(run.hp) == hp0 and spent < wind + 0.3:
+		run.step(STEP, Vector2.ZERO)
+		spent += STEP
+	_check(int(run.hp) < hp0,
+		"the announced blow must land when its window closes (asked %.2f s), hp=%d" % [wind, int(run.hp)])
+	_check(spent >= wind - 0.05,
+		"the blow must NOT land before its window closes: landed after %.2f s of %.2f" % [spent, wind])
+
+	# --- B. leaving the reach during the window makes it WHIFF --------------------------
+	var run2 := _fresh()
+	run2.hp = 999999
+	run2.max_hp = 999999
+	run2.defense = 0
+	run2.monsters.clear()
+	run2._spawn_one()
+	var m2: Dictionary = run2.monsters[0]
+	_pin_melee_at_contact(run2, m2, 1.5)
+	for i in 90:
+		run2.step(STEP, Vector2.ZERO)
+		if float(m2["atk_t"]) >= 0.0:
+			break
+	var hpb := int(run2.hp)
+	run2.events.clear()
+	var walked := 0.0
+	while walked < float(m2["windup_total"]) + 0.15:
+		run2.step(STEP, Vector2(-1, 0))
+		walked += STEP
+	_check(int(run2.hp) == hpb,
+		"a blow must MISS a hero who left the reach during its window, hp %d -> %d" % [hpb, int(run2.hp)])
+	_check(run2.events.has("whiff"),
+		"a missed blow must be reported to the screen (events=%s)" % str(run2.events))
+
+	# --- C. the hero's reaction window: two bodies, one blow -----------------------------
+	var run3 := _fresh()
+	run3.hp = 999999
+	run3.max_hp = 999999
+	run3.defense = 0
+	run3.monsters.clear()
+	run3._spawn_one()
+	var a: Dictionary = run3.monsters[0]
+	_pin_melee_at_contact(run3, a, 1.5)
+	var b: Dictionary = run3._make_monster(run3._pick_row(0), run3.player_pos + Vector2(0, 58), 1)
+	b["ranged"] = false
+	b["speed"] = 0.0
+	b["atk_cd"] = 1.5
+	b["atk_ready"] = 0.0
+	b["hp"] = 999999
+	b["dmg_min"] = 10
+	b["dmg_max"] = 10
+	run3.monsters.append(b)
+	var hp3 := int(run3.hp)
+	var ticks3 := 0
+	while ticks3 < 240 and int(run3.hp) == hp3:
+		run3.step(STEP, Vector2.ZERO)
+		ticks3 += 1
+	var first_drop := hp3 - int(run3.hp)
+	# Right after the first blow the second body's window is still closing (or already closed):
+	# nothing may be taken inside `HERO_IFRAME_MS`.
+	var dropped_twice := false
+	for i in 20:
+		run3.step(STEP, Vector2.ZERO)
+		if first_drop > 0 and (hp3 - int(run3.hp)) > first_drop + 1:
+			dropped_twice = true
+			break
+	_check(first_drop > 0, "one of the two bodies must land its blow")
+	_check(not dropped_twice,
+		"two blows inside the hero's reaction window must count as ONE: first=%d, then %d"
+		% [first_drop, hp3 - int(run3.hp)])
+
+	# --- D. a CRIT cancels the wind-up; a normal hit only rattles it ---------------------
+	var run4 := _fresh(12345, false)
+	run4.hp = 999999
+	run4.max_hp = 999999
+	run4.defense = 0
+	run4.monsters.clear()
+	run4._spawn_one()
+	var m4: Dictionary = run4.monsters[0]
+	_pin_melee_at_contact(run4, m4, 3.0)
+	m4["windup"] = SurvivorRun.WINDUP_MAX
+	for i in 120:
+		run4.step(STEP, Vector2.ZERO)
+		if float(m4["atk_t"]) >= 0.0:
+			break
+	_check(float(m4["atk_t"]) >= 0.0, "the body must be committed before the interrupt is tested")
+	# The swing clock is armed ON demand: waiting for the next natural beat would let the blow
+	# land first and the section would then measure a hit after a whiff, not an interrupt.
+	run4.attack_held = true
+	run4.crit_chance = 0.0
+	run4._main_clock = 0.0
+	run4.events.clear()
+	run4.step(STEP, Vector2.ZERO)
+	_check(run4.events.has("hit"), "the held attack must land on a committed body")
+	_check(float(m4["atk_t"]) >= 0.0,
+		"a NORMAL hit must only rattle a wind-up, not cancel it")
+	run4.crit_chance = 100.0
+	run4._main_clock = 0.0
+	run4.events.clear()
+	run4.step(STEP, Vector2.ZERO)
+	_check(run4.events.has("interrupt"),
+		"a CRIT must cancel the committed blow and say so (events=%s)" % str(run4.events))
+	_check(float(m4["atk_t"]) < 0.0, "the cancelled blow must not stay committed, atk_t=%.2f" % float(m4["atk_t"]))
+
+
+## One body, in contact, melee, standing still, with a chosen attack speed. Shared by the
+## telegraph sections so a change to the spawn table cannot retarget the thing being measured.
+func _pin_melee_at_contact(run: SurvivorRun, m: Dictionary, atk_cd: float) -> void:
+	m["ranged"] = false
+	m["speed"] = 0.0
+	m["keep_range"] = 0.0
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	m["dmg_min"] = 10
+	m["dmg_max"] = 10
+	m["atk_cd"] = atk_cd
+	m["windup"] = clampf(atk_cd * SurvivorRun.WINDUP_FRAC, SurvivorRun.WINDUP_MIN, SurvivorRun.WINDUP_MAX)
+	m["atk_ready"] = 0.0
+	m["pos"] = run.player_pos + Vector2(58, 0)
 
 
 # ============================================================================ ranged units

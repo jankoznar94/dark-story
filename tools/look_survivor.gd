@@ -28,6 +28,10 @@ var _stick := "1"
 ## Wait for a blow to be LANDING before the shot. A screenshot of a swing that is not happening
 ## photographs the game as if it had no attack animation at all.
 var _wait_swing := true
+## Hold the frame until a body is COMMITTED to a blow, so the telegraph ring is in the shot.
+## A look-frame of a fight has to show the thing being judged: an idle pack photographs the
+## absence of the feature as convincingly as its presence.
+var _wait_telegraph := false
 ## Place N bodies in the hero's reach before the shot. A look-frame needs a fight IN it; waiting
 ## for the spawner to walk one over costs the timeout and photographs an empty field.
 var _pack := 5
@@ -166,6 +170,8 @@ func _initialize() -> void:
 				_stick = args[i + 1]
 			"--swing":
 				_wait_swing = args[i + 1] != "0"
+			"--telegraph":
+				_wait_telegraph = args[i + 1] != "0"
 			"--pack":
 				_pack = int(args[i + 1])
 			"--spot":
@@ -288,6 +294,18 @@ func _process(_delta: float) -> bool:
 					_screen.run._pick_target(), str(_screen.run.facing),
 					(_screen.run.monsters[0]["pos"] as Vector2).distance_to(_screen.run.player_pos)
 						if not _screen.run.monsters.is_empty() else -1.0])
+	if _wait_telegraph and _screen.run != null:
+		var committed := false
+		for m in _screen.run.monsters:
+			if float(m.get("atk_t", -1.0)) >= 0.0:
+				committed = true
+				break
+		if not committed:
+			_stall += 1
+			if _stall < 180:
+				_frames -= 1
+				return false
+			print("look_survivor: no committed body in the window (alive=%d)" % _screen.run.monsters.size())
 	if _map and _screen != null:
 		# Through the REAL press path, so the frame also proves the button is hittable where it is
 		# drawn — a private `_open_map()` would photograph a map nobody can open.

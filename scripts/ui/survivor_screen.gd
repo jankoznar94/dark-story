@@ -46,6 +46,7 @@ const TownPortal := preload("res://scripts/items/town_portal.gd")
 const UIKit := preload("res://scripts/ui/ui_kit.gd")
 const UIFonts := preload("res://scripts/ui/ui_fonts.gd")
 const Sfx := preload("res://scripts/audio/sfx.gd")
+const HitStop := preload("res://scripts/ui/hit_stop.gd")
 
 const STEP := 1.0 / 60.0
 const MAX_STEPS_PER_FRAME := 6
@@ -898,14 +899,29 @@ func _play_events() -> void:
 		match str(cue):
 			"hit":
 				Sfx.play_global(Sfx.CUE_MELEE_HIT)
+				# THE 30 ms THAT MAKE A BLOW AN IMPACT. Presentation only: the rules keep
+				# stepping on their own fixed accumulator, so no tick is split and no rule sees
+				# a partial one — the fight is simply a hair longer in wall time (see HitStop).
+				HitStop.freeze(30)
 				# The phone's half of "something happened". A buzz is a bonus, never the
 				# message: on an iPhone or in a desktop browser there is no motor at all.
 				Juice.haptic_hit()
 			"crit":
 				Sfx.play_global(Sfx.CUE_MELEE_CRIT)
 				Juice.haptic_crit()
+				HitStop.freeze(65)
 			"kill":
 				Sfx.play_global(Sfx.CUE_BLUNT_HIT)
+				HitStop.freeze(45)
+			"interrupt":
+				# A crit landing into a telegraph CANCELS the blow. It has to be audible as a
+				# different event from a hit, or the player never learns the rule.
+				Sfx.play_global(Sfx.CUE_COUNTER)
+				HitStop.freeze(85)
+			"whiff":
+				# The blow missed because he stepped out of it. Silence here reads as a broken
+				# monster; the dodge cue is the whoosh of something finding nothing.
+				Sfx.play_global(Sfx.CUE_DODGE)
 			"hurt":
 				Sfx.play_global(Sfx.CUE_HURT)
 				_flash = 1.0
@@ -2664,6 +2680,8 @@ func _draw_portal() -> void:
 
 func _draw_actors() -> void:
 	# Loot first: it lies ON the ground, so a body always covers it.
+	for c in run.corpses:
+		_draw_corpse(c)
 	var actors: Array = []
 	for m in run.monsters:
 		actors.append({"y": (m["pos"] as Vector2).y, "kind": "monster", "ref": m})
@@ -2674,6 +2692,22 @@ func _draw_actors() -> void:
 			_draw_monster(a["ref"])
 		else:
 			_draw_hero()
+
+
+## A body that died a moment ago, fading into the ground. Rules keep it in `run.corpses`, which
+## nothing in the fight reads — this is the only consumer, so a corpse can never be targeted or
+## collided with. Sinking rather than shrinking, because a disc that shrinks reads as a retreat.
+func _draw_corpse(c: Dictionary) -> void:
+	var base: Vector2 = (c["pos"] as Vector2) - _cam
+	if not on_screen(base, DISC_DIA, _view_world_size()):
+		return
+	var on := clampf(float(c["age"]) / SurvivorRun.CORPSE_LIFE, 0.0, 1.0)
+	var tex := _disc(str(c["face"]))
+	if tex == null:
+		return
+	var sink := 8.0 * on
+	var r := Rect2(base.x - DISC_DIA * 0.5, base.y - DISC_DIA * 0.5 + sink, DISC_DIA, DISC_DIA)
+	draw_texture_rect(tex, r, false, Color(1.0, 1.0, 1.0, (1.0 - on) * 0.75))
 
 
 func _draw_monster(m: Dictionary) -> void:
@@ -2694,6 +2728,32 @@ func _draw_monster(m: Dictionary) -> void:
 	if swinging:
 		pos += atk_dir * MON_LUNGE_PX * sin(PI * clampf(atk / MON_ATK_ANIM, 0.0, 1.0))
 	var role := str(m.get("role", "normal"))
+
+	# THE TELEGRAPH. A committed body draws a ring on the ground that CLOSES as the blow
+	# approaches; the same vocabulary as the hero's reach ring, so it reads as "an attack is
+	# coming" rather than as a buff. It sits UNDER the portrait on the ground plane, which is why
+	# it is an ellipse: a circle drawn flat on the floor is the cheapest way to say "here", and it
+	# needs no asset. The last third of the window also reddens, so a glance is enough.
+	var wind := float(m.get("atk_t", -1.0))
+	if wind >= 0.0:
+		var total := maxf(0.001, float(m.get("windup_total", 0.3)))
+		var frac := clampf(1.0 - wind / total, 0.0, 1.0)
+		# ⚠️  ON THE BODY'S OWN RIM, not on the ground. The first version drew a squashed
+		# ground ellipse at 0.82 of the disc radius — twice the body's width — and it read as an
+		# AoE marker for an attack that is single-target (caught in the frame: "a ring around the
+		# lower-left of the portrait, not lying under it"). A sweep on the rim is the mobile
+		# convention for "this body is charging" and cannot be mistaken for a ground effect.
+		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.60, -PI * 0.5,
+			-PI * 0.5 + TAU * frac, 30, Color(0.94, 0.30, 0.22, 0.55 + 0.45 * frac),
+			3.0 + 1.5 * frac, true)
+		# A faint full ring under the sweep, so the arc has a path to travel and the body reads
+		# as charging even at frac 0.
+		draw_arc(pos + Vector2(0, bob), DISC_DIA * 0.60, 0.0, TAU, 30,
+			Color(0.85, 0.30, 0.24, 0.16), 2.0, true)
+		# The body REARS BACK as it winds up: 5 px is invisible as a walk and unambiguous as a
+		# preparation, and it keeps the portrait still so the closing ring is the only motion.
+		bob = 0.0
+		pos += (m.get("atk_dir", Vector2.RIGHT) as Vector2) * (-5.0 * frac)
 
 	# THE AURA, on the ground under the elite. `Aura Enchanted` is a real rule (its slaves hit
 	# 30 % harder), and a rule the player cannot SEE is a rule he cannot play around. Drawn as

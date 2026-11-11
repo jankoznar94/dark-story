@@ -70,6 +70,26 @@ const CONTACT_PAD := 3.0
 ## alternation below the animation's readability.
 const PAIR_FLOOR := 0.15
 
+## THE ENEMY'S TELEGRAPH. Every hostile blow is ANNOUNCED: the body stops, draws the shape of
+## the attack it has committed to and only then strikes. The window is DERIVED from the
+## monster's own attack speed — `0.4 * atk_cd` — never a constant, so a fast kind telegraphs
+## briefly (hard to read, easy to beat by killing it first) and a slow one telegraphs long
+## (easy to step out of, hits like a bear). A fixed window would make `attackSpeed` a number
+## nothing in the fight can feel, which is exactly the trade this pass exists to avoid.
+const WINDUP_FRAC := 0.4
+const WINDUP_MIN := 0.18
+const WINDUP_MAX := 0.95
+## How far outside contact a committed blow still lands. Two discs are 62 px across, so 8 px is
+## a shoulder, not a step: avoiding a blow means LEAVING the reach, not twitching.
+const STRIKE_PAD := 8.0
+## The hero's own reaction window after being hurt. Without it a pack of four landing on the
+## same frame is one enormous unavoidable hit, which is the "to je nefér" report in code form.
+const HERO_IFRAME_MS := 220
+## How long a landed hit rattles a body. It PAUSES a committed wind-up (it never cancels one —
+## that is the crit's job), so a fast weapon delays a blow without making a single enemy
+## harmless and `swingMs`/IAS stay a build choice instead of a lock.
+const STAGGER_MS := 120
+
 ## --- facing ----------------------------------------------------------------
 ## Jan, Nov 2026: "hrdina může útočit na nepřítele jen když je nepřítel v dosahu zbraní a když je
 ## hrdina otočen k nepříteli čelem. Teď hrdina útočí i za sebe, když utíká a to je příliš velká
@@ -376,6 +396,12 @@ var target_id := -1
 var hp := 1
 var max_hp := 1
 var defense := 0
+## The hero's own reaction window after being hurt, in ms. NOT a rule about the hero's health —
+## it is what stops four bodies landing on one frame from reading as one unavoidable blow.
+var iframe_ms := 0
+## Bodies that died this frame, still on the ground for their short fade. Rules keep them
+## separate from `monsters` so nothing in the fight (targeting, collision, packs) can see them.
+var corpses: Array = []
 ## MAIN hand's damage range and crit (the fields the HUD and the older tests read).
 var dmg_min := 1
 var dmg_max := 2
@@ -674,6 +700,8 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	effects.clear()
 	drops.clear()
 	numbers.clear()
+	corpses.clear()
+	iframe_ms = 0
 	events.clear()
 	# ⚠️  THE VILLAGE IS CHOSEN BY THE ZONE'S THEME, not by its index: the theme row is the data
 	# that says "this place is the treetop settlement", so a village in another act (or a village
@@ -900,6 +928,8 @@ func step(dt: float, move: Vector2) -> void:
 	if finished:
 		return
 	elapsed += dt
+	# The hero's own reaction window, ticked on the rules clock so a test can read it.
+	iframe_ms = maxi(0, iframe_ms - int(round(dt * 1000.0)))
 	if swing_age >= 0.0:
 		swing_age += dt
 	if swing_age_off >= 0.0:
@@ -926,6 +956,7 @@ func step(dt: float, move: Vector2) -> void:
 	_age_effects(dt)
 	_move_drops(dt)
 	_age_numbers(dt)
+	_age_corpses(dt)
 	RunSpells.tick(self, dt)
 	_zone_clear_tick(dt)
 	# A portal left behind closes once the hero has walked away from it. It is not a second way
@@ -3178,6 +3209,7 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 			name = "%s Slave" % base_name
 		"elite":
 			name = str(opts.get("name", "")) if str(opts.get("name", "")) != "" else base_name
+	var atk_cd := float(row.get("attackSpeed", 1500)) / 1000.0
 	var rec := {
 		"id": _next_id,
 		"face": str(row.get("face", "")),
@@ -3189,7 +3221,7 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		"speed": rng.randf_range(46.0, 68.0) + float(act_id) * 4.0 + float(zone_index) * 1.2,
 		"dmg_min": maxi(1, int(round(float(row.get("dmgMin", 5)) * float(scales["dmg"]) * dmg_mult))),
 		"dmg_max": maxi(1, int(round(float(row.get("dmgMax", 9)) * float(scales["dmg"]) * dmg_mult))),
-		"atk_cd": float(row.get("attackSpeed", 1500)) / 1000.0,
+		"atk_cd": atk_cd,
 		"atk_ready": 0.0,
 		"hit_flash": 0.0,
 		# THE MONSTER'S OWN SWING, for the screen to draw. Seconds since it STRUCK (contact
@@ -3199,6 +3231,13 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		# nothing on screen moved — Jan: "u nepřátel musí mít animaci útoku".
 		"atk_age": -1.0,
 		"atk_dir": Vector2.ZERO,
+		# THE COMMITMENT: seconds left before the blow this body is winding up actually lands
+		# (-1 = not committed), the length it started with (the screen draws the closing ring
+		# from that fraction) and the rattle a landed hit leaves behind.
+		"atk_t": -1.0,
+		"windup": clampf(atk_cd * WINDUP_FRAC, WINDUP_MIN, WINDUP_MAX),
+		"windup_total": 0.0,
+		"stagger": 0.0,
 		"bob": rng.randf() * TAU,
 		# A thrower's DISTANCE is part of its record, not a global: the fight has to be able
 		# to give two kinds different stand-off ranges without a second table.
@@ -3302,9 +3341,35 @@ func _move_monsters(dt: float) -> void:
 		m["block_ms"] = maxi(0, int(m.get("block_ms", 0)) - int(round(dt * 1000.0)))
 		if int(m.get("slow_ms", 0)) <= 0:
 			m["slow_pct"] = 0.0
+		m["stagger"] = maxf(0.0, float(m.get("stagger", 0.0)) - dt)
 		if int(m["stun_ms"]) > 0:
 			alive.append(m)
 			continue
+		# ⚠️  THE ATTACK CLOCK TICKS THROUGH THE WIND-UP. It used to tick only on the walk, and
+		# because a committed body does not walk, the telegraph silently ADDED its own length to
+		# every cycle — measured 1.92 s between blows where `atk_cd` says 1.5, i.e. a 26 % damage
+		# nerf to every monster in the game that nothing on screen or in the tests would have
+		# explained. The clock is spent at the COMMITMENT; the blow merely arrives later inside
+		# the same beat, so `attackSpeed` still means what the table says.
+		m["atk_ready"] = maxf(0.0, float(m["atk_ready"]) - dt)
+		# THE TELEGRAPH. A body that has COMMITTED to a blow stands still, shows the shape of it
+		# and only then strikes. It runs BEFORE the walk, because a committed body does not walk:
+		# the pause is what makes the window visible, and visible is what makes it punishable.
+		# `_resolve_strike()` is the ONE place a hostile blow is dealt; nothing else may damage
+		# the hero, or a second code path would quietly keep the old unreadable timing alive.
+		if float(m["atk_t"]) >= 0.0:
+			if float(m["stagger"]) <= 0.0:
+				m["atk_t"] = float(m["atk_t"]) - dt
+			if float(m["atk_t"]) <= 0.0:
+				m["atk_t"] = -1.0
+				_resolve_strike(m)
+			# A MELEE body is ROOTED by its commitment — the pause is the window. A CASTER is
+			# not: it channels WHILE walking, or a thrower would spend 40 % of its approach
+			# standing still and never reach the stand-off it exists for (measured: it hung at
+			# 327 px against a KEEP_RANGE of 232).
+			if not bool(m["ranged"]):
+				alive.append(m)
+				continue
 		var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
 		var gap := to_hero.length()
 		var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
@@ -3333,28 +3398,55 @@ func _move_monsters(dt: float) -> void:
 		# The gap AFTER the move: the attack must be judged on where the bodies really are,
 		# or a caster fires from a distance it has already left.
 		var after: float = player_pos.distance_to(m["pos"] as Vector2)
-		m["atk_ready"] = maxf(0.0, float(m["atk_ready"]) - dt)
 		if int(m.get("block_ms", 0)) > 0:
 			# Pummel: the attacks are blocked, the body still walks. The clock is NOT spent
 			# while blocked, so the first swing after the window is a real one.
 			alive.append(m)
 			continue
 		if float(m["atk_ready"]) <= 0.0:
+			# ARM the blow; it lands in `windup` seconds, and that delay is the whole point.
 			if ranged:
 				if after <= SHOOT_RANGE:
-					m["atk_ready"] = float(m["atk_cd"]) * walk_mult
-					_shoot(m, player_pos - (m["pos"] as Vector2))
-			elif after <= stop_at + 1.0:
-				# Contact damage. The cooldown is the KIND's own attack speed, so a Bear hits
-				# like a bear and a Wolf like a wolf with no extra code.
-				m["atk_ready"] = float(m["atk_cd"]) * walk_mult
-				# The lunge the screen draws, aimed where the hero actually stands.
-				m["atk_age"] = 0.0
-				m["atk_dir"] = ((player_pos as Vector2) - (m["pos"] as Vector2)).normalized()
-				_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
+					_begin_windup(m, walk_mult)
+			elif after <= stop_at + STRIKE_PAD:
+				_begin_windup(m, walk_mult)
 		alive.append(m)
 	monsters = alive
 	_resolve_bodies()
+
+
+## Commit to a blow. The CYCLE stays exactly `atk_cd` long — the clock is spent here, at the
+## commitment, not at the landing — so the telegraph moves the blow later inside the same beat
+## instead of quietly lowering every monster's damage per second.
+func _begin_windup(m: Dictionary, walk_mult: float) -> void:
+	m["atk_ready"] = maxf(float(m["atk_ready"]), float(m["atk_cd"]) * walk_mult)
+	m["atk_t"] = float(m["windup"])
+	m["windup_total"] = float(m["windup"])
+	var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
+	m["atk_dir"] = to_hero.normalized() if to_hero.length() > 0.001 else Vector2.RIGHT
+
+
+## The blow that was announced. It lands only if the hero is STILL where the body aimed it: a
+## committed body does no tracking, so leaving the reach is the answer and the reach ring is
+## no longer a promise the fight does not keep. A whiff is reported, so the screen can play the
+## sound of something missing — silence there reads as a broken monster.
+func _resolve_strike(m: Dictionary) -> void:
+	var to_hero: Vector2 = player_pos - (m["pos"] as Vector2)
+	var gap := to_hero.length()
+	var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
+	if bool(m["ranged"]):
+		if gap > SHOOT_RANGE:
+			events.append("whiff")
+			return
+		_shoot(m, dir)
+		return
+	if gap > BODY_RADIUS * 2.0 + STRIKE_PAD:
+		events.append("whiff")
+		return
+	# The lunge the screen draws, aimed where the hero actually stands.
+	m["atk_age"] = 0.0
+	m["atk_dir"] = dir
+	_take_damage(rng.randi_range(int(m["dmg_min"]), maxi(int(m["dmg_max"]), int(m["dmg_min"]))))
 
 
 ## The corridor's edge, for anything that only has a TARGET point and no previous one: pull the
@@ -3480,6 +3572,12 @@ func _hero_is_free(min_gap: float) -> bool:
 
 
 func _take_damage(raw: int) -> void:
+	# Already reeling. A pack of four bodies resolves inside one frame; without this window the
+	# player takes four blows he could not have separated, and the report is "to je nefér",
+	# not "the monsters are strong". Nothing is reported at all here — a swallowed blow is not
+	# an event, it is the same blow.
+	if iframe_ms > 0:
+		return
 	# The hero's own defence is the only mitigation in the slice; gear therefore already
 	# matters, which is the point of keeping the loot loop attached from day one.
 	# Defensive Shout multiplies that armour — it writes `buff_armor_pct` and THIS is the one
@@ -3487,6 +3585,7 @@ func _take_damage(raw: int) -> void:
 	var eff_def := float(defense) * (1.0 + buff_armor_pct / 100.0)
 	var taken := maxi(1, raw - int(eff_def * 0.35))
 	hp -= taken
+	iframe_ms = HERO_IFRAME_MS
 	_add_number(player_pos + Vector2(0, -34), "-%d" % taken, "hurt")
 	events.append("hurt")
 	if hp <= 0:
@@ -3747,6 +3846,29 @@ func _swing_hand(index: int, is_off: bool) -> void:
 	m["hit_flash"] = 0.12
 	var toward: Vector2 = (m["pos"] as Vector2) - player_pos
 	var dir := toward.normalized() if toward.length() > 0.001 else Vector2.RIGHT
+	# A COMMITTED body is ROOTED: it does not get shoved out of its own blow. Without this the
+	# knockback silently turned every crit into a whiff — the body was pushed past its own strike
+	# reach, the blow "missed" and the interrupt rule never fired at all (measured: events
+	# `["whiff", "crit", "crit"]` instead of `["interrupt"]`). The pause IS the wind-up's meaning,
+	# so the shove belongs to free bodies only.
+	var rooted := float(m.get("atk_t", -1.0)) >= 0.0
+	if not rooted:
+		# KNOCKBACK: a few pixels away from the hero. Enough to SEE the body give, small enough
+		# that a pack is not shoved through the rock — a body pushed into a wall stays put rather
+		# than teleporting out of the corridor.
+		var push := 12.0 if crit else 6.0
+		var shoved: Vector2 = (m["pos"] as Vector2) + dir * push
+		if walkable(shoved, MON_RADIUS):
+			m["pos"] = shoved
+	m["stagger"] = float(STAGGER_MS) / 1000.0
+	# A CRIT INTERRUPTS the blow it lands into: that is D2's hit recovery in its smallest useful
+	# form, and it is what makes a crit worth building for beyond the number. A normal hit only
+	# RATTLES the wind-up (pauses it), because cancelling every blow with a fast weapon would
+	# turn `swingMs`/IAS into a stun lock and remove the fight.
+	if crit and rooted:
+		m["atk_t"] = -1.0
+		m["atk_ready"] = maxf(float(m["atk_ready"]), float(m["atk_cd"]) * 0.5)
+		events.append("interrupt")
 	if is_off:
 		swing_dir_off = dir
 		swing_age_off = 0.0
@@ -3823,6 +3945,10 @@ func _kill(index: int) -> void:
 	_award_xp(xp)
 	events.append("kill")
 	_roll_drop(m["pos"] as Vector2, int(m.get("loot_grade", 0)), int(m.get("lvl", 1)))
+	# The body stays for a beat, fading. Presentation only: `monsters` is already clean, so the
+	# target assist, the collision solver and the pack counters cannot see it.
+	corpses.append({"pos": m["pos"], "face": m["face"], "role": str(m.get("role", "normal")),
+		"age": 0.0})
 	monsters.remove_at(index)
 
 
@@ -4100,6 +4226,23 @@ func add_effect(kind: String, pos: Vector2, opts: Dictionary = {}) -> void:
 func add_shout_rings(colour: String) -> void:
 	add_effect("ring", player_pos, {"life": 0.80, "colour": colour,
 		"data": {"count": 5, "r0": 10.0, "r1": 148.0, "delay": 0.10, "width": 4.0}})
+
+
+## How long a dead body stays on the ground, fading and sinking. A body that vanishes on the
+## frame it dies is the single cheapest thing that makes a kill feel like arithmetic instead of
+## like a kill — and drawing a corpse is one texture with an alpha, no new art.
+const CORPSE_LIFE := 0.45
+
+
+func _age_corpses(dt: float) -> void:
+	if corpses.is_empty():
+		return
+	var keep: Array = []
+	for c in corpses:
+		c["age"] = float(c["age"]) + dt
+		if float(c["age"]) < CORPSE_LIFE:
+			keep.append(c)
+	corpses = keep
 
 
 func _age_effects(dt: float) -> void:
