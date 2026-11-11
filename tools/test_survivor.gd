@@ -59,6 +59,7 @@ func _initialize() -> void:
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
 	_test_telegraph_and_iframes()
+	_test_open_window()
 	_test_hero_windup()
 	_test_bodies_are_solid()
 	_test_reach_is_the_drawn_circle()
@@ -654,6 +655,96 @@ func _pin_melee_at_contact(run: SurvivorRun, m: Dictionary, atk_cd: float) -> vo
 	m["windup"] = clampf(atk_cd * SurvivorRun.WINDUP_FRAC, SurvivorRun.WINDUP_MIN, SurvivorRun.WINDUP_MAX)
 	m["atk_ready"] = 0.0
 	m["pos"] = run.player_pos + Vector2(58, 0)
+
+
+## THE OPEN WINDOW. A blow that whiffs has to COST the body something, or stepping out of a
+## telegraph is free and tanking (which keeps your own swings running) is strictly better —
+## measured on `tools/probe_dodgeability.gd` before this rule existed. Three halves:
+##   A. a whiff leaves the body open and reports it;
+##   B. everything landing inside the window does `OPEN_DMG_MULT`;
+##   C. an open body neither walks nor blows, and is back on its clock afterwards.
+func _test_open_window() -> void:
+	_log("  section: open_window")
+	# --- A. the whiff opens the body ----------------------------------------------------
+	var run := _fresh()
+	run.hp = 999999
+	run.max_hp = 999999
+	run.defense = 0
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	_pin_melee_at_contact(run, m, 1.5)
+	for i in 90:
+		run.step(STEP, Vector2.ZERO)
+		if float(m["atk_t"]) >= 0.0:
+			break
+	var hpb := int(run.hp)
+	var walked := 0.0
+	while walked < float(m["windup_total"]) + 0.15:
+		run.step(STEP, Vector2(-1, 0))
+		walked += STEP
+	_check(int(run.hp) == hpb, "the baiting step itself must not be hit, hp %d -> %d"
+		% [hpb, int(run.hp)])
+	_check(int(m["open_ms"]) > 0, "a WHIFFED blow must leave the body OPEN, got %d ms"
+		% int(m["open_ms"]))
+	_check(int(m["open_ms"]) <= SurvivorRun.OPEN_MS,
+		"the window must not exceed OPEN_MS, got %d" % int(m["open_ms"]))
+
+	# --- B. a blow into an open body pays OPEN_DMG_MULT ---------------------------------
+	run.dmg_min = 100
+	run.dmg_max = 100
+	run.dmg_off_min = 100
+	run.dmg_off_max = 100
+	run.crit_chance = 0.0
+	run.crit_off = 0.0
+	run.buff_dmg_pct = 0.0
+	m["hp"] = 100000
+	var before := int(m["hp"])
+	run._swing_hand(0, false)
+	var open_hit := before - int(m["hp"])
+	m["open_ms"] = 0
+	before = int(m["hp"])
+	run._swing_hand(0, false)
+	var plain_hit := before - int(m["hp"])
+	_check(plain_hit == 100, "the control blow must be the plain 100, got %d" % plain_hit)
+	# ⚠️  The expectation is a LITERAL, not `OPEN_DMG_MULT * 100`: a test that multiplies by the
+	# constant it is checking stays green when the constant is wrong (verified — raising the
+	# multiplier to 2.0 left the whole suite passing). 1.5x of 100 is 150, and that is the number.
+	_check(open_hit == 150, "a blow into an OPEN body must pay 1.5x: %d vs 100" % open_hit)
+
+	# --- C. an open body neither walks nor blows ----------------------------------------
+	var run2 := _fresh()
+	run2.hp = 999999
+	run2.max_hp = 999999
+	run2.defense = 0
+	run2.monsters.clear()
+	run2._spawn_one()
+	var m2: Dictionary = run2.monsters[0]
+	_pin_melee_at_contact(run2, m2, 1.5)
+	var home: Vector2 = run2.player_pos
+	for i in 90:
+		run2.step(STEP, Vector2.ZERO)
+		if float(m2["atk_t"]) >= 0.0:
+			break
+	while float(m2["atk_t"]) >= 0.0:
+		run2.step(STEP, Vector2(-1, 0))
+	run2.player_pos = home          # back inside its reach, and it is OPEN
+	var hp2 := int(run2.hp)
+	var held := 0.0
+	while held < float(SurvivorRun.OPEN_MS) / 1000.0 - 0.12:
+		run2.step(STEP, Vector2.ZERO)
+		held += STEP
+	_check(int(run2.hp) == hp2,
+		"an OPEN body must not blow the hero standing in its reach: hp %d -> %d"
+		% [hp2, int(run2.hp)])
+	# ...and it is NOT dead weight forever: once the window closes it commits again.
+	var rearmed := false
+	for i in 240:
+		run2.step(STEP, Vector2.ZERO)
+		if float(m2["atk_t"]) >= 0.0 or int(run2.hp) < hp2:
+			rearmed = true
+			break
+	_check(rearmed, "a body must fight again after its open window closes")
 
 
 ## The HERO's wind-up (Jan: "možná by to prospělo i u hráče, samozřejmě v rámci rychlostí zbraní").

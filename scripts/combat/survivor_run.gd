@@ -85,6 +85,14 @@ const STRIKE_PAD := 8.0
 ## The hero's own reaction window after being hurt. Without it a pack of four landing on the
 ## same frame is one enormous unavoidable hit, which is the "to je nefér" report in code form.
 const HERO_IFRAME_MS := 220
+## THE PUNISH WINDOW. A committed blow that WHIFFS leaves the body OPEN: it can neither walk nor
+## swing for `OPEN_MS`, and everything landing on it in that window does `OPEN_DMG_MULT` damage.
+## ⚠️  Measured before this existed (`tools/probe_dodgeability.gd`): stepping out of a telegraph
+## was FREE and worth nothing, so standing in it — which keeps your own swings running — was
+## strictly better, and every melee fight was face-to-face arithmetic. The window is what pays
+## for the step, and it is the whole reason to bait a blow instead of eating it.
+const OPEN_MS := 700
+const OPEN_DMG_MULT := 1.5
 ## How long a landed hit rattles a body. It PAUSES a committed wind-up (it never cancels one —
 ## that is the crit's job), so a fast weapon delays a blow without making a single enemy
 ## harmless and `swingMs`/IAS stay a build choice instead of a lock.
@@ -3276,6 +3284,10 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		"hop_t": 0.0,
 		"hop_cd": 0.0,
 		"hop_dir": Vector2.ZERO,
+		# THE PUNISH WINDOW, in ms left. Set by `_resolve_strike` when the blow it committed to
+		# misses, read by the walk/attack gate below AND by `_swing_hand`'s multiplier, drawn by
+		# the screen as a broken ring. A body that is open is a body the player was PAID to bait.
+		"open_ms": 0,
 		"orb_colour": str(row.get("orbColor", ORB_COLOUR)),
 		# The monster's own LEVEL VALUE, the same number `battle.gd` calls
 		# `monster_level_value`: the XP a kill is worth is derived from it.
@@ -3375,7 +3387,14 @@ func _move_monsters(dt: float) -> void:
 		if int(m.get("slow_ms", 0)) <= 0:
 			m["slow_pct"] = 0.0
 		m["stagger"] = maxf(0.0, float(m.get("stagger", 0.0)) - dt)
+		m["open_ms"] = maxi(0, int(m.get("open_ms", 0)) - int(round(dt * 1000.0)))
 		if int(m["stun_ms"]) > 0:
+			alive.append(m)
+			continue
+		# A WHIFFED body is OPEN: it stands in recovery and takes everything the hero has for
+		# `OPEN_MS`. It is not a stun — the hero still has to spend the swing inside the window,
+		# which is why it pays out as damage rather than as free time.
+		if int(m["open_ms"]) > 0:
 			alive.append(m)
 			continue
 		# ⚠️  THE ATTACK CLOCK TICKS THROUGH THE WIND-UP. It used to tick only on the walk, and
@@ -3498,6 +3517,11 @@ func _resolve_strike(m: Dictionary) -> void:
 		_shoot(m, dir)
 		return
 	if gap > BODY_RADIUS * 2.0 + STRIKE_PAD:
+		# THE WHIFF IS THE PRIZE. The body spent its beat, the hero spent a step, and what the
+		# step BUYS is `OPEN_MS` of a target that cannot answer and takes `OPEN_DMG_MULT`. The
+		# clock restarts from full, so baiting does not accidentally speed the next blow up.
+		m["open_ms"] = OPEN_MS
+		m["atk_ready"] = maxf(float(m["atk_ready"]), float(m["atk_cd"]))
 		events.append("whiff")
 		return
 	# The lunge the screen draws, aimed where the hero actually stands.
@@ -3924,6 +3948,12 @@ func _swing_hand(index: int, is_off: bool) -> void:
 		dmg = int(round(float(dmg) * 2.0))
 	if buff_dmg_pct > 0.0:
 		dmg = int(round(float(dmg) * (1.0 + buff_dmg_pct / 100.0)))
+	# THE PUNISH. A body left open by its own whiff takes `OPEN_DMG_MULT` from every hand — the
+	# payout for baiting the telegraph instead of standing in it. Multiplied here, on the rolled
+	# damage, so crits and buffs stack on top of it like every other multiplier in the fight.
+	var open := int(m.get("open_ms", 0)) > 0
+	if open:
+		dmg = int(round(float(dmg) * OPEN_DMG_MULT))
 	if not is_off and heroic_queued:
 		heroic_queued = false
 		var lv := maxi(PlayerSpells.spell_level(_state, str(_state.data.get("heroClass", "")),
@@ -3971,7 +4001,13 @@ func _swing_hand(index: int, is_off: bool) -> void:
 		kind = "crit"
 	elif is_off:
 		kind = "hit_off"
+	if open:
+		# A punish is its own receipt: bigger and warmer than a plain blow, because the player
+		# has to LEARN that the step he took is what paid.
+		kind = "open"
 	_add_number((m["pos"] as Vector2) + Vector2(0, -30), str(dmg), kind)
+	if open:
+		events.append("punish")
 	events.append("crit" if crit else "hit")
 	if int(m["hp"]) <= 0:
 		_kill(index)

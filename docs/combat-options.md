@@ -208,6 +208,14 @@ hotové B1 (wind-up 0,4 × `atk_cd`, whiff při odchodu), B4 (i-frames 220 ms), 
 stagger, crit ruší návěstí, rozpad těla, hit-stop 30/65/45 ms a sweep na okraji portrétu.
 **Zbývá:** B2 (tvary útoků podle druhu), B5 dodge, D1 charger, D6 affixy, C1–C3, E1 boss.
 
+**Stav po druhém průchodu (commity `9a25315` + tento):**
+Naměřeno `tools/probe_dodgeability.gd`. Střelec: `SHOOT_RANGE` 470 → 300 (dřív pálil z 421–428 px,
+tj. za okrajem obrazu), `MIN_SHOT_GAP` 150 — zblízka nestřílí, ale uskočí (0,30 s / 320 px/s,
+cooldown 0,9 s); zaražený o skálu nestřílí vůbec; vběhnutí do návěstí ránu ruší. **Punish okno:**
+whiffnutá rána nechá tělo 700 ms otevřené, bere 1,5×, nekráčí a neútočí, kreslí se přerušený
+prstenec s mezerou. Před tímhle byla obrana zdarma a tankování matematicky lepší.
+**Zbývá pořád:** B2 (tvary útoků podle druhu), B5 dodge, D1 charger, D6 affixy, C1–C3, E1 boss.
+
 ⚠️ **A6 (zvukové schody) NEPLATÍ** — Jan dřív odmítl jakýkoli pitch shift („nezní to dobře"),
 cue se hraje na své vlastní výšce. Pocit comba musí nést vizuál (čísla, hit-stop), ne hudba.
 

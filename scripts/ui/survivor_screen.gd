@@ -922,6 +922,11 @@ func _play_events() -> void:
 				# The blow missed because he stepped out of it. Silence here reads as a broken
 				# monster; the dodge cue is the whoosh of something finding nothing.
 				Sfx.play_global(Sfx.CUE_DODGE)
+			"punish":
+				# The payout for that step: the counter cue and a longer freeze, so baiting a
+				# blow and cashing it in is the loudest thing in a melee fight.
+				Sfx.play_global(Sfx.CUE_COUNTER)
+				HitStop.freeze(55)
 			"hurt":
 				Sfx.play_global(Sfx.CUE_HURT)
 				_flash = 1.0
@@ -2755,6 +2760,24 @@ func _draw_monster(m: Dictionary) -> void:
 		bob = 0.0
 		pos += (m.get("atk_dir", Vector2.RIGHT) as Vector2) * (-5.0 * frac)
 
+	# THE OPEN WINDOW. A body whose own blow whiffed stands in recovery for `OPEN_MS` and takes
+	# 1.5x from everything — and a rule the player cannot SEE is a rule he cannot play around.
+	# Drawn as a BROKEN ring with a gap punched through it (the guard dropped) that fades as the
+	# window closes, plus a flat fill wedge in the gap so it reads at a glance on a small screen.
+	var open_ms := int(m.get("open_ms", 0))
+	if open_ms > 0:
+		var f := clampf(float(open_ms) / float(SurvivorRun.OPEN_MS), 0.0, 1.0)
+		var rr := DISC_DIA * 0.62
+		var col := Color(0.98, 0.72, 0.36, 0.30 + 0.55 * f)
+		# The two arcs of a ring that has a hole between PI*0.45 and PI*1.15 (lower left).
+		draw_arc(pos + Vector2(0, bob), rr, -PI * 0.5, PI * 0.45, 18, col, 2.5, true)
+		draw_arc(pos + Vector2(0, bob), rr, PI * 1.15, PI * 1.5, 10, col, 2.5, true)
+		# The gap itself, marked with a short radial tick: "here is where it is open".
+		var g := PI * 0.8
+		var gv := Vector2(cos(g), sin(g))
+		draw_line(pos + Vector2(0, bob) + gv * (rr - 5.0), pos + Vector2(0, bob) + gv * (rr + 6.0),
+			Color(0.99, 0.86, 0.55, 0.25 + 0.6 * f), 3.0, true)
+
 	# THE AURA, on the ground under the elite. `Aura Enchanted` is a real rule (its slaves hit
 	# 30 % harder), and a rule the player cannot SEE is a rule he cannot play around. Drawn as
 	# one flat ring, no glow — Jan's rule for the whole game.
@@ -3091,6 +3114,12 @@ func _draw_numbers() -> void:
 			"crit":
 				col = Color("#f0c860")
 				fs = 20
+			"open":
+				# THE PUNISH. A blow into a body that whiffed its own attack: bigger than a plain
+				# hit and a different colour, because the number is the ONLY place the player can
+				# learn that the step he took is what paid for it.
+				col = Color("#f2a04e")
+				fs = 22
 			"hit_off":
 				# The off hand's own number, dimmer and smaller: with two weapons landing at once,
 				# two identical white numbers read as one number drawn twice.
