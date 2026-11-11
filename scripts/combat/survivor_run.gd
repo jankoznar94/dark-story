@@ -143,7 +143,25 @@ static func reach_for(weapon: Dictionary) -> float:
 ## on purpose: a caster that can outrun a player makes a fight that never ends.
 const KEEP_RANGE := 232.0
 const RETREAT_RANGE := 168.0
-const SHOOT_RANGE := 470.0
+## How far a caster will still loose an orb. It used to be 470, which on a 390x844 canvas at
+## ZOOM 0.82 (a visible half-width of ~238 px) meant orbs arriving from bodies at the very edge
+## of the screen or beyond it — measured: shots at 421-428 px against a hero who never saw the
+## thrower move. A threat has to be INSIDE the frame to be answered.
+const SHOOT_RANGE := 300.0
+## ⚠️  NO POINT-BLANK SHOTS. A sidestep needs 43 px of lateral travel (hero radius 31 + orb 12),
+## which at 140 px/s is 0.31 s; at 268 px/s the orb needs 83 px of flight to buy that, so any
+## throw closer than ~120 px of gap is a HIT no matter what the player does. Measured with
+## `tools/probe_dodgeability.gd`: at 70-130 px every single orb connected even when the hero
+## reacted on the frame it was thrown. Inside this band a caster does not shoot — it BACKSTEPS
+## first (see `HOP_*`), which turns "get in its face" from unavoidable damage into a real play.
+const MIN_SHOT_GAP := 150.0
+## The backstep that makes the band work. A caster caught too close hops away FAST (not at its
+## walk speed — at 46-68 px/s against a 140 px/s hero it could never open the gap), then shoots
+## from a distance the player can read and sidestep. Cornered by rock the hop does nothing, which
+## is the reward for pinning a thrower against a wall: it cannot fire at all.
+const HOP_TIME := 0.30
+const HOP_SPEED := 320.0
+const HOP_COOLDOWN := 0.9
 const PROJECTILE_SPEED := 268.0
 ## The HERO's bolt: faster than a thrown orb (it is magic, and the player is spending mana on it),
 ## small, and gone after 1.4 s so a miss cannot fly around the area forever.
@@ -3251,6 +3269,13 @@ func _make_monster(row: Dictionary, pos: Vector2, level: int = 1, opts: Dictiona
 		# to give two kinds different stand-off ranges without a second table.
 		"ranged": ranged,
 		"keep_range": KEEP_RANGE,
+		# THE BACKSTEP. Seconds left in the hop away from a hero who closed inside
+		# `MIN_SHOT_GAP`, the direction it is hopping in, and the cooldown that stops a cornered
+		# caster from twitching forever. Presentation reads none of these; they exist because a
+		# caster with no answer to being rushed is either harmless or unfair, never a fight.
+		"hop_t": 0.0,
+		"hop_cd": 0.0,
+		"hop_dir": Vector2.ZERO,
 		"orb_colour": str(row.get("orbColor", ORB_COLOUR)),
 		# The monster's own LEVEL VALUE, the same number `battle.gd` calls
 		# `monster_level_value`: the XP a kill is worth is derived from it.
@@ -3392,6 +3417,24 @@ func _move_monsters(dt: float) -> void:
 				dir = flow
 		var ranged := bool(m["ranged"])
 		var walk_mult := 1.0 + float(m.get("slow_pct", 0.0)) / 100.0
+		# THE BACKSTEP ticks here, before anything else moves: a hopping caster is NOT walking,
+		# so its own speed must not be added on top of the hop.
+		m["hop_t"] = maxf(0.0, float(m.get("hop_t", 0.0)) - dt)
+		m["hop_cd"] = maxf(0.0, float(m.get("hop_cd", 0.0)) - dt)
+		if float(m["hop_t"]) > 0.0:
+			m["pos"] = _step_body(m["pos"] as Vector2,
+				(m["hop_dir"] as Vector2) * HOP_SPEED * dt, MON_RADIUS)
+			alive.append(m)
+			continue
+		# A caster caught inside `MIN_SHOT_GAP` cannot shoot (see the constant), so it hops away
+		# instead. Cornered, the hop is simply not available and the body stands there — pinning a
+		# thrower against rock is the counter-play the band exists to create.
+		if ranged and gap < MIN_SHOT_GAP and float(m["atk_t"]) < 0.0 and float(m["hop_cd"]) <= 0.0:
+			m["hop_t"] = HOP_TIME
+			m["hop_cd"] = HOP_TIME + HOP_COOLDOWN
+			m["hop_dir"] = -dir
+			alive.append(m)
+			continue
 		# A thrower stops OUT OF REACH and shoots; a melee kind stops when the two discs touch.
 		var stop_at := float(m["keep_range"]) if ranged else BODY_RADIUS * 2.0
 		if gap > stop_at:
@@ -3414,7 +3457,10 @@ func _move_monsters(dt: float) -> void:
 		if float(m["atk_ready"]) <= 0.0:
 			# ARM the blow; it lands in `windup` seconds, and that delay is the whole point.
 			if ranged:
-				if after <= SHOOT_RANGE:
+				# The BAND: no shot closer than `MIN_SHOT_GAP` (unkillable at that range) and no
+				# shot past `SHOOT_RANGE` (off the frame). A caster inside the band hops instead
+				# and simply does not fire while it cannot open the distance.
+				if after >= MIN_SHOT_GAP and after <= SHOOT_RANGE:
 					_begin_windup(m, walk_mult)
 			elif after <= stop_at + STRIKE_PAD:
 				_begin_windup(m, walk_mult)
@@ -3443,7 +3489,10 @@ func _resolve_strike(m: Dictionary) -> void:
 	var gap := to_hero.length()
 	var dir := to_hero / gap if gap > 0.001 else Vector2.RIGHT
 	if bool(m["ranged"]):
-		if gap > SHOOT_RANGE:
+		# Rushing a wind-up CANCELS the shot: the orb is thrown at where the hero stood, so a
+		# hero who closed inside `MIN_SHOT_GAP` during the telegraph makes it whiff. That is the
+		# reward for running INTO a caster instead of circling at range.
+		if gap > SHOOT_RANGE or gap < MIN_SHOT_GAP:
 			events.append("whiff")
 			return
 		_shoot(m, dir)
