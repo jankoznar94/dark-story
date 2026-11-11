@@ -2869,8 +2869,22 @@ func _draw_hero() -> void:
 	draw_circle(Vector2.ZERO, DISC_DIA * 0.54, Color(0, 0, 0, 0.48))
 	_set_world()
 	var tex: Texture2D = _disc("assets/monsters/%s.png" % _hero_face())
+	# THE HERO'S OWN WIND-UP. Jan: "jak se nepřátelé napřahují … možná by to prospělo i u hráče,
+	# samozřejmě v rámci rychlostí zbraní". `swing_charge()` is 0..1 over the LAST 35 % of his
+	# own beat, so a dagger flicks and a maul heaves — and the blow lands exactly when it reaches
+	# 1, so the body can never move out of step with the damage. The body pulls BACK and tilts
+	# away from the blow; the ring draws in (see `_draw_attack_ring`), then both snap out.
+	var charge: float = run.swing_charge() if not _baking else 0.0
+	if charge > 0.0:
+		pos += -run.facing * (7.0 * charge)
 	if tex != null:
-		draw_texture_rect(tex, Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
+		if charge > 0.0:
+			var tilt := 0.16 * charge * (-1.0 if run.facing.x >= 0.0 else 1.0)
+			draw_set_transform_matrix(_world_xform() * Transform2D(tilt, pos))
+			draw_texture_rect(tex, Rect2(-DISC_DIA * 0.5, -DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
+			_set_world()
+		else:
+			draw_texture_rect(tex, Rect2(pos.x - DISC_DIA * 0.5, pos.y - DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
 	# The player's ring is the SAME blue the hero's stat page uses for his portrait frame
 	# (`MOD_BLUE #4a7dff`). A gold ring on both sides made the hero indistinguishable from the
 	# pack — the two looked like five enemies. Colour, not size, is what separates him.
@@ -2919,6 +2933,18 @@ func _draw_attack_ring() -> void:
 	# A short nose on the ring in the facing direction: the smallest mark that says "this way".
 	var nose: Vector2 = pos + run.facing * run.reach_main
 	draw_circle(nose, 4.5 + 1.5 * hot, Color(UIKit.MOD_BLUE, 0.75 + 0.25 * hot))
+	# THE DRAW-IN. While he winds up, the front half of the reach ring contracts toward his body
+	# and brightens; on the blow it snaps back out (hot = 1). Same element, two states — a wind-up
+	# built from the ring he already reads needs no new vocabulary and cannot be mistaken for an
+	# enemy telegraph (theirs is red and on the body's rim).
+	var charge: float = run.swing_charge()
+	if charge > 0.0:
+		var pulled: float = run.reach_main * (1.0 - 0.20 * charge)
+		var cc := Color(UIKit.MOD_BLUE)
+		cc.a = 0.34 + 0.44 * charge
+		_dashed_ring(pos, pulled, cc, 1.8 + 1.4 * charge, base - PI * 0.5, base + PI * 0.5)
+		draw_circle(pos + run.facing * pulled, 3.0 + 2.2 * charge,
+			Color(UIKit.MOD_BLUE, 0.55 + 0.45 * charge))
 	# A second hand with a DIFFERENT reach gets its own, fainter circle. ONE ring cannot be the
 	# promise for two weapons: a hand that really reaches 10 px further has to be visible, or the
 	# ring lies about the off hand.

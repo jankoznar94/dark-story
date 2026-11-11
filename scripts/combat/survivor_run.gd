@@ -751,7 +751,14 @@ func setup(state, find_item: Callable, loot_system, act: int, seed_value: int = 
 	area_cleared = false
 	portal_open = false
 	portal_point = Vector2.ZERO
-	_main_clock = 0.0
+	# The beat starts at the BEGINNING OF THE WIND-UP, not at zero: a run whose first armed
+	# frame would swing instantly has one blow in it that was never announced, and it is the one
+	# the player watches most closely.
+	# ⚠️  The beat starts at the BEGINNING OF THE WIND-UP, not at zero — and the assignment has to
+	# be HERE, after `_read_hands()` has made `main_swing` final. Put in `_read_hands()` itself it
+	# is silently zeroed by this very block, and the first blow of every run is the one blow that
+	# was never announced (measured: clock 0.000 with a wind-up of 0.254).
+	_main_clock = hero_windup()
 	_off_clock = 0.0
 	_next_id = 0
 	swing_age = -1.0
@@ -914,6 +921,7 @@ func _read_hands() -> void:
 
 	speed_pct = clampi(int(Progression._equip_attr(equip, _find_item, "moveSpeed")),
 		0, MAX_SPEED_PCT)
+
 
 
 ## The walk, in world pixels per second. One number for the rules and the camera, so a boot
@@ -3721,6 +3729,11 @@ func _attack_tick(dt: float) -> void:
 	if held_spell != "":
 		_repeat_held_spell()
 	if not attack_held:
+		# An IDLE hero holds his clock at the START of the wind-up, not at zero: otherwise the
+		# first blow after arming the attack fired on the very next step and had no wind-up at
+		# all — the one swing the player watches most closely. The beat itself is unchanged;
+		# only the first blow of an engagement is shifted by its own anticipation.
+		_main_clock = maxf(_main_clock, hero_windup())
 		return
 	# A spell on hold owns the attack button: swings would be a second action under one thumb.
 	if ww_active or held_spell != "" or monsters.is_empty():
@@ -3764,6 +3777,35 @@ func _in_reach(index: int, reach: float) -> bool:
 	if index < 0 or index >= monsters.size():
 		return false
 	return (monsters[index]["pos"] as Vector2).distance_to(player_pos) <= reach + MON_RADIUS
+
+
+## The hero's own WIND-UP, as a FRACTION of his swing interval. Jan, Nov 2026: "Pocitově je to
+## docela příjemné, jak se nepřátelé napřahují. Možná by to stejné prospělo i u hráče. Samozřejmě
+## v rámci rychlostí zbraní." So it is derived from the weapon's own beat, never a constant: a
+## dagger flicks (115 ms of a 330 ms beat), a maul is a visible heave (350 ms of 1000 ms). The
+## blow still lands exactly when the clock expires, so the drawn anticipation can never disagree
+## with the damage, and no damage per second changes.
+const HERO_WINDUP_FRAC := 0.35
+
+
+## Seconds of the hero's beat that are the wind-up.
+func hero_windup() -> float:
+	return _main_interval() * HERO_WINDUP_FRAC
+
+
+## How far the NEXT blow is into its wind-up, 0..1. Presentation only — nothing in the rules
+## reads it back. It is derived from the same clock the blow lands on, which is the whole reason
+## the animation cannot drift from the damage.
+func swing_charge() -> float:
+	if not attack_held or target_id < 0 or ww_active or held_spell != "":
+		return 0.0
+	var wind := hero_windup()
+	if wind <= 0.0:
+		return 0.0
+	var remaining := clampf(_main_clock, 0.0, _main_interval())
+	if remaining > wind:
+		return 0.0
+	return 1.0 - remaining / wind
 
 
 ## Seconds per beat. One clock for both hands (they alternate), so this is the PAIR's interval:

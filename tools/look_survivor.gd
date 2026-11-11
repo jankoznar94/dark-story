@@ -32,6 +32,10 @@ var _wait_swing := true
 ## A look-frame of a fight has to show the thing being judged: an idle pack photographs the
 ## absence of the feature as convincingly as its presence.
 var _wait_telegraph := false
+## Hold the frame until the HERO is deep in his own wind-up, so the pull-back and the drawn-in
+## reach ring are in the shot. Same reason as `--telegraph`: a frame of an idle hero proves
+## nothing about an anticipation that only exists for 115-350 ms per beat.
+var _wait_charge := false
 ## Place N bodies in the hero's reach before the shot. A look-frame needs a fight IN it; waiting
 ## for the spawner to walk one over costs the timeout and photographs an empty field.
 var _pack := 5
@@ -172,6 +176,8 @@ func _initialize() -> void:
 				_wait_swing = args[i + 1] != "0"
 			"--telegraph":
 				_wait_telegraph = args[i + 1] != "0"
+			"--charge":
+				_wait_charge = args[i + 1] != "0"
 			"--pack":
 				_pack = int(args[i + 1])
 			"--spot":
@@ -294,6 +300,15 @@ func _process(_delta: float) -> bool:
 					_screen.run._pick_target(), str(_screen.run.facing),
 					(_screen.run.monsters[0]["pos"] as Vector2).distance_to(_screen.run.player_pos)
 						if not _screen.run.monsters.is_empty() else -1.0])
+	if _wait_charge and _screen.run != null:
+		if _screen.run.swing_charge() < 0.55:
+			_stall += 1
+			if _stall < 180:
+				_frames -= 1
+				return false
+			print("look_survivor: no wind-up in the window (charge=%.2f held=%s target=%d reach_ok=%s)"
+				% [_screen.run.swing_charge(), str(_screen.run.attack_held),
+					int(_screen.run.target_id), str(_screen.run._pick_target() >= 0)])
 	if _wait_telegraph and _screen.run != null:
 		var committed := false
 		for m in _screen.run.monsters:
@@ -387,6 +402,9 @@ func _capture() -> void:
 	var kinds: Array = []
 	for e in run.effects:
 		kinds.append(str(e["kind"]))
+	print("look_survivor: charge=%.2f hero=%s facing=%s reach=%.1f target=%d" % [
+		_screen.run.swing_charge(), str(_screen.run.player_pos - _screen._cam),
+		str(_screen.run.facing), _screen.run.reach_main, int(_screen.run.target_id)])
 	print("look_survivor: %s %dx%d kills=%d drops=%d alive=%d hp=%d/%d wave=%d t=%.1f effects=%s bolts=%d"
 		% [_out, img.get_width(), img.get_height(), run.kills, run.drops.size(),
 			run.monsters.size(), run.hp, run.max_hp, run.wave, run.elapsed, str(kinds),

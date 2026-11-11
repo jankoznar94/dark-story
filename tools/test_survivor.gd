@@ -59,6 +59,7 @@ func _initialize() -> void:
 	_test_full_bag_leaves_the_item()
 	_test_contact_damage_kills()
 	_test_telegraph_and_iframes()
+	_test_hero_windup()
 	_test_bodies_are_solid()
 	_test_reach_is_the_drawn_circle()
 	_test_weapon_pace_and_two_hands()
@@ -655,6 +656,56 @@ func _pin_melee_at_contact(run: SurvivorRun, m: Dictionary, atk_cd: float) -> vo
 	m["pos"] = run.player_pos + Vector2(58, 0)
 
 
+## The HERO's wind-up (Jan: "možná by to prospělo i u hráče, samozřejmě v rámci rychlostí zbraní").
+## Two halves: the length must be DERIVED from the weapon's own beat, and the drawn charge must
+## actually reach the blow — a wind-up that starts is not a wind-up that arrives.
+func _test_hero_windup() -> void:
+	_log("  section: hero_windup")
+	var fast := _fresh()
+	fast.main_swing = 0.33
+	var slow := _fresh()
+	slow.main_swing = 1.0
+	_check(absf(fast.hero_windup() - 0.33 * SurvivorRun.HERO_WINDUP_FRAC) < 0.001,
+		"a dagger's wind-up must be a fraction of ITS beat, got %.3f" % fast.hero_windup())
+	_check(slow.hero_windup() > fast.hero_windup() * 2.5,
+		"a maul must wind up visibly longer than a dagger: %.3f vs %.3f"
+		% [slow.hero_windup(), fast.hero_windup()])
+
+	# Nothing held = no wind-up, even with a body in reach and the clock running.
+	var idle := _fresh(12345, false)
+	idle.monsters.clear()
+	idle._spawn_one()
+	_pin_melee_at_contact(idle, idle.monsters[0], 5.0)
+	idle.step(STEP, Vector2.ZERO)
+	_check(idle.swing_charge() == 0.0,
+		"an IDLE hero must show no wind-up, charge=%.2f" % idle.swing_charge())
+
+	# The first blow after arming waits for its own wind-up, and the charge peaks on the blow.
+	var run := _fresh(12345, false)
+	run.hp = 999999
+	run.monsters.clear()
+	run._spawn_one()
+	var m: Dictionary = run.monsters[0]
+	_pin_melee_at_contact(run, m, 5.0)
+	m["speed"] = 0.0
+	m["hp"] = 999999
+	m["max_hp"] = 999999
+	run.attack_held = true
+	_log("   measured: main_swing=%.3f windup=%.3f clock=%.3f" % [run.main_swing, run.hero_windup(), run._main_clock])
+	var hp0 := int(m["hp"])
+	var peak := 0.0
+	var steps := 0
+	while int(m["hp"]) == hp0 and steps < 200:
+		peak = maxf(peak, run.swing_charge())
+		run.step(STEP, Vector2.ZERO)
+		steps += 1
+	_check(int(m["hp"]) < hp0, "the held attack must land, hp %d" % int(m["hp"]))
+	_check(steps >= int(run.hero_windup() / STEP) - 2,
+		"the FIRST blow must wait for its wind-up: landed after %d steps, the wind-up is %d"
+		% [steps, int(run.hero_windup() / STEP)])
+	_check(peak > 0.85, "the drawn wind-up must reach the blow, peaked at %.2f" % peak)
+
+
 # ============================================================================ ranged units
 
 ## WHICH kinds throw. The rule is the port's own (the PWA had no range at all), so it is
@@ -813,6 +864,9 @@ func _test_reach_is_the_drawn_circle() -> void:
 	var hp_before := int(m["hp"])
 	var gap := SurvivorRun.HIT_REACH - 1.0
 	m["pos"] = inside.player_pos + Vector2(gap, 0)
+	# This section is about the REACH SEMANTICS, not about the beat: the hero's wind-up is armed
+	# away so that "hit" and "not hit" both mean the reach test, not the clock.
+	inside._main_clock = 0.0
 	for _i in 2:
 		m["pos"] = inside.player_pos + Vector2(gap, 0)
 		inside.step(STEP, Vector2.ZERO)
@@ -826,6 +880,7 @@ func _test_reach_is_the_drawn_circle() -> void:
 	m2["speed"] = 0.0
 	var hp2 := int(m2["hp"])
 	var far := SurvivorRun.HIT_REACH + 3.0
+	outside._main_clock = 0.0
 	for _i in 10:
 		m2["pos"] = outside.player_pos + Vector2(far, 0)
 		outside.step(STEP, Vector2.ZERO)
@@ -953,6 +1008,11 @@ func _hit_once_at(run: SurvivorRun, gap: float) -> bool:
 	m["dmg_min"] = 0
 	m["dmg_max"] = 0
 	var hp_before := int(m["hp"])
+	# ⚠️  This helper measures REACH, not the beat. Since the hero winds up before every blow, the
+	# clock is armed to zero here — otherwise the section measures a 15-step anticipation and
+	# reports it as "the two-hander cannot reach", and the assist would also walk him in during
+	# the extra frames, which is the opposite of a reach test.
+	run._main_clock = 0.0
 	for _i in 4:
 		m["pos"] = run.player_pos + Vector2(gap, 0)
 		run.step(STEP, Vector2.ZERO)
