@@ -3881,6 +3881,17 @@ func swing_charge() -> float:
 	return 1.0 - remaining / wind
 
 
+## WHICH HAND TAKES THE NEXT BEAT — presentation only, and it has to answer the same question
+## `_attack_tick` answers or the drawn wind-up lies about the hand that swings. It mirrors that
+## function's own two tests: the alternation flag, and whether a body is inside the OFF weapon's
+## reach (an off beat with nothing there falls back to the main hand).
+func planned_hand_off() -> bool:
+	if off_swing <= 0.0 or not _next_hand_off:
+		return false
+	var idx := target_index()
+	return idx >= 0 and _in_reach(idx, reach_off)
+
+
 ## Seconds per beat. One clock for both hands (they alternate), so this is the PAIR's interval:
 ## the main hand's own when he holds one weapon, the harmonic mean of the two when he holds two.
 ## Frenzy is the only thing that changes it — each stack takes `lv + 1` % off the pair, and the

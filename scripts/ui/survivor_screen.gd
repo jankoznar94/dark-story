@@ -1326,6 +1326,9 @@ func _draw() -> void:
 	_draw_attack_ring()
 	_draw_drops()
 	_draw_actors()
+	# The blow LEAVING the blade goes over the bodies it just hit (the cleave crescent), so it is
+	# drawn after the actors rather than inside `_draw_hero`.
+	_draw_cleaves()
 	_draw_projectiles()
 	_draw_bolts()
 	_draw_effects()
@@ -3014,8 +3017,18 @@ func _draw_attack_ring() -> void:
 	var charge: float = run.swing_charge()
 	if charge > 0.0:
 		var fill := Color(0.86, 0.92, 1.0, 0.30 + 0.55 * charge)
-		draw_arc(pos, run.reach_main, base - PI * 0.5, base - PI * 0.5 + PI * charge, 26,
-			fill, 2.5 + 1.5 * charge, true)
+		# ⚠️  THE GAUGE FILLS FROM THE HAND THAT WILL SWING. One sweep from one side read as
+		# "he charges one big blow and lets it go" (Jan) — with two weapons the beat is a PAIR,
+		# so the main hand fills CLOCKWISE from the left of the facing and the off hand
+		# COUNTER-clockwise from the right. Same element, mirrored: the alternation of the hands
+		# becomes visible in the one place the player is already watching.
+		var sweep := PI * charge
+		if run.planned_hand_off():
+			draw_arc(pos, run.reach_main, base + PI * 0.5 - sweep, base + PI * 0.5, 26, fill,
+				2.5 + 1.5 * charge, true)
+		else:
+			draw_arc(pos, run.reach_main, base - PI * 0.5, base - PI * 0.5 + sweep, 26, fill,
+				2.5 + 1.5 * charge, true)
 		draw_circle(pos + run.facing * run.reach_main, 4.5 + 2.5 * charge,
 			Color(UIKit.MOD_BLUE, 0.75 + 0.25 * charge))
 	# A second hand with a DIFFERENT reach gets its own, fainter circle. ONE ring cannot be the
@@ -3025,6 +3038,41 @@ func _draw_attack_ring() -> void:
 		var off_col := Color(UIKit.MOD_BLUE)
 		off_col.a = 0.10 + 0.26 * hot
 		_dashed_ring(pos, run.reach_off, off_col, 1.2 + hot, base - PI * 0.5, base + PI * 0.5)
+
+
+## THE BLOW LEAVING THE BLADE. Jan: "při udělení poškození by proběhl druhotný vizuální efekt, kdy
+## se tato nabitá výseč jakoby kousíček vystřelí proti nepříteli a s fade out efektem zmizí — jako
+## cleave v Diablo 3."
+##
+## Purely presentation: it is derived from `swing_age` / `swing_age_off`, which only ever start on
+## a blow that actually LANDED (`_swing_hand`), so nothing in the rules is read or written. The
+## crescent is born on the hero's own edge and travels out to just past the reach while its alpha
+## falls to zero — the "the damage left the weapon and hit that body" beat the frame was missing.
+const CLEAVE_ANIM := 0.26
+## How wide the crescent is, in radians: about 49 degrees, i.e. one body's worth at the reach.
+const CLEAVE_SPAN := 0.86
+
+
+func _draw_cleaves() -> void:
+	if run.swing_age >= 0.0 and run.swing_age < CLEAVE_ANIM:
+		_cleave(float(run.swing_age), run.swing_dir, run.reach_main)
+	if run.swing_age_off >= 0.0 and run.swing_age_off < CLEAVE_ANIM:
+		_cleave(float(run.swing_age_off), run.swing_dir_off, run.reach_off)
+
+
+func _cleave(age: float, dir: Vector2, reach: float) -> void:
+	var t := clampf(age / CLEAVE_ANIM, 0.0, 1.0)
+	var pos: Vector2 = run.player_pos - _cam
+	var ang := dir.angle()
+	var r: float = DISC_DIA * 0.5 + (reach * 1.20 - DISC_DIA * 0.5) * t
+	var fade := 1.0 - t
+	# TWO parts, the same read as the enemy telegraph and the reach ring: a flat band for mass
+	# under a thin hard edge. A single pale stroke on a pale road is invisible; the band is what
+	# makes the edge read as a moving shape. No glow — flat fills only (Jan's rule).
+	draw_arc(pos, r, ang - CLEAVE_SPAN * 0.5, ang + CLEAVE_SPAN * 0.5, 14,
+		Color(0.88, 0.94, 1.0, 0.30 * fade), 12.0 * fade + 3.0, true)
+	draw_arc(pos, r + 3.0, ang - CLEAVE_SPAN * 0.46, ang + CLEAVE_SPAN * 0.46, 14,
+		Color(0.99, 1.0, 1.0, 0.85 * fade), 2.5 * fade + 1.0, true)
 
 
 ## The dashed circle itself, so the main and the off hand draw the SAME shape at two radii.

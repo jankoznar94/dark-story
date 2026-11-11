@@ -270,6 +270,16 @@ func _process(_delta: float) -> bool:
 		var wc: Vector2 = _screen.wheel_centre()
 		_screen._on_press(wc, 7)
 		_screen._on_drag(wc + Vector2(0, -(_screen.wheel_inner() + 14.0)), 7)
+	# ⚠️  AND HOLD IT, whatever the wedge resolved to. The wheel's sector under a synthetic drag
+	# can slide to a neighbour (measured: the press landed on slot 0 = Whirlwind, the hero never
+	# swung, and `--wait-swing` sat out its 180-frame stall and captured an idle hero with a log
+	# line that reads like a broken game). A look-frame of the swing exists to photograph the
+	# swing, so the attack is forced for the probe's own purpose: `attack_held` is the same field
+	# the thumb writes, no rule is bypassed.
+	if (_wait_swing or _wait_charge) and _frames > 6:
+		_screen._attack_held = true
+		if _screen.run != null:
+			_screen.run.attack_held = true
 	# ⚠️  THE WALK STOPS. A shot taken while still running shows a hero who outran his pack and is
 	# now surrounded from BEHIND — which the facing rule correctly refuses to swing at, so
 	# `--wait_swing` never finds a blow. Standing still is also the beat worth judging: the assist
