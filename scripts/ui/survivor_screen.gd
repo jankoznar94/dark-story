@@ -2872,15 +2872,21 @@ func _draw_hero() -> void:
 	# THE HERO'S OWN WIND-UP. Jan: "jak se nepřátelé napřahují … možná by to prospělo i u hráče,
 	# samozřejmě v rámci rychlostí zbraní". `swing_charge()` is 0..1 over the LAST 35 % of his
 	# own beat, so a dagger flicks and a maul heaves — and the blow lands exactly when it reaches
-	# 1, so the body can never move out of step with the damage. The body pulls BACK and tilts
-	# away from the blow; the ring draws in (see `_draw_attack_ring`), then both snap out.
+	# 1, so the body can never move out of step with the damage. The body COILS (pulls back a few
+	# px and gathers); the gauge on the reach ring is the countdown (`_draw_attack_ring`).
 	var charge: float = run.swing_charge() if not _baking else 0.0
 	if charge > 0.0:
-		pos += -run.facing * (7.0 * charge)
+		pos += -run.facing * (4.0 * charge)
 	if tex != null:
 		if charge > 0.0:
-			var tilt := 0.16 * charge * (-1.0 if run.facing.x >= 0.0 else 1.0)
-			draw_set_transform_matrix(_world_xform() * Transform2D(tilt, pos))
+			# ⚠️  NO ROTATION. The first version tilted the portrait ~9 degrees away from the blow
+			# and Jan's report was immediate: "natahování u hrdiny je nějaké podivné, špatně vidět".
+			# A bust has no neck to lean with — rotating the whole disc reads as a broken sprite, not
+			# as a body coiling. What a drawn body DOES do is gather: it shrinks a hair and pulls
+			# back, and the ring carries the timing.
+			var coil := 1.0 - 0.05 * charge
+			draw_set_transform_matrix(_world_xform() * Transform2D(
+				Vector2(coil, 0.0), Vector2(0.0, coil), pos))
 			draw_texture_rect(tex, Rect2(-DISC_DIA * 0.5, -DISC_DIA * 0.5, DISC_DIA, DISC_DIA), false)
 			_set_world()
 		else:
@@ -2937,14 +2943,18 @@ func _draw_attack_ring() -> void:
 	# and brightens; on the blow it snaps back out (hot = 1). Same element, two states — a wind-up
 	# built from the ring he already reads needs no new vocabulary and cannot be mistaken for an
 	# enemy telegraph (theirs is red and on the body's rim).
+	# THE WIND-UP GAUGE. ⚠️  It is a sweep ON the reach ring, never a second circle: a contracted
+	# ring drawn beside the real one is a doubled dashed radius, and Jan read it as a bug
+	# ("hlavně ten zdvojený čárkovaný rádius je divný"). It was also a LIE — the reach does not
+	# change while he winds up, so the ring must not move either. The gauge fills the front half
+	# from one side and is complete on the frame the blow lands.
 	var charge: float = run.swing_charge()
 	if charge > 0.0:
-		var pulled: float = run.reach_main * (1.0 - 0.20 * charge)
-		var cc := Color(UIKit.MOD_BLUE)
-		cc.a = 0.34 + 0.44 * charge
-		_dashed_ring(pos, pulled, cc, 1.8 + 1.4 * charge, base - PI * 0.5, base + PI * 0.5)
-		draw_circle(pos + run.facing * pulled, 3.0 + 2.2 * charge,
-			Color(UIKit.MOD_BLUE, 0.55 + 0.45 * charge))
+		var fill := Color(0.86, 0.92, 1.0, 0.30 + 0.55 * charge)
+		draw_arc(pos, run.reach_main, base - PI * 0.5, base - PI * 0.5 + PI * charge, 26,
+			fill, 2.5 + 1.5 * charge, true)
+		draw_circle(pos + run.facing * run.reach_main, 4.5 + 2.5 * charge,
+			Color(UIKit.MOD_BLUE, 0.75 + 0.25 * charge))
 	# A second hand with a DIFFERENT reach gets its own, fainter circle. ONE ring cannot be the
 	# promise for two weapons: a hand that really reaches 10 px further has to be visible, or the
 	# ring lies about the off hand.
