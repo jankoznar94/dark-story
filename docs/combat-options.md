@@ -203,6 +203,14 @@ Nic z toho nemění balanc; hra okamžitě přestane být „klikací“.
 **Vlna 2 — „souboj, ne závod“ (1–2 větve, ~2–3 dny):**
 B1 wind-up + B2 tvary útoků · B4 i-frames · B5 dodge · F4/F5 čísla · D1 charger · D6 elitní affixy.
 
+**Stav po prvním průchodu (implementováno, commit `36b7bb5`):**
+hotové B1 (wind-up 0,4 × `atk_cd`, whiff při odchodu), B4 (i-frames 220 ms), knockback +
+stagger, crit ruší návěstí, rozpad těla, hit-stop 30/65/45 ms a sweep na okraji portrétu.
+**Zbývá:** B2 (tvary útoků podle druhu), B5 dodge, D1 charger, D6 affixy, C1–C3, E1 boss.
+
+⚠️ **A6 (zvukové schody) NEPLATÍ** — Jan dřív odmítl jakýkoli pitch shift („nezní to dobře"),
+cue se hraje na své vlastní výšce. Pocit comba musí nést vizuál (čísla, hit-stop), ne hudba.
+
 **Vlna 3 — „proč další běh“ (~3–4 dny):**
 E1 boss · E6 zdravotní orb · C1 nabíjený útok · C2 finisher · C3 bonus zezadu · E2/E3 truhla + volba.
 
