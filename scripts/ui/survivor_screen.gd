@@ -376,11 +376,25 @@ func _build_decoration() -> void:
 			var pos := centre + Vector2(to_rock) * (SurvivorRun.TILE * 0.5 - 14.0) \
 				+ Vector2(rng.randf_range(-7, 7), rng.randf_range(-7, 7))
 			wall_spots.append({"pos": pos, "dir": to_rock})
-			# Every other cell only: a boulder per 120 px reads as a wall, one per 60 as a hedge.
-			if (cx + cy) % 2 == 1 and rng.randf() < 0.6:
-				continue
-			_props.append(_wall_prop(pos, along, rng))
+			# ⚠️  ONE PROP PER BOUNDARY CELL, no skipping. The old pass dropped roughly half of
+			# them (every other cell at 60 %), which left up to 120 px of open dark between two
+			# boulders — exactly what Jan read as "díry, kterými by šel projít". A wall prop is
+			# 42-78 px wide against a 60 px cell, so one per cell OVERLAPS its neighbours and the
+			# line closes without needing a new asset.
+			var front := _wall_prop(pos, along, rng)
+			front["wall"] = true
+			_props.append(front)
 			along += 1
+			# ...and a SECOND, smaller row pushed deeper into the void, so the slivers between
+			# the front row's silhouettes do not show bare ground behind them. It reads as the
+			# back of the hedge; nothing walkable is ever behind it.
+			if rng.randf() < 0.75:
+				var back_pos: Vector2 = centre + Vector2(to_rock) * (SurvivorRun.TILE * 0.5 + 34.0) \
+					+ Vector2(rng.randf_range(-12, 12), rng.randf_range(-12, 12))
+				var back := _wall_prop(back_pos, along + 1, rng)
+				back["size"] = float(back["size"]) * 1.15
+				back["wall"] = true
+				_props.append(back)
 	# Interior cover. Sparse on purpose: it is something to run past, and a pack has to be
 	# readable from a distance instead of hiding behind a bush.
 	#
@@ -422,8 +436,10 @@ func _build_decoration() -> void:
 					"seed": rng.randf() * 10.0,
 				})
 	_build_landmarks(wall_spots, rng)
-	# Nothing may stand on the hero's first step.
-	_props = _props.filter(func(p): return (p["pos"] as Vector2).distance_to(run.player_pos) > 70.0)
+	# Nothing may stand on the hero's first step — EXCEPT the wall line, which is allowed to be
+	# right next to him: deleting two boulders out of the hedge to keep his feet clear would put
+	# the exact gap back that this pass exists to close.
+	_props = _props.filter(func(p): return bool(p.get("wall", false)) or (p["pos"] as Vector2).distance_to(run.player_pos) > 70.0)
 
 
 ## The zone's SIGNATURE, placed in the rock beyond the path. One at the hero's arrival (so the
@@ -1399,6 +1415,20 @@ func _draw_ground() -> void:
 	_draw_deck()
 
 
+## ⚠️  THE OUTSIDE IS A VOID, NOT TERRAIN. Jan, Nov 2026: "nepřístupné plochy by měly být černé
+## nebo hodně tmavé... zkrátka ať hráč nevidí, co tam je."
+##
+## Every zone's `rock` is a dark OLIVE/BROWN in the theme (zone 0 #1d2018, measured 29,32,19 on a
+## real frame) — the same hue family as the tinted grass, so the area beyond the corridor read as
+## "dark grass with stones on it" and the gaps between two bushes looked walkable. The fill is now
+## taken most of the way to black and the boundary hexagons are darkened with it; the EDGE of the
+## world is carried by the props standing on it, not by a rock texture.
+const WALL_DARKEN := 0.78
+## The boundary cells keep a little more light than the void behind them, so the corridor has a
+## drawn outline instead of ending in a hole — but only a little.
+const WALL_EDGE_DARKEN := 0.42
+
+
 ## Everything that is NOT the corridor's floor, painted as rock. Cells are merged into runs per
 ## row, so a wall is one rectangle instead of a row of 60 px squares with seams between them.
 func _draw_rock() -> void:
@@ -1412,8 +1442,8 @@ func _draw_rock() -> void:
 		# start room's corner of rock and leave the rest of the zone bare.
 		c0 = Vector2i.ZERO
 		c1 = Vector2i(SurvivorRun.COLS - 1, SurvivorRun.ROWS - 1)
-	var dark: Color = _theme.get("rock", Color("#191510"))
-	var rock_line: Color = _theme.get("rock_line", Color("#2e2619"))
+	var dark: Color = (_theme.get("rock", Color("#191510")) as Color).darkened(WALL_DARKEN)
+	var rock_line: Color = (_theme.get("rock_line", Color("#2e2619")) as Color).darkened(WALL_EDGE_DARKEN)
 	for cy in range(maxi(c0.y, 0), mini(c1.y + 1, SurvivorRun.ROWS)):
 		var x := maxi(c0.x, 0)
 		var stop := mini(c1.x + 1, SurvivorRun.COLS)
@@ -1427,7 +1457,7 @@ func _draw_rock() -> void:
 			var rect := Rect2(Vector2(float(start) * SurvivorRun.TILE,
 				float(cy) * SurvivorRun.TILE) - _cam,
 				Vector2(float(x - start) * SurvivorRun.TILE, SurvivorRun.TILE))
-			draw_rect(rect, dark)
+			_P_rect(rect, dark)
 	# Pass 2: an ORGANIC edge. Filling whole cells makes the corridor a staircase of 60 px
 	# squares — the first capture read as "vyříznuté z papíru" — so every rock cell that touches
 	# floor is redrawn as a jittered polygon that may overhang the path by a few pixels. The
@@ -1440,12 +1470,12 @@ func _draw_rock() -> void:
 			var poly := _rock_polygon(cx, cy)
 			for i in poly.size():
 				poly[i] -= _cam
-			draw_colored_polygon(poly, rock_line)
+			_P_poly(poly, rock_line)
 			# The wall is the DARKEST thing on screen and it is most of the frame, so a
 			# one-shade outline leaves it reading as a HOLE rather than as rock. One lit
 			# ridge per hexagon is what makes it a surface (measured on zone 4, where the
 			# pale dirt runs straight into it and the top of the frame went black).
-			draw_polyline(poly, rock_line.lightened(0.26), 2.0)
+			_P_polyline(poly, rock_line.lightened(0.26), 2.0)
 
 
 ## A rock cell's silhouette: a hexagon with every corner pushed out by a stable pseudo-random
@@ -2009,12 +2039,22 @@ func _bake_props() -> void:
 	# THE ROCK is static too, and it was 69 of a 360-command frame on its own (measured by
 	# skip-subtraction). It bakes into its own mesh because it has to be drawn BEFORE the water
 	# and the deck, which are painted over it.
+	#
+	# ⚠️  THIS USED TO BAKE THE PREVIOUS MESH INTO ITSELF (`_draw_baked(_rock_mesh)` after
+	# clearing the buffer), so `_draw_rock()` was never called at all and `_rock_mesh` stayed
+	# null: the whole non-floor half of the world was drawn as BARE TINTED GRASS under the fog
+	# veil. That is exactly what Jan reported — "nepřístupná plocha je jen holý trávník a
+	# kameny" — and it was not a matter of taste. The painter emits through the `_P_*` wrappers,
+	# which capture into the bake buffer, so calling it here is all that was missing.
+	var saved_rock_cam := _cam
+	_cam = Vector2.ZERO
 	_bake_tris = PackedVector2Array()
 	_bake_cols = PackedColorArray()
 	_baking = true
 	_bake_xf = Transform2D()
-	_draw_baked(_rock_mesh)
+	_draw_rock()
 	_baking = false
+	_cam = saved_rock_cam
 	_rock_mesh = _mesh_from_bake()
 
 
